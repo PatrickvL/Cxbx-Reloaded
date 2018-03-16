@@ -7018,8 +7018,6 @@ void XTL::CxbxDrawIndexed(CxbxDrawContext &DrawContext, INDEX16 *pIndexData)
 			// NOTE : We don't restore the previously active index buffer
 		}
 	}
-
-	VertexBufferConverter.Restore();
 }
 
 // TODO : Move to own file
@@ -7080,8 +7078,6 @@ void XTL::CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 			);
 		}
 	}
-
-	VertexBufferConverter.Restore();
 }
 
 void EmuUpdateActiveTextureStages()
