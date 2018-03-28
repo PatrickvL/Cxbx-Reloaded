@@ -3572,7 +3572,7 @@ HRESULT WINAPI XTL::EMUPATCH(D3DDevice_CreateVertexShader)
                                                    &pRecompiledDeclaration,
                                                    &DeclarationSize,
                                                    pFunction == NULL,
-                                                   &pVertexShader->VertexShaderDynamicPatch);
+                                                   &pVertexShader->VertexShaderInfo);
 
     if(SUCCEEDED(hRet) && pFunction)
     {
