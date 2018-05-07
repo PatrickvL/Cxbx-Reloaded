@@ -298,7 +298,9 @@ extern void XTL::EmuExecutePushBufferRaw
             pVertexData = pdwPushData;
 			//move pushpuffer to the end of vertex data.
             pdwPushData += dwCount;
-
+			if (dwCount == 0) {
+				continue;
+			}
             // retrieve vertex shader
 			DWORD dwVertexShader = g_CurrentXboxVertexShaderHandle;
 
