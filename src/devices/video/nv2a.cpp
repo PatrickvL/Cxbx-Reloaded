@@ -228,6 +228,7 @@ static void *nv_dma_map(NV2AState *d, xbaddr dma_obj_address, xbaddr *len)
 #include "EmuNV2A_PCRTC.cpp"
 #include "EmuNV2A_PFB.cpp"
 #include "EmuNV2A_PGRAPH.cpp"
+#include "EmuNV2A_PGRAPH_OpenGL.cpp"
 #include "EmuNV2A_PFIFO.cpp"
 #include "EmuNV2A_PMC.cpp"
 #include "EmuNV2A_PRAMDAC.cpp"

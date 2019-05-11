@@ -325,6 +325,7 @@ file (GLOB CXBXR_SOURCE_EMU
  #"${CXBXR_ROOT_DIR}/src/devices/video/EmuNV2A_PFB.cpp"
  #"${CXBXR_ROOT_DIR}/src/devices/video/EmuNV2A_PFIFO.cpp"
  #"${CXBXR_ROOT_DIR}/src/devices/video/EmuNV2A_PGRAPH.cpp"
+ #"${CXBXR_ROOT_DIR}/src/devices/video/EmuNV2A_PGRAPH_OpenGL.cpp"
  #"${CXBXR_ROOT_DIR}/src/devices/video/EmuNV2A_PMC.cpp"
  #"${CXBXR_ROOT_DIR}/src/devices/video/EmuNV2A_PRAMDAC.cpp"
  #"${CXBXR_ROOT_DIR}/src/devices/video/EmuNV2A_PRAMIN.cpp"
