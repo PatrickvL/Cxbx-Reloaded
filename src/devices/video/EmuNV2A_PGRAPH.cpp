@@ -43,123 +43,6 @@
 #define TARGET_PAGE_MASK ~(TARGET_PAGE_SIZE - 1)
 #define TARGET_PAGE_ALIGN(addr) (((addr) + TARGET_PAGE_SIZE - 1) & TARGET_PAGE_MASK)
 
-static const GLenum pgraph_texture_min_filter_map[] = {
-    0,
-    GL_NEAREST,
-    GL_LINEAR,
-    GL_NEAREST_MIPMAP_NEAREST,
-    GL_LINEAR_MIPMAP_NEAREST,
-    GL_NEAREST_MIPMAP_LINEAR,
-    GL_LINEAR_MIPMAP_LINEAR,
-    GL_LINEAR, /* TODO: Convolution filter... */
-};
-
-static const GLenum pgraph_texture_mag_filter_map[] = {
-    0,
-    GL_NEAREST,
-    GL_LINEAR,
-    0,
-    GL_LINEAR /* TODO: Convolution filter... */
-};
-
-static const GLenum pgraph_texture_addr_map[] = {
-    0,
-    GL_REPEAT,
-    GL_MIRRORED_REPEAT,
-    GL_CLAMP_TO_EDGE,
-    GL_CLAMP_TO_BORDER,
-    // GL_CLAMP
-};
-
-static const GLenum pgraph_blend_factor_map[] = {
-    GL_ZERO,
-    GL_ONE,
-    GL_SRC_COLOR,
-    GL_ONE_MINUS_SRC_COLOR,
-    GL_SRC_ALPHA,
-    GL_ONE_MINUS_SRC_ALPHA,
-    GL_DST_ALPHA,
-    GL_ONE_MINUS_DST_ALPHA,
-    GL_DST_COLOR,
-    GL_ONE_MINUS_DST_COLOR,
-    GL_SRC_ALPHA_SATURATE,
-    0,
-    GL_CONSTANT_COLOR,
-    GL_ONE_MINUS_CONSTANT_COLOR,
-    GL_CONSTANT_ALPHA,
-    GL_ONE_MINUS_CONSTANT_ALPHA,
-};
-
-static const GLenum pgraph_blend_equation_map[] = {
-    GL_FUNC_SUBTRACT,
-    GL_FUNC_REVERSE_SUBTRACT,
-    GL_FUNC_ADD,
-    GL_MIN,
-    GL_MAX,
-    GL_FUNC_REVERSE_SUBTRACT,
-    GL_FUNC_ADD,
-};
-
-static const GLenum pgraph_blend_logicop_map[] = {
-    GL_CLEAR,
-    GL_AND,
-    GL_AND_REVERSE,
-    GL_COPY,
-    GL_AND_INVERTED,
-    GL_NOOP,
-    GL_XOR,
-    GL_OR,
-    GL_NOR,
-    GL_EQUIV,
-    GL_INVERT,
-    GL_OR_REVERSE,
-    GL_COPY_INVERTED,
-    GL_OR_INVERTED,
-    GL_NAND,
-    GL_SET,
-};
-
-static const GLenum pgraph_cull_face_map[] = {
-    0,
-    GL_FRONT,
-    GL_BACK,
-    GL_FRONT_AND_BACK
-};
-
-static const GLenum pgraph_depth_func_map[] = {
-    GL_NEVER,
-    GL_LESS,
-    GL_EQUAL,
-    GL_LEQUAL,
-    GL_GREATER,
-    GL_NOTEQUAL,
-    GL_GEQUAL,
-    GL_ALWAYS,
-};
-
-static const GLenum pgraph_stencil_func_map[] = {
-    GL_NEVER,
-    GL_LESS,
-    GL_EQUAL,
-    GL_LEQUAL,
-    GL_GREATER,
-    GL_NOTEQUAL,
-    GL_GEQUAL,
-    GL_ALWAYS,
-};
-
-static const GLenum pgraph_stencil_op_map[] = {
-    0,
-    GL_KEEP,
-    GL_ZERO,
-    GL_REPLACE,
-    GL_INCR,
-    GL_DECR,
-    GL_INVERT,
-    GL_INCR_WRAP,
-    GL_DECR_WRAP,
-};
-
 enum FormatEncoding {
 	linear = 0,
 	swizzled, // for all NV097_SET_TEXTURE_FORMAT_*_SZ_*
@@ -350,49 +233,6 @@ static const ColorFormatInfo kelvin_color_format_map[256] = {
         {4, linear, GL_RGBA8, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8}, // TODO : Verify
     //0x41 [NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_R8G8B8A8] =
         {4, linear, GL_RGBA8, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8}, // TODO : Verify
-};
-
-typedef struct SurfaceColorFormatInfo {
-    unsigned int bytes_per_pixel;
-    GLint gl_internal_format;
-    GLenum gl_format;
-    GLenum gl_type;
-} SurfaceColorFormatInfo;
-
-// Note : Avoid designated initializers to facilitate C++ builds
-static const SurfaceColorFormatInfo kelvin_surface_color_format_map[16] = {
-	//0x00 [?] = 
-		{},
-    //0x01 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_Z1R5G5B5] =
-        {2, GL_RGB5_A1, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV},
-	//0x02 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_O1R5G5B5] =
-		{},
-    //0x03 [NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5] =
-        {2, GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
-    //0x04 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_Z8R8G8B8] =
-        {4, GL_RGBA8, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
-	//0x05 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_O8R8G8B8] =
-		{},
-	//0x06 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X1A7R8G8B8_Z1A7R8G8B8] =
-		{},
-	//0x07 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X1A7R8G8B8_O1A7R8G8B8] =
-		{},
-    //0x08 [NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8] =
-        {4, GL_RGBA8, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
-	//0x09 [NV097_SET_SURFACE_FORMAT_COLOR_LE_B8] =
-		{}, // TODO : {1, GL_R8, GL_RED, GL_UNSIGNED_BYTE}, // PatrickvL guesstimate
-	//0x0A [NV097_SET_SURFACE_FORMAT_COLOR_LE_G8B8] =
-		{}, // TODO : {2, GL_RG8, GL_RG, GL_UNSIGNED_BYTE}, // PatrickvL guesstimate
-	//0x0B [?] = 
-		{},
-	//0x0C [?] = 
-		{},
-	//0x0D [?] = 
-		{},
-	//0x0E [?] = 
-		{},
-	//0x0F [?] = 
-		{}
 };
 
 void (*pgraph_draw_arrays)(NV2AState *d);
@@ -661,6 +501,25 @@ void OpenGL_draw_state_update(NV2AState *d)
 
 	uint32_t blend = pg->regs[NV_PGRAPH_BLEND];
 	if (blend & NV_PGRAPH_BLEND_EN) {
+		static const GLenum pgraph_blend_factor_map[] = {
+			GL_ZERO,
+			GL_ONE,
+			GL_SRC_COLOR,
+			GL_ONE_MINUS_SRC_COLOR,
+			GL_SRC_ALPHA,
+			GL_ONE_MINUS_SRC_ALPHA,
+			GL_DST_ALPHA,
+			GL_ONE_MINUS_DST_ALPHA,
+			GL_DST_COLOR,
+			GL_ONE_MINUS_DST_COLOR,
+			GL_SRC_ALPHA_SATURATE,
+			0,
+			GL_CONSTANT_COLOR,
+			GL_ONE_MINUS_CONSTANT_COLOR,
+			GL_CONSTANT_ALPHA,
+			GL_ONE_MINUS_CONSTANT_ALPHA,
+		};
+
 		glEnable(GL_BLEND);
 		uint32_t sfactor = GET_MASK(blend,
 			NV_PGRAPH_BLEND_SFACTOR);
@@ -671,11 +530,45 @@ void OpenGL_draw_state_update(NV2AState *d)
 		glBlendFunc(pgraph_blend_factor_map[sfactor],
 			pgraph_blend_factor_map[dfactor]);
 
-		uint32_t equation = GET_MASK(blend,
-			NV_PGRAPH_BLEND_EQN);
-		assert(equation < ARRAY_SIZE(pgraph_blend_equation_map));
-		glBlendEquation(pgraph_blend_equation_map[equation]);
+		{
+			static const GLenum pgraph_blend_equation_map[] = {
+				GL_FUNC_SUBTRACT,
+				GL_FUNC_REVERSE_SUBTRACT,
+				GL_FUNC_ADD,
+				GL_MIN,
+				GL_MAX,
+				GL_FUNC_REVERSE_SUBTRACT,
+				GL_FUNC_ADD,
+			};
 
+			uint32_t equation = GET_MASK(blend,
+				NV_PGRAPH_BLEND_EQN);
+			assert(equation < ARRAY_SIZE(pgraph_blend_equation_map));
+			glBlendEquation(pgraph_blend_equation_map[equation]);
+		}
+
+/*
+			static const GLenum pgraph_blend_logicop_map[] = {
+				GL_CLEAR,
+				GL_AND,
+				GL_AND_REVERSE,
+				GL_COPY,
+				GL_AND_INVERTED,
+				GL_NOOP,
+				GL_XOR,
+				GL_OR,
+				GL_NOR,
+				GL_EQUIV,
+				GL_INVERT,
+				GL_OR_REVERSE,
+				GL_COPY_INVERTED,
+				GL_OR_INVERTED,
+				GL_NAND,
+				GL_SET,
+			};
+
+
+*/
 		uint32_t blend_color = pg->regs[NV_PGRAPH_BLENDCOLOR];
 		glBlendColor(((blend_color >> 16) & 0xFF) / 255.0f, /* red */
 			((blend_color >> 8) & 0xFF) / 255.0f,  /* green */
@@ -690,6 +583,13 @@ void OpenGL_draw_state_update(NV2AState *d)
 	uint32_t setupraster = pg->regs[NV_PGRAPH_SETUPRASTER];
 	if (setupraster
 		& NV_PGRAPH_SETUPRASTER_CULLENABLE) {
+		static const GLenum pgraph_cull_face_map[] = {
+			0,
+			GL_FRONT,
+			GL_BACK,
+			GL_FRONT_AND_BACK
+		};
+
 		uint32_t cull_face = GET_MASK(setupraster,
 			NV_PGRAPH_SETUPRASTER_CULLCTRL);
 		assert(cull_face < ARRAY_SIZE(pgraph_cull_face_map));
@@ -739,6 +639,17 @@ void OpenGL_draw_state_update(NV2AState *d)
 
 	/* Depth testing */
 	if (depth_test) {
+		static const GLenum pgraph_depth_func_map[] = {
+			GL_NEVER,
+			GL_LESS,
+			GL_EQUAL,
+			GL_LEQUAL,
+			GL_GREATER,
+			GL_NOTEQUAL,
+			GL_GEQUAL,
+			GL_ALWAYS,
+		};
+
 		glEnable(GL_DEPTH_TEST);
 
 		uint32_t depth_func = GET_MASK(control_0,
@@ -751,6 +662,17 @@ void OpenGL_draw_state_update(NV2AState *d)
 	}
 
 	if (stencil_test) {
+		static const GLenum pgraph_stencil_func_map[] = {
+			GL_NEVER,
+			GL_LESS,
+			GL_EQUAL,
+			GL_LEQUAL,
+			GL_GREATER,
+			GL_NOTEQUAL,
+			GL_GEQUAL,
+			GL_ALWAYS,
+		};
+
 		glEnable(GL_STENCIL_TEST);
 
 		uint32_t stencil_func = GET_MASK(control_1,
@@ -768,6 +690,19 @@ void OpenGL_draw_state_update(NV2AState *d)
 			NV_PGRAPH_CONTROL_2_STENCIL_OP_ZPASS);
 
 		assert(stencil_func < ARRAY_SIZE(pgraph_stencil_func_map));
+
+		static const GLenum pgraph_stencil_op_map[] = {
+			0,
+			GL_KEEP,
+			GL_ZERO,
+			GL_REPLACE,
+			GL_INCR,
+			GL_DECR,
+			GL_INVERT,
+			GL_INCR_WRAP,
+			GL_DECR_WRAP,
+		};
+
 		assert(op_fail < ARRAY_SIZE(pgraph_stencil_op_map));
 		assert(op_zfail < ARRAY_SIZE(pgraph_stencil_op_map));
 		assert(op_zpass < ARRAY_SIZE(pgraph_stencil_op_map));
@@ -3502,6 +3437,49 @@ static void pgraph_update_surface_part(NV2AState *d, bool upload, bool color) {
     GLenum gl_format, gl_type, gl_attachment;
 
     if (color) {
+		typedef struct SurfaceColorFormatInfo {
+			unsigned int bytes_per_pixel;
+			GLint gl_internal_format;
+			GLenum gl_format;
+			GLenum gl_type;
+		} SurfaceColorFormatInfo;
+
+		// Note : Avoid designated initializers to facilitate C++ builds
+		static const SurfaceColorFormatInfo kelvin_surface_color_format_map[16] = {
+			//0x00 [?] = 
+				{},
+			//0x01 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_Z1R5G5B5] =
+				{2, GL_RGB5_A1, GL_BGRA, GL_UNSIGNED_SHORT_1_5_5_5_REV},
+			//0x02 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_O1R5G5B5] =
+				{},
+			//0x03 [NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5] =
+				{2, GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5},
+			//0x04 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_Z8R8G8B8] =
+				{4, GL_RGBA8, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
+			//0x05 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_O8R8G8B8] =
+				{},
+			//0x06 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X1A7R8G8B8_Z1A7R8G8B8] =
+				{},
+			//0x07 [NV097_SET_SURFACE_FORMAT_COLOR_LE_X1A7R8G8B8_O1A7R8G8B8] =
+				{},
+			//0x08 [NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8] =
+				{4, GL_RGBA8, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV},
+			//0x09 [NV097_SET_SURFACE_FORMAT_COLOR_LE_B8] =
+				{}, // TODO : {1, GL_R8, GL_RED, GL_UNSIGNED_BYTE}, // PatrickvL guesstimate
+			//0x0A [NV097_SET_SURFACE_FORMAT_COLOR_LE_G8B8] =
+				{}, // TODO : {2, GL_RG8, GL_RG, GL_UNSIGNED_BYTE}, // PatrickvL guesstimate
+			//0x0B [?] = 
+				{},
+			//0x0C [?] = 
+				{},
+			//0x0D [?] = 
+				{},
+			//0x0E [?] = 
+				{},
+			//0x0F [?] = 
+				{}
+		};
+
         surface = &pg->surface_color;
         dma_address = pg->dma_color;
         gl_buffer = &pg->gl_color_buffer;
@@ -4094,25 +4072,61 @@ static void pgraph_bind_textures(NV2AState *d)
             }
         }
 
-        glTexParameteri(binding->gl_target, GL_TEXTURE_MIN_FILTER,
-            pgraph_texture_min_filter_map[min_filter]);
-        glTexParameteri(binding->gl_target, GL_TEXTURE_MAG_FILTER,
-            pgraph_texture_mag_filter_map[mag_filter]);
+		{
+			static const GLenum pgraph_texture_min_filter_map[] = {
+				0,
+				GL_NEAREST,
+				GL_LINEAR,
+				GL_NEAREST_MIPMAP_NEAREST,
+				GL_LINEAR_MIPMAP_NEAREST,
+				GL_NEAREST_MIPMAP_LINEAR,
+				GL_LINEAR_MIPMAP_LINEAR,
+				GL_LINEAR, /* TODO: Convolution filter... */
+			};
 
+			assert(min_filter < ARRAY_SIZE(pgraph_texture_min_filter_map));
+			glTexParameteri(binding->gl_target, GL_TEXTURE_MIN_FILTER,
+				pgraph_texture_min_filter_map[min_filter]);
+		}
+
+		{
+			static const GLenum pgraph_texture_mag_filter_map[] = {
+				0,
+				GL_NEAREST,
+				GL_LINEAR,
+				0,
+				GL_LINEAR /* TODO: Convolution filter... */
+			};
+
+			assert(mag_filter < ARRAY_SIZE(pgraph_texture_mag_filter_map));
+			glTexParameteri(binding->gl_target, GL_TEXTURE_MAG_FILTER,
+				pgraph_texture_mag_filter_map[mag_filter]);
+		}
         /* Texture wrapping */
-        assert(addru < ARRAY_SIZE(pgraph_texture_addr_map));
-        glTexParameteri(binding->gl_target, GL_TEXTURE_WRAP_S,
-            pgraph_texture_addr_map[addru]);
-        if (dimensionality > 1) {
-            assert(addrv < ARRAY_SIZE(pgraph_texture_addr_map));
-            glTexParameteri(binding->gl_target, GL_TEXTURE_WRAP_T,
-                pgraph_texture_addr_map[addrv]);
-        }
-        if (dimensionality > 2) {
-            assert(addrp < ARRAY_SIZE(pgraph_texture_addr_map));
-            glTexParameteri(binding->gl_target, GL_TEXTURE_WRAP_R,
-                pgraph_texture_addr_map[addrp]);
-        }
+		{
+			static const GLenum pgraph_texture_addr_map[] = {
+				0,
+				GL_REPEAT,
+				GL_MIRRORED_REPEAT,
+				GL_CLAMP_TO_EDGE,
+				GL_CLAMP_TO_BORDER,
+				// GL_CLAMP
+			};
+
+			assert(addru < ARRAY_SIZE(pgraph_texture_addr_map));
+			glTexParameteri(binding->gl_target, GL_TEXTURE_WRAP_S,
+				pgraph_texture_addr_map[addru]);
+			if (dimensionality > 1) {
+				assert(addrv < ARRAY_SIZE(pgraph_texture_addr_map));
+				glTexParameteri(binding->gl_target, GL_TEXTURE_WRAP_T,
+					pgraph_texture_addr_map[addrv]);
+			}
+			if (dimensionality > 2) {
+				assert(addrp < ARRAY_SIZE(pgraph_texture_addr_map));
+				glTexParameteri(binding->gl_target, GL_TEXTURE_WRAP_R,
+					pgraph_texture_addr_map[addrp]);
+			}
+		}
 
         /* FIXME: Only upload if necessary? [s, t or r = GL_CLAMP_TO_BORDER] */
         if (border_source_color) {
