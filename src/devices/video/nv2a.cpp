@@ -728,13 +728,13 @@ void cxbx_gl_render_framebuffer(NV2AState *d)
 		GL_CHECK();
 	}
 
-	int rf = upload_gl_texture(GL_TEXTURE_2D,
+	int rf = OpenGL_upload_texture(GL_TEXTURE_2D,
 		s,
 		frame_pixels,
 		palette_data);
 	GL_CHECK();
 
-	// Note : It'd be less code to use generate_texture(), except that puts linear formats
+	// Note : It'd be less code to use OpenGL_generate_texture(), except that puts linear formats
 	// into GL_TEXTURE_RECTANGLE, while we need GL_TEXTURE_2D here. So instead, handle the
 	// difference here by separately setting the resulting format's RGBA swizzle:
 	ColorFormatInfo cfi = kelvin_color_format_map[rf];

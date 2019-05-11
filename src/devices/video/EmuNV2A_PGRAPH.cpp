@@ -241,37 +241,40 @@ void (*pgraph_draw_inline_array)(NV2AState *d);
 void (*pgraph_draw_inline_elements)(NV2AState *d);
 void (*pgraph_draw_state_update)(NV2AState *d);
 void (*pgraph_draw_clear)(NV2AState *d);
+void (*pgraph_update_surface)(NV2AState *d, bool upload, bool color_write, bool zeta_write);
+void (*pgraph_report_get)(NV2AState *d);
+void (*pgraph_report_clear)(NV2AState *d);
 
 //static void pgraph_set_context_user(NV2AState *d, uint32_t value);
 void pgraph_handle_method(NV2AState *d, unsigned int subchannel, unsigned int method, uint32_t parameter);
 static void pgraph_log_method(unsigned int subchannel, unsigned int graphics_class, unsigned int method, uint32_t parameter);
 static void pgraph_allocate_inline_buffer_vertices(PGRAPHState *pg, unsigned int attr);
 static void pgraph_finish_inline_buffer_vertex(PGRAPHState *pg);
-static void pgraph_update_shader_constants(PGRAPHState *pg, ShaderBinding *binding, bool binding_changed, bool vertex_program, bool fixed_function);
-static void pgraph_bind_shaders(PGRAPHState *pg);
+static void OpenGL_pgraph_update_shader_constants(PGRAPHState *pg, ShaderBinding *binding, bool binding_changed, bool vertex_program, bool fixed_function);
+static void OpenGL_pgraph_bind_shaders(PGRAPHState *pg);
 static bool pgraph_get_framebuffer_dirty(PGRAPHState *pg);
 static bool pgraph_get_color_write_enabled(PGRAPHState *pg);
 static bool pgraph_get_zeta_write_enabled(PGRAPHState *pg);
 static void pgraph_set_surface_dirty(PGRAPHState *pg, bool color, bool zeta);
-static void pgraph_update_surface_part(NV2AState *d, bool upload, bool color);
-static void pgraph_update_surface(NV2AState *d, bool upload, bool color_write, bool zeta_write);
-static void pgraph_bind_textures(NV2AState *d);
+static void OpenGL_pgraph_update_surface_part(NV2AState *d, bool upload, bool color);
+static void OpenGL_pgraph_update_surface(NV2AState *d, bool upload, bool color_write, bool zeta_write);
+static void OpenGL_pgraph_bind_textures(NV2AState *d);
 static void pgraph_apply_anti_aliasing_factor(PGRAPHState *pg, unsigned int *width, unsigned int *height);
 static void pgraph_get_surface_dimensions(PGRAPHState *pg, unsigned int *width, unsigned int *height);
-static void pgraph_update_memory_buffer(NV2AState *d, hwaddr addr, hwaddr size, bool f);
-static void pgraph_bind_vertex_attributes(NV2AState *d, unsigned int num_elements, bool inline_data, unsigned int inline_stride);
-static unsigned int pgraph_bind_inline_array(NV2AState *d);
+static void OpenGL_pgraph_update_memory_buffer(NV2AState *d, hwaddr addr, hwaddr size, bool f);
+static void OpenGL_pgraph_bind_vertex_attributes(NV2AState *d, unsigned int num_elements, bool inline_data, unsigned int inline_stride);
+static unsigned int OpenGL_pgraph_bind_inline_array(NV2AState *d);
 
 static float convert_f16_to_float(uint16_t f16);
 static float convert_f24_to_float(uint32_t f24);
 static uint8_t* convert_texture_data(const unsigned int color_format, const uint8_t *data, const uint8_t *palette_data, const unsigned int width, const unsigned int height, const unsigned int depth, const unsigned int row_pitch, const unsigned int slice_pitch);
-static int upload_gl_texture(GLenum gl_target, const TextureShape s, const uint8_t *texture_data, const uint8_t *palette_data);
-static TextureBinding* generate_texture(const TextureShape s, const uint8_t *texture_data, const uint8_t *palette_data);
+static int OpenGL_upload_texture(GLenum gl_target, const TextureShape s, const uint8_t *texture_data, const uint8_t *palette_data);
+static TextureBinding* OpenGL_generate_texture(const TextureShape s, const uint8_t *texture_data, const uint8_t *palette_data);
 static guint texture_key_hash(gconstpointer key);
 static gboolean texture_key_equal(gconstpointer a, gconstpointer b);
-static gpointer texture_key_retrieve(gpointer key, gpointer user_data, GError **error);
+static gpointer OpenGL_texture_key_retrieve(gpointer key, gpointer user_data, GError **error);
 static void texture_key_destroy(gpointer data);
-static void texture_binding_destroy(gpointer data);
+static void OpenGL_texture_binding_destroy(gpointer data);
 static guint shader_hash(gconstpointer key);
 static gboolean shader_equal(gconstpointer a, gconstpointer b);
 static unsigned int kelvin_map_stencil_op(uint32_t parameter);
@@ -379,7 +382,7 @@ void OpenGL_draw_arrays(NV2AState *d)
 	assert(pg->opengl_enabled);
 	assert(pg->shader_binding);
 
-	pgraph_bind_vertex_attributes(d, pg->draw_arrays_max_count,
+	OpenGL_pgraph_bind_vertex_attributes(d, pg->draw_arrays_max_count,
 		false, 0);
 	glMultiDrawArrays(pg->shader_binding->gl_primitive_mode,
 		pg->gl_draw_arrays_start,
@@ -435,7 +438,7 @@ void OpenGL_draw_inline_array(NV2AState *d)
 	assert(pg->opengl_enabled);
 	assert(pg->shader_binding);
 
-	unsigned int index_count = pgraph_bind_inline_array(d);
+	unsigned int index_count = OpenGL_pgraph_bind_inline_array(d);
 	glDrawArrays(pg->shader_binding->gl_primitive_mode,
 		0, index_count);
 
@@ -455,7 +458,7 @@ void OpenGL_draw_inline_elements(NV2AState *d)
 		max_element = MAX(pg->inline_elements[i], max_element);
 		min_element = MIN(pg->inline_elements[i], min_element);
 	}
-	pgraph_bind_vertex_attributes(d, max_element + 1, false, 0);
+	OpenGL_pgraph_bind_vertex_attributes(d, max_element + 1, false, 0);
 
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, pg->gl_element_buffer);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER,
@@ -488,7 +491,7 @@ void OpenGL_draw_state_update(NV2AState *d)
 	bool stencil_test = control_1
 		& NV_PGRAPH_CONTROL_1_STENCIL_TEST_ENABLE;
 
-	pgraph_update_surface(d, true, true, depth_test || stencil_test);
+	OpenGL_pgraph_update_surface(d, true, true, depth_test || stencil_test);
 
 	bool alpha = control_0 & NV_PGRAPH_CONTROL_0_ALPHA_WRITE_ENABLE;
 	bool red = control_0 & NV_PGRAPH_CONTROL_0_RED_WRITE_ENABLE;
@@ -732,8 +735,8 @@ void OpenGL_draw_state_update(NV2AState *d)
 		glDisable(GL_DITHER);
 	}
 
-	pgraph_bind_shaders(pg);
-	pgraph_bind_textures(d);
+	OpenGL_pgraph_bind_shaders(pg);
+	OpenGL_pgraph_bind_textures(d);
 
 	//glDisableVertexAttribArray(NV2A_VERTEX_ATTR_DIFFUSE);
 	//glVertexAttrib4f(NV2A_VERTEX_ATTR_DIFFUSE, 1.0f, 1.0f, 1.0f, 1.0f);
@@ -919,7 +922,7 @@ void OpenGL_draw_clear(NV2AState *d)
 	}
 
 	if (gl_mask) {
-		pgraph_update_surface(d, true, write_color, write_zeta);
+		OpenGL_pgraph_update_surface(d, true, write_color, write_zeta);
 
 		glEnable(GL_SCISSOR_TEST);
 
@@ -967,6 +970,48 @@ void OpenGL_draw_clear(NV2AState *d)
 	pgraph_set_surface_dirty(pg, write_color, write_zeta);
 }
 
+void OpenGL_pgraph_report_get(NV2AState *d)
+{
+	unsigned int i;
+
+	PGRAPHState *pg = &d->pgraph;
+
+	assert(pg->opengl_enabled);
+
+	/* FIXME: Multisampling affects this (both: OGL and Xbox GPU),
+	 *        not sure if CLEARs also count
+	 */
+	 /* FIXME: What about clipping regions etc? */
+	for (i = 0; i < pg->gl_zpass_pixel_count_query_count; i++) {
+		GLuint gl_query_result;
+		glGetQueryObjectuiv(pg->gl_zpass_pixel_count_queries[i],
+			GL_QUERY_RESULT,
+			&gl_query_result);
+		pg->zpass_pixel_count_result += gl_query_result;
+	}
+	if (pg->gl_zpass_pixel_count_query_count) {
+		glDeleteQueries(pg->gl_zpass_pixel_count_query_count,
+			pg->gl_zpass_pixel_count_queries);
+	}
+	pg->gl_zpass_pixel_count_query_count = 0;
+}
+
+void OpenGL_pgraph_report_clear(NV2AState *d)
+{
+	PGRAPHState *pg = &d->pgraph;
+
+	assert(pg->opengl_enabled);
+
+	/* FIXME: Does this have a value in parameter? Also does this (also?) modify
+	 *        the report memory block?
+	 */
+	if (pg->gl_zpass_pixel_count_query_count) {
+		glDeleteQueries(pg->gl_zpass_pixel_count_query_count,
+			pg->gl_zpass_pixel_count_queries);
+	}
+	pg->gl_zpass_pixel_count_query_count = 0;
+}
+
 void OpenGL_init_pgraph_plugins()
 {
 	pgraph_draw_arrays = OpenGL_draw_arrays;
@@ -975,6 +1020,116 @@ void OpenGL_init_pgraph_plugins()
 	pgraph_draw_inline_elements = OpenGL_draw_inline_elements;
 	pgraph_draw_state_update = OpenGL_draw_state_update;
 	pgraph_draw_clear = OpenGL_draw_clear;
+	pgraph_update_surface = OpenGL_pgraph_update_surface;
+	pgraph_report_get = OpenGL_pgraph_report_get;
+	pgraph_report_clear = OpenGL_pgraph_report_clear;
+}
+
+void OpenGL_init(PGRAPHState *pg)
+{
+	int i;
+
+	/* attach OpenGL render plugins */
+	OpenGL_init_pgraph_plugins();
+
+	/* fire up opengl */
+
+    pg->gl_context = glo_context_create();
+    assert(pg->gl_context);
+
+#ifdef DEBUG_NV2A_GL
+    glEnable(GL_DEBUG_OUTPUT);
+#endif
+
+    glextensions_init();
+
+    /* DXT textures */
+    assert(glo_check_extension("GL_EXT_texture_compression_s3tc"));
+    /*  Internal RGB565 texture format */
+    assert(glo_check_extension("GL_ARB_ES2_compatibility"));
+
+    GLint max_vertex_attributes;
+    glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_vertex_attributes);
+    assert(max_vertex_attributes >= NV2A_VERTEXSHADER_ATTRIBUTES);
+
+    glGenFramebuffers(1, &pg->gl_framebuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, pg->gl_framebuffer);
+
+    /* need a valid framebuffer to start with */
+    glGenTextures(1, &pg->gl_color_buffer);
+    glBindTexture(GL_TEXTURE_2D, pg->gl_color_buffer);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 640, 480,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, pg->gl_color_buffer, 0);
+
+    assert(glCheckFramebufferStatus(GL_FRAMEBUFFER)
+            == GL_FRAMEBUFFER_COMPLETE);
+
+    //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+
+#ifdef USE_TEXTURE_CACHE
+    pg->texture_cache = g_lru_cache_new_full(
+        0,
+        NULL,
+        texture_key_destroy,
+        0,
+        NULL,
+		OpenGL_texture_binding_destroy,
+        texture_key_hash,
+        texture_key_equal,
+        OpenGL_texture_key_retrieve,
+        NULL,
+        NULL
+        );
+
+    g_lru_cache_set_max_size(pg->texture_cache, 512);
+#endif
+
+#ifdef USE_SHADER_CACHE
+    pg->shader_cache = g_hash_table_new(shader_hash, shader_equal);
+#endif
+
+    for (i=0; i<NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
+        glGenBuffers(1, &pg->vertex_attributes[i].gl_converted_buffer);
+        glGenBuffers(1, &pg->vertex_attributes[i].gl_inline_buffer);
+    }
+    glGenBuffers(1, &pg->gl_inline_array_buffer);
+    glGenBuffers(1, &pg->gl_element_buffer);
+
+    glGenBuffers(1, &pg->gl_memory_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, pg->gl_memory_buffer);
+    glBufferData(GL_ARRAY_BUFFER,
+                 g_SystemMaxMemory, // Was : d->vram_size,
+                 NULL,
+                 GL_DYNAMIC_DRAW);
+
+    glGenVertexArrays(1, &pg->gl_vertex_array);
+    glBindVertexArray(pg->gl_vertex_array);
+
+//    assert(glGetError() == GL_NO_ERROR);
+
+    glo_set_current(NULL);
+}
+
+void OpenGL_destroy(PGRAPHState *pg)
+{
+	glo_set_current(pg->gl_context);
+
+	if (pg->gl_color_buffer) {
+		glDeleteTextures(1, &pg->gl_color_buffer);
+	}
+	if (pg->gl_zeta_buffer) {
+		glDeleteTextures(1, &pg->gl_zeta_buffer);
+	}
+	glDeleteFramebuffers(1, &pg->gl_framebuffer);
+
+	// TODO: clear out shader cached
+	// TODO: clear out texture cache
+
+	glo_set_current(NULL);
+
+	glo_context_destroy(pg->gl_context);
 }
 
 void pgraph_handle_method(NV2AState *d,
@@ -982,7 +1137,6 @@ void pgraph_handle_method(NV2AState *d,
 							unsigned int method,
 							uint32_t parameter)
 {
-	unsigned int i;
 	unsigned int slot;
 
     PGRAPHState *pg = &d->pgraph;
@@ -2193,16 +2347,7 @@ void pgraph_handle_method(NV2AState *d,
 
 		case NV097_CLEAR_REPORT_VALUE:
 
-			/* FIXME: Does this have a value in parameter? Also does this (also?) modify
-			 *        the report memory block?
-			 */
-			if (pg->gl_zpass_pixel_count_query_count) {
-				if (pg->opengl_enabled) {
-					glDeleteQueries(pg->gl_zpass_pixel_count_query_count,
-									pg->gl_zpass_pixel_count_queries);
-				}
-				pg->gl_zpass_pixel_count_query_count = 0;
-			}
+			pgraph_report_clear(d);
 			pg->zpass_pixel_count_result = 0;
 
 			break;
@@ -2224,34 +2369,17 @@ void pgraph_handle_method(NV2AState *d,
 			uint64_t timestamp = 0x0011223344556677; /* FIXME: Update timestamp?! */
 			uint32_t done = 0;
 
-			if (pg->opengl_enabled) {
-				/* FIXME: Multisampling affects this (both: OGL and Xbox GPU),
-				 *        not sure if CLEARs also count
-				 */
-				/* FIXME: What about clipping regions etc? */
-				for(i = 0; i < pg->gl_zpass_pixel_count_query_count; i++) {
-					GLuint gl_query_result;
-					glGetQueryObjectuiv(pg->gl_zpass_pixel_count_queries[i],
-										GL_QUERY_RESULT,
-										&gl_query_result);
-					pg->zpass_pixel_count_result += gl_query_result;
-				}
-				if (pg->gl_zpass_pixel_count_query_count) {
-					glDeleteQueries(pg->gl_zpass_pixel_count_query_count,
-									pg->gl_zpass_pixel_count_queries);
-				}
-				pg->gl_zpass_pixel_count_query_count = 0;
+			pgraph_report_get(d);
 
-				hwaddr report_dma_len;
-				uint8_t *report_data = (uint8_t*)nv_dma_map(d, pg->dma_report,
-															&report_dma_len);
-				assert(offset < report_dma_len);
-				report_data += offset;
+			hwaddr report_dma_len;
+			uint8_t *report_data = (uint8_t*)nv_dma_map(d, pg->dma_report,
+				&report_dma_len);
+			assert(offset < report_dma_len);
+			report_data += offset;
 
-				stq_le_p((uint64_t*)&report_data[0], timestamp);
-				stl_le_p((uint32_t*)&report_data[8], pg->zpass_pixel_count_result);
-				stl_le_p((uint32_t*)&report_data[12], done);
-			}
+			stq_le_p((uint64_t*)&report_data[0], timestamp);
+			stl_le_p((uint32_t*)&report_data[8], pg->zpass_pixel_count_result);
+			stl_le_p((uint32_t*)&report_data[12], done);
 
 			break;
 		}
@@ -2281,9 +2409,7 @@ void pgraph_handle_method(NV2AState *d,
 					assert(pg->inline_array_length == 0);
 					assert(pg->inline_elements_length == 0);
 
-					if (pgraph_draw_arrays != nullptr) {
-						pgraph_draw_arrays(d);
-					}
+					pgraph_draw_arrays(d);
 				} else if (pg->inline_buffer_length) {
 
 					NV2A_GL_DPRINTF(false, "Inline Buffer");
@@ -2292,9 +2418,7 @@ void pgraph_handle_method(NV2AState *d,
 					assert(pg->inline_array_length == 0);
 					assert(pg->inline_elements_length == 0);
 
-					if (pgraph_draw_inline_buffer != nullptr) {
-						pgraph_draw_inline_buffer(d);
-					}
+					pgraph_draw_inline_buffer(d);
 				} else if (pg->inline_array_length) {
 
 					NV2A_GL_DPRINTF(false, "Inline Array");
@@ -2303,9 +2427,7 @@ void pgraph_handle_method(NV2AState *d,
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_elements_length == 0);
 
-					if (pgraph_draw_inline_array != nullptr) {
-						pgraph_draw_inline_array(d);
-					}
+					pgraph_draw_inline_array(d);
 				} else if (pg->inline_elements_length) {
 
 					NV2A_GL_DPRINTF(false, "Inline Elements");
@@ -2314,9 +2436,7 @@ void pgraph_handle_method(NV2AState *d,
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_array_length == 0);
 
-					if (pgraph_draw_inline_elements != nullptr) {
-						pgraph_draw_inline_elements(d);
-					}
+					pgraph_draw_inline_elements(d);
 				} else {
 					NV2A_GL_DPRINTF(true, "EMPTY NV097_SET_BEGIN_END");
 					assert(false);
@@ -2327,9 +2447,7 @@ void pgraph_handle_method(NV2AState *d,
 
 				pg->primitive_mode = parameter;
 
-				if (pgraph_draw_state_update != nullptr) {
-					pgraph_draw_state_update(d);
-				}
+				pgraph_draw_state_update(d);
 
 				pg->inline_elements_length = 0;
 				pg->inline_array_length = 0;
@@ -2611,9 +2729,7 @@ void pgraph_handle_method(NV2AState *d,
 
 		case NV097_CLEAR_SURFACE: {
 			pg->clear_surface = parameter;
-			if (pgraph_draw_clear != nullptr) {
-				pgraph_draw_clear(d);
-			}
+			pgraph_draw_clear(d);
 			break;
 		}
 
@@ -2827,130 +2943,31 @@ static void pgraph_finish_inline_buffer_vertex(PGRAPHState *pg)
 
 void pgraph_init(NV2AState *d)
 {
-    int i;
-
-    PGRAPHState *pg = &d->pgraph;
+	PGRAPHState *pg = &d->pgraph;
 
 	qemu_mutex_init(&pg->pgraph_lock);
 	qemu_cond_init(&pg->interrupt_cond);
 	qemu_cond_init(&pg->fifo_access_cond);
 	qemu_cond_init(&pg->flip_3d);
 
-	if (!(pg->opengl_enabled))
-		return;
-
-	/* attach OpenGL render plugins */
-	OpenGL_init_pgraph_plugins();
-
-	/* fire up opengl */
-
-    pg->gl_context = glo_context_create();
-    assert(pg->gl_context);
-
-#ifdef DEBUG_NV2A_GL
-    glEnable(GL_DEBUG_OUTPUT);
-#endif
-
-    glextensions_init();
-
-    /* DXT textures */
-    assert(glo_check_extension("GL_EXT_texture_compression_s3tc"));
-    /*  Internal RGB565 texture format */
-    assert(glo_check_extension("GL_ARB_ES2_compatibility"));
-
-    GLint max_vertex_attributes;
-    glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_vertex_attributes);
-    assert(max_vertex_attributes >= NV2A_VERTEXSHADER_ATTRIBUTES);
-
-    glGenFramebuffers(1, &pg->gl_framebuffer);
-	glBindFramebuffer(GL_FRAMEBUFFER, pg->gl_framebuffer);
-
-    /* need a valid framebuffer to start with */
-    glGenTextures(1, &pg->gl_color_buffer);
-    glBindTexture(GL_TEXTURE_2D, pg->gl_color_buffer);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 640, 480,
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, pg->gl_color_buffer, 0);
-
-    assert(glCheckFramebufferStatus(GL_FRAMEBUFFER)
-            == GL_FRAMEBUFFER_COMPLETE);
-
-    //glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
-
-#ifdef USE_TEXTURE_CACHE
-    pg->texture_cache = g_lru_cache_new_full(
-        0,
-        NULL,
-        texture_key_destroy,
-        0,
-        NULL,
-        texture_binding_destroy,
-        texture_key_hash,
-        texture_key_equal,
-        texture_key_retrieve,
-        NULL,
-        NULL
-        );
-
-    g_lru_cache_set_max_size(pg->texture_cache, 512);
-#endif
-
-#ifdef USE_SHADER_CACHE
-    pg->shader_cache = g_hash_table_new(shader_hash, shader_equal);
-#endif
-
-    for (i=0; i<NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
-        glGenBuffers(1, &pg->vertex_attributes[i].gl_converted_buffer);
-        glGenBuffers(1, &pg->vertex_attributes[i].gl_inline_buffer);
-    }
-    glGenBuffers(1, &pg->gl_inline_array_buffer);
-    glGenBuffers(1, &pg->gl_element_buffer);
-
-    glGenBuffers(1, &pg->gl_memory_buffer);
-    glBindBuffer(GL_ARRAY_BUFFER, pg->gl_memory_buffer);
-    glBufferData(GL_ARRAY_BUFFER,
-                 d->vram_size,
-                 NULL,
-                 GL_DYNAMIC_DRAW);
-
-    glGenVertexArrays(1, &pg->gl_vertex_array);
-    glBindVertexArray(pg->gl_vertex_array);
-
-//    assert(glGetError() == GL_NO_ERROR);
-
-    glo_set_current(NULL);
+	if (pg->opengl_enabled) {
+		OpenGL_init(pg);
+	}
 }
 
 void pgraph_destroy(PGRAPHState *pg)
 {
-
 	qemu_mutex_destroy(&pg->pgraph_lock);
 	qemu_cond_destroy(&pg->interrupt_cond);
 	qemu_cond_destroy(&pg->fifo_access_cond);
 	qemu_cond_destroy(&pg->flip_3d);
 
 	if (pg->opengl_enabled) {
-		glo_set_current(pg->gl_context);
-
-		if (pg->gl_color_buffer) {
-			glDeleteTextures(1, &pg->gl_color_buffer);
-		}
-		if (pg->gl_zeta_buffer) {
-			glDeleteTextures(1, &pg->gl_zeta_buffer);
-		}
-		glDeleteFramebuffers(1, &pg->gl_framebuffer);
-
-		// TODO: clear out shader cached
-		// TODO: clear out texture cache
-
-		glo_set_current(NULL);
-
-		glo_context_destroy(pg->gl_context);
+		OpenGL_destroy(pg);
 	}
 }
 
-static void pgraph_update_shader_constants(PGRAPHState *pg,
+static void OpenGL_pgraph_update_shader_constants(PGRAPHState *pg,
                                            ShaderBinding *binding,
                                            bool binding_changed,
                                            bool vertex_program,
@@ -3138,7 +3155,7 @@ static void pgraph_update_shader_constants(PGRAPHState *pg,
 
 }
 
-static void pgraph_bind_shaders(PGRAPHState *pg)
+static void OpenGL_pgraph_bind_shaders(PGRAPHState *pg)
 {
 	assert(pg->opengl_enabled);
 
@@ -3377,7 +3394,7 @@ static void pgraph_bind_shaders(PGRAPHState *pg)
                     x_min, y_min, x_max, y_max);
     }
 
-    pgraph_update_shader_constants(pg, pg->shader_binding, binding_changed,
+    OpenGL_pgraph_update_shader_constants(pg, pg->shader_binding, binding_changed,
                                    vertex_program, fixed_function);
 
     NV2A_GL_DGROUP_END();
@@ -3422,8 +3439,11 @@ static void pgraph_set_surface_dirty(PGRAPHState *pg, bool color, bool zeta)
     pg->surface_zeta.draw_dirty |= zeta;
 }
 
-static void pgraph_update_surface_part(NV2AState *d, bool upload, bool color) {
+static void OpenGL_pgraph_update_surface_part(NV2AState *d, bool upload, bool color)
+{
     PGRAPHState *pg = &d->pgraph;
+
+	assert(pg->opengl_enabled);
 
     unsigned int width, height;
     pgraph_get_surface_dimensions(pg, &width, &height);
@@ -3590,60 +3610,58 @@ static void pgraph_update_surface_part(NV2AState *d, bool upload, bool color) {
                            bytes_per_pixel);
         }
 
-		if (pg->opengl_enabled) {
-			if (!color) {
-				/* need to clear the depth_stencil and depth attachment for zeta */
-				glFramebufferTexture2D(GL_FRAMEBUFFER,
-									   GL_DEPTH_ATTACHMENT,
-									   GL_TEXTURE_2D,
-									   0, 0);
-				glFramebufferTexture2D(GL_FRAMEBUFFER,
-									   GL_DEPTH_STENCIL_ATTACHMENT,
-									   GL_TEXTURE_2D,
-									   0, 0);
-			}
-
+		if (!color) {
+			/* need to clear the depth_stencil and depth attachment for zeta */
 			glFramebufferTexture2D(GL_FRAMEBUFFER,
-								   gl_attachment,
-								   GL_TEXTURE_2D,
-								   0, 0);
-
-			if (*gl_buffer) {
-				glDeleteTextures(1, gl_buffer);
-				*gl_buffer = 0;
-			}
-
-			glGenTextures(1, gl_buffer);
-			glBindTexture(GL_TEXTURE_2D, *gl_buffer);
-
-			/* This is VRAM so we can't do this inplace! */
-			uint8_t *flipped_buf = (uint8_t*)g_malloc(width * height * bytes_per_pixel);
-			unsigned int irow;
-			for (irow = 0; irow < height; irow++) {
-				memcpy(&flipped_buf[width * (height - irow - 1)
-										 * bytes_per_pixel],
-					   &buf[surface->pitch * irow],
-					   width * bytes_per_pixel);
-			}
-
-			glTexImage2D(GL_TEXTURE_2D, 0, gl_internal_format,
-						 width, height, 0,
-						 gl_format, gl_type,
-						 flipped_buf);
-
-			g_free(flipped_buf);
-
+									GL_DEPTH_ATTACHMENT,
+									GL_TEXTURE_2D,
+									0, 0);
 			glFramebufferTexture2D(GL_FRAMEBUFFER,
-								   gl_attachment,
-								   GL_TEXTURE_2D,
-								   *gl_buffer, 0);
-
-			assert(glCheckFramebufferStatus(GL_FRAMEBUFFER)
-				== GL_FRAMEBUFFER_COMPLETE);
+									GL_DEPTH_STENCIL_ATTACHMENT,
+									GL_TEXTURE_2D,
+									0, 0);
 		}
 
+		glFramebufferTexture2D(GL_FRAMEBUFFER,
+								gl_attachment,
+								GL_TEXTURE_2D,
+								0, 0);
+
+		if (*gl_buffer) {
+			glDeleteTextures(1, gl_buffer);
+			*gl_buffer = 0;
+		}
+
+		glGenTextures(1, gl_buffer);
+		glBindTexture(GL_TEXTURE_2D, *gl_buffer);
+
+		/* This is VRAM so we can't do this inplace! */
+		uint8_t *flipped_buf = (uint8_t*)g_malloc(width * height * bytes_per_pixel);
+		unsigned int irow;
+		for (irow = 0; irow < height; irow++) {
+			memcpy(&flipped_buf[width * (height - irow - 1)
+										* bytes_per_pixel],
+					&buf[surface->pitch * irow],
+					width * bytes_per_pixel);
+		}
+
+		glTexImage2D(GL_TEXTURE_2D, 0, gl_internal_format,
+						width, height, 0,
+						gl_format, gl_type,
+						flipped_buf);
+
+		g_free(flipped_buf);
+
+		glFramebufferTexture2D(GL_FRAMEBUFFER,
+								gl_attachment,
+								GL_TEXTURE_2D,
+								*gl_buffer, 0);
+
+		assert(glCheckFramebufferStatus(GL_FRAMEBUFFER)
+			== GL_FRAMEBUFFER_COMPLETE);
+
         if (color) {
-            pgraph_update_memory_buffer(d, dma.address + surface->offset,
+            OpenGL_pgraph_update_memory_buffer(d, dma.address + surface->offset,
                                         surface->pitch * height, true);
         }
         surface->buffer_dirty = false;
@@ -3666,16 +3684,14 @@ static void pgraph_update_surface_part(NV2AState *d, bool upload, bool color) {
     }
 
     if (!upload && surface->draw_dirty) {
-		if (pg->opengl_enabled) {
-			/* read the opengl framebuffer into the surface */
+		/* read the opengl framebuffer into the surface */
 
-			glo_readpixels(gl_format, gl_type,
-						   bytes_per_pixel, surface->pitch,
-						   width, height,
-						   buf);
+		glo_readpixels(gl_format, gl_type,
+						bytes_per_pixel, surface->pitch,
+						width, height,
+						buf);
 
-//			assert(glGetError() == GL_NO_ERROR);
-		}
+//		assert(glGetError() == GL_NO_ERROR);
 
         if (swizzle) {
             swizzle_rect(buf,
@@ -3691,7 +3707,7 @@ static void pgraph_update_surface_part(NV2AState *d, bool upload, bool color) {
         //                                DIRTY_MEMORY_VGA);
 
         if (color) {
-            pgraph_update_memory_buffer(d, dma.address + surface->offset,
+            OpenGL_pgraph_update_memory_buffer(d, dma.address + surface->offset,
                                         surface->pitch * height, true);
         }
 
@@ -3719,14 +3735,12 @@ static void pgraph_update_surface_part(NV2AState *d, bool upload, bool color) {
     }
 }
 
-static void pgraph_update_surface(NV2AState *d, bool upload,
+static void OpenGL_pgraph_update_surface(NV2AState *d, bool upload,
 	bool color_write, bool zeta_write)
 {
     PGRAPHState *pg = &d->pgraph;
 
-	if (!pg->opengl_enabled) {
-		return;
-	}
+	assert(pg->opengl_enabled);
 
     pg->surface_shape.z_format = GET_MASK(pg->regs[NV_PGRAPH_SETUPRASTER],
                                           NV_PGRAPH_SETUPRASTER_Z_FORMAT);
@@ -3772,24 +3786,23 @@ static void pgraph_update_surface(NV2AState *d, bool upload,
 
     if ((color_write || (!upload && pg->surface_color.write_enabled_cache))
         && (upload || pg->surface_color.draw_dirty)) {
-        pgraph_update_surface_part(d, upload, true);
+		OpenGL_pgraph_update_surface_part(d, upload, true);
     }
 
 
     if ((zeta_write || (!upload && pg->surface_zeta.write_enabled_cache))
         && (upload || pg->surface_zeta.draw_dirty)) {
-        pgraph_update_surface_part(d, upload, false);
+		OpenGL_pgraph_update_surface_part(d, upload, false);
     }
 
 }
 
-static void pgraph_bind_textures(NV2AState *d)
+static void OpenGL_pgraph_bind_textures(NV2AState *d)
 {
     int i;
     PGRAPHState *pg = &d->pgraph;
 
-	if (!(pg->opengl_enabled))
-		return;
+	assert(pg->opengl_enabled);
 
     NV2A_GL_DGROUP_BEGIN("%s", __func__);
 
@@ -4050,7 +4063,7 @@ static void pgraph_bind_textures(NV2AState *d)
         assert(binding);
         binding->refcnt++;
 #else
-        TextureBinding *binding = generate_texture(state,
+        TextureBinding *binding = OpenGL_generate_texture(state,
                                                    texture_data, palette_data);
 #endif
 
@@ -4142,7 +4155,7 @@ static void pgraph_bind_textures(NV2AState *d)
         }
 
         if (pg->texture_binding[i]) {
-            texture_binding_destroy(pg->texture_binding[i]);
+			OpenGL_texture_binding_destroy(pg->texture_binding[i]);
         }
         pg->texture_binding[i] = binding;
         pg->texture_dirty[i] = false;
@@ -4184,7 +4197,7 @@ static void pgraph_get_surface_dimensions(PGRAPHState *pg,
     }
 }
 
-static void pgraph_update_memory_buffer(NV2AState *d, hwaddr addr, hwaddr size,
+static void OpenGL_pgraph_update_memory_buffer(NV2AState *d, hwaddr addr, hwaddr size,
                                         bool f)
 {
 	glBindBuffer(GL_ARRAY_BUFFER, d->pgraph.gl_memory_buffer);
@@ -4205,7 +4218,7 @@ static void pgraph_update_memory_buffer(NV2AState *d, hwaddr addr, hwaddr size,
 //		assert(error == GL_NO_ERROR);
 }
 
-static void pgraph_bind_vertex_attributes(NV2AState *d,
+static void OpenGL_pgraph_bind_vertex_attributes(NV2AState *d,
                                           unsigned int num_elements,
                                           bool inline_data,
                                           unsigned int inline_stride)
@@ -4306,7 +4319,7 @@ static void pgraph_bind_vertex_attributes(NV2AState *d,
                                       (void*)(uintptr_t)vertex_attribute->inline_array_offset);
             } else {
                 hwaddr addr = data - d->vram_ptr;
-                pgraph_update_memory_buffer(d, addr,
+                OpenGL_pgraph_update_memory_buffer(d, addr,
                                             num_elements * vertex_attribute->stride,
                                             false);
                 glVertexAttribPointer(i,
@@ -4326,7 +4339,7 @@ static void pgraph_bind_vertex_attributes(NV2AState *d,
     NV2A_GL_DGROUP_END();
 }
 
-static unsigned int pgraph_bind_inline_array(NV2AState *d)
+static unsigned int OpenGL_pgraph_bind_inline_array(NV2AState *d)
 {
 	int i;
 
@@ -4358,7 +4371,7 @@ static unsigned int pgraph_bind_inline_array(NV2AState *d)
     glBufferData(GL_ARRAY_BUFFER, pg->inline_array_length*4, pg->inline_array,
                  GL_DYNAMIC_DRAW);
 
-    pgraph_bind_vertex_attributes(d, index_count, true, vertex_size);
+	OpenGL_pgraph_bind_vertex_attributes(d, index_count, true, vertex_size);
 
     return index_count;
 }
@@ -4466,12 +4479,12 @@ static uint8_t* convert_texture_data(const unsigned int color_format,
 }
 
 /* returns the format of the output, either identical to the input format, or the converted format - see converted_format */
-static int upload_gl_texture(GLenum gl_target,
+static int OpenGL_upload_texture(GLenum gl_target,
                               const TextureShape s,
                               const uint8_t *texture_data,
                               const uint8_t *palette_data)
 {
-	//assert(pg->opengl_enabled);
+	// assert(pg->opengl_enabled); // Lacks in-scope pg
     int resulting_format = s.color_format;
     ColorFormatInfo f = kelvin_color_format_map[s.color_format];
 
@@ -4631,11 +4644,11 @@ static int upload_gl_texture(GLenum gl_target,
 	return resulting_format;
 }
 
-static TextureBinding* generate_texture(const TextureShape s,
+static TextureBinding* OpenGL_generate_texture(const TextureShape s,
                                         const uint8_t *texture_data,
                                         const uint8_t *palette_data)
 {
-	// assert(pg->opengl_enabled);
+	// assert(pg->opengl_enabled); // Lacks in-scope pg
 
     ColorFormatInfo f = kelvin_color_format_map[s.color_format];
 
@@ -4688,7 +4701,7 @@ static TextureBinding* generate_texture(const TextureShape s,
             s.levels - 1);
     }
 
-	/* Set this before calling upload_gl_texture() to prevent potential conversions */
+	/* Set this before calling OpenGL_upload_texture() to prevent potential conversions */
     if (f.gl_swizzle_mask) {
         glTexParameteriv(gl_target, GL_TEXTURE_SWIZZLE_RGBA,
                          f.gl_swizzle_mask);
@@ -4706,20 +4719,20 @@ static TextureBinding* generate_texture(const TextureShape s,
             h /= 2;
         }
 
-        upload_gl_texture(GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+        OpenGL_upload_texture(GL_TEXTURE_CUBE_MAP_POSITIVE_X,
                           s, texture_data + 0 * length, palette_data);
-        upload_gl_texture(GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+        OpenGL_upload_texture(GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
                           s, texture_data + 1 * length, palette_data);
-        upload_gl_texture(GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
+        OpenGL_upload_texture(GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
                           s, texture_data + 2 * length, palette_data);
-        upload_gl_texture(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+        OpenGL_upload_texture(GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
                           s, texture_data + 3 * length, palette_data);
-        upload_gl_texture(GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
+        OpenGL_upload_texture(GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
                           s, texture_data + 4 * length, palette_data);
-        upload_gl_texture(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
+        OpenGL_upload_texture(GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
                           s, texture_data + 5 * length, palette_data);
     } else {
-        upload_gl_texture(gl_target, s, texture_data, palette_data);
+        OpenGL_upload_texture(gl_target, s, texture_data, palette_data);
     }
 
     TextureBinding* ret = (TextureBinding *)g_malloc(sizeof(TextureBinding));
@@ -4744,10 +4757,10 @@ static gboolean texture_key_equal(gconstpointer a, gconstpointer b)
     return memcmp(&ak->state, &bk->state, sizeof(TextureShape)) == 0
             && ak->data_hash == bk->data_hash;
 }
-static gpointer texture_key_retrieve(gpointer key, gpointer user_data, GError **error)
+static gpointer OpenGL_texture_key_retrieve(gpointer key, gpointer user_data, GError **error)
 {
     const TextureKey *k = (const TextureKey *)key;
-    TextureBinding *v = generate_texture(k->state,
+    TextureBinding *v = OpenGL_generate_texture(k->state,
                                          k->texture_data,
                                          k->palette_data);
     if (error != NULL) {
@@ -4759,11 +4772,11 @@ static void texture_key_destroy(gpointer data)
 {
     g_free(data);
 }
-static void texture_binding_destroy(gpointer data)
+static void OpenGL_texture_binding_destroy(gpointer data)
 {
     TextureBinding *binding = (TextureBinding *)data;
 
-	// assert(pg->opengl_enabled);
+	// assert(pg->opengl_enabled); // Lacks in-scope pg
 
     assert(binding->refcnt > 0);
     binding->refcnt--;
