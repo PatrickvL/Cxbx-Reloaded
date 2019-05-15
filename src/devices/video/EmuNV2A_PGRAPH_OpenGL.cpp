@@ -231,18 +231,6 @@ static const ColorFormatInfo kelvin_color_format_map[256] = {
         {4, linear, GL_RGBA8, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8}, // TODO : Verify
 };
 
-#if 0
-extern void (*pgraph_draw_arrays)(NV2AState *d);
-extern void (*pgraph_draw_inline_buffer)(NV2AState *d);
-extern void (*pgraph_draw_inline_array)(NV2AState *d);
-extern void (*pgraph_draw_inline_elements)(NV2AState *d);
-extern void (*pgraph_draw_state_update)(NV2AState *d);
-extern void (*pgraph_draw_clear)(NV2AState *d);
-extern void (*pgraph_update_surface)(NV2AState *d, bool upload, bool color_write, bool zeta_write);
-extern void (*pgraph_report_get)(NV2AState *d);
-extern void (*pgraph_report_clear)(NV2AState *d);
-#endif
-
 static void OpenGL_pgraph_update_shader_constants(PGRAPHState *pg, ShaderBinding *binding, bool binding_changed, bool vertex_program, bool fixed_function);
 static void OpenGL_pgraph_bind_shaders(PGRAPHState *pg);
 static void OpenGL_pgraph_update_surface_part(NV2AState *d, bool upload, bool color);
