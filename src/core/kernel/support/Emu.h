@@ -76,7 +76,9 @@ typedef struct DUMMY_KERNEL
 	IMAGE_SECTION_HEADER SectionHeader;
 } *PDUMMY_KERNEL;
 
-extern bool g_DisablePixelShaders;
+enum { psmDisabled = 0, psmHLSL, psmLegacy }; // g_PixelShaderMode values
+
+extern int g_PixelShaderMode;
 extern bool g_UseAllCores;
 extern bool g_SkipRdtscPatching;
 #endif

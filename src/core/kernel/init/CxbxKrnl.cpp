@@ -281,8 +281,9 @@ void PrintCurrentConfigurationLog()
 
 	// Print Enabled Hacks
 	{
+		const char* PixelShaderModeStrings[3] = {/*psmDisabled=*/"Disabled", /*psmHLSL=*/"HLSL", /*psmLegacy=*/"Legacy (default)"};
 		EmuLogInit(LOG_LEVEL::INFO, "--------------------------- HACKS CONFIG ---------------------------");
-		EmuLogInit(LOG_LEVEL::INFO, "Disable Pixel Shaders: %s", g_DisablePixelShaders == 1 ? "On" : "Off (Default)");
+		EmuLogInit(LOG_LEVEL::INFO, "Pixel Shader mode: %s\n", PixelShaderModeStrings[g_PixelShaderMode]);
 		EmuLogInit(LOG_LEVEL::INFO, "Run Xbox threads on all cores: %s", g_UseAllCores == 1 ? "On" : "Off (Default)");
 		EmuLogInit(LOG_LEVEL::INFO, "Skip RDTSC Patching: %s", g_SkipRdtscPatching == 1 ? "On" : "Off (Default)");
 	}
@@ -1046,7 +1047,7 @@ static void CxbxrKrnlInitHacks()
 {
 	int HackEnabled = 0;
 	g_EmuShared->GetDisablePixelShaders(&HackEnabled);
-	g_DisablePixelShaders = !!HackEnabled;
+	g_PixelShaderMode = (HackEnabled == 0) ? psmDisabled : (HackEnabled == 2) ? psmHLSL : psmLegacy;
 	g_EmuShared->GetUseAllCores(&HackEnabled);
 	g_UseAllCores = !!HackEnabled;
 	g_EmuShared->GetSkipRdtscPatching(&HackEnabled);

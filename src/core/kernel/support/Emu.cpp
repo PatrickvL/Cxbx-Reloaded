@@ -45,7 +45,7 @@ CRITICAL_SECTION dbgCritical;
 // Global Variable(s)
 volatile thread_local  bool    g_bEmuException = false;
 static thread_local bool bOverrideEmuException;
-bool g_DisablePixelShaders = false;
+int g_PixelShaderMode = psmLegacy; // TODO : Switch default to psmHLSL
 bool g_UseAllCores = false;
 bool g_SkipRdtscPatching = false;
 

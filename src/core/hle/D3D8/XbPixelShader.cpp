@@ -1001,7 +1001,7 @@ void UpdateFixedFunctionPixelShaderState()
 }
 
 bool g_UseFixedFunctionPixelShader = true;
-void DxbxUpdateActivePixelShader() // NOPATCH
+void DxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
 {
   // The first RenderState is PSAlpha,
   // The pixel shader is stored in pDevice->m_pPixelShader
@@ -1026,6 +1026,63 @@ void DxbxUpdateActivePixelShader() // NOPATCH
     g_pD3DDevice->SetPixelShader(pShader);
     return;
   }
+
+  const PSH_RECOMPILED_SHADER* RecompiledPixelShader = nullptr;
+	if (bTargetHLSL) {
+		static PSH_RECOMPILED_SHADER RecompiledPixelShader_HLSL = {};
+
+		if (RecompiledPixelShader_HLSL.ConstInUse[0] == false) {
+			// Initialize static RecompiledPixelShader_HLSL once :
+			for (int i = 0; i < PSH_XBOX_CONSTANT_MAX; i++) {
+				RecompiledPixelShader_HLSL.ConstInUse[i] = true;
+				RecompiledPixelShader_HLSL.ConstMapping[i] = i;
+			}
+		}
+
+		RecompiledPixelShader = &RecompiledPixelShader_HLSL;
+
+		static IDirect3DPixelShader9 *pHLSLPixelShader = nullptr;
+		if (pHLSLPixelShader == nullptr) {
+			static LPCSTR HLSLPixelShader_String = "TODO";
+			DWORD dwFlags = 0 | D3DXSHADER_DEBUG;
+			D3DXMACRO *pDefines = nullptr;
+			LPD3DXINCLUDE pInclude = nullptr;
+			LPCSTR pFunctionName = nullptr;
+			LPCSTR pProfile = nullptr;
+
+			LPD3DXBUFFER pShaderBuffer = nullptr;
+			LPD3DXBUFFER pErrorMsgs = nullptr;
+			LPD3DXCONSTANTTABLE pConstantTable = nullptr;
+
+			Result = D3DXCompileShader(
+				/*pSrcData=*/HLSLPixelShader_String,
+				/*SrcDataLen=*/strlen(HLSLPixelShader_String),
+				pDefines, pInclude, pFunctionName, pProfile, dwFlags,
+				/*OUT*/&pShaderBuffer, &pErrorMsgs, &pConstantTable
+			);
+
+			if (pErrorMsgs) {
+				char* szErrors = (char*)pErrorMsgs->GetBufferPointer();
+				EmuLog(FAILED(Result) ? LOG_LEVEL::FATAL : LOG_LEVEL::WARNING, szErrors);
+				// CxbxShowError(szErrors);
+				pErrorMsgs->Release();
+			}
+
+			if (FAILED(Result)) {
+				// CxbxShowError("HLSL pixel shader compilation failed");
+				return;
+			}
+
+			Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
+			pShaderBuffer->Release();
+			if (FAILED(Result)) {
+				// CxbxShowError("HLSL pixel shader creation failed");
+				return;
+			}
+		}
+
+		RecompiledPixelShader->ConvertedPixelShader = pHLSLPixelShader;
+	} else {
 
   // Create a copy of the pixel shader definition, as it is residing in render state register slots :
   CxbxPSDef CompletePSDef;
@@ -1052,7 +1109,6 @@ void DxbxUpdateActivePixelShader() // NOPATCH
 
   // Now, see if we already have a shader compiled for this definition :
   // TODO : Change g_RecompiledPixelShaders into an unordered_map, hash just the identifying PSDef members, and add cache eviction (clearing host resources when pruning)
-  const PSH_RECOMPILED_SHADER* RecompiledPixelShader = nullptr;
   for (const auto& it : g_RecompiledPixelShaders) {
     if (CompletePSDef.IsEquivalent(it.CompletePSDef)) {
       RecompiledPixelShader = &it;
@@ -1066,7 +1122,7 @@ void DxbxUpdateActivePixelShader() // NOPATCH
     g_RecompiledPixelShaders.push_back(CxbxRecompilePixelShader(CompletePSDef));
     RecompiledPixelShader = &g_RecompiledPixelShaders.back();
   }
-
+}
   // Switch to the converted pixel shader (if it's any different from our currently active
   // pixel shader, to avoid many unnecessary state changes on the local side).
   Microsoft::WRL::ComPtr<IDirect3DPixelShader> CurrentPixelShader;
