@@ -7091,6 +7091,19 @@ void CxbxUpdateNativeD3DResources()
 
     EmuUpdateActiveTextureStages();
 
+	if (!g_DisablePixelShaders) {
+		case psmDisabled:
+			break;
+		case psmLegacy:
+			XTL::DxbxUpdateActivePixelShader(/*TargetHLSL=*/false);
+			break;
+		case psmHLSL:
+		XTL::DxbxUpdateActivePixelShader();
+			break;
+		default:
+			assert(false);
+	}
+
 	// Some titles set Vertex Shader constants directly via pushbuffers rather than through D3D
 	// We handle that case by updating any constants that have the dirty flag set on the nv2a.
 	auto nv2a = g_NV2A->GetDeviceState();

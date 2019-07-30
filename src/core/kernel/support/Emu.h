@@ -79,7 +79,9 @@ typedef struct DUMMY_KERNEL
 
 typedef WORD INDEX16;
 
-extern bool g_DisablePixelShaders;
+enum { psmDisabled = 0, psmHLSL, psmLegacy }; // g_PixelShaderMode values
+
+extern int g_PixelShaderMode;
 extern bool g_UseAllCores;
 extern bool g_SkipRdtscPatching;
 extern int g_RenderScaleFactor;
