@@ -182,7 +182,7 @@ uint1 get_high_nibble_from_byte(const floor1_t value)
 //
 
 // Xbox Pixel Shader definition (a uint array) D3D__RenderState member indices :
-// Since shader model 3.0 seem to have no input-buffer feature, and texture-sampling might interpolate values, use pixel shader constants to access the Xbox renderstate input :
+// Since shader model 3.0 seems to have no input-buffer feature, and using texture-sampling might interpolate values, use host pixel shader constants to access the Xbox renderstate input :
 float D3DRS_PSALPHAINPUTS_Lower16            [8] : register(c0);
 float D3DRS_PSFINALCOMBINERINPUTSABCD_Lower16    : register(c8);
 float D3DRS_PSFINALCOMBINERINPUTSEFG_Lower16     : register(c9);
@@ -345,10 +345,7 @@ typedef struct
     // float4 R[2]; // Temporary registers, read/write (R[0].a (R0_ALPHA) is initialized to T[0].s (T0_ALPHA) in stage 0); Final result is in R[0]
     // float3 V1R0_SUM;	// Note : V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
     // float3 EF_PROD;  // Note : V1R0_SUM_ALPHA and EF_PROD_ALPHA are not available, hence the float3 type here
-    float4 RegisterValues[16]; // for 16 registers, PS_REGISTER_ZERO (0) upto PS_REGISTER_EF_PROD (15)
-
-	// The final output value :
-    float4 FinalOutput;
+    float4 RegisterValues[16]; // Room for 16 registers : PS_REGISTER_ZERO (0) upto PS_REGISTER_EF_PROD (15)
 } ps_state;
 
 uint1 mask_register(const uint1 value)
@@ -365,7 +362,7 @@ uint1 mask_inputmapping(const uint1 value)
     return (uint1) Result;
 }
 
-float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, const bool is_alpha = false)
+float4 get_input_register_as_float4(in ps_state state, const uint1 reg_byte, const bool is_alpha = false)
 {
     float4 Result = 0;
 
@@ -480,7 +477,7 @@ float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, 
 	return Result;
 }
 
-void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, float4 value)
+void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, const float4 value)
 {
     uint register_index = mask_register(reg_byte);
 #ifdef ASSERT_VALID_ACCESSES
@@ -501,7 +498,7 @@ void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, float4 
     state.RegisterValues[register_index].rgb = value.rgb; // TODO : Fix error X3500: array reference cannot be used as an l-value; not natively addressable
 }
 
-void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, float4 value)
+void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, const float4 value)
 {
     uint register_index = mask_register(reg_byte);
 #ifdef ASSERT_VALID_ACCESSES
@@ -614,8 +611,9 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
     }
 }
 
-void do_final_combiner(inout ps_state state)
+float4 do_final_combiner(inout ps_state state)
 {
+    float4 R0_value = state.RegisterValues[PS_REGISTER_R0];
 	// Get the final combiner words :
     floor2_t AB_regs_word = floor(D3DRS_PSFINALCOMBINERINPUTSABCD_Lower16);
     floor2_t CD_regs_word = floor(D3DRS_PSFINALCOMBINERINPUTSABCD_Upper16);
@@ -646,8 +644,6 @@ void do_final_combiner(inout ps_state state)
         state.RegisterValues[PS_REGISTER_EF_PROD] = float4(EF_PROD_value, DEFAULT_ALPHA);
 
 		// Fetch R0 register value (including an optional complement operation) :
-        float3 R0_value;
-        R0_value = (float3)state.RegisterValues[PS_REGISTER_R0];
         if (get_bit_5_from_value(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_R0
         {
 			// unsigned invert mapping  (1 - r0) is used as an input to the sum rather than r0
@@ -664,7 +660,7 @@ void do_final_combiner(inout ps_state state)
         }
 
 		// Calculate V1 + R0 value (including an optional clamping operation) :
-        float3 V1R0_SUM_value = V1_value + R0_value;
+        float3 V1R0_SUM_value = V1_value + R0_value.rgb;
         if (get_bit_7_from_value(setting_byte)) // PS_FINALCOMBINERSETTING_CLAMP_SUM
         {
 			// V1+R0 sum clamped to [0,1]
@@ -681,19 +677,26 @@ void do_final_combiner(inout ps_state state)
         float4 D_value = get_input_register_as_float4(state, D_reg_byte);
 
 		// Calculate output RGB = a*b + (1-a)*c + d :
-        state.FinalOutput.rgb = lerp(B_value.rgb, C_value.rgb, A_value.rgb) + D_value.rgb;
+        float4 FinalOutput;
+        FinalOutput.rgb = lerp(B_value.rgb, C_value.rgb, A_value.rgb) + D_value.rgb;
 
 		// Fetch the output alpha channel from the G register value :
         float4 G_value = get_input_register_as_float4(state, G_reg_byte, /*is_alpha=*/true); // TODO : Is is_alpha correct?
-        state.FinalOutput.a = G_value.a;
+        FinalOutput.a = G_value.a;
+
+        return FinalOutput;
     }
+	else
+        return R0_value;
 }
 
 float4 main() : SV_TARGET
 {
     ps_state state = (ps_state) 0; // Clearing like this avoids error X3508: 'do_color_combiner_stage': output parameter 'state' not completely initialized
 	// Note, the above also sets state.RegisterValues[PS_REGISTER_ZERO] to 0.0
-    state.FinalOutput = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
+
+	// TODO : Is the following initialization of R0 correct?
+    state.RegisterValues[PS_REGISTER_R0] = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
 
 	// Decode the global combiner count and flags :
     floor2_t CombinerCountWord = floor(D3DRS_PSCOMBINERCOUNT_Lower16);
@@ -722,7 +725,5 @@ float4 main() : SV_TARGET
         do_color_combiner_stage(state, /*is_alpha=*/true);
     }
 
-    do_final_combiner(state);
-
-    return state.FinalOutput;
+    return do_final_combiner(state);
 }
