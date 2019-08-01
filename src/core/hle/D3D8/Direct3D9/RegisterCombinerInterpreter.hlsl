@@ -319,6 +319,112 @@ uint1 mask_inputmapping(const uint1 value)
     return (uint1) Result;
 }
 
+void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, float3 value)
+{
+    int register_index = mask_register(reg_byte);
+#ifdef ASSERT_VALID_ACCESSES
+	// Below are not writeable :
+    switch (register_index) {
+        case PS_REGISTER_C0:
+        case PS_REGISTER_C1:
+        case PS_REGISTER_FOG:
+		case 6: // Unknown
+		case 7: // Unknown
+        case PS_REGISTER_V1R0_SUM:
+		case PS_REGISTER_EF_PROD:
+		    assert(false);
+			break;
+	}
+
+#endif
+#ifdef EXPLICIT_REGISTERS
+    switch (register_index) {
+        case PS_REGISTER_DISCARD:
+            // Don't overwrite PS_REGISTER_ZERO
+            break;
+		case PS_REGISTER_V0:
+            state.V[0].rgb = value;
+            break;
+		case PS_REGISTER_V1:
+            state.V[1].rgb = value;
+            break;
+		case PS_REGISTER_T0:
+            state.T[0].rgb = value;
+            break;
+		case PS_REGISTER_T1:
+            state.T[1].rgb = value;
+            break;
+		case PS_REGISTER_T2:
+            state.T[2].rgb = value;
+            break;
+		case PS_REGISTER_T3:
+            state.T[3].rgb = value;
+            break;
+		case PS_REGISTER_R0:
+            state.R[0].rgb = value;
+            break;
+		case PS_REGISTER_R1:
+            state.R[1].rgb = value;
+            break;
+    }
+#else
+    state.RegisterValues[register_index].rgb = value;
+#endif
+}
+
+void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, float value)
+{
+    int register_index = mask_register(reg_byte);
+#ifdef ASSERT_VALID_ACCESSES
+	// Below are not writeable :
+    switch (register_index) {
+        case PS_REGISTER_C0:
+        case PS_REGISTER_C1:
+        case PS_REGISTER_FOG:
+		case 6: // Unknown
+		case 7: // Unknown
+        case PS_REGISTER_V1R0_SUM:
+		case PS_REGISTER_EF_PROD:
+		    assert(false);
+			break;
+	}
+
+#endif
+#ifdef EXPLICIT_REGISTERS
+    switch (register_index) {
+        case PS_REGISTER_DISCARD:
+            // Don't overwrite PS_REGISTER_ZERO
+            break;
+		case PS_REGISTER_V0:
+            state.V[0].a = value;
+            break;
+		case PS_REGISTER_V1:
+            state.V[1].a = value;
+            break;
+		case PS_REGISTER_T0:
+            state.T[0].a = value;
+            break;
+		case PS_REGISTER_T1:
+            state.T[1].a = value;
+            break;
+		case PS_REGISTER_T2:
+            state.T[2].a = value;
+            break;
+		case PS_REGISTER_T3:
+            state.T[3].a = value;
+            break;
+		case PS_REGISTER_R0:
+            state.R[0].a = value;
+            break;
+		case PS_REGISTER_R1:
+            state.R[1].a = value;
+            break;
+    }
+#else
+    state.RegisterValues[register_index].a = value;
+#endif
+}
+
 float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, const bool is_alpha = false)
 {
     float4 Result = 0;
@@ -500,6 +606,7 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
 	// xmmd : d0=s0*s1,     d1=s2*s3,     d2=(r0.a>0.5) ? s2*s3 : s0*s1
 	// xdm  : d0=s0 dot s1, d1=s2*s3
 	// xdd  : d0=s0 dot s1, d1=s2 dot s3
+	// via set_output_register_rgb / set_output_register_alpha
 }
 
 void do_final_combiner(inout ps_state state)
