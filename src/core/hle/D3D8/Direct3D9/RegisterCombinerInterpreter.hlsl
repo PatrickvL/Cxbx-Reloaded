@@ -148,7 +148,7 @@ bool get_bit_22_from_value(const floor_t value)
 uint1 get_low_byte_from_word(const floor2_t value)
 {
 #ifdef ASSERT_VALID_ACCESSES
-    assert(value <= 65535.0);
+    assert(value <= 65535);
 #endif
     return (uint1) abs(fmod(value, 256));
 }
@@ -159,6 +159,22 @@ uint1 get_high_byte_from_word(const floor2_t value)
     assert(value <= 65535);
 #endif
     return (uint) abs(value / 256); // Cast avoids warning X3556: integer divides may be much slower, try using uints if possible.
+}
+
+uint1 get_low_nibble_from_byte(const floor1_t value)
+{
+#ifdef ASSERT_VALID_ACCESSES
+    assert(value <= 255);
+#endif
+    return (uint1) abs(fmod(value, 16));
+}
+
+uint1 get_high_nibble_from_byte(const floor1_t value)
+{
+#ifdef ASSERT_VALID_ACCESSES
+    assert(value <= 255);
+#endif
+    return (uint) abs(value / 16); // Cast avoids warning X3556: integer divides may be much slower, try using uints if possible.
 }
 
 //
@@ -268,6 +284,41 @@ static const uint PS_FINALCOMBINERSETTING_CLAMP_SUM =     0x80; // V1+R0 sum cla
 static const uint PS_FINALCOMBINERSETTING_COMPLEMENT_V1 = 0x40; // unsigned invert mapping  (1 - v1) is used as an input to the sum rather than v1
 static const uint PS_FINALCOMBINERSETTING_COMPLEMENT_R0 = 0x20; // unsigned invert mapping  (1 - r0) is used as an input to the sum rather than r0
 
+// =========================================================================================================
+// PSRGBOutputs[0-7]
+// PSAlphaOutputs[0-7]
+// --------.--------.--------.----xxxx // CD register
+// --------.--------.--------.xxxx---- // AB register
+// --------.--------.----xxxx.-------- // SUM register
+// --------.--------.---x----.-------- // CD output (0= multiply, 1= dot product)
+// --------.--------.--x-----.-------- // AB output (0= multiply, 1= dot product)
+// --------.--------.-x------.-------- // AB_CD mux/sum select (0= sum, 1= mux)
+// --------.------xx.x-------.-------- // Output mapping
+// --------.-----x--.--------.-------- // CD blue to alpha
+// --------.----x---.--------.-------- // AB blue to alpha
+//
+//#define PS_COMBINEROUTPUTS(ab,cd,mux_sum,flags) (((flags)<<12)|((mux_sum)<<8)|((ab)<<4)|(cd))
+// ab,cd,mux_sum contain a value from PS_REGISTER
+// flags contains values from PS_COMBINEROUTPUT
+static const uint PS_COMBINEROUTPUT_IDENTITY             = 0x00L; // y = x
+static const uint PS_COMBINEROUTPUT_BIAS                 = 0x08L; // y = x - 0.5
+static const uint PS_COMBINEROUTPUT_SHIFTLEFT_1          = 0x10L; // y = x*2
+static const uint PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS     = 0x18L; // y = (x - 0.5)*2
+static const uint PS_COMBINEROUTPUT_SHIFTLEFT_2          = 0x20L; // y = x*4
+// static const uint PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4
+static const uint PS_COMBINEROUTPUT_SHIFTRIGHT_1         = 0x30L; // y = x/2
+// static const uint PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2
+static const uint PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA     = 0x80L; // RGB only
+static const uint PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA     = 0x40L; // RGB only
+static const uint PS_COMBINEROUTPUT_AB_MULTIPLY          = 0x00L;
+static const uint PS_COMBINEROUTPUT_AB_DOT_PRODUCT       = 0x02L; // RGB only
+static const uint PS_COMBINEROUTPUT_CD_MULTIPLY          = 0x00L;
+static const uint PS_COMBINEROUTPUT_CD_DOT_PRODUCT       = 0x01L; // RGB only
+static const uint PS_COMBINEROUTPUT_AB_CD_SUM            = 0x00L; // 3rd output is AB+CD
+static const uint PS_COMBINEROUTPUT_AB_CD_MUX            = 0x04L; // 3rd output is MUX(AB;CD) based on R0.a
+// AB_CD register output must be DISCARD if either AB_DOT_PRODUCT or CD_DOT_PRODUCT are set
+
+
 // Cxbx constants
 static const uint MAX_COMBINER_STAGE_COUNT = 8;
 static const uint FINAL_COMBINER_STAGE     = MAX_COMBINER_STAGE_COUNT;
@@ -294,7 +345,7 @@ typedef struct
     // float4 R[2]; // Temporary registers, read/write (R[0].a (R0_ALPHA) is initialized to T[0].s (T0_ALPHA) in stage 0); Final result is in R[0]
     // float3 V1R0_SUM;	// Note : V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
     // float3 EF_PROD;  // Note : V1R0_SUM_ALPHA and EF_PROD_ALPHA are not available, hence the float3 type here
-    float4 RegisterValues[PS_REGISTER_EF_PROD + 1]; // = 16 registers
+    float4 RegisterValues[16]; // for 16 registers, PS_REGISTER_ZERO (0) upto PS_REGISTER_EF_PROD (15)
 
 	// The final output value :
     float4 FinalOutput;
@@ -314,53 +365,11 @@ uint1 mask_inputmapping(const uint1 value)
     return (uint1) Result;
 }
 
-void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, float3 value)
-{
-    int register_index = mask_register(reg_byte);
-#ifdef ASSERT_VALID_ACCESSES
-	// Below are not writeable :
-    switch (register_index) {
-        case PS_REGISTER_C0:
-        case PS_REGISTER_C1:
-        case PS_REGISTER_FOG:
-		case 6: // Unknown
-		case 7: // Unknown
-        case PS_REGISTER_V1R0_SUM:
-		case PS_REGISTER_EF_PROD:
-		    assert(false);
-			break;
-	}
-
-#endif
-    state.RegisterValues[register_index].rgb = value;
-}
-
-void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, float value)
-{
-    int register_index = mask_register(reg_byte);
-#ifdef ASSERT_VALID_ACCESSES
-	// Below are not writeable :
-    switch (register_index) {
-        case PS_REGISTER_C0:
-        case PS_REGISTER_C1:
-        case PS_REGISTER_FOG:
-		case 6: // Unknown
-		case 7: // Unknown
-        case PS_REGISTER_V1R0_SUM:
-		case PS_REGISTER_EF_PROD:
-		    assert(false);
-			break;
-	}
-
-#endif
-    state.RegisterValues[register_index].a = value;
-}
-
 float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, const bool is_alpha = false)
 {
     float4 Result = 0;
 
-    int register_index = mask_register(reg_byte);
+    uint register_index = mask_register(reg_byte);
 #ifdef ASSERT_VALID_ACCESSES
     if (state.stage == FINAL_COMBINER_STAGE) {
 		// Below are only valid for final combiner :
@@ -471,22 +480,138 @@ float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, 
 	return Result;
 }
 
+void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, float4 value)
+{
+    uint register_index = mask_register(reg_byte);
+#ifdef ASSERT_VALID_ACCESSES
+	// Below are not writeable :
+    switch (register_index) {
+        case PS_REGISTER_C0:
+        case PS_REGISTER_C1:
+        case PS_REGISTER_FOG:
+		case 6: // Unknown
+		case 7: // Unknown
+        case PS_REGISTER_V1R0_SUM:
+		case PS_REGISTER_EF_PROD:
+		    assert(false);
+			break;
+	}
+
+#endif
+    state.RegisterValues[register_index].rgb = value.rgb; // TODO : Fix error X3500: array reference cannot be used as an l-value; not natively addressable
+}
+
+void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, float4 value)
+{
+    uint register_index = mask_register(reg_byte);
+#ifdef ASSERT_VALID_ACCESSES
+	// Below are not writeable :
+    switch (register_index) {
+        case PS_REGISTER_C0:
+        case PS_REGISTER_C1:
+        case PS_REGISTER_FOG:
+		case 6: // Unknown
+		case 7: // Unknown
+        case PS_REGISTER_V1R0_SUM:
+		case PS_REGISTER_EF_PROD:
+		    assert(false);
+			break;
+	}
+
+#endif
+    state.RegisterValues[register_index].a = value.a; // TODO : Fix error X3500: array reference cannot be used as an l-value; not natively addressable
+}
+
 void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
 {
-    floor2_t input_low   = is_alpha ? floor(D3DRS_PSALPHAINPUTS_Lower16[state.stage])  : floor(D3DRS_PSRGBINPUTS_Lower16[state.stage]);
-    floor2_t input_high  = is_alpha ? floor(D3DRS_PSALPHAINPUTS_Upper16[state.stage])  : floor(D3DRS_PSRGBINPUTS_Upper16[state.stage]);
-    floor2_t output_low  = is_alpha ? floor(D3DRS_PSALPHAOUTPUTS_Lower16[state.stage]) : floor(D3DRS_PSRGBOUTPUTS_Lower16[state.stage]);
-    floor2_t output_high = is_alpha ? floor(D3DRS_PSALPHAOUTPUTS_Upper16[state.stage]) : floor(D3DRS_PSRGBOUTPUTS_Upper16[state.stage]);
+	// Decode input register words :
+    floor2_t AB_input_regs_word = is_alpha ? floor(D3DRS_PSALPHAINPUTS_Lower16[state.stage]) : floor(D3DRS_PSRGBINPUTS_Lower16[state.stage]);
+    floor2_t CD_input_regs_word = is_alpha ? floor(D3DRS_PSALPHAINPUTS_Upper16[state.stage]) : floor(D3DRS_PSRGBINPUTS_Upper16[state.stage]);
+    floor1_t A_input_reg_byte = get_low_byte_from_word(AB_input_regs_word);
+    floor1_t B_input_reg_byte = get_high_byte_from_word(AB_input_regs_word);
+    floor1_t C_input_reg_byte = get_low_byte_from_word(CD_input_regs_word);
+    floor1_t D_input_reg_byte = get_high_byte_from_word(CD_input_regs_word);
 
-    float4 input1_value = get_input_register_as_float4(state, get_low_byte_from_word(input_low), is_alpha);
-    float4 input2_value = get_input_register_as_float4(state, get_high_byte_from_word(input_low),is_alpha);
+	// Fetch input (source) register values :
+    float4 A_value = get_input_register_as_float4(state, A_input_reg_byte, is_alpha); // A.k.a. 's0'
+    float4 B_value = get_input_register_as_float4(state, B_input_reg_byte, is_alpha); // A.k.a. 's1'
+    float4 C_value = get_input_register_as_float4(state, C_input_reg_byte, is_alpha); // A.k.a. 's2'
+    float4 D_value = get_input_register_as_float4(state, D_input_reg_byte, is_alpha); // A.k.a. 's3'
 
-	// TODO : Implement all 4 opcodes (xmma, xmmc, xdm, xdd)
-	// xmma : d0=s0*s1,     d1=s2*s3,     d2=s0*s1 + s2*s3
-	// xmmd : d0=s0*s1,     d1=s2*s3,     d2=(r0.a>0.5) ? s2*s3 : s0*s1
-	// xdm  : d0=s0 dot s1, d1=s2*s3
-	// xdd  : d0=s0 dot s1, d1=s2 dot s3
-	// via set_output_register_rgb / set_output_register_alpha
+	// Decode output words :
+    floor2_t output_word0 = is_alpha ? floor(D3DRS_PSALPHAOUTPUTS_Lower16[state.stage]) : floor(D3DRS_PSRGBOUTPUTS_Lower16[state.stage]);
+    floor2_t output_word1 = is_alpha ? floor(D3DRS_PSALPHAOUTPUTS_Upper16[state.stage]) : floor(D3DRS_PSRGBOUTPUTS_Upper16[state.stage]);
+    floor1_t output_byte0 = get_low_byte_from_word(output_word0);
+    floor1_t output_byte1 = get_high_byte_from_word(output_word0);
+    floor1_t output_byte2 = get_low_byte_from_word(output_word1);
+
+	// Decode output register numbers and flags :
+    uint1 combiner_output_reg_AB = get_low_nibble_from_byte(output_byte0); // A.k.a. 'd0'
+    uint1 combiner_output_reg_CD = get_high_nibble_from_byte(output_byte0); // A.k.a. 'd1'
+    uint1 combiner_output_reg_AB_CD = get_low_nibble_from_byte(output_byte1); // A.k.a. 'd2'
+    bool combiner_flag_CD_DotProduct = get_bit_4_from_value(output_byte1); // PS_COMBINEROUTPUT_CD_DOT_PRODUCT = 0x01L; // RGB only
+    bool combiner_flag_AB_DotProduct = get_bit_5_from_value(output_byte1); // PS_COMBINEROUTPUT_AB_DOT_PRODUCT = 0x02L; // RGB only
+    bool combiner_flag_ABCD_Mux = get_bit_6_from_value(output_byte1); // PS_COMBINEROUTPUT_AB_CD_MUX = 0x04L; // 3rd output is MUX(AB;CD) based on R0.a
+	/* TODO : Fetch and interpret 3 output mapping bits
+	static const uint PS_COMBINEROUTPUT_IDENTITY             = 0x00L; // y = x
+	static const uint PS_COMBINEROUTPUT_BIAS                 = 0x08L; // y = x - 0.5
+	static const uint PS_COMBINEROUTPUT_SHIFTLEFT_1          = 0x10L; // y = x*2
+	static const uint PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS     = 0x18L; // y = (x - 0.5)*2
+	static const uint PS_COMBINEROUTPUT_SHIFTLEFT_2          = 0x20L; // y = x*4
+	// static const uint PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4
+	static const uint PS_COMBINEROUTPUT_SHIFTRIGHT_1         = 0x30L; // y = x/2
+	// static const uint PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2
+	*/
+    bool combiner_flag_CD_BlueToAlpha = get_bit_2_from_value(output_byte2); // PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA = 0x40L; // RGB only
+    bool combiner_flag_AB_BlueToAlpha = get_bit_3_from_value(output_byte2); // PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA = 0x80L; // RGB only
+
+	// AB_CD register output must be DISCARD if either AB_DOT_PRODUCT or CD_DOT_PRODUCT are set
+#ifdef ASSERT_VALID_ACCESSES
+	if (combiner_flag_AB_DotProduct || combiner_flag_CD_DotProduct)
+	{
+		assert(combiner_output_reg_AB_CD == PS_REGISTER_DISCARD);
+	}
+#endif
+
+	// xmma (mul/mul/sum)     > calculating : d0=s0*s1,     d1=s2*s3,     d2=             s2*s3 + s0*s1
+	// xmmc (mul/mul/mux)     > calculating : d0=s0*s1,     d1=s2*s3,     d2=(r0.a>0.5) ? s2*s3 : s0*s1
+	// xdm  (dot/mul/discard) > calculating : d0=s0 dot s1, d1=s2*s3
+	// xdd  (dot/dot/discard) > calculating : d0=s0 dot s1, d1=s2 dot s3
+
+	// Calculate AB side, doing either DOT or MUL :
+    float4 AB_value = combiner_flag_AB_DotProduct ? dot(A_value, B_value) : A_value * B_value;
+	// Calculate CD side, doing either DOT or MUL :
+    float4 CD_value = combiner_flag_CD_DotProduct ? dot(C_value, D_value) : C_value * D_value;
+
+	// Perform the AB,CD operation (either MUX or SUM) :
+    float4 AB_CD_value;
+    if (combiner_flag_ABCD_Mux) // PS_COMBINEROUTPUT_AB_CD_MUX
+	{
+        float R0_a_value = state.RegisterValues[PS_REGISTER_R0].a;
+        if (state.FlagMuxMsb)
+            AB_CD_value = (R0_a_value > 0.5) ? CD_value : AB_value; // PS_COMBINERCOUNT_MUX_MSB
+		else
+            AB_CD_value = get_bit_0_from_value(R0_a_value) ? CD_value : AB_value; // PS_COMBINERCOUNT_MUX_LSB
+    }
+    else // PS_COMBINEROUTPUT_AB_CD_SUM
+        AB_CD_value = AB_value + CD_value;
+
+	// Store resulting values in output registers :
+	// TODO : Handle output_mapping in set_output_register_*()
+    // uint output_mapping = mask_outputmapping(output_byte1, output_byte2);
+    // TODO : Apply combiner_flag_AB_BlueToAlpha and combiner_flag_CD_BlueToAlpha
+    if (is_alpha)
+	{
+        set_output_register_alpha(state, combiner_output_reg_AB, AB_value);
+        set_output_register_alpha(state, combiner_output_reg_CD, CD_value);
+        set_output_register_alpha(state, combiner_output_reg_AB_CD, AB_CD_value);
+    }
+	else
+	{
+        set_output_register_rgb(state, combiner_output_reg_AB, AB_value);
+        set_output_register_rgb(state, combiner_output_reg_CD, CD_value);
+        set_output_register_rgb(state, combiner_output_reg_AB_CD, AB_CD_value);
+    }
 }
 
 void do_final_combiner(inout ps_state state)
