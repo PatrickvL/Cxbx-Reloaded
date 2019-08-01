@@ -17,7 +17,6 @@
 // Utility functions
 //
 
-//#define EXPLICIT_REGISTERS
 //#define ASSERT_VALID_ACCESSES
 
 typedef float floor_t;  // Indicates an already floor()'ed float
@@ -272,6 +271,7 @@ static const uint PS_FINALCOMBINERSETTING_COMPLEMENT_R0 = 0x20; // unsigned inve
 // Cxbx constants
 static const uint MAX_COMBINER_STAGE_COUNT = 8;
 static const uint FINAL_COMBINER_STAGE     = MAX_COMBINER_STAGE_COUNT;
+static const float DEFAULT_ALPHA = 1.0f;
 
 //
 // Our Xbox Pixel Shader Interpreter state
@@ -284,22 +284,17 @@ typedef struct
     bool FlagUniqueC0; // C[0] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C0, 1 = PS_COMBINERCOUNT_UNIQUE_C0
     bool FlagUniqueC1; // C[1] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C1, 1 = PS_COMBINERCOUNT_UNIQUE_C1
 
-	// Xbox NV2A pixel shader register values :
-#ifdef EXPLICIT_REGISTERS // In order of PS_REGISTER_*
+	// Xbox NV2A pixel shader register values, in order of PS_REGISTER_* :
 	// float4 ZERO;
-    float4 C[2]; // Constant registers, read-only
-    float4 FOG;  // Note, FOG ALPHA is only available in final combiner
-    float4 V[2]; // Vertex color registers, read/write (V[0] = diffuse, V[1] = specular
+    // float4 C[2]; // Constant registers, read-only
+    // float4 FOG;  // Note, FOG ALPHA is only available in final combiner
+    // float4 V[2]; // Vertex color registers, read/write (V[0] = diffuse, V[1] = specular
 	// float4 Unknown[2];
-    float4 T[4]; // Texture registers, initially sampled or (0,0,0,1), after texture-addressing they're read/write just like temporary registers
-    float4 R[2]; // Temporary registers, read/write (R[0].a (R0_ALPHA) is initialized to T[0].s (T0_ALPHA) in stage 0); Final result is in R[0]
-	// V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
-	// V1R0_SUM_ALPHA and EF_PROD_ALPHA are not available, hence the float3 type here :
-    float3 V1R0_SUM;	
-    float3 EF_PROD;
-#else
+    // float4 T[4]; // Texture registers, initially sampled or (0,0,0,1), after texture-addressing they're read/write just like temporary registers
+    // float4 R[2]; // Temporary registers, read/write (R[0].a (R0_ALPHA) is initialized to T[0].s (T0_ALPHA) in stage 0); Final result is in R[0]
+    // float3 V1R0_SUM;	// Note : V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
+    // float3 EF_PROD;  // Note : V1R0_SUM_ALPHA and EF_PROD_ALPHA are not available, hence the float3 type here
     float4 RegisterValues[PS_REGISTER_EF_PROD + 1]; // = 16 registers
-#endif
 
 	// The final output value :
     float4 FinalOutput;
@@ -337,39 +332,7 @@ void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, float3 
 	}
 
 #endif
-#ifdef EXPLICIT_REGISTERS
-    switch (register_index) {
-        case PS_REGISTER_DISCARD:
-            // Don't overwrite PS_REGISTER_ZERO
-            break;
-		case PS_REGISTER_V0:
-            state.V[0].rgb = value;
-            break;
-		case PS_REGISTER_V1:
-            state.V[1].rgb = value;
-            break;
-		case PS_REGISTER_T0:
-            state.T[0].rgb = value;
-            break;
-		case PS_REGISTER_T1:
-            state.T[1].rgb = value;
-            break;
-		case PS_REGISTER_T2:
-            state.T[2].rgb = value;
-            break;
-		case PS_REGISTER_T3:
-            state.T[3].rgb = value;
-            break;
-		case PS_REGISTER_R0:
-            state.R[0].rgb = value;
-            break;
-		case PS_REGISTER_R1:
-            state.R[1].rgb = value;
-            break;
-    }
-#else
     state.RegisterValues[register_index].rgb = value;
-#endif
 }
 
 void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, float value)
@@ -390,39 +353,7 @@ void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, float
 	}
 
 #endif
-#ifdef EXPLICIT_REGISTERS
-    switch (register_index) {
-        case PS_REGISTER_DISCARD:
-            // Don't overwrite PS_REGISTER_ZERO
-            break;
-		case PS_REGISTER_V0:
-            state.V[0].a = value;
-            break;
-		case PS_REGISTER_V1:
-            state.V[1].a = value;
-            break;
-		case PS_REGISTER_T0:
-            state.T[0].a = value;
-            break;
-		case PS_REGISTER_T1:
-            state.T[1].a = value;
-            break;
-		case PS_REGISTER_T2:
-            state.T[2].a = value;
-            break;
-		case PS_REGISTER_T3:
-            state.T[3].a = value;
-            break;
-		case PS_REGISTER_R0:
-            state.R[0].a = value;
-            break;
-		case PS_REGISTER_R1:
-            state.R[1].a = value;
-            break;
-    }
-#else
     state.RegisterValues[register_index].a = value;
-#endif
 }
 
 float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, const bool is_alpha = false)
@@ -444,11 +375,6 @@ float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, 
 
 #endif
     switch (register_index) {
-#ifdef EXPLICIT_REGISTERS
-        case PS_REGISTER_ZERO:
-            Result = 0;
-            break;
-#endif
 		case PS_REGISTER_C0:
             if (state.stage == FINAL_COMBINER_STAGE)
                 Result = D3DRS_PSFINALCOMBINERCONSTANT[0];
@@ -456,11 +382,7 @@ float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, 
 				if (state.FlagUniqueC0)
 					Result = D3DRS_PSCONSTANT0[state.stage];
 				else
-#ifdef EXPLICIT_REGISTERS
-					Result = state.C[0];
-#else
 					Result = state.RegisterValues[PS_REGISTER_C0];
-#endif
             break;
 		case PS_REGISTER_C1:
             if (state.stage == FINAL_COMBINER_STAGE)
@@ -469,19 +391,11 @@ float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, 
 				if (state.FlagUniqueC1)
 					Result = D3DRS_PSCONSTANT1[state.stage];
 				else
-#ifdef EXPLICIT_REGISTERS
-					Result = state.C[1];
-#else
 					Result = state.RegisterValues[PS_REGISTER_C1];
-#endif
             break;
 		case PS_REGISTER_FOG: {
             float4 FOG_value;
-#ifdef EXPLICIT_REGISTERS
-			FOG_value = state.FOG;
-#else
             FOG_value = state.RegisterValues[PS_REGISTER_FOG];
-#endif
             if (state.stage == FINAL_COMBINER_STAGE)
 			{
                 if (is_alpha)
@@ -490,46 +404,12 @@ float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, 
                     Result = FOG_value; // TODO : Verify this!
             }
 			else
-				Result = float4(FOG_value.rgb, 0);
+				Result = float4(FOG_value.rgb, DEFAULT_ALPHA);
             }
             break;
-#ifdef EXPLICIT_REGISTERS
-        case PS_REGISTER_V0:
-            Result = state.V[0];
-            break;
-        case PS_REGISTER_V1:
-            Result = state.V[1];
-            break;
-		// Unknown[0], Unknown[1]
-        case PS_REGISTER_T0:
-            Result = state.T[0];
-            break;
-        case PS_REGISTER_T1:
-            Result = state.T[1];
-            break;
-        case PS_REGISTER_T2:
-            Result = state.T[2];
-            break;
-        case PS_REGISTER_T3:
-            Result = state.T[3];
-            break;
-        case PS_REGISTER_R0:
-            Result = state.R[0];
-            break;
-        case PS_REGISTER_R1:
-            Result = state.R[1];
-            break;
-        case PS_REGISTER_V1R0_SUM:
-            Result = float4(state.V1R0_SUM, 0);
-            break;
-        case PS_REGISTER_EF_PROD:
-            Result = float4(state.EF_PROD, 0);
-            break;
-#else
 		default:
             Result = state.RegisterValues[register_index];
             break;
-#endif
     }
 
     uint input_mapping = mask_inputmapping(reg_byte);
@@ -586,7 +466,7 @@ float4 get_input_register_as_float4(inout ps_state state, const uint1 reg_byte, 
         if (is_alpha)
             Result = Result.b; // PS_CHANNEL_BLUE = 0x00; // used as ALPHA source
         else
-            Result = float4(Result.rgb, 0); // PS_CHANNEL_RGB: // = 0x00; // used as RGB source
+            Result = float4(Result.rgb, DEFAULT_ALPHA); // PS_CHANNEL_RGB: // = 0x00; // used as RGB source
 
 	return Result;
 }
@@ -638,19 +518,11 @@ void do_final_combiner(inout ps_state state)
 
 		// Calculate the product of E*F and set the result in it's dedicated register :
         float3 EF_PROD_value = E_value * F_value;
-#ifdef EXPLICIT_REGISTERS
-        state.EF_PROD = EF_PROD_value;
-#else
-        state.RegisterValues[PS_REGISTER_EF_PROD] = float4(EF_PROD_value, 0);
-#endif
+        state.RegisterValues[PS_REGISTER_EF_PROD] = float4(EF_PROD_value, DEFAULT_ALPHA);
 
 		// Fetch R0 register value (including an optional complement operation) :
         float3 R0_value;
-#ifdef EXPLICIT_REGISTERS
-        R0_value = (float3)state.R[0];
-#else
         R0_value = (float3)state.RegisterValues[PS_REGISTER_R0];
-#endif
         if (get_bit_5_from_value(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_R0
         {
 			// unsigned invert mapping  (1 - r0) is used as an input to the sum rather than r0
@@ -659,11 +531,7 @@ void do_final_combiner(inout ps_state state)
 
 		// Fetch V1 register value (including an optional complement operation) :
         float3 V1_value;
-#ifdef EXPLICIT_REGISTERS
-        V1_value = (float3)state.V[1];
-#else
         V1_value = (float3)state.RegisterValues[PS_REGISTER_V1];
-#endif
         if (get_bit_6_from_value(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_V1
         {
 			// unsigned invert mapping  (1 - v1) is used as an input to the sum rather than v1
@@ -679,11 +547,7 @@ void do_final_combiner(inout ps_state state)
         }
 
 		// Set the result in it's dedicated register
-#ifdef EXPLICIT_REGISTERS
-        state.V1R0_SUM = V1R0_SUM_value;
-#else
-        state.RegisterValues[PS_REGISTER_V1R0_SUM] = float4(V1R0_SUM_value, 0);
-#endif
+        state.RegisterValues[PS_REGISTER_V1R0_SUM] = float4(V1R0_SUM_value, DEFAULT_ALPHA);
 
 		// Fetch the A, B, C and D register values :
         float4 A_value = get_input_register_as_float4(state, A_reg_byte);
@@ -704,7 +568,7 @@ float4 main() : SV_TARGET
 {
     ps_state state = (ps_state) 0; // Clearing like this avoids error X3508: 'do_color_combiner_stage': output parameter 'state' not completely initialized
 	// Note, the above also sets state.RegisterValues[PS_REGISTER_ZERO] to 0.0
-    state.FinalOutput = float4(1.0f, 1.0f, 1.0f, 1.0f);
+    state.FinalOutput = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
 
 	// Decode the global combiner count and flags :
     floor2_t CombinerCountWord = floor(D3DRS_PSCOMBINERCOUNT_Lower16);
