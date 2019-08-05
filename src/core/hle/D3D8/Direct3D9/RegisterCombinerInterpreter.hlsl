@@ -386,13 +386,13 @@ typedef struct {
 	// Xbox NV2A pixel shader register values, in order of PS_REGISTER_* :
 #ifndef SUPPORTS_INDIRECT_INDEX
 	// float4 ZERO;
-    // float4 C[2]; // Constant registers, read-only
-    float4 FOG;  // Note, FOG ALPHA is only available in final combiner
-    float4 V[2]; // Vertex color registers, read/write (V[0] = diffuse, V[1] = specular
+    // float4 C[2];    // Constant registers, read-only
+    float4 FOG;      // Note, FOG ALPHA is only available in final combiner
+    float4 V[2];     // Vertex color registers, read/write (V[0] = diffuse, V[1] = specular
 	// float4 Unknown[2];
-    float4 T[4]; // Texture registers, initially sampled or (0,0,0,1), after texture-addressing they're read/write just like temporary registers
-    float4 R[2]; // Temporary registers, read/write (R[0].a (R0_ALPHA) is initialized to T[0].s (T0_ALPHA) in stage 0); Final result is in R[0]
-    float3 V1R0_SUM;	// Note : V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
+    float4 T[4];     // Texture registers, initially sampled or (0,0,0,1), after texture-addressing they're read/write just like temporary registers
+    float4 R[2];     // Temporary registers, read/write (R[0].a (R0_ALPHA) is initialized to T[0].s (T0_ALPHA) in stage 0); Final result is in R[0]
+    float3 V1R0_SUM; // Note : V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
     float3 EF_PROD;  // Note : V1R0_SUM_ALPHA and EF_PROD_ALPHA are not available, hence the float3 type here
 #else
     float4 RegisterValues[16]; // Room for 16 registers : PS_REGISTER_ZERO (0) upto PS_REGISTER_EF_PROD (15)
@@ -489,6 +489,9 @@ float4 get_input_register_as_float4(const ps_state state, const uint1 reg_byte, 
             }
             break;
 #ifndef SUPPORTS_INDIRECT_INDEX
+		case PS_REGISTER_ZERO:
+            Result = 0;
+            break;
         case PS_REGISTER_V0:
             Result = state.V[0];
             break;
@@ -570,11 +573,14 @@ void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, const f
     uint register_index = mask_register(reg_byte);
 
 	// Below are not writeable :
+#ifdef SUPPORTS_INDIRECT_INDEX
+	if (register_index == PS_REGISTER_DISCARD)
+		return;
+
+#endif
+#ifdef AVOID_INVALID_ACCESSES
     switch (register_index)
     {
-        case PS_REGISTER_DISCARD:
-            return;
-#ifdef AVOID_INVALID_ACCESSES
         case PS_REGISTER_C0:
         case PS_REGISTER_C1:
         case PS_REGISTER_FOG:
@@ -586,8 +592,13 @@ void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, const f
 		    assert(false);
 #endif
             return;
+    }
+
 #endif
 #ifndef SUPPORTS_INDIRECT_INDEX
+	// Below are writable :
+    switch (register_index)
+    {
         case PS_REGISTER_V0:
             state.V[0].rgb = value.rgb;
             break;
@@ -612,10 +623,8 @@ void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, const f
         case PS_REGISTER_R1:
             state.R[1].rgb = value.rgb;
             break;
-#endif
     }
-
-#ifdef SUPPORTS_INDIRECT_INDEX
+#else
     state.RegisterValues[register_index].rgb = value.rgb; // TODO : Fix error X3500: array reference cannot be used as an l-value; not natively addressable
 #endif
 }
@@ -625,11 +634,14 @@ void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, const
     uint register_index = mask_register(reg_byte);
 
 	// Below are not writeable :
+#ifdef SUPPORTS_INDIRECT_INDEX
+	if (register_index == PS_REGISTER_DISCARD)
+		return;
+
+#endif
+#ifdef AVOID_INVALID_ACCESSES
     switch (register_index)
     {
-        case PS_REGISTER_DISCARD:
-            return;
-#ifdef AVOID_INVALID_ACCESSES
         case PS_REGISTER_C0:
         case PS_REGISTER_C1:
         case PS_REGISTER_FOG:
@@ -641,12 +653,17 @@ void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, const
 		    assert(false);
 #endif
             return;
+    }
+
 #endif
 #ifndef SUPPORTS_INDIRECT_INDEX
+	// Below are writable :
+    switch (register_index)
+    {
         case PS_REGISTER_V0:
             state.V[0].a = value.a;
             break;
-		case PS_REGISTER_V1:
+        case PS_REGISTER_V1:
             state.V[1].a = value.a;
             break;
         case PS_REGISTER_T0:
@@ -661,16 +678,14 @@ void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, const
         case PS_REGISTER_T3:
             state.T[3].a = value.a;
             break;
-        case PS_REGISTER_R0:
+		case PS_REGISTER_R0:
             state.R[0].a = value.a;
             break;
         case PS_REGISTER_R1:
             state.R[1].a = value.a;
             break;
-#endif
     }
-
-#ifdef SUPPORTS_INDIRECT_INDEX
+#else
     state.RegisterValues[register_index].a = value.a; // TODO : Fix error X3500: array reference cannot be used as an l-value; not natively addressable
 #endif
 }
