@@ -1,4 +1,4 @@
-//
+	//
 // Cxbx-Reloaded Xbox Pixel Shader Interpreter, written in Direct3D 9.0 Shader Model 3.0
 //
 // This shader interprets Xbox Pixel Shaders, as declared in the Xbox Direct3D__RenderState registers.
@@ -19,11 +19,11 @@
 // Utility functions
 //
 
-//#define SUPPORTS_INDIRECT_INDEX // TODO : Allow use by fixing : error X3500: array reference cannot be used as an l-value; not natively addressable
-//#define AVOID_INVALID_ACCESSES
-//#define ASSERT_VALID_ACCESSES
+#define SUPPORTS_INDIRECT_INDEX // TODO : Fix possible fxc.exe HLSL bug, that optimizes everything away with this unset?!
+#define AVOID_INVALID_ACCESSES
+#define ASSERT_VALID_ACCESSES
 
-typedef float floor1_t; // Indicates an already floor()'ed float, limited to lowest 8 bits
+typedef uint byte_t; // Indicates an already floor()'ed float, limited to lowest 8 bits
 
 #ifdef ASSERT_VALID_ACCESSES
 void assert(bool condition)
@@ -32,80 +32,103 @@ void assert(bool condition)
 }
 #endif
 
-bool get_bit_0_from_byte(const floor1_t value)
+byte_t float_to_byte(const float value) // TODO : Test this thoroughly, aiming for the fastest correct implementation that compiles without problems
+{
+#ifdef ASSERT_VALID_ACCESSES
+    assert(value >= 0);
+    assert(value <= 255);
+#endif
+    byte_t byte_result = abs(fmod(value, 256));	//max(value, 255u);
+#ifdef ASSERT_VALID_ACCESSES
+    assert(byte_result >= 0u);
+    assert(byte_result <= 255u);
+#endif
+    return byte_result;
+}
+
+// byte functions
+byte_t get_byte_0_from_float4(const float4 value)
+{
+    return float_to_byte(value.r);
+}
+
+byte_t get_byte_1_from_float4(const float4 value)
+{
+    return float_to_byte(value.g);
+}
+
+byte_t get_byte_2_from_float4(const float4 value)
+{
+    return float_to_byte(value.b);
+}
+
+byte_t get_byte_3_from_float4(const float4 value)
+{
+    return float_to_byte(value.a);
+}
+
+// bit functions
+bool get_bit_0_from_byte(const byte_t value)
 {
     return fmod(value, 2) == 1;
 }
 
-bool get_bit_1_from_byte(const floor1_t value)
+#if 0 // unused for now
+bool get_bit_1_from_byte(const byte_t value)
 {
-    return fmod(value, 4) >= 2;
+    return fmod(value, 4u) >= 2u;
 }
+#endif
 
-bool get_bit_2_from_byte(const floor1_t value)
+bool get_bit_2_from_byte(const byte_t value)
 {
     return fmod(value, 8) >= 4;
 }
 
-bool get_bit_3_from_byte(const floor1_t value)
+bool get_bit_3_from_byte(const byte_t value)
 {
     return fmod(value, 16) >= 8;
 }
 
-bool get_bit_4_from_byte(const floor1_t value)
+bool get_bit_4_from_byte(const byte_t value)
 {
     return fmod(value, 32) >= 16;
 }
 
-bool get_bit_5_from_byte(const floor1_t value)
+bool get_bit_5_from_byte(const byte_t value)
 {
     return fmod(value, 64) >= 32;
 }
 
-bool get_bit_6_from_byte(const floor1_t value)
+bool get_bit_6_from_byte(const byte_t value)
 {
     return fmod(value, 128) >= 64;
 }
 
-bool get_bit_7_from_byte(const floor1_t value)
+bool get_bit_7_from_byte(const byte_t value)
 {
     return fmod(value, 256) >= 128;
 }
 
-uint1 get_nibble_0_from_byte(const floor1_t value)
+// nibble functions
+byte_t get_nibble_0_from_byte(const byte_t value)
 {
+    byte_t nibble_0_result = (byte_t) abs(fmod(value, 16u));
 #ifdef ASSERT_VALID_ACCESSES
-    assert(value <= 255);
+    assert(nibble_0_result >= 0);
+    assert(nibble_0_result <= 255);
 #endif
-    return (uint1) abs(fmod(value, 16));
+    return nibble_0_result;
 }
 
-uint1 get_nibble_1_from_byte(const floor1_t value)
+byte_t get_nibble_1_from_byte(const byte_t value)
 {
+    byte_t nibble_1_result = (byte_t) abs(value / 16u); // Cast avoids warning X3556: integer divides may be much slower, try using uints if possible.
 #ifdef ASSERT_VALID_ACCESSES
-    assert(value <= 255);
+    assert(nibble_1_result >= 0);
+    assert(nibble_1_result <= 255);
 #endif
-    return (uint) abs(value / 16); // Cast avoids warning X3556: integer divides may be much slower, try using uints if possible.
-}
-
-uint1 get_byte_0_from_float4(const float4 value)
-{
-    return abs(floor(value.r));
-}
-
-uint1 get_byte_1_from_float4(const float4 value)
-{
-    return abs(floor(value.g));
-}
-
-uint1 get_byte_2_from_float4(const float4 value)
-{
-    return abs(floor(value.b));
-}
-
-uint1 get_byte_3_from_float4(const float4 value)
-{
-    return abs(floor(value.a));
+    return nibble_1_result;
 }
 
 //
@@ -215,48 +238,48 @@ uint1 get_byte_3_from_float4(const float4 value)
 // PS_REGISTER_ONE_HALF          (PS_INPUTMAPPING_HALFBIAS_NEGATE on zero) : y =  0.5
 // PS_REGISTER_ONE               (PS_INPUTMAPPING_UNSIGNED_INVERT on zero) : y =  1.0
 // (Note : It has no define, but PS_INPUTMAPPING_EXPAND_NEGATE on zero results in ONE too!)
-static const uint PS_INPUTMAPPING_UNSIGNED_IDENTITY = 0x00L; // max(0;x)         OK for final combiner: y = abs(x)
-static const uint PS_INPUTMAPPING_UNSIGNED_INVERT = 0x20L; // 1 - max(0;x)     OK for final combiner: y = 1 - x
-static const uint PS_INPUTMAPPING_EXPAND_NORMAL = 0x40L; // 2*max(0;x) - 1   invalid for final combiner
-static const uint PS_INPUTMAPPING_EXPAND_NEGATE = 0x60L; // 1 - 2*max(0;x)   invalid for final combiner
-static const uint PS_INPUTMAPPING_HALFBIAS_NORMAL = 0x80L; // max(0;x) - 1/2   invalid for final combiner
-static const uint PS_INPUTMAPPING_HALFBIAS_NEGATE = 0xa0L; // 1/2 - max(0;x)   invalid for final combiner
-static const uint PS_INPUTMAPPING_SIGNED_IDENTITY = 0xc0L; // x                invalid for final combiner
-static const uint PS_INPUTMAPPING_SIGNED_NEGATE = 0xe0L; // -x               invalid for final combiner
+static const byte_t PS_INPUTMAPPING_UNSIGNED_IDENTITY = 0x00L; // max(0;x)         OK for final combiner: y = abs(x)
+static const byte_t PS_INPUTMAPPING_UNSIGNED_INVERT = 0x20L; // 1 - max(0;x)     OK for final combiner: y = 1 - x
+static const byte_t PS_INPUTMAPPING_EXPAND_NORMAL = 0x40L; // 2*max(0;x) - 1   invalid for final combiner
+static const byte_t PS_INPUTMAPPING_EXPAND_NEGATE = 0x60L; // 1 - 2*max(0;x)   invalid for final combiner
+static const byte_t PS_INPUTMAPPING_HALFBIAS_NORMAL = 0x80L; // max(0;x) - 1/2   invalid for final combiner
+static const byte_t PS_INPUTMAPPING_HALFBIAS_NEGATE = 0xa0L; // 1/2 - max(0;x)   invalid for final combiner
+static const byte_t PS_INPUTMAPPING_SIGNED_IDENTITY = 0xc0L; // x                invalid for final combiner
+static const byte_t PS_INPUTMAPPING_SIGNED_NEGATE = 0xe0L; // -x               invalid for final combiner
 
 // Pixel Shader Registers
-static const uint PS_REGISTER_ZERO = 0x00L; // r
-static const uint PS_REGISTER_DISCARD = 0x00L; // w
-static const uint PS_REGISTER_C0 = 0x01L; // r
-static const uint PS_REGISTER_C1 = 0x02L; // r
-static const uint PS_REGISTER_FOG = 0x03L; // r
-static const uint PS_REGISTER_V0 = 0x04L; // r/w
-static const uint PS_REGISTER_V1 = 0x05L; // r/w
+static const byte_t PS_REGISTER_ZERO = 0x00L; // r
+static const byte_t PS_REGISTER_DISCARD = 0x00L; // w
+static const byte_t PS_REGISTER_C0 = 0x01L; // r
+static const byte_t PS_REGISTER_C1 = 0x02L; // r
+static const byte_t PS_REGISTER_FOG = 0x03L; // r
+static const byte_t PS_REGISTER_V0 = 0x04L; // r/w
+static const byte_t PS_REGISTER_V1 = 0x05L; // r/w
 // Filling the PS_REGISTER_* gap here with V2 and V3 is just guesswork,
 // they could be unsupported, read-only, special-purpose, or whatever else.
 // Needs investigation.
-//static const uint PS_REGISTER_V2 =                0x06L; // unknown r/w state
-//static const uint PS_REGISTER_V3 =                0x07L; // unknown r/w state
-static const uint PS_REGISTER_T0 = 0x08L; // r/w
-static const uint PS_REGISTER_T1 = 0x09L; // r/w
-static const uint PS_REGISTER_T2 = 0x0aL; // r/w
-static const uint PS_REGISTER_T3 = 0x0bL; // r/w
-static const uint PS_REGISTER_R0 = 0x0cL; // r/w
-static const uint PS_REGISTER_R1 = 0x0dL; // r/w
-static const uint PS_REGISTER_V1R0_SUM = 0x0eL; // r
-static const uint PS_REGISTER_EF_PROD = 0x0fL; // r
-//static const uint PS_REGISTER_ONE = PS_REGISTER_ZERO | PS_INPUTMAPPING_UNSIGNED_INVERT; // 0x20 OK for final combiner
-//static const uint PS_REGISTER_NEGATIVE_ONE = PS_REGISTER_ZERO | PS_INPUTMAPPING_EXPAND_NORMAL; // 0x40 invalid for final combiner
-//static const uint PS_REGISTER_ONE_HALF = PS_REGISTER_ZERO | PS_INPUTMAPPING_HALFBIAS_NEGATE; // 0xa0 invalid for final combiner
-//static const uint PS_REGISTER_NEGATIVE_ONE_HALF = PS_REGISTER_ZERO | PS_INPUTMAPPING_HALFBIAS_NORMAL; // 0x80 invalid for final combiner
+//static const byte_t PS_REGISTER_V2 =                0x06L; // unknown r/w state
+//static const byte_t PS_REGISTER_V3 =                0x07L; // unknown r/w state
+static const byte_t PS_REGISTER_T0 = 0x08L; // r/w
+static const byte_t PS_REGISTER_T1 = 0x09L; // r/w
+static const byte_t PS_REGISTER_T2 = 0x0aL; // r/w
+static const byte_t PS_REGISTER_T3 = 0x0bL; // r/w
+static const byte_t PS_REGISTER_R0 = 0x0cL; // r/w
+static const byte_t PS_REGISTER_R1 = 0x0dL; // r/w
+static const byte_t PS_REGISTER_V1R0_SUM = 0x0eL; // r
+static const byte_t PS_REGISTER_EF_PROD = 0x0fL; // r
+//static const byte_t PS_REGISTER_ONE = PS_REGISTER_ZERO | PS_INPUTMAPPING_UNSIGNED_INVERT; // 0x20 OK for final combiner
+//static const byte_t PS_REGISTER_NEGATIVE_ONE = PS_REGISTER_ZERO | PS_INPUTMAPPING_EXPAND_NORMAL; // 0x40 invalid for final combiner
+//static const byte_t PS_REGISTER_ONE_HALF = PS_REGISTER_ZERO | PS_INPUTMAPPING_HALFBIAS_NEGATE; // 0xa0 invalid for final combiner
+//static const byte_t PS_REGISTER_NEGATIVE_ONE_HALF = PS_REGISTER_ZERO | PS_INPUTMAPPING_HALFBIAS_NORMAL; // 0x80 invalid for final combiner
 
-static const uint PS_CHANNEL_RGB = 0x00; // used as RGB source
-static const uint PS_CHANNEL_BLUE = 0x00; // used as ALPHA source
-static const uint PS_CHANNEL_ALPHA = 0x10; // used as RGB or ALPHA source
+static const byte_t PS_CHANNEL_RGB = 0x00; // used as RGB source
+static const byte_t PS_CHANNEL_BLUE = 0x00; // used as ALPHA source
+static const byte_t PS_CHANNEL_ALPHA = 0x10; // used as RGB or ALPHA source
 
-static const uint PS_FINALCOMBINERSETTING_CLAMP_SUM = 0x80; // V1+R0 sum clamped to [0;1]
-static const uint PS_FINALCOMBINERSETTING_COMPLEMENT_V1 = 0x40; // unsigned invert mapping  (1 - v1) is used as an input to the sum rather than v1
-static const uint PS_FINALCOMBINERSETTING_COMPLEMENT_R0 = 0x20; // unsigned invert mapping  (1 - r0) is used as an input to the sum rather than r0
+static const byte_t PS_FINALCOMBINERSETTING_CLAMP_SUM = 0x80; // V1+R0 sum clamped to [0;1]
+static const byte_t PS_FINALCOMBINERSETTING_COMPLEMENT_V1 = 0x40; // unsigned invert mapping  (1 - v1) is used as an input to the sum rather than v1
+static const byte_t PS_FINALCOMBINERSETTING_COMPLEMENT_R0 = 0x20; // unsigned invert mapping  (1 - r0) is used as an input to the sum rather than r0
 
 // =========================================================================================================
 // PSRGBOutputs[0-7]
@@ -274,22 +297,22 @@ static const uint PS_FINALCOMBINERSETTING_COMPLEMENT_R0 = 0x20; // unsigned inve
 //#define PS_COMBINEROUTPUTS(ab,cd,mux_sum,flags) (((flags)<<12)|((mux_sum)<<8)|((ab)<<4)|(cd))
 // ab,cd,mux_sum contain a value from PS_REGISTER
 // flags contains values from PS_COMBINEROUTPUT
-static const uint PS_COMBINEROUTPUT_IDENTITY = 0x00L; // y = x
-static const uint PS_COMBINEROUTPUT_BIAS = 0x08L; // y = x - 0.5
-static const uint PS_COMBINEROUTPUT_SHIFTLEFT_1 = 0x10L; // y = x*2
-static const uint PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS = 0x18L; // y = (x - 0.5)*2
-static const uint PS_COMBINEROUTPUT_SHIFTLEFT_2 = 0x20L; // y = x*4
-// static const uint PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4
-static const uint PS_COMBINEROUTPUT_SHIFTRIGHT_1 = 0x30L; // y = x/2
-// static const uint PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2
-static const uint PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA = 0x80L; // RGB only
-static const uint PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA = 0x40L; // RGB only
-static const uint PS_COMBINEROUTPUT_AB_MULTIPLY = 0x00L;
-static const uint PS_COMBINEROUTPUT_AB_DOT_PRODUCT = 0x02L; // RGB only
-static const uint PS_COMBINEROUTPUT_CD_MULTIPLY = 0x00L;
-static const uint PS_COMBINEROUTPUT_CD_DOT_PRODUCT = 0x01L; // RGB only
-static const uint PS_COMBINEROUTPUT_AB_CD_SUM = 0x00L; // 3rd output is AB+CD
-static const uint PS_COMBINEROUTPUT_AB_CD_MUX = 0x04L; // 3rd output is MUX(AB;CD) based on R0.a
+static const byte_t PS_COMBINEROUTPUT_IDENTITY = 0x00L; // y = x
+static const byte_t PS_COMBINEROUTPUT_BIAS = 0x08L; // y = x - 0.5
+static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_1 = 0x10L; // y = x*2
+static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS = 0x18L; // y = (x - 0.5)*2
+static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2 = 0x20L; // y = x*4
+// static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4
+static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1 = 0x30L; // y = x/2
+// static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2
+static const byte_t PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA = 0x80L; // RGB only
+static const byte_t PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA = 0x40L; // RGB only
+static const byte_t PS_COMBINEROUTPUT_AB_MULTIPLY = 0x00L;
+static const byte_t PS_COMBINEROUTPUT_AB_DOT_PRODUCT = 0x02L; // RGB only
+static const byte_t PS_COMBINEROUTPUT_CD_MULTIPLY = 0x00L;
+static const byte_t PS_COMBINEROUTPUT_CD_DOT_PRODUCT = 0x01L; // RGB only
+static const byte_t PS_COMBINEROUTPUT_AB_CD_SUM = 0x00L; // 3rd output is AB+CD
+static const byte_t PS_COMBINEROUTPUT_AB_CD_MUX = 0x04L; // 3rd output is MUX(AB;CD) based on R0.a
 // AB_CD register output must be DISCARD if either AB_DOT_PRODUCT or CD_DOT_PRODUCT are set
 
 // =========================================================================================================
@@ -342,13 +365,13 @@ static const uint PS_COMBINEROUTPUT_AB_CD_MUX = 0x04L; // 3rd output is MUX(AB;C
 //    PS_GLOBALFLAGS_TEXMODE_ADJUST = 0x0001L, // adjust texture modes according to set texture
 
 // Cxbx constants
-static const uint MAX_COMBINER_STAGE_COUNT = 8;
-static const uint FINAL_COMBINER_STAGE = MAX_COMBINER_STAGE_COUNT; // Used for E,F,G inputs
-static const uint FINAL_COMBINER_STAGE_ABCD = FINAL_COMBINER_STAGE + 1;
+static const byte_t MAX_COMBINER_STAGE_COUNT = 8;
+static const byte_t FINAL_COMBINER_STAGE = MAX_COMBINER_STAGE_COUNT; // Used for E,F,G inputs
+static const byte_t FINAL_COMBINER_STAGE_ABCD = FINAL_COMBINER_STAGE + 1;
 static const float DEFAULT_ALPHA = 1.0f;
 
 #ifdef INPUT_BUFFER // TODO : Expand this for Shader Model 4 and up :
-// Xbox Pixel Shader definition (a uint array) D3D__RenderState member indices :
+// Xbox Pixel Shader definition (a byte_t array) D3D__RenderState member indices :
 #else // Shader Model 3 :
 
 //
@@ -378,7 +401,7 @@ float4 D3DRS_PSCOMBINERCOUNT            : register(c53); // 4 byte floats
 //
 typedef struct {
 	// Flags, used in get_input_register_as_float4() :
-    uint stage;        // Currently active stage (0 upto 7, 8 is for final combiner)
+    byte_t stage;        // Currently active stage (0 upto 7, 8 is for final combiner)
     bool FlagMuxMsb;   // Mux on r0.a lsb or msb, 0 = PS_COMBINERCOUNT_MUX_LSB, 1 = PS_COMBINERCOUNT_MUX_MSB
     bool FlagUniqueC0; // C[0] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C0, 1 = PS_COMBINERCOUNT_UNIQUE_C0
     bool FlagUniqueC1; // C[1] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C1, 1 = PS_COMBINERCOUNT_UNIQUE_C1
@@ -399,26 +422,38 @@ typedef struct {
 #endif
 } ps_state;
 
-uint1 mask_register(const uint1 value)
+byte_t mask_register(const byte_t value)
 {
-    return (uint1) abs(fmod((float) value, 16)); // == PS_REGISTER_EF_PROD + 1
+    float mask_register_result = (float) value;
+    mask_register_result = fmod(mask_register_result, PS_REGISTER_EF_PROD + 1);
+    mask_register_result = max(mask_register_result, PS_REGISTER_EF_PROD); // max() avoids error X3500: array reference cannot be used as an l-value; not natively addressable
+#ifdef ASSERT_VALID_ACCESSES
+    assert((byte_t) mask_register_result >= PS_REGISTER_ZERO);
+    assert((byte_t) mask_register_result <= PS_REGISTER_EF_PROD);
+#endif
+    return (byte_t) mask_register_result;
 }
 
-uint1 mask_inputmapping(const uint1 value)
+byte_t mask_inputmapping(const byte_t value)
 {
-    float Result = abs(float(value));
-    Result = Result / 2;
-    Result = fmod(Result, 8); // == (PS_INPUTMAPPING_SIGNED_NEGATE/2) + 1;
-    Result = Result + Result;
-    return (uint1) abs(Result);
+    float mask_inputmapping_result = float(value);
+    mask_inputmapping_result = mask_inputmapping_result / 2; // remove least significant bit
+    mask_inputmapping_result = fmod(mask_inputmapping_result, 8); // == (PS_INPUTMAPPING_SIGNED_NEGATE/2) + 1;
+    mask_inputmapping_result = mask_inputmapping_result * 2; // shift bits back to their original place
+    mask_inputmapping_result = max(mask_inputmapping_result, PS_INPUTMAPPING_SIGNED_NEGATE); // max() avoids error X3500: array reference cannot be used as an l-value; not natively addressable
+#ifdef ASSERT_VALID_ACCESSES
+    assert((byte_t) mask_inputmapping_result >= PS_INPUTMAPPING_UNSIGNED_IDENTITY);
+    assert((byte_t) mask_inputmapping_result <= PS_INPUTMAPPING_SIGNED_NEGATE);
+#endif
+    return (byte_t) mask_inputmapping_result;
 }
 
-float4 get_input_register_as_float4(const ps_state state, const uint1 reg_byte, const bool is_alpha = false)
+float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte, const bool is_alpha = false)
 {
     float4 Result = 0;
 
-    uint register_index = mask_register(reg_byte);
-    uint input_mapping = mask_inputmapping(reg_byte);
+    byte_t register_index = mask_register(reg_byte);
+    byte_t input_mapping = mask_inputmapping(reg_byte);
 #ifdef AVOID_INVALID_ACCESSES
     if (state.stage >= FINAL_COMBINER_STAGE)
     {
@@ -459,15 +494,15 @@ float4 get_input_register_as_float4(const ps_state state, const uint1 reg_byte, 
             if (state.stage >= FINAL_COMBINER_STAGE)
                 Result = D3DRS_PSFINALCOMBINERCONSTANT[0];
             else if (state.FlagUniqueC0)
-                Result = D3DRS_PSCONSTANT0[state.stage];
+                Result = D3DRS_PSCONSTANT0[state.stage]; // TODO : Tell the compiler state.stage range is integera 0 to 7?
             else
                 Result = D3DRS_PSCONSTANT0[0];
             break;
         case PS_REGISTER_C1:
             if (state.stage >= FINAL_COMBINER_STAGE)
                 Result = D3DRS_PSFINALCOMBINERCONSTANT[1];
-            else if (state.FlagUniqueC1)
-                Result = D3DRS_PSCONSTANT1[state.stage];
+            else if (state.FlagUniqueC0 && state.stage < FINAL_COMBINER_STAGE)
+                Result = D3DRS_PSCONSTANT1[state.stage]; // TODO : Tell the compiler state.stage range is integera 0 to 7?
             else
                 Result = D3DRS_PSCONSTANT1[1];
             break;
@@ -532,10 +567,10 @@ float4 get_input_register_as_float4(const ps_state state, const uint1 reg_byte, 
     switch (input_mapping)
     {
         case PS_INPUTMAPPING_UNSIGNED_IDENTITY: // = 0x00L : y = max(0,x)       =  1*max(0,x) + 0.0
-            Result = abs(Result);
+            Result = abs(Result); // TODO : Verify
             break;
         case PS_INPUTMAPPING_UNSIGNED_INVERT: // = 0x20L : y = 1 - max(0,x)   = -1*max(0,x) + 1.0
-            Result = 1 - Result;
+            Result = 1 - abs(Result); // TODO : Verify
             break;
         case PS_INPUTMAPPING_EXPAND_NORMAL: // = 0x40L : y = 2*max(0,x) - 1 =  2*max(0,x) - 1.0
             Result = 2 * max(0, Result) - 1.0;
@@ -568,9 +603,9 @@ float4 get_input_register_as_float4(const ps_state state, const uint1 reg_byte, 
     return Result;
 }
 
-void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, const float4 value)
+void set_output_register_rgb(inout ps_state state, const byte_t reg_byte, const float4 value)
 {
-    uint register_index = mask_register(reg_byte);
+    byte_t register_index = mask_register(reg_byte);
 
 	// Below are not writeable :
 #ifdef SUPPORTS_INDIRECT_INDEX
@@ -629,9 +664,9 @@ void set_output_register_rgb(inout ps_state state, const uint1 reg_byte, const f
 #endif
 }
 
-void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, const float4 value)
+void set_output_register_alpha(inout ps_state state, const byte_t reg_byte, const float4 value)
 {
-    uint register_index = mask_register(reg_byte);
+    byte_t register_index = mask_register(reg_byte);
 
 	// Below are not writeable :
 #ifdef SUPPORTS_INDIRECT_INDEX
@@ -693,10 +728,10 @@ void set_output_register_alpha(inout ps_state state, const uint1 reg_byte, const
 void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
 {
 	// Decode input register bytes :
-    floor1_t A_input_reg_byte = is_alpha ? get_byte_0_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_0_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
-    floor1_t B_input_reg_byte = is_alpha ? get_byte_1_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_1_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
-    floor1_t C_input_reg_byte = is_alpha ? get_byte_2_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_2_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
-    floor1_t D_input_reg_byte = is_alpha ? get_byte_3_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_3_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
+    byte_t A_input_reg_byte = is_alpha ? get_byte_0_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_0_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
+    byte_t B_input_reg_byte = is_alpha ? get_byte_1_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_1_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
+    byte_t C_input_reg_byte = is_alpha ? get_byte_2_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_2_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
+    byte_t D_input_reg_byte = is_alpha ? get_byte_3_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_3_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
 
 	// Fetch input (source) register values :
     float4 A_value = get_input_register_as_float4(state, A_input_reg_byte, is_alpha); // A.k.a. 's0'
@@ -705,26 +740,26 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
     float4 D_value = get_input_register_as_float4(state, D_input_reg_byte, is_alpha); // A.k.a. 's3'
 
 	// Decode output bytes :
-    floor1_t output_byte_0 = is_alpha ? get_byte_0_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_0_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
-    floor1_t output_byte_1 = is_alpha ? get_byte_1_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_1_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
-    floor1_t output_byte_2 = is_alpha ? get_byte_2_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_2_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
+    byte_t output_byte_0 = is_alpha ? get_byte_0_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_0_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
+    byte_t output_byte_1 = is_alpha ? get_byte_1_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_1_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
+    byte_t output_byte_2 = is_alpha ? get_byte_2_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_2_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
 
 	// Decode output register numbers and flags :
-    uint1 combiner_output_reg_AB = get_nibble_0_from_byte(output_byte_0); // A.k.a. 'd0'
-    uint1 combiner_output_reg_CD = get_nibble_1_from_byte(output_byte_0); // A.k.a. 'd1'
-    uint1 combiner_output_reg_AB_CD = get_nibble_0_from_byte(output_byte_1); // A.k.a. 'd2'
+    byte_t combiner_output_reg_AB = get_nibble_0_from_byte(output_byte_0); // A.k.a. 'd0'
+    byte_t combiner_output_reg_CD = get_nibble_1_from_byte(output_byte_0); // A.k.a. 'd1'
+    byte_t combiner_output_reg_AB_CD = get_nibble_0_from_byte(output_byte_1); // A.k.a. 'd2'
     bool combiner_flag_CD_DotProduct = get_bit_4_from_byte(output_byte_1); // PS_COMBINEROUTPUT_CD_DOT_PRODUCT = 0x01L; // RGB only
     bool combiner_flag_AB_DotProduct = get_bit_5_from_byte(output_byte_1); // PS_COMBINEROUTPUT_AB_DOT_PRODUCT = 0x02L; // RGB only
     bool combiner_flag_ABCD_Mux = get_bit_6_from_byte(output_byte_1); // PS_COMBINEROUTPUT_AB_CD_MUX = 0x04L; // 3rd output is MUX(AB;CD) based on R0.a
 	/* TODO : Fetch and interpret 3 output mapping bits
-	static const uint PS_COMBINEROUTPUT_IDENTITY             = 0x00L; // y = x
-	static const uint PS_COMBINEROUTPUT_BIAS                 = 0x08L; // y = x - 0.5
-	static const uint PS_COMBINEROUTPUT_SHIFTLEFT_1          = 0x10L; // y = x*2
-	static const uint PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS     = 0x18L; // y = (x - 0.5)*2
-	static const uint PS_COMBINEROUTPUT_SHIFTLEFT_2          = 0x20L; // y = x*4
-	// static const uint PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4
-	static const uint PS_COMBINEROUTPUT_SHIFTRIGHT_1         = 0x30L; // y = x/2
-	// static const uint PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2
+	static const byte_t PS_COMBINEROUTPUT_IDENTITY             = 0x00L; // y = x
+	static const byte_t PS_COMBINEROUTPUT_BIAS                 = 0x08L; // y = x - 0.5
+	static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_1          = 0x10L; // y = x*2
+	static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS     = 0x18L; // y = (x - 0.5)*2
+	static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2          = 0x20L; // y = x*4
+	// static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4
+	static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1         = 0x30L; // y = x/2
+	// static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2
 	*/
     bool combiner_flag_CD_BlueToAlpha = get_bit_2_from_byte(output_byte_2); // PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA = 0x40L; // RGB only
     bool combiner_flag_AB_BlueToAlpha = get_bit_3_from_byte(output_byte_2); // PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA = 0x80L; // RGB only
@@ -771,7 +806,7 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
 
 	// Store resulting values in output registers :
 	// TODO : Handle output_mapping in set_output_register_*()
-    // uint output_mapping = mask_outputmapping(output_byte1, output_byte2);
+    // byte_t output_mapping = mask_outputmapping(output_byte1, output_byte2);
     // TODO : Apply combiner_flag_AB_BlueToAlpha and combiner_flag_CD_BlueToAlpha
     if (is_alpha)
     {
@@ -796,110 +831,146 @@ float4 do_final_combiner(inout ps_state state)
 	float4 R0_value = state.RegisterValues[PS_REGISTER_R0].a;
 #endif
 
-	// Check if the final combiner needs to run at all :
-    if (any(D3DRS_PSFINALCOMBINERINPUTSABCD) || any(D3DRS_PSFINALCOMBINERINPUTSEFG))
-    {
-		// Decompose the final combiner inputs into separate bytes :
-        uint1 A_reg_byte = get_byte_0_from_float4(D3DRS_PSFINALCOMBINERINPUTSABCD);
-        uint1 B_reg_byte = get_byte_1_from_float4(D3DRS_PSFINALCOMBINERINPUTSABCD);
-        uint1 C_reg_byte = get_byte_2_from_float4(D3DRS_PSFINALCOMBINERINPUTSABCD);
-        uint1 D_reg_byte = get_byte_3_from_float4(D3DRS_PSFINALCOMBINERINPUTSABCD);
-        uint1 E_reg_byte = get_byte_0_from_float4(D3DRS_PSFINALCOMBINERINPUTSEFG);
-        uint1 F_reg_byte = get_byte_1_from_float4(D3DRS_PSFINALCOMBINERINPUTSEFG);
-        uint1 G_reg_byte = get_byte_2_from_float4(D3DRS_PSFINALCOMBINERINPUTSEFG);
-        uint1 setting_byte = get_byte_3_from_float4(D3DRS_PSFINALCOMBINERINPUTSEFG);
-
-		// Tell get_input_register_as_float4() we're now in the final combiner stage for E,F,G :
-        state.stage = FINAL_COMBINER_STAGE;
-
-		// Fetch the E and F register values :
-        float3 E_value = (float3) get_input_register_as_float4(state, E_reg_byte);
-        float3 F_value = (float3) get_input_register_as_float4(state, F_reg_byte);
-
-		// Calculate the product of E*F and set the result in it's dedicated register :
-        float3 EF_PROD_value = E_value * F_value;
-#ifndef SUPPORTS_INDIRECT_INDEX
-        state.EF_PROD = EF_PROD_value;
-#else
-        state.RegisterValues[PS_REGISTER_EF_PROD] = float4(EF_PROD_value, DEFAULT_ALPHA);
-#endif
-
-		// Do optional complement operation on R0 register value :
-        if (get_bit_5_from_byte(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_R0
-        {
-			// unsigned invert mapping  (1 - r0) is used as an input to the sum rather than r0
-            R0_value = 1 - R0_value;
-        }
-
-		// Fetch V1 register value (including an optional complement operation) :
-        float3 V1_value;
-#ifndef SUPPORTS_INDIRECT_INDEX
-        V1_value = (float3) state.V[1];
-#else
-        V1_value = (float3) state.RegisterValues[PS_REGISTER_V1];
-#endif
-        if (get_bit_6_from_byte(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_V1
-        {
-			// unsigned invert mapping  (1 - v1) is used as an input to the sum rather than v1
-            V1_value = 1 - V1_value;
-        }
-
-		// Calculate V1 + R0 value (including an optional clamping operation) :
-        float3 V1R0_SUM_value = V1_value + R0_value.rgb;
-        if (get_bit_7_from_byte(setting_byte)) // PS_FINALCOMBINERSETTING_CLAMP_SUM
-        {
-			// V1+R0 sum clamped to [0,1]
-            V1R0_SUM_value = clamp(V1R0_SUM_value, 0, 1);
-        }
-
-		// Set the result in it's dedicated register
-#ifndef SUPPORTS_INDIRECT_INDEX
-        state.V1R0_SUM = V1R0_SUM_value;
-#else
-        state.RegisterValues[PS_REGISTER_V1R0_SUM] = float4(V1R0_SUM_value, DEFAULT_ALPHA);
-#endif
-
-		// Tell get_input_register_as_float4() we're now in the final combiner stage for A,B,C,D :
-        state.stage = FINAL_COMBINER_STAGE_ABCD;
-		// Fetch the A, B, C and D register values :
-        float4 A_value = get_input_register_as_float4(state, A_reg_byte);
-        float4 B_value = get_input_register_as_float4(state, B_reg_byte);
-        float4 C_value = get_input_register_as_float4(state, C_reg_byte);
-        float4 D_value = get_input_register_as_float4(state, D_reg_byte);
-
-		// Calculate output RGB = a*b + (1-a)*c + d :
-        float4 FinalOutput;
-        FinalOutput.rgb = lerp(B_value.rgb, C_value.rgb, A_value.rgb) + D_value.rgb;
-
-		// Fetch the output alpha channel from the G register value :
-        float4 G_value = get_input_register_as_float4(state, G_reg_byte, /*is_alpha=*/true); // TODO : Is is_alpha correct?
-        FinalOutput.a = G_value.a;
-
-        return FinalOutput;
-    }
-    else
+	// Check if the final combiner doesn't need to run :
+    if (!any(D3DRS_PSFINALCOMBINERINPUTSABCD) && !any(D3DRS_PSFINALCOMBINERINPUTSEFG))
         return R0_value;
+
+	// Decompose the final combiner inputs into separate bytes :
+    byte_t A_reg_byte = get_byte_0_from_float4(D3DRS_PSFINALCOMBINERINPUTSABCD);
+    byte_t B_reg_byte = get_byte_1_from_float4(D3DRS_PSFINALCOMBINERINPUTSABCD);
+    byte_t C_reg_byte = get_byte_2_from_float4(D3DRS_PSFINALCOMBINERINPUTSABCD);
+    byte_t D_reg_byte = get_byte_3_from_float4(D3DRS_PSFINALCOMBINERINPUTSABCD);
+    byte_t E_reg_byte = get_byte_0_from_float4(D3DRS_PSFINALCOMBINERINPUTSEFG);
+    byte_t F_reg_byte = get_byte_1_from_float4(D3DRS_PSFINALCOMBINERINPUTSEFG);
+    byte_t G_reg_byte = get_byte_2_from_float4(D3DRS_PSFINALCOMBINERINPUTSEFG);
+    byte_t setting_byte = get_byte_3_from_float4(D3DRS_PSFINALCOMBINERINPUTSEFG);
+
+	// Tell get_input_register_as_float4() we're now in the final combiner stage for E,F,G :
+    state.stage = FINAL_COMBINER_STAGE;
+
+	// Fetch the E and F register values :
+    float3 E_value = (float3) get_input_register_as_float4(state, E_reg_byte);
+    float3 F_value = (float3) get_input_register_as_float4(state, F_reg_byte);
+
+	// Calculate the product of E*F and set the result in it's dedicated register :
+    float3 EF_PROD_value = E_value * F_value;
+#ifndef SUPPORTS_INDIRECT_INDEX
+    state.EF_PROD = EF_PROD_value;
+#else
+    state.RegisterValues[PS_REGISTER_EF_PROD] = float4(EF_PROD_value, DEFAULT_ALPHA);
+#endif
+
+	// Do optional complement operation on R0 register value :
+    if (get_bit_5_from_byte(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_R0
+    {
+		// unsigned invert mapping  (1 - r0) is used as an input to the sum rather than r0
+        R0_value = 1 - R0_value;
+    }
+
+	// Fetch V1 register value (including an optional complement operation) :
+    float3 V1_value;
+#ifndef SUPPORTS_INDIRECT_INDEX
+    V1_value = (float3) state.V[1];
+#else
+    V1_value = (float3) state.RegisterValues[PS_REGISTER_V1];
+#endif
+    if (get_bit_6_from_byte(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_V1
+    {
+		// unsigned invert mapping  (1 - v1) is used as an input to the sum rather than v1
+        V1_value = 1 - V1_value;
+    }
+
+	// Calculate V1 + R0 value (including an optional clamping operation) :
+    float3 V1R0_SUM_value = V1_value + R0_value.rgb;
+    if (get_bit_7_from_byte(setting_byte)) // PS_FINALCOMBINERSETTING_CLAMP_SUM
+    {
+		// V1+R0 sum clamped to [0,1]
+        V1R0_SUM_value = clamp(V1R0_SUM_value, 0, 1);
+    }
+
+	// Set the result in it's dedicated register
+#ifndef SUPPORTS_INDIRECT_INDEX
+    state.V1R0_SUM = V1R0_SUM_value;
+#else
+    state.RegisterValues[PS_REGISTER_V1R0_SUM] = float4(V1R0_SUM_value, DEFAULT_ALPHA);
+#endif
+
+	// Tell get_input_register_as_float4() we're now in the final combiner stage for A,B,C,D :
+    state.stage = FINAL_COMBINER_STAGE_ABCD;
+	// Fetch the A, B, C and D register values :
+    float4 A_value = get_input_register_as_float4(state, A_reg_byte);
+    float4 B_value = get_input_register_as_float4(state, B_reg_byte);
+    float4 C_value = get_input_register_as_float4(state, C_reg_byte);
+    float4 D_value = get_input_register_as_float4(state, D_reg_byte);
+
+	// Calculate output RGB = a*b + (1-a)*c + d :
+    float4 FinalOutput;
+    FinalOutput.rgb = lerp(B_value.rgb, C_value.rgb, A_value.rgb) + D_value.rgb;
+
+	// Fetch the output alpha channel from the G register value :
+    float4 G_value = get_input_register_as_float4(state, G_reg_byte, /*is_alpha=*/true); // TODO : Is is_alpha correct?
+    FinalOutput.a = G_value.a;
+
+    return FinalOutput;
 }
+
+texture tex0;
+texture tex1;
+texture tex2;
+texture tex3;
+sampler samp2d; // TODO : Implement all possible samplers
+
+struct VS_OUTPUT // TODO : Complete and pass this in through code (and/or vertex shader?)
+{
+    float4 Position : SV_POSITION; // vertex position 
+//    float4 Diffuse : COLOR0; // vertex diffuse color (note that COLOR0 is clamped from 0..1)
+    float4 TextureCoords[4] : TEXCOORD0; // vertex texture coords 
+};
+
+VS_OUTPUT In;
 
 float4 main() : SV_TARGET
 {
     ps_state state = (ps_state) 0; // Clearing like this avoids error X3508: 'do_color_combiner_stage': output parameter 'state' not completely initialized
-	// Note, the above also sets state.ZERO] to 0.0
+	// Note, the above also sets state.RegisterValues[PS_REGISTER_ZERO] to 0!
 
+	// Calculate initial register values :
+    float4 V0_value = In.Position; // TODO : Is this correct?
+	// TODO : Fully implement texture fetch (preferrably in this shader, including conversion of X_D3DFMT_P8 and other unsupported textures formats)
+    float4 T0_value = tex2D(samp2d, (float2) In.TextureCoords[0]);
+    float4 T1_value = tex2D(samp2d, (float2) In.TextureCoords[1]);
+    float4 T2_value = tex2D(samp2d, (float2) In.TextureCoords[2]);
+    float4 T3_value = tex2D(samp2d, (float2) In.TextureCoords[3]);
 	// TODO : Is the following initialization of R0 and FOG correct?
+    float4 R0_value = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
+    float4 FOG_value = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
+
+	// Set initial register values :
 #ifndef SUPPORTS_INDIRECT_INDEX
-    state.R[0] = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
-    state.FOG = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
+    state.V[0] = V0_value;
+    //state.V[1] = V1_value;
+    state.T[0] = T0_value;
+    state.T[1] = T1_value;
+    state.T[2] = T2_value;
+    state.T[3] = T3_value;
+    state.R[0] = R0_value;
+    state.FOG = FOG_value;
 #else
-    state.RegisterValues[PS_REGISTER_R0] = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
-    state.RegisterValues[PS_REGISTER_FOG] = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
+    state.RegisterValues[PS_REGISTER_V0] = V0_value;
+    //state.RegisterValues[PS_REGISTER_V1] = V1_value;
+    state.RegisterValues[PS_REGISTER_T0] = T0_value;
+    state.RegisterValues[PS_REGISTER_T1] = T1_value;
+    state.RegisterValues[PS_REGISTER_T2] = T2_value;
+    state.RegisterValues[PS_REGISTER_T3] = T3_value;
+    state.RegisterValues[PS_REGISTER_R0] = R0_value;
+    state.RegisterValues[PS_REGISTER_FOG] = FOG_value;
 #endif
 
 	// Decode the global combiner count and flags :
-    uint1 combiner_byte_0 = get_byte_0_from_float4(D3DRS_PSCOMBINERCOUNT);
-    uint1 combiner_byte_1 = get_byte_1_from_float4(D3DRS_PSCOMBINERCOUNT);
-    uint1 combiner_byte_2 = get_byte_2_from_float4(D3DRS_PSCOMBINERCOUNT);
-    uint num_stages = combiner_byte_0;
+    byte_t combiner_byte_0 = get_byte_0_from_float4(D3DRS_PSCOMBINERCOUNT);
+    byte_t combiner_byte_1 = get_byte_1_from_float4(D3DRS_PSCOMBINERCOUNT);
+    byte_t combiner_byte_2 = get_byte_2_from_float4(D3DRS_PSCOMBINERCOUNT);
+    byte_t num_stages = fmod(combiner_byte_0, 8);
     state.FlagMuxMsb = get_bit_0_from_byte(combiner_byte_1); // PS_COMBINERCOUNT_MUX_MSB = 0x0001L, // mux on r0.a msb
     state.FlagUniqueC0 = get_bit_4_from_byte(combiner_byte_1); // PS_COMBINERCOUNT_UNIQUE_C0 = 0x0010L, // c0 unique in each stage
     state.FlagUniqueC1 = get_bit_0_from_byte(combiner_byte_2); // PS_COMBINERCOUNT_UNIQUE_C1 = 0x0100L // c1 unique in each stage
@@ -908,22 +979,14 @@ float4 main() : SV_TARGET
     assert(num_stages >= 1);
     assert(num_stages <= 8);
 #endif
-
-	// TODO : Implement texture fetch (preferrably in this shader, including conversion of X_D3DFMT_P8 and other unsupported textures formats)
+    num_stages = max(num_stages, 7u);
 
 	// Loop over at most 8 stages (start counting from zero)
-    for (uint stage = 0; stage < MAX_COMBINER_STAGE_COUNT; stage++)
+    for (byte_t stage = 0; stage < num_stages; stage++)
     {
-		// Help loop-unrolling (which doesn't work with an uncertain limit) by breaking ourselves
-        if (stage >= num_stages)
-        {
-            break;
-        }
-
         state.stage = stage; // tell get_input_register_as_float4() the currently active stage
-        do_color_combiner_stage(state, /*rgb*/false);
-        do_color_combiner_stage(state, /*is_alpha=*/true);
+        do_color_combiner_stage(state, false); // for RGB
+        do_color_combiner_stage(state, true); // for Alpha
     }
-
     return do_final_combiner(state);
 }
