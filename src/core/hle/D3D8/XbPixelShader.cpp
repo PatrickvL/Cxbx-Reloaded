@@ -5969,9 +5969,14 @@ VOID XTL::DxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
   // See D3DDevice_SetPixelShaderCommon which implements this
 
   pPSDef = g_pXbox_PixelShader != nullptr ? (XTL::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
- 
-  if (pPSDef != nullptr)
+
+  if (pPSDef == nullptr)
   {
+	ConvertedPixelShaderHandle = 0;
+	g_pD3DDevice->SetPixelShader((IDirect3DPixelShader9*)ConvertedPixelShaderHandle);
+	return;
+  }
+
 	if (bTargetHLSL) {
 		if (RecompiledPixelShader_HLSL.ConstInUse[0] == false) {
 			// Initialize static RecompiledPixelShader_HLSL once :
@@ -6024,7 +6029,40 @@ VOID XTL::DxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
 		}
 
 		g_pD3DDevice->SetPixelShader(pHLSLPixelShader);
-	} else {
+
+		// Transfer all current render state values to the HLSL pixel shader through host pixel shader constants
+		for (int rs = XTL::X_D3DRS_PSALPHAINPUTS0; i <= XTL::X_D3DRS_PSCOMBINERCOUNT; i++) {
+			DWORD dwRenderState = TemporaryPixelShaderRenderStates[i];
+
+			float ConstantData[4];
+/*
+			bool is_color_constant = (rs >= XTL::X_D3DRS_PSCONSTANT0_0 && rs <= XTL::X_D3DRS_PSCONSTANT1_7)
+				|| (rs == X_D3DRS_PSFINALCOMBINERCONSTANT0)
+				|| (rs == X_D3DRS_PSFINALCOMBINERCONSTANT1);
+
+			if (is_color_constant)
+			{
+				ConstantData[0] = 0.0f;
+				ConstantData[1] = 0.0f;
+				ConstantData[2] = 0.0f;
+				ConstantData[3] = 0.0f;
+			}
+			else
+*/
+			{
+				ConstantData[0] = (float)(dwRenderState & 0xFF);
+				ConstantData[1] = (float)((dwRenderState >> 8) & 0xFF);
+				ConstantData[2] = (float)((dwRenderState >> 16) & 0xFF);
+				ConstantData[3] = (float)((dwRenderState >> 24)& 0xFF);
+			}
+
+			g_pD3DDevice->SetPixelShaderConstantF(i, ConstantData, 1);
+		}
+
+		return;
+	}
+
+	// Non-HLSL pixel shader path :
 	RecompiledPixelShader = nullptr;
 
     // Now, see if we already have a shader compiled for this declaration :
@@ -6155,12 +6193,6 @@ VOID XTL::DxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
 		);
       }
     }
-  }
-  else
-  {
-    ConvertedPixelShaderHandle = 0;
-	g_pD3DDevice->SetPixelShader((IDirect3DPixelShader*)ConvertedPixelShaderHandle);
-  }
 }
 
 // End of Dxbx code
