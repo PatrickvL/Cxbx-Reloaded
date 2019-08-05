@@ -1,4 +1,4 @@
-	//
+//
 // Cxbx-Reloaded Xbox Pixel Shader Interpreter, written in Direct3D 9.0 Shader Model 3.0
 //
 // This shader interprets Xbox Pixel Shaders, as declared in the Xbox Direct3D__RenderState registers.
@@ -19,9 +19,9 @@
 // Utility functions
 //
 
-#define SUPPORTS_INDIRECT_INDEX // TODO : Fix possible fxc.exe HLSL bug, that optimizes everything away with this unset?!
-#define AVOID_INVALID_ACCESSES
-#define ASSERT_VALID_ACCESSES
+#define SUPPORTS_INDIRECT_INDEX // TODO : Fix possible fxc.exe HLSL bug, that optimizes (nearly) everything away with this unset?!
+//#define AVOID_INVALID_ACCESSES
+//#define ASSERT_VALID_ACCESSES
 
 typedef uint byte_t; // Indicates an already floor()'ed float, limited to lowest 8 bits
 
@@ -38,10 +38,13 @@ byte_t float_to_byte(const float value) // TODO : Test this thoroughly, aiming f
     assert(value >= 0);
     assert(value <= 255);
 #endif
-    byte_t byte_result = abs(fmod(value, 256));	//max(value, 255u);
+    //byte_t byte_result = max(value, 255u); // Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
+    byte_t byte_result = abs(value); // Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
+    //byte_t byte_result = abs(fmod(value, 256)); // Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
+    //uint byte_result = max(fmod(value, 256), 255); // Compiles in Visual Studio?, not in AMD GPU ShaderAnalyzer
 #ifdef ASSERT_VALID_ACCESSES
-    assert(byte_result >= 0u);
-    assert(byte_result <= 255u);
+    assert(byte_result >= 0);
+    assert(byte_result <= 255);
 #endif
     return byte_result;
 }
@@ -297,22 +300,22 @@ static const byte_t PS_FINALCOMBINERSETTING_COMPLEMENT_R0 = 0x20; // unsigned in
 //#define PS_COMBINEROUTPUTS(ab,cd,mux_sum,flags) (((flags)<<12)|((mux_sum)<<8)|((ab)<<4)|(cd))
 // ab,cd,mux_sum contain a value from PS_REGISTER
 // flags contains values from PS_COMBINEROUTPUT
+static const byte_t PS_COMBINEROUTPUT_CD_MULTIPLY = 0x00L;
+static const byte_t PS_COMBINEROUTPUT_CD_DOT_PRODUCT = 0x01L; // RGB only
+static const byte_t PS_COMBINEROUTPUT_AB_MULTIPLY = 0x00L;
+static const byte_t PS_COMBINEROUTPUT_AB_DOT_PRODUCT = 0x02L; // RGB only
+static const byte_t PS_COMBINEROUTPUT_AB_CD_SUM = 0x00L; // 3rd output is AB+CD
+static const byte_t PS_COMBINEROUTPUT_AB_CD_MUX = 0x04L; // 3rd output is MUX(AB;CD) based on R0.a
 static const byte_t PS_COMBINEROUTPUT_IDENTITY = 0x00L; // y = x
 static const byte_t PS_COMBINEROUTPUT_BIAS = 0x08L; // y = x - 0.5
 static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_1 = 0x10L; // y = x*2
 static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS = 0x18L; // y = (x - 0.5)*2
 static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2 = 0x20L; // y = x*4
-// static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4
+static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4 // TODO : Unknown if this actually exists, needs verification
 static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1 = 0x30L; // y = x/2
-// static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2
-static const byte_t PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA = 0x80L; // RGB only
+static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2 // TODO : Unknown if this actually exists, needs verification
 static const byte_t PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA = 0x40L; // RGB only
-static const byte_t PS_COMBINEROUTPUT_AB_MULTIPLY = 0x00L;
-static const byte_t PS_COMBINEROUTPUT_AB_DOT_PRODUCT = 0x02L; // RGB only
-static const byte_t PS_COMBINEROUTPUT_CD_MULTIPLY = 0x00L;
-static const byte_t PS_COMBINEROUTPUT_CD_DOT_PRODUCT = 0x01L; // RGB only
-static const byte_t PS_COMBINEROUTPUT_AB_CD_SUM = 0x00L; // 3rd output is AB+CD
-static const byte_t PS_COMBINEROUTPUT_AB_CD_MUX = 0x04L; // 3rd output is MUX(AB;CD) based on R0.a
+static const byte_t PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA = 0x80L; // RGB only
 // AB_CD register output must be DISCARD if either AB_DOT_PRODUCT or CD_DOT_PRODUCT are set
 
 // =========================================================================================================
@@ -399,7 +402,9 @@ float4 D3DRS_PSCOMBINERCOUNT            : register(c53); // 4 byte floats
 //
 // Our Xbox Pixel Shader Interpreter state
 //
-typedef struct {
+typedef
+struct _ps_state
+{
 	// Flags, used in get_input_register_as_float4() :
     byte_t stage;        // Currently active stage (0 upto 7, 8 is for final combiner)
     bool FlagMuxMsb;   // Mux on r0.a lsb or msb, 0 = PS_COMBINERCOUNT_MUX_LSB, 1 = PS_COMBINERCOUNT_MUX_MSB
@@ -436,16 +441,31 @@ byte_t mask_register(const byte_t value)
 
 byte_t mask_inputmapping(const byte_t value)
 {
-    float mask_inputmapping_result = float(value);
+    float mask_inputmapping_result = (float) value;
     mask_inputmapping_result = mask_inputmapping_result / 2; // remove least significant bit
-    mask_inputmapping_result = fmod(mask_inputmapping_result, 8); // == (PS_INPUTMAPPING_SIGNED_NEGATE/2) + 1;
+    mask_inputmapping_result = fmod(mask_inputmapping_result, PS_INPUTMAPPING_SIGNED_NEGATE/2); // == (PS_INPUTMAPPING_SIGNED_NEGATE/2) + 1;
     mask_inputmapping_result = mask_inputmapping_result * 2; // shift bits back to their original place
-    mask_inputmapping_result = max(mask_inputmapping_result, PS_INPUTMAPPING_SIGNED_NEGATE); // max() avoids error X3500: array reference cannot be used as an l-value; not natively addressable
+//    mask_inputmapping_result = max(mask_inputmapping_result, PS_INPUTMAPPING_SIGNED_NEGATE); // max() avoids error X3500: array reference cannot be used as an l-value; not natively addressable
 #ifdef ASSERT_VALID_ACCESSES
     assert((byte_t) mask_inputmapping_result >= PS_INPUTMAPPING_UNSIGNED_IDENTITY);
     assert((byte_t) mask_inputmapping_result <= PS_INPUTMAPPING_SIGNED_NEGATE);
 #endif
     return (byte_t) mask_inputmapping_result;
+}
+
+byte_t mask_outputmapping(const byte_t byte_1, const byte_t byte_2)
+{
+    float mask_outputmapping_result = (float) byte_2;
+    mask_outputmapping_result = fmod(mask_outputmapping_result, 4); // only use the lowest 2 bits of byte 2
+    mask_outputmapping_result = mask_outputmapping_result * PS_COMBINEROUTPUT_SHIFTLEFT_1; // shift them left 4 bits
+    if (get_bit_7_from_byte(byte_1)) // when bit 7 of byte 1 is set
+        mask_outputmapping_result = mask_outputmapping_result + PS_COMBINEROUTPUT_BIAS; // include the BIAS bit in the result
+
+#ifdef ASSERT_VALID_ACCESSES
+	assert((byte_t) mask_outputmapping_result >= PS_COMBINEROUTPUT_IDENTITY);
+    assert((byte_t) mask_outputmapping_result <= PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS);
+#endif
+    return (byte_t) mask_outputmapping_result;
 }
 
 float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte, const bool is_alpha = false)
@@ -455,7 +475,18 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
     byte_t register_index = mask_register(reg_byte);
     byte_t input_mapping = mask_inputmapping(reg_byte);
 #ifdef AVOID_INVALID_ACCESSES
-    if (state.stage >= FINAL_COMBINER_STAGE)
+    if (state.stage < FINAL_COMBINER_STAGE)
+	{
+		// Below are invalid in color combiners (only final combiner) :
+        if (register_index == PS_REGISTER_V1R0_SUM || register_index == PS_REGISTER_EF_PROD)
+		{
+#ifdef ASSERT_VALID_ACCESSES
+				assert(false);
+#endif
+                return Result;
+		}
+	}
+    else
     {
 		// Below are only valid for final combiner :
         if (register_index == PS_REGISTER_V1R0_SUM || register_index == PS_REGISTER_EF_PROD)
@@ -603,7 +634,12 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
     return Result;
 }
 
-void set_output_register_rgb(inout ps_state state, const byte_t reg_byte, const float4 value)
+void set_output_register_rgb(
+	inout ps_state state,
+	const byte_t reg_byte,
+	byte_t output_mapping,
+	bool flag_BlueToAlpha,
+	const float4 value)
 {
     byte_t register_index = mask_register(reg_byte);
 
@@ -630,6 +666,8 @@ void set_output_register_rgb(inout ps_state state, const byte_t reg_byte, const 
     }
 
 #endif
+	// TODO : Handle output_mapping
+    // TODO : Apply flag_BlueToAlpha 
 #ifndef SUPPORTS_INDIRECT_INDEX
 	// Below are writable :
     switch (register_index)
@@ -664,7 +702,11 @@ void set_output_register_rgb(inout ps_state state, const byte_t reg_byte, const 
 #endif
 }
 
-void set_output_register_alpha(inout ps_state state, const byte_t reg_byte, const float4 value)
+void set_output_register_alpha(
+	inout ps_state state,
+	const byte_t reg_byte,
+	byte_t output_mapping,
+	const float4 value)
 {
     byte_t register_index = mask_register(reg_byte);
 
@@ -691,6 +733,7 @@ void set_output_register_alpha(inout ps_state state, const byte_t reg_byte, cons
     }
 
 #endif
+	// TODO : Handle output_mapping
 #ifndef SUPPORTS_INDIRECT_INDEX
 	// Below are writable :
     switch (register_index)
@@ -744,38 +787,10 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
     byte_t output_byte_1 = is_alpha ? get_byte_1_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_1_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
     byte_t output_byte_2 = is_alpha ? get_byte_2_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_2_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
 
-	// Decode output register numbers and flags :
-    byte_t combiner_output_reg_AB = get_nibble_0_from_byte(output_byte_0); // A.k.a. 'd0'
-    byte_t combiner_output_reg_CD = get_nibble_1_from_byte(output_byte_0); // A.k.a. 'd1'
-    byte_t combiner_output_reg_AB_CD = get_nibble_0_from_byte(output_byte_1); // A.k.a. 'd2'
+	// Decode already required flags from output byte 1 :
     bool combiner_flag_CD_DotProduct = get_bit_4_from_byte(output_byte_1); // PS_COMBINEROUTPUT_CD_DOT_PRODUCT = 0x01L; // RGB only
     bool combiner_flag_AB_DotProduct = get_bit_5_from_byte(output_byte_1); // PS_COMBINEROUTPUT_AB_DOT_PRODUCT = 0x02L; // RGB only
     bool combiner_flag_ABCD_Mux = get_bit_6_from_byte(output_byte_1); // PS_COMBINEROUTPUT_AB_CD_MUX = 0x04L; // 3rd output is MUX(AB;CD) based on R0.a
-	/* TODO : Fetch and interpret 3 output mapping bits
-	static const byte_t PS_COMBINEROUTPUT_IDENTITY             = 0x00L; // y = x
-	static const byte_t PS_COMBINEROUTPUT_BIAS                 = 0x08L; // y = x - 0.5
-	static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_1          = 0x10L; // y = x*2
-	static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS     = 0x18L; // y = (x - 0.5)*2
-	static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2          = 0x20L; // y = x*4
-	// static const byte_t PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS  = 0x28L; // y = (x - 0.5)*4
-	static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1         = 0x30L; // y = x/2
-	// static const byte_t PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS = 0x38L; // y = (x - 0.5)/2
-	*/
-    bool combiner_flag_CD_BlueToAlpha = get_bit_2_from_byte(output_byte_2); // PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA = 0x40L; // RGB only
-    bool combiner_flag_AB_BlueToAlpha = get_bit_3_from_byte(output_byte_2); // PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA = 0x80L; // RGB only
-
-	// AB_CD register output must be DISCARD if either AB_DOT_PRODUCT or CD_DOT_PRODUCT are set
-    if (combiner_flag_AB_DotProduct || combiner_flag_CD_DotProduct)
-    {
-#ifdef AVOID_INVALID_ACCESSES
-		// Fix-up, just to avoid issues (TODO : Investigate if real hardware does this too?)
-        combiner_output_reg_AB_CD = PS_REGISTER_DISCARD;
-#else
-#ifdef ASSERT_VALID_ACCESSES
-		assert(combiner_output_reg_AB_CD == PS_REGISTER_DISCARD);
-#endif
-#endif
-    }
 
 	// xmma (mul/mul/sum)     > calculating : d0=s0*s1,     d1=s2*s3,     d2=             s2*s3 + s0*s1
 	// xmmc (mul/mul/mux)     > calculating : d0=s0*s1,     d1=s2*s3,     d2=(r0.a>0.5) ? s2*s3 : s0*s1
@@ -804,21 +819,41 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
     else // PS_COMBINEROUTPUT_AB_CD_SUM
         AB_CD_value = AB_value + CD_value;
 
+	// Decode further output register numbers :
+    byte_t combiner_output_reg_AB = get_nibble_0_from_byte(output_byte_0); // A.k.a. 'd0'
+    byte_t combiner_output_reg_CD = get_nibble_1_from_byte(output_byte_0); // A.k.a. 'd1'
+    byte_t combiner_output_reg_AB_CD = get_nibble_0_from_byte(output_byte_1); // A.k.a. 'd2'
+    byte_t combiner_output_mapping = mask_outputmapping(output_byte_1, output_byte_2);
+
+	// AB_CD register output must be DISCARD if either AB_DOT_PRODUCT or CD_DOT_PRODUCT are set
+    if (combiner_flag_AB_DotProduct || combiner_flag_CD_DotProduct)
+    {
+#ifdef AVOID_INVALID_ACCESSES
+		// Fix-up, just to avoid issues (TODO : Investigate if real hardware does this too?)
+        combiner_output_reg_AB_CD = PS_REGISTER_DISCARD;
+#else
+#ifdef ASSERT_VALID_ACCESSES
+		assert(combiner_output_reg_AB_CD == PS_REGISTER_DISCARD);
+#endif
+#endif
+    }
+
 	// Store resulting values in output registers :
-	// TODO : Handle output_mapping in set_output_register_*()
-    // byte_t output_mapping = mask_outputmapping(output_byte1, output_byte2);
-    // TODO : Apply combiner_flag_AB_BlueToAlpha and combiner_flag_CD_BlueToAlpha
     if (is_alpha)
     {
-        set_output_register_alpha(state, combiner_output_reg_AB, AB_value);
-        set_output_register_alpha(state, combiner_output_reg_CD, CD_value);
-        set_output_register_alpha(state, combiner_output_reg_AB_CD, AB_CD_value);
+        set_output_register_alpha(state, combiner_output_reg_AB, combiner_output_mapping, AB_value);
+        set_output_register_alpha(state, combiner_output_reg_CD, combiner_output_mapping, CD_value);
+        set_output_register_alpha(state, combiner_output_reg_AB_CD, combiner_output_mapping, AB_CD_value);
     }
     else
     {
-        set_output_register_rgb(state, combiner_output_reg_AB, AB_value);
-        set_output_register_rgb(state, combiner_output_reg_CD, CD_value);
-        set_output_register_rgb(state, combiner_output_reg_AB_CD, AB_CD_value);
+		// Decode the last two output register flags (for RGB only) :
+		bool flag_CD_BlueToAlpha = get_bit_2_from_byte(output_byte_2); // PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA = 0x40L; // RGB only
+        bool flag_AB_BlueToAlpha = get_bit_3_from_byte(output_byte_2); // PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA = 0x80L; // RGB only
+
+        set_output_register_rgb(state, combiner_output_reg_AB, combiner_output_mapping, flag_AB_BlueToAlpha, AB_value);
+        set_output_register_rgb(state, combiner_output_reg_CD, combiner_output_mapping, flag_CD_BlueToAlpha, CD_value);
+        set_output_register_rgb(state, combiner_output_reg_AB_CD, combiner_output_mapping, /*flag_BlueToAlpha=*/false, AB_CD_value);
     }
 }
 
@@ -831,6 +866,7 @@ float4 do_final_combiner(inout ps_state state)
 	float4 R0_value = state.RegisterValues[PS_REGISTER_R0].a;
 #endif
 
+	// TODO : Is the following actually required? D3D seems to always set the final combiner register...
 	// Check if the final combiner doesn't need to run :
     if (!any(D3DRS_PSFINALCOMBINERINPUTSABCD) && !any(D3DRS_PSFINALCOMBINERINPUTSEFG))
         return R0_value;
@@ -924,6 +960,7 @@ struct VS_OUTPUT // TODO : Complete and pass this in through code (and/or vertex
 {
     float4 Position : SV_POSITION; // vertex position 
 //    float4 Diffuse : COLOR0; // vertex diffuse color (note that COLOR0 is clamped from 0..1)
+//    float4 Fog : COLOR0;
     float4 TextureCoords[4] : TEXCOORD0; // vertex texture coords 
 };
 
@@ -935,18 +972,19 @@ float4 main() : SV_TARGET
 	// Note, the above also sets state.RegisterValues[PS_REGISTER_ZERO] to 0!
 
 	// Calculate initial register values :
+    float4 FOG_value = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA); // TODO : Is this correct? Read In.Fog instead?
     float4 V0_value = In.Position; // TODO : Is this correct?
+    //float4 V1_value = In.Position??; // TODO : Implement, but how?
 	// TODO : Fully implement texture fetch (preferrably in this shader, including conversion of X_D3DFMT_P8 and other unsupported textures formats)
     float4 T0_value = tex2D(samp2d, (float2) In.TextureCoords[0]);
     float4 T1_value = tex2D(samp2d, (float2) In.TextureCoords[1]);
     float4 T2_value = tex2D(samp2d, (float2) In.TextureCoords[2]);
     float4 T3_value = tex2D(samp2d, (float2) In.TextureCoords[3]);
-	// TODO : Is the following initialization of R0 and FOG correct?
-    float4 R0_value = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
-    float4 FOG_value = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA);
+    float4 R0_value = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA); // TODO : Is this correct?
 
 	// Set initial register values :
 #ifndef SUPPORTS_INDIRECT_INDEX
+    state.FOG = FOG_value;
     state.V[0] = V0_value;
     //state.V[1] = V1_value;
     state.T[0] = T0_value;
@@ -954,8 +992,8 @@ float4 main() : SV_TARGET
     state.T[2] = T2_value;
     state.T[3] = T3_value;
     state.R[0] = R0_value;
-    state.FOG = FOG_value;
 #else
+    state.RegisterValues[PS_REGISTER_FOG] = FOG_value;
     state.RegisterValues[PS_REGISTER_V0] = V0_value;
     //state.RegisterValues[PS_REGISTER_V1] = V1_value;
     state.RegisterValues[PS_REGISTER_T0] = T0_value;
@@ -963,7 +1001,6 @@ float4 main() : SV_TARGET
     state.RegisterValues[PS_REGISTER_T2] = T2_value;
     state.RegisterValues[PS_REGISTER_T3] = T3_value;
     state.RegisterValues[PS_REGISTER_R0] = R0_value;
-    state.RegisterValues[PS_REGISTER_FOG] = FOG_value;
 #endif
 
 	// Decode the global combiner count and flags :
