@@ -34,7 +34,7 @@ void DumpPixelShaderDefToFile( XTL::X_D3DPIXELSHADERDEF* pPSDef, const char* psz
 // print relevant contents to the debug console
 void PrintPixelShaderDefContents(XTL::X_D3DPIXELSHADERDEF* pDSDef );
 
-// PatrickvL's Dxbx pixel shader translation
-VOID DxbxUpdateActivePixelShader(const bool bTargetHLSL); // NOPATCH
+// Pixel shader emulation
+VOID CxbxUpdateActivePixelShader(const bool bTargetHLSL); // NOPATCH
 
 #endif // PIXELSHADER_H

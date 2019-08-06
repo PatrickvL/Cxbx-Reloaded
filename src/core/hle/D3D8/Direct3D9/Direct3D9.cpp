@@ -7091,14 +7091,14 @@ void CxbxUpdateNativeD3DResources()
 
     EmuUpdateActiveTextureStages();
 
-	if (!g_DisablePixelShaders) {
+	switch (g_PixelShaderMode) {
 		case psmDisabled:
 			break;
 		case psmLegacy:
-			XTL::DxbxUpdateActivePixelShader(/*TargetHLSL=*/false);
+			XTL::CxbxUpdateActivePixelShader(/*TargetHLSL=*/false);
 			break;
 		case psmHLSL:
-		XTL::DxbxUpdateActivePixelShader();
+			XTL::CxbxUpdateActivePixelShader(/*TargetHLSL=*/true);
 			break;
 		default:
 			assert(false);

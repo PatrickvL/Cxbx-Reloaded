@@ -5942,125 +5942,138 @@ static const
 
 std::vector<PSH_RECOMPILED_SHADER> g_RecompiledPixelShaders;
 
-VOID XTL::DxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
+  // TODO: Is this even right? The first RenderState is PSAlpha,
+// PatrickvL's HLSL pixel shader - an Xbox register combiner interpreter, based on D3D__RenderState values
+  // See D3DDevice_SetPixelShaderCommon which implements this
+VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 {
-  XTL::X_D3DPIXELSHADERDEF *pPSDef;
+	using namespace XTL;
+
+	static IDirect3DPixelShader9* pHLSLPixelShader = nullptr;
+
+	if (pHLSLPixelShader == nullptr) {
+		HRESULT Result = D3D_OK;
+		static LPCSTR HLSLPixelShader_String = "TODO";
+		DWORD dwFlags = 0 | D3DXSHADER_DEBUG;
+		D3DXMACRO* pDefines = nullptr;
+		LPD3DXINCLUDE pInclude = nullptr;
+		LPCSTR pFunctionName = nullptr;
+		LPCSTR pProfile = nullptr;
+
+		LPD3DXBUFFER pShaderBuffer = nullptr;
+		LPD3DXBUFFER pErrorMsgs = nullptr;
+		LPD3DXCONSTANTTABLE pConstantTable = nullptr;
+
+		Result = D3DXCompileShader(
+			/*pSrcData=*/HLSLPixelShader_String,
+			/*SrcDataLen=*/strlen(HLSLPixelShader_String),
+			pDefines, pInclude, pFunctionName, pProfile, dwFlags,
+			/*OUT*/&pShaderBuffer, &pErrorMsgs, &pConstantTable
+		);
+
+		if (pErrorMsgs) {
+			char* szErrors = (char*)pErrorMsgs->GetBufferPointer();
+			EmuLog(FAILED(Result) ? LOG_LEVEL::FATAL : LOG_LEVEL::WARNING, szErrors);
+			// CxbxShowError(szErrors);
+			pErrorMsgs->Release();
+		}
+
+		if (FAILED(Result)) {
+			// CxbxShowError("HLSL pixel shader compilation failed");
+			return;
+		}
+
+		Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
+		pShaderBuffer->Release();
+		if (FAILED(Result)) {
+			// CxbxShowError("HLSL pixel shader creation failed");
+			return;
+		}
+	}
+
+	// Check which pixel shader is currently active :
+	IDirect3DPixelShader9* pCurrentPixelShader = nullptr;;
+	if (FAILED(g_pD3DDevice->GetPixelShader(&pCurrentPixelShader))) {
+		// CxbxShowError("GetPixelShader failed");
+		return;
+	}
+
+	// Only set HLSL pixel shader when it's not already set, to avoid needless host GPU state-changes :
+	if (pCurrentPixelShader != pHLSLPixelShader) {
+		// Activate the HLSL pixel shader, which will interpret the Xbox register combiner unit :
+		g_pD3DDevice->SetPixelShader(pHLSLPixelShader);
+	}
+
+	// Avoid leaking a previously set pixel shader (if any) :
+	if (pCurrentPixelShader) {
+		pCurrentPixelShader->Release();
+		pCurrentPixelShader = nullptr;
+	}
+
+	assert(X_D3DRS_PS_FIRST == 0); // Below code is based on the first D3D pixel shader render-state being at offset zero
+	float PixelShaderConstants[X_D3DRS_PS_LAST + 1][4]; // TODO : Packing?
+
+	// Transfer all current render state values to the HLSL pixel shader through host pixel shader constants
+	for (int rs = X_D3DRS_PS_FIRST; rs <= X_D3DRS_PS_LAST; rs++) {
+		// Read from D3D__RenderState each value, put together this forms the entire Xbox register combiner configuration :
+		DWORD dwRenderStateValue = TemporaryPixelShaderRenderStates[rs];
+
+		// Replace the reserved slot with the value from X_D3DRS_PSTEXTUREMODES (which is at offset 136, which lies outside the pixel shader range) :
+		if (rs == X_D3DRS_PS_RESERVED)
+			dwRenderStateValue = TemporaryPixelShaderRenderStates[X_D3DRS_PSTEXTUREMODES];
+
+		// Convert each DWORD into four separate bytes :
+		uint8_t ByteValues[4];
+		ByteValues[0] = (uint8_t)(dwRenderStateValue & 0xFF);
+		ByteValues[1] = (uint8_t)((dwRenderStateValue >> 8) & 0xFF);
+		ByteValues[2] = (uint8_t)((dwRenderStateValue >> 16) & 0xFF);
+		ByteValues[3] = (uint8_t)((dwRenderStateValue >> 24) & 0xFF);
+
+		// Check for color constants :
+		bool is_color_constant = (rs >= X_D3DRS_PSCONSTANT0_0 && rs <= X_D3DRS_PSCONSTANT1_7)
+			|| (rs == X_D3DRS_PSFINALCOMBINERCONSTANT0)
+			|| (rs == X_D3DRS_PSFINALCOMBINERCONSTANT1);
+
+		// Transfer color constants differently from other combiner registers :
+		if (is_color_constant)
+		{
+			// For color constants, swap R and B and map each color channel byte to a fraction [0.0-1.0] :
+			// TODO : Verify if this R<>B swap is really needed or not.
+			PixelShaderConstants[rs][0] = ((float)ByteValues[2]) / 255.0f; // B (blue) swapped with R
+			PixelShaderConstants[rs][1] = ((float)ByteValues[1]) / 255.0f; // G (green)
+			PixelShaderConstants[rs][2] = ((float)ByteValues[0]) / 255.0f; // R (red) swapped with B
+			PixelShaderConstants[rs][3] = ((float)ByteValues[3]) / 255.0f; // A (alpha)
+		}
+		else
+		{
+			// For other combiner registers, store each byte value as a float [0.0-255.0],
+			// which will be further decomposed in our HLSL pixel shader through "fmod()" operations :
+			// (This, because shader model 3 as available in Direct3D 9, has no integer support.)
+			PixelShaderConstants[rs][0] = (float)ByteValues[0];
+			PixelShaderConstants[rs][1] = (float)ByteValues[1];
+			PixelShaderConstants[rs][2] = (float)ByteValues[2];
+			PixelShaderConstants[rs][3] = (float)ByteValues[3];
+		}
+	}
+
+	// Set all constant values in a single call to host GPU, so that the new configuration becomes avaialbe to our HLSL pixel shader :
+	g_pD3DDevice->SetPixelShaderConstantF(X_D3DRS_PS_FIRST, &(PixelShaderConstants[X_D3DRS_PS_FIRST][0]), X_D3DRS_PS_LAST + 1);
+}
+
+// PatrickvL's Dxbx pixel shader translation
+VOID DxbxUpdateActivePixelShader_Legacy(XTL::X_D3DPIXELSHADERDEF* pPSDef) // NOPATCH
+{
+  using namespace XTL;
+
   PPSH_RECOMPILED_SHADER RecompiledPixelShader;
-  static PSH_RECOMPILED_SHADER RecompiledPixelShader_HLSL = {};
   DWORD ConvertedPixelShaderHandle;
   DWORD CurrentPixelShader;
   int i;
   DWORD Register_;
-  D3DCOLOR dwColor;
-  D3DXCOLOR fColor;
+  XTL::D3DCOLOR dwColor;
+  XTL::D3DXCOLOR fColor;
 
   HRESULT Result = D3D_OK;
-
-  // The first RenderState is PSAlpha,
-  // The pixel shader is stored in pDevice->m_pPixelShader
-  // For now, we still patch SetPixelShader and read from there...
-
-  // Use the pixel shader stored in D3D__RenderState rather than the set handle
-  // This allows changes made via SetRenderState to actually take effect!
-  // NOTE: PSTextureModes is in a different location in the X_D3DPIXELSHADERFEF than in Render State mappings
-  // All other fields are the same.
-  // We cast D3D__RenderState to a pPSDef for these fields, but
-  // manually read from D3D__RenderState[X_D3DRS_PSTEXTUREMODES) for that one field.
-  // See D3DDevice_SetPixelShaderCommon which implements this
-
-  pPSDef = g_pXbox_PixelShader != nullptr ? (XTL::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
-
-  if (pPSDef == nullptr)
-  {
-	ConvertedPixelShaderHandle = 0;
-	g_pD3DDevice->SetPixelShader((IDirect3DPixelShader9*)ConvertedPixelShaderHandle);
-	return;
-  }
-
-	if (bTargetHLSL) {
-		if (RecompiledPixelShader_HLSL.ConstInUse[0] == false) {
-			// Initialize static RecompiledPixelShader_HLSL once :
-			for (int i = 0; i < PSH_XBOX_CONSTANT_MAX; i++) {
-				RecompiledPixelShader_HLSL.ConstInUse[i] = true;
-				RecompiledPixelShader_HLSL.ConstMapping[i] = i;
-			}
-		}
-
-		RecompiledPixelShader = &RecompiledPixelShader_HLSL;
-
-		static IDirect3DPixelShader9 *pHLSLPixelShader = nullptr;
-		if (pHLSLPixelShader == nullptr) {
-			static LPCSTR HLSLPixelShader_String = "TODO";
-			DWORD dwFlags = 0 | D3DXSHADER_DEBUG;
-			D3DXMACRO *pDefines = nullptr;
-			LPD3DXINCLUDE pInclude = nullptr;
-			LPCSTR pFunctionName = nullptr;
-			LPCSTR pProfile = nullptr;
-
-			LPD3DXBUFFER pShaderBuffer = nullptr;
-			LPD3DXBUFFER pErrorMsgs = nullptr;
-			LPD3DXCONSTANTTABLE pConstantTable = nullptr;
-
-			Result = D3DXCompileShader(
-				/*pSrcData=*/HLSLPixelShader_String,
-				/*SrcDataLen=*/strlen(HLSLPixelShader_String),
-				pDefines, pInclude, pFunctionName, pProfile, dwFlags,
-				/*OUT*/&pShaderBuffer, &pErrorMsgs, &pConstantTable
-			);
-
-			if (pErrorMsgs) {
-				char* szErrors = (char*)pErrorMsgs->GetBufferPointer();
-				EmuLog(FAILED(Result) ? LOG_LEVEL::FATAL : LOG_LEVEL::WARNING, szErrors);
-				// CxbxShowError(szErrors);
-				pErrorMsgs->Release();
-			}
-
-			if (FAILED(Result)) {
-				// CxbxShowError("HLSL pixel shader compilation failed");
-				return;
-			}
-
-			Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
-			pShaderBuffer->Release();
-			if (FAILED(Result)) {
-				// CxbxShowError("HLSL pixel shader creation failed");
-				return;
-			}
-		}
-
-		g_pD3DDevice->SetPixelShader(pHLSLPixelShader);
-
-		// Transfer all current render state values to the HLSL pixel shader through host pixel shader constants
-		for (int rs = XTL::X_D3DRS_PSALPHAINPUTS0; i <= XTL::X_D3DRS_PSCOMBINERCOUNT; i++) {
-			DWORD dwRenderState = TemporaryPixelShaderRenderStates[i];
-
-			float ConstantData[4];
-/*
-			bool is_color_constant = (rs >= XTL::X_D3DRS_PSCONSTANT0_0 && rs <= XTL::X_D3DRS_PSCONSTANT1_7)
-				|| (rs == X_D3DRS_PSFINALCOMBINERCONSTANT0)
-				|| (rs == X_D3DRS_PSFINALCOMBINERCONSTANT1);
-
-			if (is_color_constant)
-			{
-				ConstantData[0] = 0.0f;
-				ConstantData[1] = 0.0f;
-				ConstantData[2] = 0.0f;
-				ConstantData[3] = 0.0f;
-			}
-			else
-*/
-			{
-				ConstantData[0] = (float)(dwRenderState & 0xFF);
-				ConstantData[1] = (float)((dwRenderState >> 8) & 0xFF);
-				ConstantData[2] = (float)((dwRenderState >> 16) & 0xFF);
-				ConstantData[3] = (float)((dwRenderState >> 24)& 0xFF);
-			}
-
-			g_pD3DDevice->SetPixelShaderConstantF(i, ConstantData, 1);
-		}
-
-		return;
-	}
 
 	// Non-HLSL pixel shader path :
 	RecompiledPixelShader = nullptr;
@@ -6193,6 +6206,36 @@ VOID XTL::DxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
 		);
       }
     }
+}
+
+VOID XTL::CxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
+{
+	XTL::X_D3DPIXELSHADERDEF* pPSDef;
+
+	// TODO: Is this even right? The first RenderState is PSAlpha,
+	// The pixel shader is stored in pDevice->m_pPixelShader
+	// For now, we still patch SetPixelShader and read from there...
+	//DWORD *XTL_D3D__RenderState = XTL::EmuMappedD3DRenderState[0];
+	//pPSDef = (XTL::X_D3DPIXELSHADERDEF*)(XTL_D3D__RenderState);
+
+	// Use the pixel shader stored in TemporaryPixelShaderRenderStates rather than the set handle
+	// This allows changes made via SetRenderState to actually take effect!
+	// TODO: Remove this and read directly from XTL_D3D__RenderState when all RenderState and Pixel Shader functions are unpatched
+	// NOTE: PSTextureModes is in a different location in the X_D3DPIXELSHADERFEF than in Render State mappings
+	// All other fields are the same. We cast TemporaryPixelShaderRenderStates to a pPSDef for these fields, but
+	// manually read from TemporaryPixelShaderRenderStates[X_D3DRS_PSTEXTUREMODES) for that one field.
+	pPSDef = g_pXbox_PixelShader != nullptr ? (XTL::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
+
+	if (pPSDef == nullptr)
+	{
+		g_pD3DDevice->SetPixelShader((IDirect3DPixelShader9*)nullptr);
+		return;
+	}
+
+	if (bTargetHLSL)
+		CxbxUpdateActivePixelShader_HLSL();
+	else
+		DxbxUpdateActivePixelShader_Legacy(pPSDef);
 }
 
 // End of Dxbx code
