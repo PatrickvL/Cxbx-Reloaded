@@ -739,9 +739,9 @@ float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_b
             if (state.stage < STAGE_FINAL_COMBINER)
             {
                 if (state.FlagUniqueC0)
-                    input_result = D3DRS_PSCONSTANT0[state.stage];
+                    input_result = D3DRS_PSCONSTANT0[state.stage]; // PS_COMBINERCOUNT_UNIQUE_C0
                 else
-                    input_result = D3DRS_PSCONSTANT0[0u];
+                    input_result = D3DRS_PSCONSTANT0[0u]; // PS_COMBINERCOUNT_SAME_C0
             }
             else
 				input_result = D3DRS_PSFINALCOMBINERCONSTANT[0u];
@@ -750,9 +750,9 @@ float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_b
             if (state.stage < STAGE_FINAL_COMBINER)
             {
                 if (state.FlagUniqueC1)
-                    input_result = D3DRS_PSCONSTANT1[state.stage];
+                    input_result = D3DRS_PSCONSTANT1[state.stage]; // PS_COMBINERCOUNT_UNIQUE_C1
                 else
-                    input_result = D3DRS_PSCONSTANT1[0u];
+                    input_result = D3DRS_PSCONSTANT1[0u]; // PS_COMBINERCOUNT_SAME_C1
             }
             else
                 input_result = D3DRS_PSFINALCOMBINERCONSTANT[1u];
@@ -1038,25 +1038,27 @@ float4 main() : COLOR
     nointerpolation ps_state state = (ps_state) 0; // Clearing like this avoids error X3508: 'do_color_combiner_stage': output parameter 'state' not completely initialized
 	// Note, the above also sets state.RegisterValues[PS_REGISTER_ZERO] to 0!
 
+	// Process all four texture stages :
+    for (byte_t texture_stage = 0u; texture_stage < 4u; texture_stage++)
+    {
+		// TODO : Fully implement texture fetch (preferrably in this shader, including conversion of X_D3DFMT_P8 and other unsupported textures formats)
+        float4 texture_value = tex2D(samp2d, (float2) In.TextureCoords[texture_stage]); // or default float4(0,0,0,1)
+
+        byte_t texture_register = PS_REGISTER_T0 + texture_stage;
+        texture_register = max(texture_register, PS_REGISTER_T3); // Avoids warning X3550: array reference cannot be used as an l-value; not natively addressable, forcing loop to unroll 
+        set_plain_register_as_float4(state, texture_register, texture_value);
+    }
+
 	// Calculate initial register values :
     float4 FOG_value = In.Fog; // TODO : Is this correct, or use float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA)?
     float4 V0_value = In.Diffuse; // TODO : Is this correct?
     float4 V1_value = In.Specular; // TODO : Is this correct?
-	// TODO : Fully implement texture fetch (preferrably in this shader, including conversion of X_D3DFMT_P8 and other unsupported textures formats)
-    float4 T0_value = tex2D(samp2d, (float2) In.TextureCoords[0]); // or default float4(0,0,0,1)
-    float4 T1_value = tex2D(samp2d, (float2) In.TextureCoords[1]); // or default float4(0,0,0,1)
-    float4 T2_value = tex2D(samp2d, (float2) In.TextureCoords[2]); // or default float4(0,0,0,1)
-    float4 T3_value = tex2D(samp2d, (float2) In.TextureCoords[3]); // or default float4(0,0,0,1)
     float4 R0_value = float4(1.0f, 1.0f, 1.0f, DEFAULT_ALPHA); // TODO : Is this correct?
 
 	// Set initial register values :
 	set_plain_register_as_float4(state, PS_REGISTER_FOG, FOG_value);
     set_plain_register_as_float4(state, PS_REGISTER_V0, V0_value);
     set_plain_register_as_float4(state, PS_REGISTER_V1, V1_value);
-    set_plain_register_as_float4(state, PS_REGISTER_T0, T0_value);
-    set_plain_register_as_float4(state, PS_REGISTER_T1, T1_value);
-    set_plain_register_as_float4(state, PS_REGISTER_T2, T2_value);
-    set_plain_register_as_float4(state, PS_REGISTER_T3, T3_value);
     set_plain_register_as_float4(state, PS_REGISTER_R0, R0_value);
 
 	// Decode the global combiner count and flags :
@@ -1077,13 +1079,13 @@ float4 main() : COLOR
     num_stages = max(num_stages, 8u);
 #endif
 
-	// Loop over at most 8 stages (start counting from zero)
-    for (byte_t stage = 0u; stage < MAX_COMBINER_STAGE_COUNT; stage++)
+	// Loop over at most 8 combiner stages (start counting from zero)
+    for (byte_t combiner_stage = 0u; combiner_stage < MAX_COMBINER_STAGE_COUNT; combiner_stage++)
     {
-        if (stage >= num_stages)
+        if (combiner_stage >= num_stages)
             break;
 
-        state.stage = stage; // tell do_color_combiner_stage() and get_input_register_as_float4() the currently active stage
+        state.stage = combiner_stage; // tell do_color_combiner_stage() and get_input_register_as_float4() the currently active stage
         do_color_combiner_stage(state, false); // for RGB
         do_color_combiner_stage(state, true); // for Alpha
     }
