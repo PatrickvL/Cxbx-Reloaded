@@ -14,6 +14,7 @@
 // Using this representation, it's possible to extract bits from floats via fmod(),
 // as described in http://theinstructionlimit.com/encoding-boolean-flags-into-a-float-in-hlsl
 // Also, see https://en.wikipedia.org/wiki/Single-precision_floating-point_format
+// Test fmod() online via https://www.functions-online.com/fmod.html
 // Note, that this only applies to bitfield registers; color constant registers are expressed
 // as four floats, one for each color channel, in the range [0.0-1.0].
 
@@ -396,7 +397,7 @@ float4 D3DRS_PSRGBINPUTS[8]             : register(c34); // 4 byte floats
 float4 D3DRS_PSFINALCOMBINERCONSTANT[2] : register(c43);
 float4 D3DRS_PSRGBOUTPUTS[8]            : register(c45); // 4 byte floats
 float4 D3DRS_PSCOMBINERCOUNT            : register(c53); // 4 byte floats
-//float4 D3DRS_PSTEXTUREMODES             : register(c54); // 4 byte floats - CxbxUpdateActivePixelShader_HLSL() reads D3DRS_PSTEXTUREMODES (at constant offset 136), and puts it here in c54, which is named D3DRS_PS_RESERVED in Xbox D3D
+//float4 D3DRS_PSTEXTUREMODES             : register(c54); // 4 byte floats - CxbxUpdateActivePixelShader_HLSL() reads D3DRS_PSTEXTUREMODES (at render state offset 136), and puts it here in c54, which is named D3DRS_PS_RESERVED in Xbox D3D
 //float4 D3DRS_PSDOTMAPPING               : register(c55); // 4 byte floats - TODO unimplemented
 //float4 D3DRS_PSINPUTTEXTURE             : register(c56); // 4 byte floats - TODO unimplemented
 
@@ -598,20 +599,26 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
     switch (register_index)
     {
         case PS_REGISTER_C0:
-            if (state.stage >= STAGE_FINAL_COMBINER)
-                Result = D3DRS_PSFINALCOMBINERCONSTANT[0];
-            else if (state.FlagUniqueC0)
-                Result = D3DRS_PSCONSTANT0[state.stage]; // TODO : Tell the compiler state.stage range is integera 0 to 7?
+            if (state.stage < STAGE_FINAL_COMBINER)
+            {
+                if (state.FlagUniqueC0)
+                    Result = D3DRS_PSCONSTANT0[state.stage];
+                else
+                    Result = D3DRS_PSCONSTANT0[0];
+            }
             else
-                Result = D3DRS_PSCONSTANT0[0];
+				Result = D3DRS_PSFINALCOMBINERCONSTANT[0];
             break;
         case PS_REGISTER_C1:
-            if (state.stage >= STAGE_FINAL_COMBINER)
-                Result = D3DRS_PSFINALCOMBINERCONSTANT[1];
-            else if (state.FlagUniqueC0 && state.stage < STAGE_FINAL_COMBINER)
-                Result = D3DRS_PSCONSTANT1[state.stage]; // TODO : Tell the compiler state.stage range is integera 0 to 7?
+            if (state.stage < STAGE_FINAL_COMBINER)
+            {
+                if (state.FlagUniqueC1)
+                    Result = D3DRS_PSCONSTANT1[state.stage];
+                else
+                    Result = D3DRS_PSCONSTANT1[0];
+            }
             else
-                Result = D3DRS_PSCONSTANT1[1];
+                Result = D3DRS_PSFINALCOMBINERCONSTANT[1];
             break;
         case PS_REGISTER_FOG:{
 #ifndef SUPPORTS_INDIRECT_INDEX
@@ -646,10 +653,10 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
     switch (input_mapping)
     {
         case PS_INPUTMAPPING_UNSIGNED_IDENTITY: // = 0x00L : y = max(0,x)       =  1*max(0,x) + 0.0
-            Result = abs(Result); // TODO : Verify
+            Result = abs(Result); // TODO : Verify, abs() might need to be replaced by max() operation?
             break;
         case PS_INPUTMAPPING_UNSIGNED_INVERT: // = 0x20L : y = 1 - max(0,x)   = -1*max(0,x) + 1.0
-            Result = 1 - abs(Result); // TODO : Verify
+            Result = 1 - abs(Result); // TODO : Verify, abs() might need to do be removed, or replaced by max() operation?
             break;
         case PS_INPUTMAPPING_EXPAND_NORMAL: // = 0x40L : y = 2*max(0,x) - 1 =  2*max(0,x) - 1.0
             Result = 2 * max(0, Result) - 1.0;
