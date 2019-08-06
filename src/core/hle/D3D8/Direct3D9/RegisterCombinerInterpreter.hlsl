@@ -22,11 +22,11 @@
 // Utility functions
 //
 
-#define SUPPORTS_INDIRECT_INDEX // When set, register value accesses indexes an array instead of accessing separate fields
-//#define ASSERT_VALID_ACCESSES // When set, checks for valid accesses are compiled in
+#define SUPPORTS_INDIRECT_INDEX // When set, register value accesses indexes an array instead of accessing separate fields // [125 slots] when unset?
+//#define ASSERT_VALID_ACCESSES // When set, checks for valid accesses are compiled (doesn't result in additional code)
 //#define AVOID_INVALID_ACCESSES // When set, invalid accesses are avoided (although assertions may have failed already)
 
-typedef uint byte_t; // Indicates an already floor()'ed float, limited to lowest 8 bits
+typedef uint byte_t; // Indicates a float in the range [0.0-255.0] (always positive with zero fraction)
 
 #ifdef ASSERT_VALID_ACCESSES
 void assert(bool condition)
@@ -35,104 +35,118 @@ void assert(bool condition)
 }
 #endif
 
-byte_t float_to_byte(const float value) // TODO : Test this thoroughly, aiming for the fastest correct implementation that compiles without problems
+// Input float is read from one of the D3DRS_* 4 byte floats, which MUST already be in range [0.0-255.0]!
+// Given this type of input, do as little as possible to get this compiling without errors.
+byte_t float_to_byte(uniform float value) // TODO : Test this thoroughly, aiming for the fastest correct implementation that compiles without problems
 {
 #ifdef ASSERT_VALID_ACCESSES
-    assert(value >= 0);
-    assert(value <= 255);
+    assert(value >= 0.0);
+    assert(value <= 255.0);
 #endif
-    //byte_t byte_result = max(value, 255u); // Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
-    byte_t byte_result = abs(value); // Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
-    //byte_t byte_result = abs(fmod(value, 256)); // Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
-    //uint byte_result = max(fmod(value, 256), 255); // Compiles in Visual Studio?, not in AMD GPU ShaderAnalyzer
+    //byte_t byte_result = value; // error X3548: in ps_3_0 uints can only be used with known-positive values, use int if possible
+    //byte_t byte_result = fmod(value, 256u); // error X3548: in ps_3_0 uints can only be used with known-positive values, use int if possible
+    //byte_t byte_result = fmod(abs(value), 256u); // error X3548: in ps_3_0 uints can only be used with known-positive values, use int if possible
+
+    byte_t byte_result = max(value, 255u); // [623 slots] Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
+    //byte_t byte_result = max(abs(value), 255); // [624 slots] Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
+    //byte_t byte_result = abs(value); // [626 slots] Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
+    //byte_t byte_result = abs(fmod(value, 256)); // [652 slots] Probably most correct. Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
+
+    //byte_t byte_result = max(fmod(value, 256u), 255u); // [13 slots] Visual Studio incorrectly optimizes nearly everything away
 #ifdef ASSERT_VALID_ACCESSES
-    assert(byte_result >= 0);
-    assert(byte_result <= 255);
+    assert(byte_result >= 0u);
+    assert(byte_result <= 255u);
 #endif
     return byte_result;
 }
 
 // byte functions
-byte_t get_byte_0_from_float4(const float4 value)
+byte_t get_byte_0_from_float4(uniform float4 value)
 {
     return float_to_byte(value.r);
 }
 
-byte_t get_byte_1_from_float4(const float4 value)
+byte_t get_byte_1_from_float4(uniform float4 value)
 {
     return float_to_byte(value.g);
 }
 
-byte_t get_byte_2_from_float4(const float4 value)
+byte_t get_byte_2_from_float4(uniform float4 value)
 {
     return float_to_byte(value.b);
 }
 
-byte_t get_byte_3_from_float4(const float4 value)
+byte_t get_byte_3_from_float4(uniform float4 value)
 {
     return float_to_byte(value.a);
 }
 
 // bit functions
-bool get_bit_0_from_byte(const byte_t value)
+bool get_bit_0_from_byte(uniform byte_t value)
 {
     return fmod(value, 2) == 1;
 }
 
 #if 0 // unused for now
-bool get_bit_1_from_byte(const byte_t value)
+bool get_bit_1_from_byte(uniform byte_t value)
 {
-    return fmod(value, 4u) >= 2u;
+    return fmod(value, 4) >= 2;
 }
 #endif
 
-bool get_bit_2_from_byte(const byte_t value)
+bool get_bit_2_from_byte(uniform byte_t value)
 {
     return fmod(value, 8) >= 4;
 }
 
-bool get_bit_3_from_byte(const byte_t value)
+bool get_bit_3_from_byte(uniform byte_t value)
 {
     return fmod(value, 16) >= 8;
 }
 
-bool get_bit_4_from_byte(const byte_t value)
+bool get_bit_4_from_byte(uniform byte_t value)
 {
     return fmod(value, 32) >= 16;
 }
 
-bool get_bit_5_from_byte(const byte_t value)
+bool get_bit_5_from_byte(uniform byte_t value)
 {
     return fmod(value, 64) >= 32;
 }
 
-bool get_bit_6_from_byte(const byte_t value)
+bool get_bit_6_from_byte(uniform byte_t value)
 {
     return fmod(value, 128) >= 64;
 }
 
-bool get_bit_7_from_byte(const byte_t value)
+bool get_bit_7_from_byte(uniform byte_t value)
 {
     return fmod(value, 256) >= 128;
 }
 
 // nibble functions
-byte_t get_nibble_0_from_byte(const byte_t value)
+byte_t get_nibble_0_from_byte(uniform byte_t value)
 {
-    byte_t nibble_0_result = (byte_t) abs(fmod(value, 16u));
+    byte_t nibble_0_result = value;
+    //nibble_0_result = abs(nibble_0_result);
+    nibble_0_result = fmod(nibble_0_result, 16u);
+    //nibble_0_result = max(nibble_0_result, 15u);
 #ifdef ASSERT_VALID_ACCESSES
-    assert(nibble_0_result >= 0);
-    assert(nibble_0_result <= 255);
+    assert(nibble_0_result >= 0u);
+    assert(nibble_0_result <= 15u);
 #endif
     return nibble_0_result;
 }
 
-byte_t get_nibble_1_from_byte(const byte_t value)
+byte_t get_nibble_1_from_byte(uniform byte_t value)
 {
-    byte_t nibble_1_result = (byte_t) abs(value / 16u); // Cast avoids warning X3556: integer divides may be much slower, try using uints if possible.
+    byte_t nibble_1_result = value;
+    //nibble_1_result = abs(nibble_1_result);
+    nibble_1_result = nibble_1_result / 16u;
+    //nibble_1_result = max(nibble_1_result, 15u);
 #ifdef ASSERT_VALID_ACCESSES
-    assert(nibble_1_result >= 0);
-    assert(nibble_1_result <= 255);
+    assert(nibble_1_result >= 0u);
+    assert(nibble_1_result <= 15u);
 #endif
     return nibble_1_result;
 }
@@ -386,20 +400,20 @@ static const float DEFAULT_ALPHA = 1.0f;
 //
 
 // Since shader model 3.0 seems to have no input-buffer feature, and using texture-sampling might interpolate values, use host pixel shader constants to access the Xbox renderstate input :
-float4 D3DRS_PSALPHAINPUTS[8]           : register(c0); // 4 byte floats
-float4 D3DRS_PSFINALCOMBINERINPUTSABCD  : register(c8); // 4 byte floats
-float4 D3DRS_PSFINALCOMBINERINPUTSEFG   : register(c9); // 4 byte floats
-float4 D3DRS_PSCONSTANT0[8]             : register(c10);
-float4 D3DRS_PSCONSTANT1[8]             : register(c18);
-float4 D3DRS_PSALPHAOUTPUTS[8]          : register(c26); // 4 byte floats
-float4 D3DRS_PSRGBINPUTS[8]             : register(c34); // 4 byte floats
-//float4 D3DRS_PSCOMPAREMODE              : register(c42); // 4 byte floats - TODO unimplemented
-float4 D3DRS_PSFINALCOMBINERCONSTANT[2] : register(c43);
-float4 D3DRS_PSRGBOUTPUTS[8]            : register(c45); // 4 byte floats
-float4 D3DRS_PSCOMBINERCOUNT            : register(c53); // 4 byte floats
-//float4 D3DRS_PSTEXTUREMODES             : register(c54); // 4 byte floats - CxbxUpdateActivePixelShader_HLSL() reads D3DRS_PSTEXTUREMODES (at render state offset 136), and puts it here in c54, which is named D3DRS_PS_RESERVED in Xbox D3D
-//float4 D3DRS_PSDOTMAPPING               : register(c55); // 4 byte floats - TODO unimplemented
-//float4 D3DRS_PSINPUTTEXTURE             : register(c56); // 4 byte floats - TODO unimplemented
+nointerpolation float4 D3DRS_PSALPHAINPUTS[8]           : register(c0); // 4 byte floats
+nointerpolation float4 D3DRS_PSFINALCOMBINERINPUTSABCD  : register(c8); // 4 byte floats
+nointerpolation float4 D3DRS_PSFINALCOMBINERINPUTSEFG   : register(c9); // 4 byte floats
+nointerpolation float4 D3DRS_PSCONSTANT0[8]             : register(c10);
+nointerpolation float4 D3DRS_PSCONSTANT1[8]             : register(c18);
+nointerpolation float4 D3DRS_PSALPHAOUTPUTS[8]          : register(c26); // 4 byte floats
+nointerpolation float4 D3DRS_PSRGBINPUTS[8] : register(c34); // 4 byte floats
+//nointerpolation float4 D3DRS_PSCOMPAREMODE              : register(c42); // 4 byte floats - TODO unimplemented
+nointerpolation float4 D3DRS_PSFINALCOMBINERCONSTANT[2] : register(c43);
+nointerpolation float4 D3DRS_PSRGBOUTPUTS[8]            : register(c45); // 4 byte floats
+nointerpolation float4 D3DRS_PSCOMBINERCOUNT : register(c53); // 4 byte floats
+//nointerpolation float4 D3DRS_PSTEXTUREMODES             : register(c54); // 4 byte floats - CxbxUpdateActivePixelShader_HLSL() reads D3DRS_PSTEXTUREMODES (at render state offset 136), and puts it here in c54, which is named D3DRS_PS_RESERVED in Xbox D3D
+//nointerpolation float4 D3DRS_PSDOTMAPPING               : register(c55); // 4 byte floats - TODO unimplemented
+//nointerpolation float4 D3DRS_PSINPUTTEXTURE             : register(c56); // 4 byte floats - TODO unimplemented
 
 #endif
 
@@ -409,47 +423,46 @@ float4 D3DRS_PSCOMBINERCOUNT            : register(c53); // 4 byte floats
 typedef
 struct _ps_state
 {
-	// Flags, used in get_input_register_as_float4() :
-	byte_t stage;      // Currently active stage (0 upto 7, 8 and 9 are for final combiner)
-	bool FlagMuxMsb;   // Mux on r0.a lsb or msb, 0 = PS_COMBINERCOUNT_MUX_LSB, 1 = PS_COMBINERCOUNT_MUX_MSB
-	bool FlagUniqueC0; // C[0] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C0, 1 = PS_COMBINERCOUNT_UNIQUE_C0
-	bool FlagUniqueC1; // C[1] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C1, 1 = PS_COMBINERCOUNT_UNIQUE_C1
-
 	// Xbox NV2A pixel shader register values, in order of PS_REGISTER_* :
 #ifndef SUPPORTS_INDIRECT_INDEX
-	// float4 ZERO;
-    // float4 C[2];    // Constant registers, read-only
-    float4 FOG;      // Note, FOG ALPHA is only available in final combiner
-    float4 V[2];     // Vertex color registers, read/write (V[0] = diffuse, V[1] = specular
-	// float4 Unknown[2];
-    float4 T[4];     // Texture registers, initially sampled or (0,0,0,1), after texture-addressing they're read/write just like temporary registers
-    float4 R[2];     // Temporary registers, read/write (R[0].a (R0_ALPHA) is initialized to T[0].s (T0_ALPHA) in stage 0); Final result is in R[0]
-    float3 V1R0_SUM; // Note : V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
-    float3 EF_PROD;  // Note : V1R0_SUM_ALPHA and EF_PROD_ALPHA are not available, hence the float3 type here
+	// nointerpolation float4 ZERO;
+    // nointerpolation float4 C[2];    // Constant registers, read-only
+    nointerpolation float4 FOG;      // Note, FOG ALPHA is only available in final combiner
+    nointerpolation float4 V[2];     // Vertex color registers, read/write (V[0] = diffuse, V[1] = specular
+	// nointerpolation float4 Unknown[2];
+    nointerpolation float4 T[4];     // Texture registers, initially sampled or (0,0,0,1), after texture-addressing they're read/write just like temporary registers
+    nointerpolation float4 R[2];     // Temporary registers, read/write (R[0].a (R0_ALPHA) is initialized to T[0].s (T0_ALPHA) in stage 0); Final result is in R[0]
+    nointerpolation float3 V1R0_SUM; // Note : V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
+    nointerpolation float3 EF_PROD;  // Note : V1R0_SUM_ALPHA and EF_PROD_ALPHA are not available, hence the float3 type here
 #else
-    float4 RegisterValues[16]; // Room for 16 registers : PS_REGISTER_ZERO (0) upto PS_REGISTER_EF_PROD (15)
+    nointerpolation float4 RegisterValues[16]; // Room for 16 registers : PS_REGISTER_ZERO (0) upto PS_REGISTER_EF_PROD (15)
 #endif
+	// Flags, used in get_input_register_as_float4() :
+    nointerpolation byte_t stage; // Currently active stage (0 upto 7, 8 and 9 are for final combiner)
+	nointerpolation bool FlagMuxMsb;   // Mux on r0.a lsb or msb, 0 = PS_COMBINERCOUNT_MUX_LSB, 1 = PS_COMBINERCOUNT_MUX_MSB
+	nointerpolation bool FlagUniqueC0; // C[0] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C0, 1 = PS_COMBINERCOUNT_UNIQUE_C0
+    nointerpolation bool FlagUniqueC1; // C[1] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C1, 1 = PS_COMBINERCOUNT_UNIQUE_C1
+
 } ps_state;
 
-byte_t mask_register(const byte_t value)
+byte_t mask_register(uniform byte_t value)
 {
-    float mask_register_result = (float) value;
+    byte_t mask_register_result = value;
     mask_register_result = fmod(mask_register_result, PS_REGISTER_EF_PROD + 1);
     mask_register_result = max(mask_register_result, PS_REGISTER_EF_PROD); // max() avoids error X3500: array reference cannot be used as an l-value; not natively addressable
 #ifdef ASSERT_VALID_ACCESSES
-    assert((byte_t) mask_register_result >= PS_REGISTER_ZERO);
-    assert((byte_t) mask_register_result <= PS_REGISTER_EF_PROD);
+    assert(mask_register_result >= PS_REGISTER_ZERO);
+    assert(mask_register_result <= PS_REGISTER_EF_PROD);
 #endif
-    return (byte_t) mask_register_result;
+    return mask_register_result;
 }
 
-byte_t mask_inputmapping(const byte_t value)
+byte_t mask_inputmapping(uniform byte_t value)
 {
     float mask_inputmapping_result = (float) value;
     mask_inputmapping_result = mask_inputmapping_result / 2; // remove least significant bit
     mask_inputmapping_result = fmod(mask_inputmapping_result, PS_INPUTMAPPING_SIGNED_NEGATE/2); // == (PS_INPUTMAPPING_SIGNED_NEGATE/2) + 1;
     mask_inputmapping_result = mask_inputmapping_result * 2; // shift bits back to their original place
-//    mask_inputmapping_result = max(mask_inputmapping_result, PS_INPUTMAPPING_SIGNED_NEGATE); // max() avoids error X3500: array reference cannot be used as an l-value; not natively addressable
 #ifdef ASSERT_VALID_ACCESSES
     assert((byte_t) mask_inputmapping_result >= PS_INPUTMAPPING_UNSIGNED_IDENTITY);
     assert((byte_t) mask_inputmapping_result <= PS_INPUTMAPPING_SIGNED_NEGATE);
@@ -457,7 +470,7 @@ byte_t mask_inputmapping(const byte_t value)
     return (byte_t) mask_inputmapping_result;
 }
 
-byte_t mask_outputmapping(const byte_t byte_1, const byte_t byte_2)
+byte_t mask_outputmapping(uniform byte_t byte_1, uniform byte_t byte_2)
 {
     float mask_outputmapping_result = (float) byte_2;
     mask_outputmapping_result = fmod(mask_outputmapping_result, 4); // only use the lowest 2 bits of byte 2
@@ -473,7 +486,7 @@ byte_t mask_outputmapping(const byte_t byte_1, const byte_t byte_2)
 }
 
 // Read without any post-processing nor validation
-float4 get_plain_register_as_float4(const ps_state state, const byte_t register_index)
+float4 get_plain_register_as_float4(uniform ps_state state, uniform byte_t register_index)
 {
 #ifndef SUPPORTS_INDIRECT_INDEX
     switch (register_index)
@@ -509,7 +522,7 @@ float4 get_plain_register_as_float4(const ps_state state, const byte_t register_
 }
 
 // Write without any pre-processing and minimal validation
-void set_plain_register_as_float4(inout ps_state state, const byte_t register_index, const float4 value)
+void set_plain_register_as_float4(inout ps_state state, uniform byte_t register_index, uniform float4 value)
 {
 #ifndef SUPPORTS_INDIRECT_INDEX
     switch (register_index)
@@ -542,10 +555,10 @@ void set_plain_register_as_float4(inout ps_state state, const byte_t register_in
             state.R[1] = value;
             break;
         case PS_REGISTER_V1R0_SUM:
-			state.V1R0_SUM = float3(value);
+			state.V1R0_SUM = value.rgb;
 			break;
         case PS_REGISTER_EF_PROD:
-			state.EF_PROD = float3(value);
+			state.EF_PROD = value.rgb;
 			break;
     }
 #else
@@ -557,7 +570,7 @@ void set_plain_register_as_float4(inout ps_state state, const byte_t register_in
 #endif
 }
 
-float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte, const bool is_alpha = false)
+float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_byte, uniform bool is_alpha = false)
 {
     float4 Result = 0;
 
@@ -722,7 +735,7 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
     return Result;
 }
 
- float4 apply_output_mapping(const byte_t output_mapping, const float4 value)
+ float4 apply_output_mapping(uniform byte_t output_mapping, uniform float4 value)
 {
     float4 new_value;
 
@@ -749,10 +762,10 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
 
 void set_output_register_rgb(
 	inout ps_state state,
-	const byte_t reg_byte,
-	byte_t output_mapping,
-	bool flag_BlueToAlpha,
-	const float3 value)
+	uniform byte_t reg_byte,
+	uniform byte_t output_mapping,
+	uniform bool flag_BlueToAlpha,
+	uniform float3 value)
 {
     byte_t register_index = mask_register(reg_byte);
 
@@ -789,9 +802,9 @@ void set_output_register_rgb(
 
 void set_output_register_alpha(
 	inout ps_state state,
-	const byte_t reg_byte,
-	byte_t output_mapping,
-	const float value)
+	uniform byte_t reg_byte,
+	uniform byte_t output_mapping,
+	uniform float value)
 {
     byte_t register_index = mask_register(reg_byte);
 
@@ -823,7 +836,7 @@ void set_output_register_alpha(
     set_plain_register_as_float4(state, register_index, new_value);
 }
 
-void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
+void do_color_combiner_stage(inout ps_state state, uniform bool is_alpha)
 {
 	// Fetch input register bytes :
     byte_t A_input_reg_byte = is_alpha ? get_byte_0_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_0_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
@@ -996,13 +1009,11 @@ struct VS_OUTPUT // TODO : Complete and pass this in through code (and/or vertex
 	float4 Specular : COLOR0; // vertex specular color (note that COLOR0 is clamped from 0..1)
 	float4 Fog : COLOR0;
     float4 TextureCoords[4] : TEXCOORD0; // vertex texture coords 
-};
-
-VS_OUTPUT In;
+} In;
 
 float4 main() : SV_TARGET
 {
-    ps_state state = (ps_state) 0; // Clearing like this avoids error X3508: 'do_color_combiner_stage': output parameter 'state' not completely initialized
+    nointerpolation ps_state state = (ps_state) 0; // Clearing like this avoids error X3508: 'do_color_combiner_stage': output parameter 'state' not completely initialized
 	// Note, the above also sets state.RegisterValues[PS_REGISTER_ZERO] to 0!
 
 	// Calculate initial register values :
@@ -1030,7 +1041,7 @@ float4 main() : SV_TARGET
     byte_t combiner_byte_0 = get_byte_0_from_float4(D3DRS_PSCOMBINERCOUNT);
     byte_t combiner_byte_1 = get_byte_1_from_float4(D3DRS_PSCOMBINERCOUNT);
     byte_t combiner_byte_2 = get_byte_2_from_float4(D3DRS_PSCOMBINERCOUNT);
-    byte_t num_stages = fmod(combiner_byte_0, 8);
+    byte_t num_stages = combiner_byte_0;
     state.FlagMuxMsb = get_bit_0_from_byte(combiner_byte_1); // PS_COMBINERCOUNT_MUX_MSB = 0x0001L, // mux on r0.a msb
     state.FlagUniqueC0 = get_bit_4_from_byte(combiner_byte_1); // PS_COMBINERCOUNT_UNIQUE_C0 = 0x0010L, // c0 unique in each stage
     state.FlagUniqueC1 = get_bit_0_from_byte(combiner_byte_2); // PS_COMBINERCOUNT_UNIQUE_C1 = 0x0100L // c1 unique in each stage
@@ -1039,11 +1050,17 @@ float4 main() : SV_TARGET
     assert(num_stages >= 1);
     assert(num_stages <= 8);
 #endif
-    //num_stages = max(num_stages, 7u);
+#ifdef AVOID_INVALID_ACCESSES
+    num_stages = min(num_stages, 1u);
+    num_stages = max(num_stages, 8u);
+#endif
 
 	// Loop over at most 8 stages (start counting from zero)
-    for (byte_t stage = 0; stage < num_stages; stage++)
+    for (byte_t stage = 0; stage < MAX_COMBINER_STAGE_COUNT; stage++)
     {
+        if (stage >= num_stages)
+            break;
+
         state.stage = stage; // tell do_color_combiner_stage() and get_input_register_as_float4() the currently active stage
         do_color_combiner_stage(state, false); // for RGB
         do_color_combiner_stage(state, true); // for Alpha
