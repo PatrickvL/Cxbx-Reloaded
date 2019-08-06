@@ -525,7 +525,7 @@ struct DecodedRegisterCombiner {
 
 extern bool g_UseFixedFunctionPixelShader;
 
-// PatrickvL's Dxbx pixel shader translation
-VOID DxbxUpdateActivePixelShader(); // NOPATCH
+// Pixel shader emulation
+VOID CxbxUpdateActivePixelShader(const bool bTargetHLSL); // NOPATCH
 
 #endif // PIXELSHADER_H

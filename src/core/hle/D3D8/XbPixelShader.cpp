@@ -1001,34 +1001,12 @@ void UpdateFixedFunctionPixelShaderState()
 }
 
 bool g_UseFixedFunctionPixelShader = true;
-void DxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
+// PatrickvL's HLSL pixel shader - an Xbox register combiner interpreter, based on D3D__RenderState values
+VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 {
-  // The first RenderState is PSAlpha,
-  // The pixel shader is stored in pDevice->m_pPixelShader
-  // For now, we still patch SetPixelShader and read from there...
-
-  // Use the pixel shader stored in D3D__RenderState rather than the set handle
-  // This allows changes made via SetRenderState to actually take effect!
-  // NOTE: PSTextureModes is in a different location in the X_D3DPIXELSHADERDEF than in Render State mappings
-  // All other fields are the same.
-  // We cast D3D__RenderState to a pPSDef for these fields, but
-  // manually read from D3D__RenderState[X_D3DRS_PSTEXTUREMODES] for that one field.
-  // See D3DDevice_SetPixelShaderCommon which implements this
-
-  const xbox::X_D3DPIXELSHADERDEF *pPSDef = g_pXbox_PixelShader != nullptr ? (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
-  if (pPSDef == nullptr) {
-	IDirect3DPixelShader9* pShader = nullptr;
-	if (g_UseFixedFunctionPixelShader) {
-		pShader = GetFixedFunctionShader();
-		UpdateFixedFunctionPixelShaderState();
-	}
-
-    g_pD3DDevice->SetPixelShader(pShader);
-    return;
-  }
+	using namespace XTL;
 
   const PSH_RECOMPILED_SHADER* RecompiledPixelShader = nullptr;
-	if (bTargetHLSL) {
 		static PSH_RECOMPILED_SHADER RecompiledPixelShader_HLSL = {};
 
 		if (RecompiledPixelShader_HLSL.ConstInUse[0] == false) {
@@ -1275,3 +1253,199 @@ void DxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
   // Set all host constant values using a single call:
   g_pD3DDevice->SetPixelShaderConstantF(0, reinterpret_cast<const float*>(fColor), PSH_XBOX_CONSTANT_MAX);
 }
+
+// PatrickvL's Dxbx pixel shader translation
+VOID DxbxUpdateActivePixelShader_Legacy(XTL::X_D3DPIXELSHADERDEF* pPSDef) // NOPATCH
+{
+  using namespace XTL;
+
+  PPSH_RECOMPILED_SHADER RecompiledPixelShader;
+  DWORD ConvertedPixelShaderHandle;
+  DWORD CurrentPixelShader;
+  int i;
+  DWORD Register_;
+  XTL::D3DCOLOR dwColor;
+  XTL::D3DXCOLOR fColor;
+
+  HRESULT Result = D3D_OK;
+
+	// Non-HLSL pixel shader path :
+	RecompiledPixelShader = nullptr;
+
+    // Now, see if we already have a shader compiled for this declaration :
+	for (auto it = g_RecompiledPixelShaders.begin(); it != g_RecompiledPixelShaders.end(); ++it) {
+		// Only compare parts that form a unique shader (ignore the constants and Direct3D8 run-time fields) :
+		if ((memcmp(&(it->PSDef.PSAlphaInputs[0]), &(pPSDef->PSAlphaInputs[0]), (8 + 2) * sizeof(DWORD)) == 0)
+			&& (memcmp(&(it->PSDef.PSAlphaOutputs[0]), &(pPSDef->PSAlphaOutputs[0]), (8 + 8 + 3 + 8 + 4) * sizeof(DWORD)) == 0)) {
+			RecompiledPixelShader = &(*it);
+			break;
+		}
+	}
+
+    // If none was found, recompile this shader and remember it :
+    if (RecompiledPixelShader == nullptr) {
+      // Recompile this pixel shader :
+	  g_RecompiledPixelShaders.push_back(DxbxRecompilePixelShader(pPSDef));
+	  RecompiledPixelShader = &g_RecompiledPixelShaders.back();
+    }
+
+    // Switch to the converted pixel shader (if it's any different from our currently active
+    // pixel shader, to avoid many unnecessary state changes on the local side).
+    ConvertedPixelShaderHandle = RecompiledPixelShader->ConvertedHandle;
+
+    g_pD3DDevice->GetPixelShader(/*out*/(IDirect3DPixelShader9**)(&CurrentPixelShader));
+    if (CurrentPixelShader != ConvertedPixelShaderHandle)
+		g_pD3DDevice->SetPixelShader((IDirect3DPixelShader9*)ConvertedPixelShaderHandle);
+
+    // Note : We set the constants /after/ setting the shader, so that any
+    // constants in the shader declaration can be overwritten (this will be
+    // needed for the final combiner constants at least)!
+
+/* This must be done once we somehow forward the vertex-shader oFog output to the pixel shader FOG input register :
+   We could use the unused oT4.x to output fog from the vertex shader, and read it with 'texcoord t4' in pixel shader!
+    // Disable native fog if pixel shader is said to handle it :
+    if ((RecompiledPixelShader.PSDef.PSFinalCombinerInputsABCD > 0)
+    || (RecompiledPixelShader.PSDef.PSFinalCombinerInputsEFG > 0))
+    {
+      g_pD3DDevice->SetRenderState(D3DRS_FOGENABLE, BOOL_FALSE);
+    }
+*/
+    //PS_TEXTUREMODES psTextureModes[XTL::X_D3DTS_STAGECOUNT];
+    //PSH_XBOX_SHADER::GetPSTextureModes(pPSDef, psTextureModes);
+    //
+    //for (i = 0; i < XTL::X_D3DTS_STAGECOUNT; i++)
+    //{
+    //    switch (psTextureModes[i])
+    //    {
+    //    case PS_TEXTUREMODES_BUMPENVMAP:
+    //        g_pD3DDevice->SetTextureStageState(i, XTL::D3DTSS_COLOROP, XTL::D3DTOP_BUMPENVMAP);
+    //        break;
+    //    case PS_TEXTUREMODES_BUMPENVMAP_LUM:
+    //        g_pD3DDevice->SetTextureStageState(i, XTL::D3DTSS_COLOROP, XTL::D3DTOP_BUMPENVMAPLUMINANCE);
+    //        break;
+    //    default:
+    //        break;
+    //    }
+    //}
+
+    // Set constants, not based on g_PixelShaderConstants, but based on
+    // the render state slots containing the pixel shader constants,
+    // as these could have been updated via SetRenderState or otherwise :
+    for (i = 0; i < PSH_XBOX_CONSTANT_MAX; i++)
+	{
+      if (RecompiledPixelShader->ConstInUse[i])
+	  {
+        // Read the color from the corresponding render state slot :
+		// TODO: These should read from EmuMappedD3DRenderState, but it doesn't exist yet
+		// The required code needs o be ported from Wip_LessVertexPatching or Dxbx
+        switch (i) {
+          case PSH_XBOX_CONSTANT_FOG:
+            //dwColor = *XTL::EmuMappedD3DRenderState[XTL::X_D3DRS_FOGCOLOR] | 0xFF000000;
+            // Note : FOG.RGB is correct like this, but FOG.a should be coming
+            // from the vertex shader (oFog) - however, D3D8 does not forward this...
+			g_pD3DDevice->GetRenderState(D3DRS_FOGCOLOR, &dwColor);
+            fColor = dwColor;
+			break;
+		  case PSH_XBOX_CONSTANT_FC0:
+            //dwColor = *XTL::EmuMappedD3DRenderState[XTL::X_D3DRS_PSFINALCOMBINERCONSTANT0];
+              fColor = dwColor = TemporaryPixelShaderRenderStates[XTL::X_D3DRS_PSFINALCOMBINERCONSTANT0];
+			break;
+		  case PSH_XBOX_CONSTANT_FC1:
+            //dwColor = *XTL::EmuMappedD3DRenderState[XTL::X_D3DRS_PSFINALCOMBINERCONSTANT1];
+              fColor = dwColor = TemporaryPixelShaderRenderStates[XTL::X_D3DRS_PSFINALCOMBINERCONSTANT1];
+			break;
+          case PSH_XBOX_CONSTANT_MUL0:
+          case PSH_XBOX_CONSTANT_MUL1:
+              continue;
+          case PSH_XBOX_CONSTANT_BEM + 0:
+          case PSH_XBOX_CONSTANT_BEM + 1:
+          case PSH_XBOX_CONSTANT_BEM + 2:
+          case PSH_XBOX_CONSTANT_BEM + 3:
+          {
+              int stage = i - PSH_XBOX_CONSTANT_BEM;
+              DWORD* value = (DWORD*)&fColor;
+
+              g_pD3DDevice->GetTextureStageState(stage, D3DTSS_BUMPENVMAT00, &value[0]);
+              g_pD3DDevice->GetTextureStageState(stage, D3DTSS_BUMPENVMAT01, &value[1]);
+              g_pD3DDevice->GetTextureStageState(stage, D3DTSS_BUMPENVMAT11, &value[2]);
+              g_pD3DDevice->GetTextureStageState(stage, D3DTSS_BUMPENVMAT10, &value[3]);
+              break;
+          }
+          case PSH_XBOX_CONSTANT_LUM + 0:
+          case PSH_XBOX_CONSTANT_LUM + 1:
+          case PSH_XBOX_CONSTANT_LUM + 2:
+          case PSH_XBOX_CONSTANT_LUM + 3:
+          {
+              int stage = i - PSH_XBOX_CONSTANT_LUM;
+              DWORD* value = (DWORD*)&fColor;
+
+              g_pD3DDevice->GetTextureStageState(stage, D3DTSS_BUMPENVLSCALE, &value[0]);
+              g_pD3DDevice->GetTextureStageState(stage, D3DTSS_BUMPENVLOFFSET, &value[1]);
+              value[2] = 0;
+              value[3] = 0;
+              break;
+          }
+          default:
+            //dwColor = *XTL::EmuMappedD3DRenderState[XTL::X_D3DRS_PSCONSTANT0_0 + i];
+              fColor = dwColor = TemporaryPixelShaderRenderStates[XTL::X_D3DRS_PSCONSTANT0_0 + i];
+			break;
+        }
+
+        // Convert it back to 4 floats  :
+        //fColor = dwColor;
+        // Read the register we can use on PC :
+        Register_ = RecompiledPixelShader->ConstMapping[i];
+        // TODO : Avoid the following setter if it's no different from the previous update (this might speed things up)
+        // Set the value locally in this register :
+        g_pD3DDevice->SetPixelShaderConstantF
+		(
+			Register_, 
+			(PixelShaderConstantType*)(&fColor),
+			1
+		);
+      }
+    }
+}
+
+VOID XTL::CxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
+{
+	XTL::X_D3DPIXELSHADERDEF* pPSDef;
+
+	// TODO: Is this even right? The first RenderState is PSAlpha,
+	// The pixel shader is stored in pDevice->m_pPixelShader
+	// For now, we still patch SetPixelShader and read from there...
+
+	// Use the pixel shader stored in D3D__RenderState rather than the set handle
+	// This allows changes made via SetRenderState to actually take effect!
+	// NOTE: PSTextureModes is in a different location in the X_D3DPIXELSHADERDEF than in Render State mappings
+	// All other fields are the same.
+	// We cast D3D__RenderState to a pPSDef for these fields, but
+	// manually read from D3D__RenderState[X_D3DRS_PSTEXTUREMODES] for that one field.
+	// See D3DDevice_SetPixelShaderCommon which implements this
+
+#if 0 // TODO : Review and refactor after rebase	
+	//DWORD *XTL_D3D__RenderState = XTL::EmuMappedD3DRenderState[0];
+	//pPSDef = (XTL::X_D3DPIXELSHADERDEF*)(XTL_D3D__RenderState);
+
+	pPSDef = g_D3DActivePixelShader != nullptr ? (XTL::X_D3DPIXELSHADERDEF*)(&TemporaryPixelShaderRenderStates[0]) : nullptr;
+#else
+	const xbox::X_D3DPIXELSHADERDEF *pPSDef = g_pXbox_PixelShader != nullptr ? (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
+#endif // TODO
+	if (pPSDef == nullptr) {
+		IDirect3DPixelShader9* pShader = nullptr;
+#if 0 // TODO : Review and refactor after rebase	
+		if (g_UseFixedFunctionPixelShader) {
+			pShader = GetFixedFunctionShader();
+			UpdateFixedFunctionPixelShaderState();
+		}
+#endif // TODO
+		g_pD3DDevice->SetPixelShader(pShader);
+		return;
+	}
+
+	if (bTargetHLSL)
+		CxbxUpdateActivePixelShader_HLSL();
+	else
+		DxbxUpdateActivePixelShader_Legacy(pPSDef);
+}
+
