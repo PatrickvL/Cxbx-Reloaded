@@ -84,44 +84,44 @@ byte_t get_byte_3_from_float4(uniform float4 value)
 // bit functions
 bool get_bit_0_from_byte(uniform byte_t value)
 {
-    return fmod(value, 2u) >= 1u;
+    return fmod(value, 2.0f) >= 1.0f;
 }
 
 #if 0 // unused for now
 bool get_bit_1_from_byte(uniform byte_t value)
 {
-    return fmod(value, 4u) >= 2u;
+    return fmod(value, 4.0f) >= 2.0f;
 }
 #endif
 
 bool get_bit_2_from_byte(uniform byte_t value)
 {
-    return fmod(value, 8u) >= 4u;
+    return fmod(value, 8.0f) >= 4.0f;
 }
 
 bool get_bit_3_from_byte(uniform byte_t value)
 {
-    return fmod(value, 16u) >= 8u;
+    return fmod(value, 16.0f) >= 8.0f;
 }
 
 bool get_bit_4_from_byte(uniform byte_t value)
 {
-    return fmod(value, 32u) >= 16u;
+    return fmod(value, 32.0f) >= 16.0f;
 }
 
 bool get_bit_5_from_byte(uniform byte_t value)
 {
-    return fmod(value, 64u) >= 32u;
+    return fmod(value, 64.0f) >= 32.0f;
 }
 
 bool get_bit_6_from_byte(uniform byte_t value)
 {
-    return fmod(value, 128u) >= 64u;
+    return fmod(value, 128.0f) >= 64.0f;
 }
 
 bool get_bit_7_from_byte(uniform byte_t value)
 {
-    return fmod(value, 256u) >= 128u;
+    return fmod(value, 256.0f) >= 128.0f;
 }
 
 // nibble functions
@@ -237,13 +237,13 @@ byte_t get_nibble_1_from_byte(uniform byte_t value)
 
 // The input can have the following mappings applied :
 //
-// PS_INPUTMAPPING_UNSIGNED_IDENTITY : y =  1*max(0,x) + 0.0  ?  OR  abs(x)                        ?
+// PS_INPUTMAPPING_UNSIGNED_IDENTITY : y =  1*max(0,x) - 0.0  ?  OR  abs(x)                        ?
 // PS_INPUTMAPPING_UNSIGNED_INVERT   : y = -1*max(0,x) + 1.0  ?  OR  1 - x   MAYBE EVEN  1-abs(x)  ?
 // PS_INPUTMAPPING_EXPAND_NORMAL     : y =  2*max(0,x) - 1.0
 // PS_INPUTMAPPING_EXPAND_NEGATE     : y = -2*max(0,x) + 1.0
 // PS_INPUTMAPPING_HALFBIAS_NORMAL   : y =  1*max(0,x) - 0.5
 // PS_INPUTMAPPING_HALFBIAS_NEGATE   : y = -1*max(0,x) + 0.5
-// PS_INPUTMAPPING_SIGNED_IDENTITY   : y =  1*      x  + 0.0
+// PS_INPUTMAPPING_SIGNED_IDENTITY   : y =  1*      x  - 0.0
 // PS_INPUTMAPPING_SIGNED_NEGATE     : y = -1*      x  + 0.0
 //
 // (Note : I don't know for sure if the max() operation mentioned above is indeed what happens,
@@ -258,14 +258,14 @@ byte_t get_nibble_1_from_byte(uniform byte_t value)
 // PS_REGISTER_ONE_HALF          (PS_INPUTMAPPING_HALFBIAS_NEGATE on zero) : y =  0.5
 // PS_REGISTER_ONE               (PS_INPUTMAPPING_UNSIGNED_INVERT on zero) : y =  1.0
 // (Note : It has no define, but PS_INPUTMAPPING_EXPAND_NEGATE on zero results in ONE too!)
-static const byte_t PS_INPUTMAPPING_UNSIGNED_IDENTITY = 0x00L; // max(0;x)         OK for final combiner: y = abs(x)
-static const byte_t PS_INPUTMAPPING_UNSIGNED_INVERT = 0x20L; // 1 - max(0;x)     OK for final combiner: y = 1 - x
-static const byte_t PS_INPUTMAPPING_EXPAND_NORMAL = 0x40L; // 2*max(0;x) - 1   invalid for final combiner
-static const byte_t PS_INPUTMAPPING_EXPAND_NEGATE = 0x60L; // 1 - 2*max(0;x)   invalid for final combiner
-static const byte_t PS_INPUTMAPPING_HALFBIAS_NORMAL = 0x80L; // max(0;x) - 1/2   invalid for final combiner
-static const byte_t PS_INPUTMAPPING_HALFBIAS_NEGATE = 0xa0L; // 1/2 - max(0;x)   invalid for final combiner
-static const byte_t PS_INPUTMAPPING_SIGNED_IDENTITY = 0xc0L; // x                invalid for final combiner
-static const byte_t PS_INPUTMAPPING_SIGNED_NEGATE = 0xe0L; // -x               invalid for final combiner
+static const byte_t PS_INPUTMAPPING_UNSIGNED_IDENTITY = 0x00L; //     max(0,x)     OK for final combiner: y = abs(x)
+static const byte_t PS_INPUTMAPPING_UNSIGNED_INVERT   = 0x20L; // 1 - max(0,x)     OK for final combiner: y = 1 - x
+static const byte_t PS_INPUTMAPPING_EXPAND_NORMAL     = 0x40L; // 2*max(0,x) - 1   invalid for final combiner
+static const byte_t PS_INPUTMAPPING_EXPAND_NEGATE     = 0x60L; // 1 - 2*max(0,x)   invalid for final combiner
+static const byte_t PS_INPUTMAPPING_HALFBIAS_NORMAL   = 0x80L; // max(0,x) - 1/2   invalid for final combiner
+static const byte_t PS_INPUTMAPPING_HALFBIAS_NEGATE   = 0xa0L; // 1/2 - max(0,x)   invalid for final combiner
+static const byte_t PS_INPUTMAPPING_SIGNED_IDENTITY   = 0xc0L; //  x               invalid for final combiner
+static const byte_t PS_INPUTMAPPING_SIGNED_NEGATE     = 0xe0L; // -x               invalid for final combiner
 
 // Pixel Shader Registers
 static const byte_t PS_REGISTER_ZERO = 0x00L; // r
@@ -570,9 +570,77 @@ void set_plain_register_as_float4(inout ps_state state, uniform byte_t register_
 #endif
 }
 
+float4 apply_input_mapping(uniform byte_t input_mapping, uniform float4 value)
+{
+    switch (input_mapping)
+    {
+        case PS_INPUTMAPPING_UNSIGNED_IDENTITY:  // = 0x00L : y = max(0,x)       =  1*max(0,x) - 0.0
+            return         abs(value); // TODO : Verify, abs() might need to be replaced by max() operation?
+        case PS_INPUTMAPPING_UNSIGNED_INVERT:    // = 0x20L : y = 1 - max(0,x)   = -1*max(0,x) + 1.0
+            return  1.0f - abs(value); // TODO : Verify, abs() might need to do be removed, or replaced by max() operation?
+        case PS_INPUTMAPPING_EXPAND_NORMAL:      // = 0x40L : y = 2*max(0,x) - 1 =  2*max(0,x) - 1.0
+            return  2.0f * max(0.0f, value) - 1.0f;
+        case PS_INPUTMAPPING_EXPAND_NEGATE:      // = 0x60L : y = 1 - 2*max(0,x) = -2*max(0,x) + 1.0
+            return -2.0f * max(0.0f, value) + 1.0f;
+        case PS_INPUTMAPPING_HALFBIAS_NORMAL:    // = 0x80L : y = max(0,x) - 1/2 =  1*max(0,x) - 0.5
+            return  1.0f * max(0.0f, value) - 0.5f;
+        case PS_INPUTMAPPING_HALFBIAS_NEGATE:    // = 0xa0L : y = 1/2 - max(0,x) = -1*max(0,x) + 0.5
+            return -1.0f * max(0.0f, value) + 0.5f;
+        default: // This also handles
+		// case PS_INPUTMAPPING_SIGNED_IDENTITY: // = 0xc0L : y = x              =  1*      x  - 0.0
+            return value;            
+        case PS_INPUTMAPPING_SIGNED_NEGATE:      // = 0xe0L : y = -x             = -1*      x  + 0.0
+            return -value;
+    }
+/* TODO : Instead of the above, mimick apply_output_mapping by determining bias and scale upfront
+	// Determine bias
+    float input_bias;
+    if (get_bit_?_from_byte(input_mapping))
+        input_bias = 0.5f;
+    else
+        input_bias = 0.0f;
+
+	// Determine scale
+    float input_scale;
+
+	// TODO : Apply input biasing and scaling (and possibly clamping?) in that order (or clamp first?) :
+    return input_scale * (value - input_bias);
+*/
+}
+
+float4 apply_output_mapping(uniform byte_t output_mapping, uniform float4 value)
+{
+	// Determine bias
+    float output_bias;
+    if (get_bit_3_from_byte(output_mapping))
+        output_bias = 0.5f; // Initial PS_COMBINEROUTPUT_BIAS (or any other PS_COMBINEROUTPUT_*_BIAS)
+    else
+        output_bias = 0.0f; // Initial PS_COMBINEROUTPUT_IDENTITY (or any other PS_COMBINEROUTPUT_* without _BIAS)
+
+	// Determine scale
+    float output_scale;
+    if (get_bit_4_from_byte(output_mapping))
+    {
+        if (get_bit_5_from_byte(output_mapping))
+            output_scale = 0.5f; // Apply PS_COMBINEROUTPUT_SHIFTRIGHT_1 (or PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS)
+        else
+            output_scale = 4.0f; // Apply PS_COMBINEROUTPUT_SHIFTLEFT_2 (or PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS)
+    }
+    else
+    {
+        if (get_bit_5_from_byte(output_mapping))
+            output_scale = 2.0f; // Apply PS_COMBINEROUTPUT_SHIFTLEFT_1 (or PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS)
+        else
+            output_scale = 1.0f; // Keep PS_COMBINEROUTPUT_IDENTITY or PS_COMBINEROUTPUT_BIAS
+    }
+
+	// Apply output biasing, scaling and clamping (in that order) :
+    return clamp(output_scale * (value - output_bias), -1.0f, 1.0f);
+}
+
 float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_byte, uniform bool is_alpha = false)
 {
-    float4 Result = 0;
+    float4 input_result = 0;
 
     byte_t register_index = mask_register(reg_byte);
     byte_t input_mapping = mask_inputmapping(reg_byte);
@@ -590,7 +658,7 @@ float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_b
 					assert(false);
 #endif
 #ifdef AVOID_INVALID_ACCESSES
-		            return Result;
+		            return input_result;
 #endif
                 }
                 break;
@@ -600,7 +668,7 @@ float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_b
 				assert(false);
 #endif
 #ifdef AVOID_INVALID_ACCESSES
-                return Result;
+                return input_result;
 #else
                 break;
 #endif
@@ -619,7 +687,7 @@ float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_b
 					assert(false);
 #endif
 #ifdef AVOID_INVALID_ACCESSES
-		            return Result;
+		            return input_result;
 #endif
                 }
                 break;
@@ -633,7 +701,7 @@ float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_b
 					assert(false);
 #endif
 #ifdef AVOID_INVALID_ACCESSES
-		            return Result;
+		            return input_result;
 #endif
                 }
 				break;
@@ -671,97 +739,44 @@ float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_b
             if (state.stage < STAGE_FINAL_COMBINER)
             {
                 if (state.FlagUniqueC0)
-                    Result = D3DRS_PSCONSTANT0[state.stage];
+                    input_result = D3DRS_PSCONSTANT0[state.stage];
                 else
-                    Result = D3DRS_PSCONSTANT0[0u];
+                    input_result = D3DRS_PSCONSTANT0[0u];
             }
             else
-				Result = D3DRS_PSFINALCOMBINERCONSTANT[0u];
+				input_result = D3DRS_PSFINALCOMBINERCONSTANT[0u];
             break;
         case PS_REGISTER_C1:
             if (state.stage < STAGE_FINAL_COMBINER)
             {
                 if (state.FlagUniqueC1)
-                    Result = D3DRS_PSCONSTANT1[state.stage];
+                    input_result = D3DRS_PSCONSTANT1[state.stage];
                 else
-                    Result = D3DRS_PSCONSTANT1[0u];
+                    input_result = D3DRS_PSCONSTANT1[0u];
             }
             else
-                Result = D3DRS_PSFINALCOMBINERCONSTANT[1u];
+                input_result = D3DRS_PSFINALCOMBINERCONSTANT[1u];
             break;
         case PS_REGISTER_FOG:{
                 float4 FOG_value = get_plain_register_as_float4(state, PS_REGISTER_FOG);
                 if (state.stage < STAGE_FINAL_COMBINER)
-                    Result = float4(FOG_value.rgb, DEFAULT_ALPHA);
+                    input_result = float4(FOG_value.rgb, DEFAULT_ALPHA);
                 else
-                    Result = float4(DEFAULT_RGB, DEFAULT_RGB, DEFAULT_RGB, FOG_value.a);
+                    input_result = float4(DEFAULT_RGB, DEFAULT_RGB, DEFAULT_RGB, FOG_value.a);
             }
             break;
 		default:
-            Result = get_plain_register_as_float4(state, register_index);
+            input_result = get_plain_register_as_float4(state, register_index);
             break;
     }
 
     bool use_channel_alpha = get_bit_4_from_byte(reg_byte);
     if (use_channel_alpha)
-        Result = Result.aaaa; // PS_CHANNEL_ALPHA
+        input_result = input_result.aaaa; // PS_CHANNEL_ALPHA
     else
-        Result = Result.rgbb; // PS_CHANNEL_BLUE and PS_CHANNEL_RGB
+        input_result = input_result.rgbb; // PS_CHANNEL_BLUE and PS_CHANNEL_RGB
 
-    switch (input_mapping)
-    {
-        case PS_INPUTMAPPING_UNSIGNED_IDENTITY: // = 0x00L : y = max(0,x)       =  1*max(0,x) + 0.0
-            Result = abs(Result); // TODO : Verify, abs() might need to be replaced by max() operation?
-            break;
-        case PS_INPUTMAPPING_UNSIGNED_INVERT: // = 0x20L : y = 1 - max(0,x)   = -1*max(0,x) + 1.0
-            Result = 1.0f - abs(Result); // TODO : Verify, abs() might need to do be removed, or replaced by max() operation?
-            break;
-        case PS_INPUTMAPPING_EXPAND_NORMAL: // = 0x40L : y = 2*max(0,x) - 1 =  2*max(0,x) - 1.0
-            Result = 2.0f * max(0.0f, Result) - 1.0f;
-            break;
-        case PS_INPUTMAPPING_EXPAND_NEGATE: // = 0x60L : y = 1 - 2*max(0,x) = -2*max(0,x) + 1.0
-            Result = -2.0f * max(0.0f, Result) + 1.0f;
-            break;
-        case PS_INPUTMAPPING_HALFBIAS_NORMAL: // = 0x80L : y = max(0,x) - 1/2 =  1*max(0,x) - 0.5
-            Result = 1.0f * max(0.0f, Result) - 0.5f;
-            break;
-        case PS_INPUTMAPPING_HALFBIAS_NEGATE: // = 0xa0L : y = 1/2 - max(0,x) = -1*max(0,x) + 0.5
-            Result = -1.0f * max(0.0f, Result) + 0.5f;
-            break;
-        case PS_INPUTMAPPING_SIGNED_IDENTITY: // = 0xc0L : y = x              =  1*      x  + 0.0
-            Result = Result;
-            break;
-        case PS_INPUTMAPPING_SIGNED_NEGATE: // = 0xe0L : y = -x             = -1*      x  + 0.0
-            Result = -Result;
-            break;
-    }
-
-    return Result;
-}
-
- float4 apply_output_mapping(uniform byte_t output_mapping, uniform float4 value)
-{
-    float4 new_value;
-
-    if (get_bit_3_from_byte(output_mapping))
-        new_value = value - 0.5f; // Initial PS_COMBINEROUTPUT_BIAS (or any other PS_COMBINEROUTPUT_*_BIAS)
-	else
-        new_value = value; // Initial PS_COMBINEROUTPUT_IDENTITY (or any other PS_COMBINEROUTPUT_* without _BIAS)
-
-    if (get_bit_4_from_byte(output_mapping))
-    {
-        if (get_bit_5_from_byte(output_mapping))
-            return new_value / 2.0f; // Apply PS_COMBINEROUTPUT_SHIFTRIGHT_1 (or PS_COMBINEROUTPUT_SHIFTRIGHT_1_BIAS)
-        else
-            return new_value * 4.0f; // Apply PS_COMBINEROUTPUT_SHIFTLEFT_2 (or PS_COMBINEROUTPUT_SHIFTLEFT_2_BIAS)
-    }
-    else
-    {
-        if (get_bit_5_from_byte(output_mapping))
-            return new_value * 2.0f; // Apply PS_COMBINEROUTPUT_SHIFTLEFT_1 (or PS_COMBINEROUTPUT_SHIFTLEFT_1_BIAS)
-		else
-            return new_value; // Keep PS_COMBINEROUTPUT_IDENTITY or PS_COMBINEROUTPUT_BIAS
-    }
+    return apply_input_mapping(input_mapping, input_result);
 }
 
 void set_output_register_rgb(
@@ -769,7 +784,7 @@ void set_output_register_rgb(
 	uniform byte_t reg_byte,
 	uniform byte_t output_mapping,
 	uniform bool flag_BlueToAlpha,
-	uniform float3 value)
+	uniform float3 rgb_value)
 {
     byte_t register_index = mask_register(reg_byte);
 
@@ -793,7 +808,7 @@ void set_output_register_rgb(
 #endif
     }
 
-    float4 new_value = apply_output_mapping(output_mapping, float4(value, 0.0f)); // Rely on the optimizer to remove useless operations (otherwise, implement apply_output_mapping_rgb)
+    float4 new_value = apply_output_mapping(output_mapping, float4(rgb_value, 0.0f)); // Rely on the optimizer to remove useless operations (otherwise, implement apply_output_mapping_rgb)
 
 	// Mix in the new RGB channels into the destination register :
     if (flag_BlueToAlpha)
@@ -808,7 +823,7 @@ void set_output_register_alpha(
 	inout ps_state state,
 	uniform byte_t reg_byte,
 	uniform byte_t output_mapping,
-	uniform float value)
+	uniform float alpha_value)
 {
     byte_t register_index = mask_register(reg_byte);
 
@@ -832,7 +847,7 @@ void set_output_register_alpha(
 #endif
     }
 
-    float new_alpha = apply_output_mapping(output_mapping, float4(DEFAULT_RGB, DEFAULT_RGB, DEFAULT_RGB, value)).a; // Rely on the optimizer to remove useless operations (otherwise, implement apply_output_mapping_alpha)
+    float new_alpha = apply_output_mapping(output_mapping, float4(DEFAULT_RGB, DEFAULT_RGB, DEFAULT_RGB, alpha_value)).a; // Rely on the optimizer to remove useless operations (otherwise, implement apply_output_mapping_alpha)
 
 	// Only mix in the new alpha value into the destination register :
     float4 new_value = float4(get_plain_register_as_float4(state, register_index).rgb, new_alpha);
