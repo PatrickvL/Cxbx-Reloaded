@@ -22,9 +22,9 @@
 // Utility functions
 //
 
-#define SUPPORTS_INDIRECT_INDEX // TODO : Fix possible fxc.exe HLSL bug, that optimizes (nearly) everything away with this unset?!
-//#define AVOID_INVALID_ACCESSES
-//#define ASSERT_VALID_ACCESSES
+#define SUPPORTS_INDIRECT_INDEX // When set, register value accesses indexes an array instead of accessing separate fields
+//#define ASSERT_VALID_ACCESSES // When set, checks for valid accesses are compiled in
+//#define AVOID_INVALID_ACCESSES // When set, invalid accesses are avoided (although assertions may have failed already)
 
 typedef uint byte_t; // Indicates an already floor()'ed float, limited to lowest 8 bits
 
@@ -410,10 +410,10 @@ typedef
 struct _ps_state
 {
 	// Flags, used in get_input_register_as_float4() :
-    byte_t stage;        // Currently active stage (0 upto 7, 8 is for final combiner)
-    bool FlagMuxMsb;   // Mux on r0.a lsb or msb, 0 = PS_COMBINERCOUNT_MUX_LSB, 1 = PS_COMBINERCOUNT_MUX_MSB
-    bool FlagUniqueC0; // C[0] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C0, 1 = PS_COMBINERCOUNT_UNIQUE_C0
-    bool FlagUniqueC1; // C[1] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C1, 1 = PS_COMBINERCOUNT_UNIQUE_C1
+	byte_t stage;      // Currently active stage (0 upto 7, 8 and 9 are for final combiner)
+	bool FlagMuxMsb;   // Mux on r0.a lsb or msb, 0 = PS_COMBINERCOUNT_MUX_LSB, 1 = PS_COMBINERCOUNT_MUX_MSB
+	bool FlagUniqueC0; // C[0] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C0, 1 = PS_COMBINERCOUNT_UNIQUE_C0
+	bool FlagUniqueC1; // C[1] unique in each stage, 0 = PS_COMBINERCOUNT_SAME_C1, 1 = PS_COMBINERCOUNT_UNIQUE_C1
 
 	// Xbox NV2A pixel shader register values, in order of PS_REGISTER_* :
 #ifndef SUPPORTS_INDIRECT_INDEX
@@ -478,6 +478,8 @@ float4 get_plain_register_as_float4(const ps_state state, const byte_t register_
 #ifndef SUPPORTS_INDIRECT_INDEX
     switch (register_index)
     {
+		case PS_REGISTER_FOG:
+			return state.FOG;
         case PS_REGISTER_V0:
             return state.V[0];
         case PS_REGISTER_V1:
@@ -494,6 +496,10 @@ float4 get_plain_register_as_float4(const ps_state state, const byte_t register_
             return state.R[0];
         case PS_REGISTER_R1:
             return state.R[1];
+        case PS_REGISTER_V1R0_SUM:
+            return float4(state.V1R0_SUM, DEFAULT_ALPHA);
+        case PS_REGISTER_EF_PROD:
+            return float4(state.EF_PROD, DEFAULT_ALPHA);
 		default: // This also handles PS_REGISTER_ZERO
             return 0; // Avoids error X3507: 'get_plain_register_as_float4': Not all control paths return a value
     }
@@ -535,6 +541,12 @@ void set_plain_register_as_float4(inout ps_state state, const byte_t register_in
         case PS_REGISTER_R1:
             state.R[1] = value;
             break;
+        case PS_REGISTER_V1R0_SUM:
+			state.V1R0_SUM = float3(value);
+			break;
+        case PS_REGISTER_EF_PROD:
+			state.EF_PROD = float3(value);
+			break;
     }
 #else
 	// Avoid writing to PS_REGISTER_ZERO
@@ -551,32 +563,67 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
 
     byte_t register_index = mask_register(reg_byte);
     byte_t input_mapping = mask_inputmapping(reg_byte);
-#ifdef AVOID_INVALID_ACCESSES
+
     if (state.stage < STAGE_FINAL_COMBINER)
 	{
 		// Below are invalid in color combiners (only final combiner) :
-        if (register_index == PS_REGISTER_V1R0_SUM || register_index == PS_REGISTER_EF_PROD)
-		{
+        switch (register_index)
+        {
+			case PS_REGISTER_FOG:
+				// Only FOG.RGB may be read in color combiner stages :
+                if (is_alpha)
+                {
+#ifdef ASSERT_VALID_ACCESSES
+					assert(false);
+#endif
+#ifdef AVOID_INVALID_ACCESSES
+		            return Result;
+#endif
+                }
+                break;
+            case PS_REGISTER_V1R0_SUM:
+            case PS_REGISTER_EF_PROD:
 #ifdef ASSERT_VALID_ACCESSES
 				assert(false);
 #endif
+#ifdef AVOID_INVALID_ACCESSES
                 return Result;
+#else
+                break;
+#endif
 		}
 	}
-    else
+    else // (state.stage >= STAGE_FINAL_COMBINER)
     {
 		// Below are only valid for final combiner :
-        if (register_index == PS_REGISTER_V1R0_SUM || register_index == PS_REGISTER_EF_PROD)
+        switch (register_index)
         {
-            if (state.stage == STAGE_FINAL_COMBINER_ABCD)
-				; // Allowed for A,B,C,D inputs, forbidden for E,F,G inputs
-            else
-            {
+            case PS_REGISTER_FOG:
+				// Only FOG.Alpha may be read in final combiner stages :
+                if (!is_alpha)
+                {
 #ifdef ASSERT_VALID_ACCESSES
-				assert(false);
+					assert(false);
 #endif
-                return Result;
-            }
+#ifdef AVOID_INVALID_ACCESSES
+		            return Result;
+#endif
+                }
+                break;
+			case PS_REGISTER_V1R0_SUM:
+			case PS_REGISTER_EF_PROD:
+				if (state.stage == STAGE_FINAL_COMBINER_ABCD)
+                    break; // Allowed for A,B,C,D inputs, forbidden for E,F,G inputs
+				else
+                {
+#ifdef ASSERT_VALID_ACCESSES
+					assert(false);
+#endif
+#ifdef AVOID_INVALID_ACCESSES
+		            return Result;
+#endif
+                }
+				break;
         }
 
 		// Below are invalid for final combiner :
@@ -591,11 +638,14 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
 #ifdef ASSERT_VALID_ACCESSES
                 assert(false);
 #endif
+#ifdef AVOID_INVALID_ACCESSES
                 return Result;
+#else
+                break;
+#endif				
         }
     }
 
-#endif
     switch (register_index)
     {
         case PS_REGISTER_C0:
@@ -621,30 +671,13 @@ float4 get_input_register_as_float4(const ps_state state, const byte_t reg_byte,
                 Result = D3DRS_PSFINALCOMBINERCONSTANT[1];
             break;
         case PS_REGISTER_FOG:{
-#ifndef SUPPORTS_INDIRECT_INDEX
-                float4 FOG_value = state.FOG;
-#else
-                float4 FOG_value = state.RegisterValues[PS_REGISTER_FOG];
-#endif
-                if (state.stage >= STAGE_FINAL_COMBINER)
-                {
-                    if (is_alpha)
-                        Result = FOG_value.a;
-                    else
-                        Result = FOG_value; // TODO : Verify this!
-                }
-                else
+                float4 FOG_value = get_plain_register_as_float4(state, PS_REGISTER_FOG);
+                if (state.stage < STAGE_FINAL_COMBINER)
                     Result = float4(FOG_value.rgb, DEFAULT_ALPHA);
+                else
+                    Result = float4(DEFAULT_RGB, DEFAULT_RGB, DEFAULT_RGB, FOG_value.a);
             }
             break;
-#ifndef SUPPORTS_INDIRECT_INDEX
-        case PS_REGISTER_V1R0_SUM:
-            Result = float4(state.V1R0_SUM, DEFAULT_ALPHA);
-            break;
-        case PS_REGISTER_EF_PROD:
-            Result = float4(state.EF_PROD, DEFAULT_ALPHA);
-            break;
-#endif
 		default:
             Result = get_plain_register_as_float4(state, register_index);
             break;
@@ -723,7 +756,6 @@ void set_output_register_rgb(
 {
     byte_t register_index = mask_register(reg_byte);
 
-#ifdef AVOID_INVALID_ACCESSES
 	// Below are not writeable :
     switch (register_index)
     {
@@ -737,10 +769,13 @@ void set_output_register_rgb(
 #ifdef ASSERT_VALID_ACCESSES
 		    assert(false);
 #endif
+#ifdef AVOID_INVALID_ACCESSES
             return;
+#else
+            break;
+#endif
     }
 
-#endif
     float4 new_value = apply_output_mapping(output_mapping, float4(value, 0)); // Rely on the optimizer to remove useless operations (otherwise, implement apply_output_mapping_rgb)
 
 	// Mix in the new RGB channels into the destination register :
@@ -760,7 +795,6 @@ void set_output_register_alpha(
 {
     byte_t register_index = mask_register(reg_byte);
 
-#ifdef AVOID_INVALID_ACCESSES
 	// Below are not writeable :
     switch (register_index)
     {
@@ -774,10 +808,13 @@ void set_output_register_alpha(
 #ifdef ASSERT_VALID_ACCESSES
 		    assert(false);
 #endif
+#ifdef AVOID_INVALID_ACCESSES
             return;
+#else
+            break;
+#endif
     }
 
-#endif
     float new_alpha = apply_output_mapping(output_mapping, float4(DEFAULT_RGB, DEFAULT_RGB, DEFAULT_RGB, value)).a; // Rely on the optimizer to remove useless operations (otherwise, implement apply_output_mapping_alpha)
 
 	// Only mix in the new alpha value into the destination register :
@@ -788,7 +825,7 @@ void set_output_register_alpha(
 
 void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
 {
-	// Decode input register bytes :
+	// Fetch input register bytes :
     byte_t A_input_reg_byte = is_alpha ? get_byte_0_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_0_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
     byte_t B_input_reg_byte = is_alpha ? get_byte_1_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_1_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
     byte_t C_input_reg_byte = is_alpha ? get_byte_2_from_float4(D3DRS_PSALPHAINPUTS[state.stage]) : get_byte_2_from_float4(D3DRS_PSRGBINPUTS[state.stage]);
@@ -800,7 +837,7 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
     float4 C_value = get_input_register_as_float4(state, C_input_reg_byte, is_alpha); // A.k.a. 's2'
     float4 D_value = get_input_register_as_float4(state, D_input_reg_byte, is_alpha); // A.k.a. 's3'
 
-	// Decode output bytes :
+	// Fetch output bytes :
     byte_t output_byte_0 = is_alpha ? get_byte_0_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_0_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
     byte_t output_byte_1 = is_alpha ? get_byte_1_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_1_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
     byte_t output_byte_2 = is_alpha ? get_byte_2_from_float4(D3DRS_PSALPHAOUTPUTS[state.stage]) : get_byte_2_from_float4(D3DRS_PSRGBOUTPUTS[state.stage]);
@@ -824,11 +861,7 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
     float4 AB_CD_value;
     if (combiner_flag_ABCD_Mux) // PS_COMBINEROUTPUT_AB_CD_MUX
     {
-#ifndef SUPPORTS_INDIRECT_INDEX
-        float R0_a_value = state.R[0].a; // TODO : Normalize? How?
-#else
-        float R0_a_value = state.RegisterValues[PS_REGISTER_R0].a; // TODO : Normalize? How?
-#endif
+        float R0_a_value = get_plain_register_as_float4(state, PS_REGISTER_R0).a; // TODO : Normalize? How?
         if (state.FlagMuxMsb)
             AB_CD_value = (R0_a_value > 0.5) ? CD_value : AB_value; // PS_COMBINERCOUNT_MUX_MSB
         else
@@ -846,13 +879,12 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
 	// AB_CD register output must be DISCARD if either AB_DOT_PRODUCT or CD_DOT_PRODUCT are set
     if (combiner_flag_AB_DotProduct || combiner_flag_CD_DotProduct)
     {
-#ifdef AVOID_INVALID_ACCESSES
-		// Fix-up, just to avoid issues (TODO : Investigate if real hardware does this too?)
-        combiner_output_reg_AB_CD = PS_REGISTER_DISCARD;
-#else
 #ifdef ASSERT_VALID_ACCESSES
 		assert(combiner_output_reg_AB_CD == PS_REGISTER_DISCARD);
 #endif
+#ifdef AVOID_INVALID_ACCESSES
+		// Fix-up, just to avoid issues (TODO : Investigate if real hardware does this too?)
+        combiner_output_reg_AB_CD = PS_REGISTER_DISCARD;
 #endif
     }
 
@@ -878,11 +910,7 @@ void do_color_combiner_stage(inout ps_state state, const bool is_alpha)
 float4 do_final_combiner(inout ps_state state)
 {
 	// Fetch R0 register value (in final combiner used are input, otherwise returned) :
-#ifndef SUPPORTS_INDIRECT_INDEX
-    float4 R0_value = state.R[0];
-#else
-	float4 R0_value = state.RegisterValues[PS_REGISTER_R0].a;
-#endif
+    float4 R0_value = get_plain_register_as_float4(state, PS_REGISTER_R0);
 
 	// TODO : Is the following actually required? D3D seems to always set the final combiner register...
 	// Check if the final combiner doesn't need to run :
@@ -908,30 +936,21 @@ float4 do_final_combiner(inout ps_state state)
 
 	// Calculate the product of E*F and set the result in it's dedicated register :
     float3 EF_PROD_value = E_value * F_value;
-#ifndef SUPPORTS_INDIRECT_INDEX
-    state.EF_PROD = EF_PROD_value;
-#else
-    state.RegisterValues[PS_REGISTER_EF_PROD] = float4(EF_PROD_value, DEFAULT_ALPHA);
-#endif
+    set_plain_register_as_float4(state, PS_REGISTER_EF_PROD, float4(EF_PROD_value, DEFAULT_ALPHA));
 
 	// Do optional complement operation on R0 register value :
     if (get_bit_5_from_byte(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_R0
     {
 		// unsigned invert mapping  (1 - r0) is used as an input to the sum rather than r0
-        R0_value = 1 - R0_value;
+        R0_value = 1 - R0_value; // TODO : Is abs() needed here?
     }
 
 	// Fetch V1 register value (including an optional complement operation) :
-    float3 V1_value;
-#ifndef SUPPORTS_INDIRECT_INDEX
-    V1_value = (float3) state.V[1];
-#else
-    V1_value = (float3) state.RegisterValues[PS_REGISTER_V1];
-#endif
+    float3 V1_value = get_plain_register_as_float4(state, PS_REGISTER_V1).rgb;
     if (get_bit_6_from_byte(setting_byte)) // PS_FINALCOMBINERSETTING_COMPLEMENT_V1
     {
 		// unsigned invert mapping  (1 - v1) is used as an input to the sum rather than v1
-        V1_value = 1 - V1_value;
+        V1_value = 1 - V1_value; // TODO : Is abs() needed here?
     }
 
 	// Calculate V1 + R0 value (including an optional clamping operation) :
@@ -942,12 +961,8 @@ float4 do_final_combiner(inout ps_state state)
         V1R0_SUM_value = clamp(V1R0_SUM_value, 0, 1);
     }
 
-	// Set the result in it's dedicated register
-#ifndef SUPPORTS_INDIRECT_INDEX
-    state.V1R0_SUM = V1R0_SUM_value;
-#else
-    state.RegisterValues[PS_REGISTER_V1R0_SUM] = float4(V1R0_SUM_value, DEFAULT_ALPHA);
-#endif
+	// Set the V1+R0 result in it's dedicated register
+    set_plain_register_as_float4(state, PS_REGISTER_V1R0_SUM, float4(V1R0_SUM_value, DEFAULT_ALPHA));
 
 	// Tell get_input_register_as_float4() we're now in the final combiner stage for A,B,C,D :
     state.stage = STAGE_FINAL_COMBINER_ABCD;
@@ -1024,14 +1039,15 @@ float4 main() : SV_TARGET
     assert(num_stages >= 1);
     assert(num_stages <= 8);
 #endif
-    num_stages = max(num_stages, 7u);
+    //num_stages = max(num_stages, 7u);
 
 	// Loop over at most 8 stages (start counting from zero)
     for (byte_t stage = 0; stage < num_stages; stage++)
     {
-        state.stage = stage; // tell get_input_register_as_float4() the currently active stage
+        state.stage = stage; // tell do_color_combiner_stage() and get_input_register_as_float4() the currently active stage
         do_color_combiner_stage(state, false); // for RGB
         do_color_combiner_stage(state, true); // for Alpha
     }
+
     return do_final_combiner(state);
 }
