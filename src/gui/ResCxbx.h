@@ -344,7 +344,7 @@
 #define ID_CACHE_CLEARHLECACHE_ALL      40084
 #define ID_CACHE_CLEARHLECACHE_CURRENT  40085
 #define ID_SETTINGS_HACKS               40088
-#define ID_HACKS_DISABLEPIXELSHADERS    40089
+#define ID_HACKS_PIXELSHADERS           40089
 #define ID_LED                          40090
 #define ID_SETTINGS_INITIALIZE          40091
 #define ID_EMULATION_STARTDEBUGGER      40092
@@ -361,6 +361,9 @@
 #define ID_LOG                          40110
 #define ID_SETTINGS_CONFIG_NETWORK      40111
 #define ID_SYNC_CONFIG_INPUT            40112
+#define ID_HACKS_PIXELSHADERS_RECOMPILE 40113
+#define ID_HACKS_PIXELSHADERS_INTERPRET 40114
+#define ID_HACKS_PIXELSHADERS_DISABLE   40115
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -368,8 +371,8 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        136
-#define _APS_NEXT_COMMAND_VALUE         40113
-#define _APS_NEXT_CONTROL_VALUE         1278
+#define _APS_NEXT_COMMAND_VALUE         40115
+#define _APS_NEXT_CONTROL_VALUE         1303
 #define _APS_NEXT_SYMED_VALUE           109
 #endif
 #endif

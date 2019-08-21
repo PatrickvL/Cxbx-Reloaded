@@ -671,7 +671,12 @@ BEGIN
             BEGIN
                 MENUITEM "Run Xbox threads on all cores", ID_HACKS_RUNXBOXTHREADSONALLCORES,MFT_STRING,MFS_ENABLED
             END
-            MENUITEM "Disable Pixel Shaders",       ID_HACKS_DISABLEPIXELSHADERS,MFT_STRING,MFS_ENABLED
+            POPUP "Pixel Shaders"
+            BEGIN
+                MENUITEM "Recompile",                   ID_HACKS_PIXELSHADERS_RECOMPILE,MFT_STRING,MFS_ENABLED, CHECKED
+                MENUITEM "Interpret",                   ID_HACKS_PIXELSHADERS_INTERPRET,MFT_STRING,MFS_ENABLED
+                MENUITEM "Disable",                     ID_HACKS_PIXELSHADERS_DISABLE,MFT_STRING,MFS_ENABLED
+            END
             MENUITEM "Skip rdtsc patching",         ID_HACKS_SKIPRDTSCPATCHING,MFT_STRING,MFS_ENABLED
         END
         MENUITEM "Allow Admin Privilege",       ID_SETTINGS_ALLOWADMINPRIVILEGE,MFT_STRING,MFS_ENABLED

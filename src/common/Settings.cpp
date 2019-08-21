@@ -137,7 +137,7 @@ static struct {
 
 static const char* section_hack = "hack";
 static struct {
-	const char* DisablePixelShaders = "DisablePixelShaders";
+	const char* PixelShaderMode = "PixelShaderMode";
 	const char* UseAllCores = "UseAllCores";
 	const char* SkipRdtscPatching = "SkipRdtscPatching";
 } sect_hack_keys;
@@ -393,7 +393,7 @@ bool Settings::LoadConfig()
 
 	// ==== Hack Begin ==========
 
-	m_hacks.DisablePixelShaders = m_si.GetBoolValue(section_hack, sect_hack_keys.DisablePixelShaders, /*Default=*/false);
+	m_hacks.PixelShaderMode = m_si.GetLongValue(section_hack, sect_hack_keys.PixelShaderMode, /*Default=*/0);
 	m_hacks.UseAllCores = m_si.GetBoolValue(section_hack, sect_hack_keys.UseAllCores, /*Default=*/false);
 	m_hacks.SkipRdtscPatching = m_si.GetBoolValue(section_hack, sect_hack_keys.SkipRdtscPatching, /*Default=*/false);
 
@@ -668,7 +668,7 @@ bool Settings::Save(std::string file_path)
 
 	// ==== Hack Begin ==========
 
-	m_si.SetBoolValue(section_hack, sect_hack_keys.DisablePixelShaders, m_hacks.DisablePixelShaders, nullptr, true);
+	m_si.SetLongValue(section_hack, sect_hack_keys.PixelShaderMode, m_hacks.PixelShaderMode, nullptr, true);
 	m_si.SetBoolValue(section_hack, sect_hack_keys.UseAllCores, m_hacks.UseAllCores, nullptr, true);
 	m_si.SetBoolValue(section_hack, sect_hack_keys.SkipRdtscPatching, m_hacks.SkipRdtscPatching, nullptr, true);
 

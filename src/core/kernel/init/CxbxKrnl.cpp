@@ -1403,8 +1403,8 @@ __declspec(noreturn) void CxbxKrnlInit
 	// Process Hacks
 	{
 		int HackEnabled = 0;
-		g_EmuShared->GetDisablePixelShaders(&HackEnabled);
-		g_PixelShaderMode = (HackEnabled == 0) ? psmDisabled : (HackEnabled == 2) ? psmHLSL : psmLegacy;
+		g_EmuShared->GetPixelShaderMode(&HackEnabled);
+		g_PixelShaderMode = (HackEnabled == 0) ? psmLegacy : (HackEnabled == 1) ? psmHLSL : psmDisabled;
 		g_EmuShared->GetUseAllCores(&HackEnabled);
 		g_UseAllCores = !!HackEnabled;
 		g_EmuShared->GetSkipRdtscPatching(&HackEnabled);
