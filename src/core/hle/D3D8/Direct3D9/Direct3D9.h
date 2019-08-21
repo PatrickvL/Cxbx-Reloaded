@@ -414,21 +414,6 @@ HRESULT WINAPI EMUPATCH(D3DDevice_CreateVertexShader)
 );
 
 // ******************************************************************
-// * patch: D3DDevice_SetPixelShaderConstant
-// ******************************************************************
-VOID WINAPI EMUPATCH(D3DDevice_SetPixelShaderConstant)
-(
-    DWORD       Register,
-    CONST PVOID pConstantData,
-    DWORD       ConstantCount
-);
-
-VOID WINAPI EMUPATCH(D3DDevice_SetPixelShaderConstant_4)
-(
-    CONST PVOID pConstantData
-);
-
-// ******************************************************************
 // * patch: D3DDevice_SetVertexShaderConstant
 // ******************************************************************
 VOID WINAPI EMUPATCH(D3DDevice_SetVertexShaderConstant)
