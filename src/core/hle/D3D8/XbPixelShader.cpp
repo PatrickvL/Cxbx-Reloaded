@@ -61,6 +61,8 @@
 
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxKrnlCleanup()
 
+#include "C:\Program Files (x86)\CMake\bin\projects\cxbx\RegisterCombinerInterpreter.h" // g_ps30_main
+
 #include <assert.h> // assert()
 #include <process.h>
 #include <locale.h>
@@ -452,7 +454,7 @@ enum PS_COMBINEROUTPUT
      (((DWORD)(s6)&0xf)<<24) | (((DWORD)(s7)&0xf)<<28)
 // s0-s7 contain the offset of the D3D constant that corresponds to the
 // c0 or c1 constant in stages 0 through 7.  These mappings are only used in
-// SetPixelShaderConstant().
+// Xbox SetPixelShaderConstant().
 
 // =========================================================================================================
 // PSFinalCombinerConstants
@@ -463,7 +465,7 @@ enum PS_COMBINEROUTPUT
 #define PS_FINALCOMBINERCONSTANTS(c0,c1,flags) (((DWORD)(flags) << 8) | ((DWORD)(c0)&0xf)<< 0) | (((DWORD)(c1)&0xf)<< 4)
 // c0 and c1 contain the offset of the D3D constant that corresponds to the
 // constants in the final combiner.  These mappings are only used in
-// SetPixelShaderConstant().  Flags contains values from PS_GLOBALFLAGS
+// Xbox SetPixelShaderConstant().  Flags contains values from PS_GLOBALFLAGS
 
 enum PS_GLOBALFLAGS
 {
@@ -5951,9 +5953,11 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 
 	static IDirect3DPixelShader9* pHLSLPixelShader = nullptr;
 
+	// Create the uber shader once
 	if (pHLSLPixelShader == nullptr) {
 		HRESULT Result = D3D_OK;
-		static LPCSTR HLSLPixelShader_String = "TODO";
+#if 0		
+		static LPCSTR HLSLPixelShader_String = ;
 		DWORD dwFlags = 0 | D3DXSHADER_DEBUG;
 		D3DXMACRO* pDefines = nullptr;
 		LPD3DXINCLUDE pInclude = nullptr;
@@ -5985,6 +5989,9 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 
 		Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
 		pShaderBuffer->Release();
+#else
+		Result = g_pD3DDevice->CreatePixelShader((DWORD*)g_ps30_main, &pHLSLPixelShader);
+#endif
 		if (FAILED(Result)) {
 			// CxbxShowError("HLSL pixel shader creation failed");
 			return;
@@ -6024,10 +6031,10 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 
 		// Convert each DWORD into four separate bytes :
 		uint8_t ByteValues[4];
-		ByteValues[0] = (uint8_t)(dwRenderStateValue & 0xFF);
-		ByteValues[1] = (uint8_t)((dwRenderStateValue >> 8) & 0xFF);
-		ByteValues[2] = (uint8_t)((dwRenderStateValue >> 16) & 0xFF);
-		ByteValues[3] = (uint8_t)((dwRenderStateValue >> 24) & 0xFF);
+		ByteValues[0] = (uint8_t)((dwRenderStateValue >>  0) & 0xFF); // Corresponds float4.r (Red channel)
+		ByteValues[1] = (uint8_t)((dwRenderStateValue >>  8) & 0xFF); // Corresponds float4.g (Green channel)
+		ByteValues[2] = (uint8_t)((dwRenderStateValue >> 16) & 0xFF); // Corresponds float4.b (Blue channel)
+		ByteValues[3] = (uint8_t)((dwRenderStateValue >> 24) & 0xFF); // Corresponds float4.a (Alpha channel)
 
 		// Check for color constants :
 		bool is_color_constant = (rs >= X_D3DRS_PSCONSTANT0_0 && rs <= X_D3DRS_PSCONSTANT1_7)
