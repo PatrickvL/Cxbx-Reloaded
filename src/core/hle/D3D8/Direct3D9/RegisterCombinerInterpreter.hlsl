@@ -299,7 +299,7 @@ static const byte_t PS_REGISTER_R0 = 0x0cL; // r/w
 static const byte_t PS_REGISTER_R1 = 0x0dL; // r/w
 static const byte_t PS_REGISTER_V1R0_SUM = 0x0eL; // r
 static const byte_t PS_REGISTER_EF_PROD = 0x0fL; // r
-//static const byte_t PS_REGISTER_ONE = PS_REGISTER_ZERO | PS_INPUTMAPPING_UNSIGNED_INVERT; // 0x20 OK for final combiner
+static const byte_t PS_REGISTER_ONE = PS_REGISTER_ZERO | PS_INPUTMAPPING_UNSIGNED_INVERT; // 0x20 OK for final combiner
 //static const byte_t PS_REGISTER_NEGATIVE_ONE = PS_REGISTER_ZERO | PS_INPUTMAPPING_EXPAND_NORMAL; // 0x40 invalid for final combiner
 //static const byte_t PS_REGISTER_ONE_HALF = PS_REGISTER_ZERO | PS_INPUTMAPPING_HALFBIAS_NEGATE; // 0xa0 invalid for final combiner
 //static const byte_t PS_REGISTER_NEGATIVE_ONE_HALF = PS_REGISTER_ZERO | PS_INPUTMAPPING_HALFBIAS_NORMAL; // 0x80 invalid for final combiner
@@ -1106,6 +1106,32 @@ float4 main() : COLOR
         state.stage = combiner_stage; // tell do_color_combiner_stage() and get_input_register_as_float4() the currently active stage
 //return DebugColor(PS_REGISTER_T2); // Dark brown
 //return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[0].a)));
+//return DebugColor(PS_REGISTER_ONE); // Soft lime green
+//return DebugColor(float_to_byte(D3DRS_PSRGBINPUTS[0].b));
+//return DebugColor(PS_REGISTER_ZERO); // Black
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[0].g)));
+//return DebugColor(PS_REGISTER_ZERO); // Black
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[0].r)));
+
+//return DebugColor(PS_REGISTER_T0); // Dark green
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[1].a)));
+//return DebugColor(PS_REGISTER_ONE); // Soft lime green
+//return DebugColor(float_to_byte(D3DRS_PSRGBINPUTS[1].b));
+//return DebugColor(PS_REGISTER_T1); // Muddy dark brown-green
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[1].g)));
+//return DebugColor(PS_REGISTER_ONE); // Soft lime green
+//return DebugColor(float_to_byte(D3DRS_PSRGBINPUTS[1].r));
+
+//return DebugColor(PS_REGISTER_R0); // Soft red
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[2].a)));
+//return DebugColor(PS_REGISTER_V0); // Deep red
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[2].b)));
+//return DebugColor(PS_REGISTER_ZERO); // Black
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[2].g)));
+//return DebugColor(PS_REGISTER_ZERO); // Black
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[2].r)));
+
+//return DebugColor(float_to_byte(D3DRS_PSFINALCOMBINERCONSTANT[0].r));
         do_color_combiner_stage(state, false); // for RGB
         do_color_combiner_stage(state, true); // for Alpha
     }
