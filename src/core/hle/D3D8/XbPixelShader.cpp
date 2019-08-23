@@ -49,6 +49,8 @@
 #include "core\hle\D3D8\Direct3D9\FixedFunctionPixelShader.hlsli"
 #include "common/FilePaths.hpp" // For szFilePath_CxbxReloaded_Exe
 
+#include "C:\Program Files (x86)\CMake\bin\projects\cxbx\RegisterCombinerInterpreter.h" // g_ps30_main
+
 #include <assert.h> // assert()
 #include <process.h>
 #include <locale.h>
@@ -125,6 +127,7 @@ void RPSInputRegister::Decode(uint8_t Value, unsigned stage_nr, bool isRGB)
 		// In final combiner stage, convert C0 into FC0, and C1 into FC1, to discern them as separate registers
 		if (Reg == PS_REGISTER_C0) Reg = PS_REGISTER_FC0;
 		if (Reg == PS_REGISTER_C1) Reg = PS_REGISTER_FC1;
+// SetPixelShaderConstant().  Flags contains values from PS_GLOBALFLAGS
 	}
 
 	// Validate correctness (see NOTE below)
@@ -1020,8 +1023,11 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 		RecompiledPixelShader = &RecompiledPixelShader_HLSL;
 
 		static IDirect3DPixelShader9 *pHLSLPixelShader = nullptr;
+
+	// Create the uber shader once
 		if (pHLSLPixelShader == nullptr) {
-			static LPCSTR HLSLPixelShader_String = "TODO";
+#if 0		
+		static LPCSTR HLSLPixelShader_String = ;
 			DWORD dwFlags = 0 | D3DXSHADER_DEBUG;
 			D3DXMACRO *pDefines = nullptr;
 			LPD3DXINCLUDE pInclude = nullptr;
@@ -1052,6 +1058,9 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 			}
 
 			Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
+#else
+		Result = g_pD3DDevice->CreatePixelShader((DWORD*)g_ps30_main, &pHLSLPixelShader);
+#endif
 			pShaderBuffer->Release();
 			if (FAILED(Result)) {
 				// CxbxShowError("HLSL pixel shader creation failed");

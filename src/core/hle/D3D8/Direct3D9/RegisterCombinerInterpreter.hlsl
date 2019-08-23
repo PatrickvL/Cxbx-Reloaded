@@ -22,7 +22,7 @@
 // Utility functions
 //
 
-#define SUPPORTS_INDIRECT_INDEX // When set, register value accesses indexes an array instead of accessing separate fields // [125 slots] when unset?
+//#define SUPPORTS_INDIRECT_INDEX // When set, register value accesses indexes an array instead of accessing separate fields // [125 slots] when unset?
 //#define ASSERT_VALID_ACCESSES // When set, checks for valid accesses are compiled (doesn't result in additional code)
 //#define AVOID_INVALID_ACCESSES // When set, invalid accesses are avoided (although assertions may have failed already)
 
@@ -34,6 +34,15 @@ void assert(bool condition)
 	// TODO
 }
 #endif
+
+float4 DebugColor(int i) // turns a value 0..255 (a byte) into 256 somewhat distinct colors
+{
+	return float4(
+		floor(fmod(i / 1, 8)) / 8, // 8 shades of Red
+		floor(fmod(i / 8, 8)) / 8, // 8 shades of Green
+		floor(fmod(i / 64, 4)) / 4, // 4 shades of Blue
+		1.0f);
+}
 
 // Input float is read from one of the D3DRS_* 4 byte floats, which MUST already be in range [0.0-255.0]!
 // Given this type of input, do as little as possible to get this compiling without errors.
@@ -47,12 +56,14 @@ byte_t float_to_byte(uniform float value) // TODO : Test this thoroughly, aiming
     //byte_t byte_result = fmod(value, 256u); // error X3548: in ps_3_0 uints can only be used with known-positive values, use int if possible
     //byte_t byte_result = fmod(abs(value), 256u); // error X3548: in ps_3_0 uints can only be used with known-positive values, use int if possible
 
-    byte_t byte_result = max(value, 255u); // [623 slots] Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
+    //byte_t byte_result = max(value, 255u); // [623 slots] Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
     //byte_t byte_result = max(abs(value), 255); // [624 slots] Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
     //byte_t byte_result = abs(value); // [626 slots] Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
     //byte_t byte_result = abs(fmod(value, 256)); // [652 slots] Probably most correct. Compiles in Visual Studio, not in AMD GPU ShaderAnalyzer
 
     //byte_t byte_result = max(fmod(value, 256u), 255u); // [13 slots] Visual Studio incorrectly optimizes nearly everything away
+
+    byte_t byte_result = clamp(value, 0, 255); // [? slots] Seems to result in sane values! Compiles in Visual Studio, ? in AMD GPU ShaderAnalyzer
 #ifdef ASSERT_VALID_ACCESSES
     assert(byte_result >= 0u);
     assert(byte_result <= 255u);
@@ -292,6 +303,7 @@ static const byte_t PS_REGISTER_EF_PROD = 0x0fL; // r
 //static const byte_t PS_REGISTER_NEGATIVE_ONE = PS_REGISTER_ZERO | PS_INPUTMAPPING_EXPAND_NORMAL; // 0x40 invalid for final combiner
 //static const byte_t PS_REGISTER_ONE_HALF = PS_REGISTER_ZERO | PS_INPUTMAPPING_HALFBIAS_NEGATE; // 0xa0 invalid for final combiner
 //static const byte_t PS_REGISTER_NEGATIVE_ONE_HALF = PS_REGISTER_ZERO | PS_INPUTMAPPING_HALFBIAS_NORMAL; // 0x80 invalid for final combiner
+static const byte_t PS_REGISTER_COUNT = 0x10L;
 
 static const byte_t PS_CHANNEL_RGB = 0x00; // used as RGB source
 static const byte_t PS_CHANNEL_BLUE = 0x00; // used as ALPHA source
@@ -435,7 +447,7 @@ struct _ps_state
     nointerpolation float3 V1R0_SUM; // Note : V1R0_SUM and EF_PROD are only available in final combiner (A,B,C,D inputs only)
     nointerpolation float3 EF_PROD;  // Note : V1R0_SUM_ALPHA and EF_PROD_ALPHA are not available, hence the float3 type here
 #else
-    nointerpolation float4 RegisterValues[16]; // Room for 16 registers : PS_REGISTER_ZERO (0) upto PS_REGISTER_EF_PROD (15)
+   nointerpolation float4 RegisterValues[16]; // Room for 16 registers : PS_REGISTER_ZERO (0) upto PS_REGISTER_EF_PROD (15)
 #endif
 	// Flags, used in get_input_register_as_float4() :
     nointerpolation byte_t stage; // Currently active stage (0 upto 7, 8 and 9 are for final combiner)
@@ -448,8 +460,9 @@ struct _ps_state
 byte_t mask_register(uniform byte_t value)
 {
     byte_t mask_register_result = value;
-    mask_register_result = fmod(mask_register_result, PS_REGISTER_EF_PROD + 1u);
-    mask_register_result = max(mask_register_result, PS_REGISTER_EF_PROD); // max() avoids error X3500: array reference cannot be used as an l-value; not natively addressable
+    mask_register_result = fmod(mask_register_result, PS_REGISTER_COUNT); // 16
+    //mask_register_result = max(mask_register_result, PS_REGISTER_EF_PROD); // max() avoids error X3500: array reference cannot be used as an l-value; not natively addressable
+    mask_register_result = clamp(mask_register_result, PS_REGISTER_ZERO, PS_REGISTER_EF_PROD); // clamp actually works, as opposed to max()?!?
 #ifdef ASSERT_VALID_ACCESSES
     assert(mask_register_result >= PS_REGISTER_ZERO);
     assert(mask_register_result <= PS_REGISTER_EF_PROD);
@@ -1079,6 +1092,11 @@ float4 main() : COLOR
     num_stages = max(num_stages, 8u);
 #endif
 
+//	return DebugColor(3);
+//	return DebugColor(combiner_byte_0);
+//	return DebugColor(num_stages);
+//	return DebugColor(combiner_byte_1);
+//	return DebugColor(combiner_byte_2);
 	// Loop over at most 8 combiner stages (start counting from zero)
     for (byte_t combiner_stage = 0u; combiner_stage < MAX_COMBINER_STAGE_COUNT; combiner_stage++)
     {
@@ -1086,6 +1104,8 @@ float4 main() : COLOR
             break;
 
         state.stage = combiner_stage; // tell do_color_combiner_stage() and get_input_register_as_float4() the currently active stage
+//return DebugColor(PS_REGISTER_T2); // Dark brown
+//return DebugColor(mask_register(float_to_byte(D3DRS_PSRGBINPUTS[0].a)));
         do_color_combiner_stage(state, false); // for RGB
         do_color_combiner_stage(state, true); // for Alpha
     }
