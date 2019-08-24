@@ -249,13 +249,13 @@ byte_t get_nibble_1_from_byte(uniform byte_t value)
 // The input can have the following mappings applied :
 //
 // PS_INPUTMAPPING_UNSIGNED_IDENTITY : y =  1*max(0,x) - 0.0  ?  OR  abs(x)                        ?
-// PS_INPUTMAPPING_UNSIGNED_INVERT   : y = -1*max(0,x) + 1.0  ?  OR  1 - x   MAYBE EVEN  1-abs(x)  ?
-// PS_INPUTMAPPING_EXPAND_NORMAL     : y =  2*max(0,x) - 1.0
-// PS_INPUTMAPPING_EXPAND_NEGATE     : y = -2*max(0,x) + 1.0
-// PS_INPUTMAPPING_HALFBIAS_NORMAL   : y =  1*max(0,x) - 0.5
-// PS_INPUTMAPPING_HALFBIAS_NEGATE   : y = -1*max(0,x) + 0.5
-// PS_INPUTMAPPING_SIGNED_IDENTITY   : y =  1*      x  - 0.0
-// PS_INPUTMAPPING_SIGNED_NEGATE     : y = -1*      x  + 0.0
+// PS_INPUTMAPPING_UNSIGNED_INVERT   : y = -1*max(0,x) + 1.0  ?  OR  1 - x   MAYBE EVEN  1-clamp(x,0,1)  ?
+// PS_INPUTMAPPING_EXPAND_NORMAL     : y =  2*max(0,x) - 1.0 =  2*(max(0,x) - 0.5)
+// PS_INPUTMAPPING_EXPAND_NEGATE     : y = -2*max(0,x) + 1.0 = -2*(max(0,x) - 0.5)
+// PS_INPUTMAPPING_HALFBIAS_NORMAL   : y =  1*max(0,x) - 0.5 =  1*(max(0,x) - 0.5)
+// PS_INPUTMAPPING_HALFBIAS_NEGATE   : y = -1*max(0,x) + 0.5 = -1*(max(0,x) - 0.5)
+// PS_INPUTMAPPING_SIGNED_IDENTITY   : y =  1*      x  - 0.0 =  1*(      x  - 0.0)
+// PS_INPUTMAPPING_SIGNED_NEGATE     : y = -1*      x  + 0.0 = -1*(      x  - 0.0)
 //
 // (Note : I don't know for sure if the max() operation mentioned above is indeed what happens,
 // as there's no further documentation available on this. Native Direct3D can clamp with the
@@ -588,9 +588,9 @@ float4 apply_input_mapping(uniform byte_t input_mapping, uniform float4 value)
     switch (input_mapping)
     {
         case PS_INPUTMAPPING_UNSIGNED_IDENTITY:  // = 0x00L : y = max(0,x)       =  1*max(0,x) - 0.0
-            return         abs(value); // TODO : Verify, abs() might need to be replaced by max() operation?
+            return         max(0.0f, value);     // TODO : Verify, might need to be replaced by 'abs(value)' operation?
         case PS_INPUTMAPPING_UNSIGNED_INVERT:    // = 0x20L : y = 1 - max(0,x)   = -1*max(0,x) + 1.0
-            return  1.0f - abs(value); // TODO : Verify, abs() might need to do be removed, or replaced by max() operation?
+            return  1.0f - clamp(value, 0.0f, 1.0f); // TODO : Verify, abs() might need to do be removed, or replaced by max() operation?
         case PS_INPUTMAPPING_EXPAND_NORMAL:      // = 0x40L : y = 2*max(0,x) - 1 =  2*max(0,x) - 1.0
             return  2.0f * max(0.0f, value) - 1.0f;
         case PS_INPUTMAPPING_EXPAND_NEGATE:      // = 0x60L : y = 1 - 2*max(0,x) = -2*max(0,x) + 1.0
@@ -601,23 +601,30 @@ float4 apply_input_mapping(uniform byte_t input_mapping, uniform float4 value)
             return -1.0f * max(0.0f, value) + 0.5f;
         default: // This also handles
 		// case PS_INPUTMAPPING_SIGNED_IDENTITY: // = 0xc0L : y = x              =  1*      x  - 0.0
-            return value;            
+            return  value;            
         case PS_INPUTMAPPING_SIGNED_NEGATE:      // = 0xe0L : y = -x             = -1*      x  + 0.0
             return -value;
     }
 /* TODO : Instead of the above, mimick apply_output_mapping by determining bias and scale upfront
+	float min_value = (input_mapping < PS_INPUTMAPPING_SIGNED_IDENTITY) ? 0.0f : value;
+	float max_value = (input_mapping == PS_INPUTMAPPING_UNSIGNED_INVERT) ? 1.0f : value;
+
 	// Determine bias
     float input_bias;
-    if (get_bit_?_from_byte(input_mapping))
+    if (get_bit_7_from_byte(input_mapping)) // PS_INPUTMAPPING_EXPAND_NORMAL, PS_INPUTMAPPING_EXPAND_NEGATE, PS_INPUTMAPPING_HALFBIAS_NORMAL, PS_INPUTMAPPING_HALFBIAS_NEGATE
         input_bias = 0.5f;
     else
         input_bias = 0.0f;
 
 	// Determine scale
     float input_scale;
+    if (get_bit_6_from_byte(input_mapping)) // PS_INPUTMAPPING_UNSIGNED_INVERT, PS_INPUTMAPPING_EXPAND_NEGATE, PS_INPUTMAPPING_HALFBIAS_NEGATE, PS_INPUTMAPPING_SIGNED_NEGATE
+		scale = -1.0f
+	else
+		scale = 1.0f;
 
-	// TODO : Apply input biasing and scaling (and possibly clamping?) in that order (or clamp first?) :
-    return input_scale * (value - input_bias);
+	// TODO : Apply clamping, input biasing and scaling in that order :
+    return (clamp(value, min_value, max_value) - input_bias) * input_scale;
 */
 }
 
@@ -626,7 +633,7 @@ float4 apply_output_mapping(uniform byte_t output_mapping, uniform float4 value)
 	// Determine bias
     float output_bias;
     if (get_bit_3_from_byte(output_mapping))
-        output_bias = 0.5f; // Initial PS_COMBINEROUTPUT_BIAS (or any other PS_COMBINEROUTPUT_*_BIAS)
+        output_bias = -0.5f; // Initial PS_COMBINEROUTPUT_BIAS (or any other PS_COMBINEROUTPUT_*_BIAS)
     else
         output_bias = 0.0f; // Initial PS_COMBINEROUTPUT_IDENTITY (or any other PS_COMBINEROUTPUT_* without _BIAS)
 
@@ -648,7 +655,7 @@ float4 apply_output_mapping(uniform byte_t output_mapping, uniform float4 value)
     }
 
 	// Apply output biasing, scaling and clamping (in that order) :
-    return clamp(output_scale * (value - output_bias), -1.0f, 1.0f);
+    return clamp((value + output_bias) * output_scale, -1.0f, 1.0f);
 }
 
 float4 get_input_register_as_float4(uniform ps_state state, uniform byte_t reg_byte, uniform bool is_alpha = false)
@@ -908,9 +915,9 @@ void do_color_combiner_stage(inout ps_state state, uniform bool is_alpha)
     {
         float R0_a_value = get_plain_register_as_float4(state, PS_REGISTER_R0).a; // TODO : Normalize? How?
         if (state.FlagMuxMsb)
-            AB_CD_value = (R0_a_value > 0.5f) ? CD_value : AB_value; // PS_COMBINERCOUNT_MUX_MSB
+            AB_CD_value = (R0_a_value >= 0.5f) ? CD_value : AB_value; // PS_COMBINERCOUNT_MUX_MSB
         else
-            AB_CD_value = get_bit_0_from_byte(R0_a_value) ? CD_value : AB_value; // PS_COMBINERCOUNT_MUX_LSB
+            AB_CD_value = get_bit_0_from_byte(R0_a_value) ? CD_value : AB_value; // PS_COMBINERCOUNT_MUX_LSB TODO : Test
     }
     else // PS_COMBINEROUTPUT_AB_CD_SUM
         AB_CD_value = AB_value + CD_value;
@@ -1023,7 +1030,7 @@ float4 do_final_combiner(inout ps_state state)
 
 	// Calculate output RGB = a*b + (1-a)*c + d :
     float4 FinalOutput;
-    FinalOutput.rgb = lerp(C_value.rgb, B_value.rgb, A_value.rgb) + D_value.rgb;
+    FinalOutput.rgb = min(lerp(C_value.rgb, B_value.rgb, A_value.rgb) + D_value.rgb, 1.0f);
 
 	// Fetch the output alpha channel from the G register value :
     FinalOutput.a = G_alpha;
