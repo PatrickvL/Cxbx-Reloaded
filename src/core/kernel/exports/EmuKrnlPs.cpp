@@ -36,13 +36,13 @@ namespace xboxkrnl
 };
 
 #include <process.h> // For __beginthreadex(), etc.
+#include <float.h> // For _controlfp constants
 
 #include "Logging.h" // For LOG_FUNC()
 #include "EmuKrnlLogging.h"
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxKrnl_TLS
 #include "core\kernel\support\Emu.h" // For EmuLog(LOG_LEVEL::WARNING, )
 #include "core\kernel\support\EmuFS.h" // For EmuGenerateFS
-#include "core\kernel\support\EmuXTL.h"
 
 // prevent name collisions
 namespace NtDll
@@ -101,8 +101,6 @@ void InitXboxThread(DWORD_PTR cores)
 }
 
 // PsCreateSystemThread proxy procedure
-#pragma warning(push)
-#pragma warning(disable: 4731)  // disable ebp modification warning
 // Dxbx Note : The signature of PCSTProxy should conform to System.TThreadFunc !
 static unsigned int WINAPI PCSTProxy
 (
@@ -142,6 +140,10 @@ static unsigned int WINAPI PCSTProxy
 	__try
 	{
 		auto routine = (xboxkrnl::PKSYSTEM_ROUTINE)SystemRoutine;
+		// Debugging notice : When the below line shows up with an Exception dialog and a
+		// message like: "Exception thrown at 0x00026190 in cxbx.exe: 0xC0000005: Access
+		// violation reading location 0xFD001804.", then this is AS-DESIGNED behaviour!
+		// (To avoid repetitions, uncheck "Break when this exception type is thrown").
 		routine(xboxkrnl::PKSTART_ROUTINE(StartRoutine), StartContext);
 	}
 	__except (EmuException(GetExceptionInformation()))
@@ -155,7 +157,6 @@ static unsigned int WINAPI PCSTProxy
 
 	return 0; // will never be reached
 }
-#pragma warning(pop)
 
 // Placeholder system function, instead of XapiThreadStartup
 void PspSystemThreadStartup
@@ -273,9 +274,9 @@ XBSYSAPI EXPORTNUM(255) xboxkrnl::NTSTATUS NTAPI xboxkrnl::PsCreateSystemThreadE
         // PCSTProxy is responsible for cleaning up this pointer
 		PCSTProxyParam *iPCSTProxyParam = (PCSTProxyParam*)malloc(sizeof(PCSTProxyParam));
 
-        iPCSTProxyParam->StartRoutine = StartRoutine;
+        iPCSTProxyParam->StartRoutine = (PVOID)StartRoutine;
         iPCSTProxyParam->StartContext = StartContext;
-        iPCSTProxyParam->SystemRoutine = SystemRoutine; // NULL, XapiThreadStartup or unknown?
+        iPCSTProxyParam->SystemRoutine = (PVOID)SystemRoutine; // NULL, XapiThreadStartup or unknown?
         iPCSTProxyParam->StartSuspended = CreateSuspended;
 	    iPCSTProxyParam->hStartedEvent = hStartedEvent;
 
@@ -398,7 +399,7 @@ XBSYSAPI EXPORTNUM(257) xboxkrnl::NTSTATUS NTAPI xboxkrnl::PsSetCreateThreadNoti
 		// that we don't accidently register the same routine twice!
 		if (g_pfnThreadNotification[i] == NULL)
 		{
-			g_pfnThreadNotification[i] = NotifyRoutine;
+			g_pfnThreadNotification[i] = (PVOID)NotifyRoutine;
 			g_iThreadNotificationCount++;
 			ret = STATUS_SUCCESS;
 			break;

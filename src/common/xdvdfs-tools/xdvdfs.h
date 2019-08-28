@@ -3,12 +3,6 @@
 #ifndef __XDVDFS_H__
 #define __XDVDFS_H__
 
-#ifdef __cplusplus
-#pragma once
-
-extern "C" {
-#endif
-
 #include <xboxkrnl/xboxkrnl.h> //#include <stdtypes.h>
 
 #include "buffered_io.h"
@@ -158,9 +152,5 @@ extern DWORD	XDVDFS_FileSeek(
 					PFILE_RECORD	FileRecord,
 					int				Delta,
 					DWORD			SeekMode);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif // __XDVDFS_H__

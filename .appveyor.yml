@@ -1,34 +1,43 @@
 # Documentation is here: https://www.appveyor.com/docs/appveyor-yml/
+# You can validate ymls here: https://ci.appveyor.com/tools/validate-yaml
+
+skip_commits:
+  files:
+    - doc/*
+    - doc/*/*
+    - .github/*
+    - .github/*/*
+    - .azure-pipelines.yml
+    - .travis.yml
+    - CONTRIBUTORS
+    - COPYING
+    - README.md
+    - gen-msvc-project.bat
+    - setup.bat
 
 init:
   - ps: Update-AppveyorBuild -Version "$env:appveyor_repo_commit"
 
-image:
-  # If this is modified, please also update the build script
+image: # If this is modified, please also update the build script
   - Visual Studio 2019
 
-configuration:
-  # The builds will be run in this order
+configuration: # The builds will be run in this order
   - Release
-  - Debug
 
 before_build:
-  - cmd: |-
+  - |-
       git submodule update --init --recursive
       mkdir build
       cd build
       cmake .. -G "Visual Studio 16 2019" -A Win32
 
 build_script:
-  - cmd: cmake --build . --config %CONFIGURATION%
+  - cmake --build . --config %configuration%
 
-after_build:
+on_success:
   - ps: |-
-      cd "bin\${env:CONFIGURATION}"
-      7z u "${env:CONFIGURATION}.zip" ..\..\..\COPYING ..\..\..\README.md
-      7z u "${env:CONFIGURATION}.zip" Cxbx.exe glew32.dll subhook.dll CxbxVSBC.dll
-      7z u "${env:CONFIGURATION}.zip" cxbxr-debugger.exe capstone.dll cs_x86.dll
-      If ($env:CONFIGURATION -eq 'Release') { 
-        Get-ChildItem .\*.zip | % { Push-AppveyorArtifact $_.FullName -FileName $_.Name } 
-      }
-
+      cd bin\$env:configuration
+      7z u "$env:configuration.zip" ..\..\..\COPYING ..\..\..\README.md
+      7z u "$env:configuration.zip" Cxbx.exe glew32.dll subhook.dll SDL2.dll
+      7z u "$env:configuration.zip" cxbxr-debugger.exe capstone.dll cs_x86.dll
+      Get-ChildItem .\*.zip | % { Push-AppveyorArtifact $_.FullName -FileName $_.Name }

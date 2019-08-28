@@ -50,6 +50,7 @@
 
 // The intent of this file is to add general functions which are not kernel specific (for those CxbxKrnl.h should be used instead)
 
+#include <cstring> // For memcpy
 #include "common\util\CxbxUtil.h"
 #include "core\kernel\init\CxbxKrnl.h"
 
@@ -60,9 +61,7 @@
 
 // Disable a compiler warning relative to uint64_t -> uint32_t conversions in Muldiv64. This function is taken from
 // QEMU so it should be safe regardless
-#pragma warning(push)
-#pragma warning(disable: 4244)
-
+#pragma warning(suppress: 4244)
 // Compute (a*b)/c with a 96 bit intermediate result
 uint64_t Muldiv64(uint64_t a, uint32_t b, uint32_t c)
 {
@@ -82,8 +81,6 @@ uint64_t Muldiv64(uint64_t a, uint32_t b, uint32_t c)
 	res.l.low = (((rh % c) << 32) + (rl & 0xffffffff)) / c;
 	return res.ll;
 }
-
-#pragma warning(pop)
 
 void IoVecReset(IOVector* qiov)
 {
@@ -253,5 +250,23 @@ void unix2dos(std::string& string)
 		}
 		string.insert(position, 1, '\r');
 		position += 2;
+	}
+}
+
+// Copyright 2008 Dolphin Emulator Project
+// Licensed under GPLv2+
+// Refer to the license.txt file of Dolphin at https://github.com/dolphin-emu/dolphin/blob/master/license.txt.
+
+// Source: StringUtil.cpp of Dolphin emulator
+/* Turns "  hello " into "hello". Also handles tabs */
+std::string StripSpaces(const std::string& str)
+{
+	const size_t s = str.find_first_not_of(" \t\r\n");
+
+	if (str.npos != s) {
+		return str.substr(s, str.find_last_not_of(" \t\r\n") - s + 1);
+	}
+	else {
+		return "";
 	}
 }

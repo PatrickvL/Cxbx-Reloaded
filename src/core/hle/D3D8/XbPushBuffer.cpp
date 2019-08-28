@@ -30,16 +30,17 @@
 #include <assert.h> // For assert()
 
 #include "core\kernel\support\Emu.h"
-#include "core\kernel\support\EmuXTL.h"
-#include "XbD3D8Types.h" // For X_D3DFORMAT
+#include "core\hle\D3D8\XbD3D8Types.h" // For X_D3DFORMAT
 #include "core\hle\D3D8\ResourceTracker.h"
+#include "core\hle\D3D8\Direct3D9\Direct3D9.h" // For g_Xbox_VertexShader_Handle
+#include "core\hle\D3D8\XbPushBuffer.h"
+#include "core\hle\D3D8\XbConvert.h"
 #include "devices/video/nv2a.h" // For g_NV2A, PGRAPHState
 #include "devices/video/nv2a_int.h" // For NV** defines
 #include "Logging.h"
 
 // TODO: Find somewhere to put this that doesn't conflict with XTL::
 extern void EmuUpdateActiveTextureStages();
-extern DWORD g_XboxBaseVertexIndex;
 
 const char *NV2AMethodToString(DWORD dwMethod); // forward
 
@@ -47,7 +48,7 @@ static void DbgDumpMesh(WORD *pIndexData, DWORD dwCount);
 
 // Determine the size (in number of floating point texture coordinates) of the texture format (indexed 0 .. 3).
 // This is the reverse of the D3DFVF_TEXCOORDSIZE[0..3] macros.
-int XTL::DxbxFVF_GetNumberOfTextureCoordinates(DWORD dwFVF, int aTextureIndex)
+int DxbxFVF_GetNumberOfTextureCoordinates(DWORD dwFVF, int aTextureIndex)
 {
 	// See D3DFVF_TEXCOORDSIZE1()
 	switch ((dwFVF >> ((aTextureIndex * 2) + 16)) & 3) {
@@ -63,7 +64,7 @@ int XTL::DxbxFVF_GetNumberOfTextureCoordinates(DWORD dwFVF, int aTextureIndex)
 
 // Dxbx Note: This code appeared in EmuExecutePushBufferRaw and occured
 // in EmuFlushIVB too, so it's generalize in this single implementation.
-UINT XTL::DxbxFVFToVertexSizeInBytes(DWORD dwFVF, BOOL bIncludeTextures)
+UINT DxbxFVFToVertexSizeInBytes(DWORD dwFVF, BOOL bIncludeTextures)
 {
 /*
 	X_D3DFVF_POSITION_MASK    = $00E; // Dec  /2  #fl
@@ -97,11 +98,11 @@ UINT XTL::DxbxFVFToVertexSizeInBytes(DWORD dwFVF, BOOL bIncludeTextures)
 	}
 
 	if (dwFVF & D3DFVF_DIFFUSE) {
-		Result += sizeof(XTL::D3DCOLOR);
+		Result += sizeof(D3DCOLOR);
 	}
 
 	if (dwFVF & D3DFVF_SPECULAR) {
-		Result += sizeof(XTL::D3DCOLOR);
+		Result += sizeof(D3DCOLOR);
 	}
 
 	if (bIncludeTextures) {
@@ -115,14 +116,14 @@ UINT XTL::DxbxFVFToVertexSizeInBytes(DWORD dwFVF, BOOL bIncludeTextures)
 	return Result;
 }
 
-void XTL::EmuExecutePushBuffer
+void EmuExecutePushBuffer
 (
-    X_D3DPushBuffer       *pPushBuffer,
-    X_D3DFixup            *pFixup
+	XTL::X_D3DPushBuffer       *pPushBuffer,
+	XTL::X_D3DFixup            *pFixup
 )
 {
 	//Check whether Fixup exists or not. 
-	if (pFixup != NULL) {
+	if (pFixup != xbnullptr) {
 		LOG_TEST_CASE("PushBuffer has fixups");
 		//Interpret address of PushBuffer Data and Fixup Data
 		UINT8* pPushBufferData = (UINT8*)pPushBuffer->Data;
@@ -163,9 +164,7 @@ void XTL::EmuExecutePushBuffer
 
 DWORD CxbxGetStrideFromVertexShaderHandle(DWORD dwVertexShader)
 {
-	using namespace XTL;
-
-	XTL::DWORD Stride = 0;
+	DWORD Stride = 0;
 
 	if (VshHandleIsVertexShader(dwVertexShader)) {
 		// Test-case : Crash 'n' Burn [45530014]
@@ -179,11 +178,11 @@ DWORD CxbxGetStrideFromVertexShaderHandle(DWORD dwVertexShader)
 		// Test-case : SpyHunter 2 [4D57001B]
 		//LOG_TEST_CASE("Non-FVF Vertex Shaders not yet (completely) supported for PushBuffer emulation!");
 
-		CxbxVertexShader *pVertexShader = GetCxbxVertexShader(dwVertexShader);
-		if (pVertexShader) {
-			if (pVertexShader->VertexShaderInfo.NumberOfVertexStreams == 1) {
+		CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(dwVertexShader);
+		if (pCxbxVertexShader) {
+			if (pCxbxVertexShader->VertexShaderInfo.NumberOfVertexStreams == 1) {
 				// Note : This assumes that the only stream in use will be stream zero :
-				Stride = pVertexShader->VertexShaderInfo.VertexStreams[0].HostVertexStride;
+				Stride = pCxbxVertexShader->VertexShaderInfo.VertexStreams[0].HostVertexStride;
 			}
 			else {
 				LOG_TEST_CASE("Non-FVF Vertex Shaders with multiple streams not supported for PushBuffer emulation!");
@@ -206,8 +205,6 @@ void HLE_draw_arrays(NV2AState *d)
 {
 	// PGRAPHState *pg = &d->pgraph;
 
-	using namespace XTL;
-
 	LOG_TEST_CASE("HLE_draw_arrays");
 
 	LOG_UNIMPLEMENTED(); // TODO : Implement HLE_draw_arrays
@@ -216,8 +213,6 @@ void HLE_draw_arrays(NV2AState *d)
 void HLE_draw_inline_buffer(NV2AState *d)
 {
 	// PGRAPHState *pg = &d->pgraph;
-
-	using namespace XTL;
 
 	LOG_TEST_CASE("HLE_draw_inline_buffer");
 
@@ -228,31 +223,25 @@ void HLE_draw_inline_array(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
-	using namespace XTL;
-
 	//DWORD vertex data array, 
 	// To be used as a replacement for DrawVerticesUP, the caller needs to set the vertex format using IDirect3DDevice8::SetVertexShader before calling BeginPush.
 	// All attributes in the vertex format must be padded DWORD multiples, and the vertex attributes must be specified in the canonical FVF ordering
 	// (position followed by weight, normal, diffuse, and so on).
 	// retrieve vertex shader
-	XTL::DWORD dwVertexShader = g_CurrentXboxVertexShaderHandle;
-	if (dwVertexShader == 0) {
+	if (g_Xbox_VertexShader_Handle == 0) {
 		LOG_TEST_CASE("FVF Vertex Shader is null");
-		dwVertexShader = -1;
 	}
-
 	// render vertices
-	if (dwVertexShader != -1) {
-		XTL::DWORD dwVertexStride = CxbxGetStrideFromVertexShaderHandle(dwVertexShader);
+	else {
+		DWORD dwVertexStride = CxbxGetStrideFromVertexShaderHandle(g_Xbox_VertexShader_Handle);
 		if (dwVertexStride > 0) {
-			XTL::UINT VertexCount = (pg->inline_array_length * sizeof(XTL::DWORD)) / dwVertexStride;
+			UINT VertexCount = (pg->inline_array_length * sizeof(DWORD)) / dwVertexStride;
 			CxbxDrawContext DrawContext = {};
 
-			DrawContext.XboxPrimitiveType = (X_D3DPRIMITIVETYPE)pg->primitive_mode;
+			DrawContext.XboxPrimitiveType = (XTL::X_D3DPRIMITIVETYPE)pg->primitive_mode;
 			DrawContext.dwVertexCount = VertexCount;
 			DrawContext.pXboxVertexStreamZeroData = pg->inline_array;
 			DrawContext.uiXboxVertexStreamZeroStride = dwVertexStride;
-			DrawContext.hVertexShader = dwVertexShader;
 
 			CxbxDrawPrimitiveUP(DrawContext);
 		}
@@ -263,16 +252,13 @@ void HLE_draw_inline_elements(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
-	using namespace XTL;
-
 	if (IsValidCurrentShader()) {
 		unsigned int uiIndexCount = pg->inline_elements_length;
 		CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = (X_D3DPRIMITIVETYPE)pg->primitive_mode;
-		DrawContext.dwVertexCount = EmuD3DIndexCountToVertexCount(DrawContext.XboxPrimitiveType, uiIndexCount);
-		DrawContext.hVertexShader = g_CurrentXboxVertexShaderHandle;
-		DrawContext.pIndexData = d->pgraph.inline_elements; // Used by GetVerticesInBuffer
+		DrawContext.XboxPrimitiveType = (XTL::X_D3DPRIMITIVETYPE)pg->primitive_mode;
+		DrawContext.dwVertexCount = uiIndexCount;
+		DrawContext.pXboxIndexData = d->pgraph.inline_elements;
 
 		CxbxDrawIndexed(DrawContext);
 	}
@@ -286,8 +272,6 @@ DWORD ABGR_to_ARGB(const uint32_t color)
 void HLE_draw_state_update(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
-
-	using namespace XTL;
 
 	CxbxUpdateNativeD3DResources();
 
@@ -332,8 +316,6 @@ void HLE_draw_state_update(NV2AState *d)
 void HLE_draw_clear(NV2AState *d)
 {
 	// PGRAPHState *pg = &d->pgraph;
-
-	using namespace XTL;
 
 	CxbxUpdateNativeD3DResources();
 
@@ -451,7 +433,7 @@ typedef union {
 	#define COMMAND_WORD_MASK_JUMP_LONG 0xFFFFFFFC /*  2 .. 28 */
 } nv_fifo_command;
 
-extern void XTL::EmuExecutePushBufferRaw
+extern void EmuExecutePushBufferRaw
 (
 	void *pPushData,
 	uint32_t uSizeInBytes
@@ -492,7 +474,7 @@ extern void XTL::EmuExecutePushBufferRaw
 	uint32_t *dma_put; // pushbuffer current end address
 	uint32_t *dma_get; //pushbuffer current read address
 	struct {
-		NV2AMETHOD mthd; // Current method
+		XTL::NV2AMETHOD mthd; // Current method
 		uint32_t subc; // :3 = Current subchannel
 		uint32_t mcnt; // :24 = Current method count
 		bool ni; // Current command's NI (non-increasing) flag
@@ -651,12 +633,10 @@ extern void XTL::EmuExecutePushBufferRaw
 
 const char *NV2AMethodToString(DWORD dwMethod)
 {
-	using namespace XTL; // for NV2A symbols
-
 	switch (dwMethod) {
 
 #define ENUM_RANGED_ToString_N(Name, Method, Pitch, N) \
-	case Name(N): return #Name ## "((" #N ")*" #Pitch ## ")";
+	case Name(N): return #Name "((" #N ")*" #Pitch ")";
 
 #define ENUM_RANGED_ToString_1(Name, Method, Pitch) \
 	ENUM_RANGED_ToString_N(Name, Method, Pitch, 0)

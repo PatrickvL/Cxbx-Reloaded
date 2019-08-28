@@ -25,14 +25,8 @@
 // *
 // ******************************************************************
 
-
-// prevent name collisions
-namespace xboxkrnl
-{
-	#include <xboxkrnl/xboxkrnl.h> // For XC_VALUE_INDEX and XBOX_EEPROM
-};
-
 #include <fstream>
+#include <cstring> // For memcpy
 #include "EmuEEPROM.h" // For EEPROMInfo, EEPROMInfos
 #include "core\kernel\init\CxbxKrnl.h"
 #include "DlgEepromConfig.h"
@@ -102,18 +96,9 @@ void WriteEepromInMemory(HWND hDlg)
 
 	// Serial number
 	{
-		char Buffer[25];
+		char Buffer[13];
 		SendMessage(GetDlgItem(hDlg, IDC_EE_SERIAL_NUMBER), WM_GETTEXT, 25, reinterpret_cast<LPARAM>(Buffer));
-		std::string hex(Buffer);
-		size_t len = hex.length();
-		std::string ByteSequence;
-		for (unsigned int i = 0; i < len; i += 2)
-		{
-			std::string byte = hex.substr(i, 2);
-			char chr = static_cast<int>(stol(byte, nullptr, 16));
-			ByteSequence.push_back(chr);
-		}
-		std::memcpy(&pEEPROM_GUI->FactorySettings.SerialNumber, ByteSequence.c_str(), 12);
+		std::memcpy(&pEEPROM_GUI->FactorySettings.SerialNumber, Buffer, 12);
 	}
 
 	// Ethernet address
@@ -229,7 +214,7 @@ void ShowEepromConfig(HWND hwnd)
 	}
 
 	// Show dialog box
-	DialogBox(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_EEPROM_CFG), hwnd, DlgEepromConfigProc);
+	DialogBox(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDD_EEPROM_CFG), hwnd, DlgEepromConfigProc);
 }
 
 static void RefreshEepromDialog(HWND hWndDlg)
@@ -240,7 +225,7 @@ static void RefreshEepromDialog(HWND hWndDlg)
 	uint32_t value;
 
 	// Set window icon
-	SetClassLong(hWndDlg, GCL_HICON, (LONG)LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_CXBX)));
+	SetClassLong(hWndDlg, GCL_HICON, (LONG)LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_CXBX)));
 
 	// Initialize the values of the drop-down lists
 	offset = 0;
@@ -400,8 +385,8 @@ static void RefreshEepromDialog(HWND hWndDlg)
 		for (auto i : { IDC_EE_CONFOUNDER, IDC_EE_HDDKEY, IDC_EE_SERIAL_NUMBER, IDC_EE_MAC_ADDRESS, IDC_EE_ONLINE_KEY, IDC_EE_PRTL_PASS }) {
 			hEditControlArray[j] = GetDlgItem(hWndDlg, i);
 			Buffer[j] = new uint8_t[ByteLimit[j]];
-			SetWindowSubclass(hEditControlArray[j], ControlSubclassProc, 0, 0);
-			SendMessage(hEditControlArray[j], EM_SETLIMITTEXT, ByteLimit[j] * 2, 0);
+			SetWindowSubclass(hEditControlArray[j], ControlSubclassProc, i, 0);
+			SendMessage(hEditControlArray[j], EM_SETLIMITTEXT, (i == IDC_EE_SERIAL_NUMBER ? ByteLimit[j] : ByteLimit[j] * 2), 0);
 			j++;
 		}
 		j = 0;
@@ -414,8 +399,14 @@ static void RefreshEepromDialog(HWND hWndDlg)
 		for (auto i : Buffer) {
 			char* CharBuffer = new char[ByteLimit[j] * 2 + 1];
 			for (int z = 0, y = 0; z < ByteLimit[j]; z++) {
-				std::sprintf(&CharBuffer[y], "%02X", i[z]);
-				y += 2;
+				// Special case for Serial Number: This field is textual
+				if (hEditControlArray[j] == GetDlgItem(hWndDlg, IDC_EE_SERIAL_NUMBER)) {
+					std::sprintf(&CharBuffer[y], "%c", i[z]);
+					y += 1;
+				} else {
+					std::sprintf(&CharBuffer[y], "%02X", i[z]);
+					y += 2;
+				}
 			}
 			SendMessage(hEditControlArray[j], WM_SETTEXT, 0, reinterpret_cast<LPARAM>(CharBuffer));
 			delete[] CharBuffer; CharBuffer = nullptr;
@@ -586,6 +577,19 @@ LRESULT CALLBACK ControlSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam,
 
 		case WM_CHAR:
 		{
+			// Serial Number field is numeric, stored as ASCII text
+			if (uIdSubclass == IDC_EE_SERIAL_NUMBER) {
+				if (!((wParam >= '0' && wParam <= '9')
+					|| wParam == VK_CANCEL
+					|| wParam == VK_CLEAR
+					|| wParam == VK_DELETE
+					|| wParam == VK_BACK))
+				{
+					return FALSE;
+				}
+				break;
+			}
+
 			// Make sure we only allow hex numbers and some special keys to delete characters
 			if (!((wParam >= '0' && wParam <= '9')
 				|| wParam == 'a'

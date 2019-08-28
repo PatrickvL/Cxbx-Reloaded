@@ -41,9 +41,7 @@
 #include "core\kernel\memory-manager\VMManager.h"
 #include "Logging.h"
 
-#include <experimental/filesystem>
-
-//#include "Logging.h" // For hex4()
+#include <filesystem>
 
 // Default Xbox Partition Table
 #define PE_PARTFLAGS_IN_USE	0x80000000
@@ -84,7 +82,7 @@ void CxbxCreatePartitionHeaderFile(std::string filename, bool partition0 = false
 {
 	HANDLE hf = CreateFile(filename.c_str(), GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0);
 	if (!hf) {
-		CxbxKrnlCleanup("CxbxCreatePartitionHeaderFile Failed\nUnable to create file: %s (%s)", filename);
+		CxbxKrnlCleanup("CxbxCreatePartitionHeaderFile Failed\nUnable to create file: %s (%s)", filename.c_str());
 		return;
 	}
 
@@ -180,13 +178,13 @@ void CxbxFormatPartitionByHandle(HANDLE hFile)
 	// Previously, we deleted and re-created the folder, but that caused permission issues for some users
 	try
 	{
-		for (auto& directoryEntry : std::experimental::filesystem::recursive_directory_iterator(partitionPath)) {
-			std::experimental::filesystem::remove_all(directoryEntry);
+		for (auto& directoryEntry : std::filesystem::recursive_directory_iterator(partitionPath)) {
+			std::filesystem::remove_all(directoryEntry);
 		}
 	}
-	catch (std::experimental::filesystem::filesystem_error fsException)
+	catch (std::filesystem::filesystem_error fsException)
 	{
-		printf("std::experimental::filesystem failed with message: %s\n", fsException.what());
+		printf("std::filesystem failed with message: %s\n", fsException.what());
 	}
 
 

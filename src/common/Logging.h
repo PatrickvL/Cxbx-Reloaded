@@ -26,8 +26,6 @@
 #ifndef _LOGGING_H
 #define _LOGGING_H
 
-#pragma once
-
 #include <windows.h> // For DWORD
 #include <sstream> // For std::stringstream
 #include <iostream> // For std::cout
@@ -68,10 +66,11 @@ typedef enum class _CXBXR_MODULE: unsigned int {
 	PSHB,
 	PXSH,
 	VTXSH,
+	VSHCACHE,
 	VTXB,
 	DINP,
 	XINP,
-	SDL2,
+	SDL,
 	FILE,
 	X86,
 	HLE,
@@ -84,6 +83,11 @@ typedef enum class _CXBXR_MODULE: unsigned int {
 	HUB,
 	XIDCTRL,
 	ADM,
+	INPSYS,
+	DSBUFFER,
+	DSSTREAM,
+	DS3DCALC,
+	XMO,
 	// kernel
 	KRNL,
 	LOG,
@@ -113,8 +117,9 @@ extern std::atomic_bool g_EnabledModules[to_underlying(CXBXR_MODULE::MAX)];
 extern const char* g_EnumModules2String[to_underlying(CXBXR_MODULE::MAX)];
 extern std::atomic_int g_CurrentLogLevel;
 
-// print out a log message to the kernel debug log file if level is high enough
+// print out a log message to the console or kernel debug log file if level is high enough
 void NTAPI EmuLogEx(CXBXR_MODULE cxbxr_module, LOG_LEVEL level, const char *szWarningMessage, ...);
+void NTAPI EmuLogInit(LOG_LEVEL level, const char *szWarningMessage, ...);
 
 #define EmuLog(level, fmt, ...) EmuLogEx(LOG_PREFIX, level, fmt, ##__VA_ARGS__)
 
@@ -391,15 +396,6 @@ extern thread_local std::string _logThreadPrefix;
 			} \
 		} while(0)
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4477)
-#endif
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-
 //
 // Short hand function logging defines :
 //
@@ -453,7 +449,9 @@ extern thread_local std::string _logThreadPrefix;
 #define FLAGS2STR_END_and_LOGRENDER(FlagType) FLAGS2STR_END LOGRENDER_TYPE(FlagType)
 
 // Macro's for Struct-member rendering :
+#define LOGRENDER_MEMBER_ARRAY_OFFSET(Name, Offset) << LOG_ARG_START << (Name) << "[" << (Offset) << "]: {"
 #define LOGRENDER_MEMBER_NAME_VALUE(Name, Value) << LOG_ARG_START << (Name) << "  : " << (Value)
+#define LOGRENDER_MEMBER_NAME_TYPE_PTR(Name, Type, Value) << LOG_ARG_START << (Name) << "  : " << hex4((uint32_t)Value) << " -> " << (Type) << "* {"
 #define LOGRENDER_MEMBER_NAME_TYPE_VALUE(Name, Type, Value) << LOG_ARG_START << (Name) << "  : " << (Type)(Value)
 #define LOGRENDER_MEMBER_NAME(Member) << LOG_ARG_START << "."#Member << "  : "
 #define LOGRENDER_MEMBER(Member) LOGRENDER_MEMBER_NAME_VALUE("."#Member, value.Member)
@@ -462,6 +460,23 @@ extern thread_local std::string _logThreadPrefix;
 
 // Macro to ease declaration of two render functions, for type and pointer-to-type :
 #define LOGRENDER_HEADER(Type) LOGRENDER_HEADER_BY_PTR(Type); LOGRENDER_HEADER_BY_REF(Type);
+
+// Macro's for dynamic array structure rendering :
+template<class A, class B>
+static std::string
+LogRenderGenerate_Array(std::string MemberStr, A MemberValue, B Count) {
+	B counter = 0;
+	std::ostringstream strGenerator;
+	while (counter < Count) {
+		strGenerator LOGRENDER_MEMBER_ARRAY_OFFSET(MemberStr, counter)
+			<< *MemberValue << "}";
+		MemberValue++;
+		counter++;
+	}
+	strGenerator << "}";
+	return strGenerator.str();
+}
+#define LOGRENDER_MEMBER_ARRAY_TYPE(Type, Member, Count) LOGRENDER_MEMBER_NAME_TYPE_PTR("."#Member, #Type, value.Member) << LogRenderGenerate_Array("."#Member, (Type*)value.Member, value.Count)
 
 // Traits to switch ostreams to our preferred rendering of hexadecimal values
 template <class _CharT, class _Traits>

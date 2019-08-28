@@ -33,16 +33,17 @@ namespace xboxkrnl
 
 #include "common\xbe\Xbe.h"
 #include "common\util\CxbxUtil.h" // For RoundUp
-#include <experimental/filesystem> // filesystem related functions available on C++ 17
+#include <filesystem> // filesystem related functions available on C++ 17
 #include <locale> // For ctime
 #include <array>
 #include "devices\LED.h" // For LED::Sequence
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxKrnlPrintUEM
 #include "common\crypto\EmuSha.h" // For the SHA functions
 #include "common\crypto\EmuRsa.h" // For the RSA functions
-#include "core\kernel\support\EmuXTL.h" // For LDT_FROM_DASHBOARD and CxbxInitWindow
+#include "core\hle\XAPI\Xapi.h" // For LDT_FROM_DASHBOARD
+#include "core\hle\D3D8\Direct3D9\Direct3D9.h" // For CxbxInitWindow
 
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 
 
 
@@ -72,7 +73,7 @@ Xbe::Xbe(const char *x_szFilename, bool bFromGUI)
 			// The dashboard could not be found on partition2. This is a fatal error on the Xbox so we display the UEM. The
 			// error code is different if we have a launch data page
 
-			XTL::CxbxInitWindow(false);
+			CxbxInitWindow(false);
 
 			ULONG FatalErrorCode = FATAL_ERROR_XBE_DASH_GENERIC;
 
@@ -103,7 +104,7 @@ Xbe::Xbe(const char *x_szFilename, bool bFromGUI)
         strcpy(m_szPath, x_szFilename);
 
 		char * c = strrchr(m_szPath, '\\');
-		if (c != NULL)
+		if (c != nullptr)
 			*(++c) = '\0';
     }
 
@@ -721,7 +722,7 @@ void *Xbe::FindSection(char *zsSectionName)
 		}
 	}
 
-	return NULL;
+	return nullptr;
 }
 
 void* Xbe::FindSection(xboxkrnl::PXBEIMAGE_SECTION section)
@@ -736,7 +737,7 @@ void* Xbe::FindSection(xboxkrnl::PXBEIMAGE_SECTION section)
 
 	}
 
-	return NULL;
+	return nullptr;
 }
 
 void Xbe::PurgeBadChar(std::string& s, const std::string& illegalChars)

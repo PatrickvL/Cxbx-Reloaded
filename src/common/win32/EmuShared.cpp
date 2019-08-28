@@ -68,7 +68,7 @@ void EmuShared::Init(DWORD guiProcessID)
         hMapObject = CreateFileMapping
         (
             INVALID_HANDLE_VALUE,   // Paging file
-            NULL,                   // default security attributes
+            nullptr,                // default security attributes
             PAGE_READWRITE,         // read/write access
             0,                      // size: high 32 bits
             sizeof(EmuShared),      // size: low 32 bits
@@ -140,6 +140,11 @@ EmuShared::EmuShared()
 	m_Reserved6 = 0.0f;
 	std::memset(m_Reserved7, 0, sizeof(m_Reserved7));
 	std::memset(m_Reserved99, 0, sizeof(m_Reserved99));
+	std::memset(m_DeviceControlNames, '\0', sizeof(m_DeviceControlNames));
+	std::memset(m_DeviceName, '\0', sizeof(m_DeviceName));
+	for (auto& i : m_DeviceType) {
+		i = to_underlying(XBOX_INPUT_DEVICE::DEVICE_INVALID);
+	}
 }
 
 // ******************************************************************

@@ -25,13 +25,13 @@
 #ifndef DIRECT3D9_H
 #define DIRECT3D9_H
 
-#include "../XbD3D8Types.h"
-#include "core\kernel\init\CxbxKrnl.h"
-#include "common\xbe\Xbe.h"
-#include "core\kernel\support\Emu.h"
+#include "core\hle\XAPI\Xapi.h" // For EMUPATCH
+#include "core\hle\D3D8\XbD3D8Types.h"
 
 #define DIRECTDRAW_VERSION 0x0700
 #include <ddraw.h>
+
+extern void LookupTrampolines();
 
 // initialize render window
 extern VOID CxbxInitWindow(bool bFullInit);
@@ -55,17 +55,23 @@ extern uint8_t *ConvertD3DTextureToARGB(
 	int TextureStage = 0
 );
 
+void CxbxUpdateNativeD3DResources();
+
 // initialize direct3d
 extern VOID EmuD3DInit();
 
 // cleanup direct3d
 extern VOID EmuD3DCleanup();
 
-// EmuD3DTileCache (8 tiles maximum)
-extern X_D3DTILE EmuD3DTileCache[0x08];
+extern IDirect3DDevice *g_pD3DDevice;
 
-// EmuD3DActiveTexture
-extern X_D3DBaseTexture *EmuD3DActiveTexture[TEXTURE_STAGES];
+extern DWORD g_Xbox_VertexShader_Handle;
+
+extern XTL::X_PixelShader *g_pXbox_PixelShader;
+
+extern XTL::X_D3DBaseTexture *g_pXbox_SetTexture[XTL::X_D3DTS_STAGECOUNT];
+
+namespace XTL {
 
 // ******************************************************************
 // * patch: Direct3D_CreateDevice
@@ -157,7 +163,7 @@ VOID WINAPI EMUPATCH(D3DDevice_EndPush)(DWORD *pPush);
 // ******************************************************************
 // * patch: D3DDevice_BeginVisibilityTest
 // ******************************************************************
-VOID WINAPI EMUPATCH(D3DDevice_BeginVisibilityTest)();
+HRESULT WINAPI EMUPATCH(D3DDevice_BeginVisibilityTest)();
 
 // ******************************************************************
 // * patch: D3DDevice_EndVisibilityTest
@@ -405,21 +411,6 @@ HRESULT WINAPI EMUPATCH(D3DDevice_CreateVertexShader)
     CONST DWORD    *pFunction,
     DWORD          *pHandle,
     DWORD           Usage
-);
-
-// ******************************************************************
-// * patch: D3DDevice_SetPixelShaderConstant
-// ******************************************************************
-VOID WINAPI EMUPATCH(D3DDevice_SetPixelShaderConstant)
-(
-    DWORD       Register,
-    CONST PVOID pConstantData,
-    DWORD       ConstantCount
-);
-
-VOID WINAPI EMUPATCH(D3DDevice_SetPixelShaderConstant_4)
-(
-    CONST PVOID pConstantData
 );
 
 // ******************************************************************
@@ -983,7 +974,7 @@ VOID WINAPI EMUPATCH(D3DDevice_BlockUntilVerticalBlank)();
 // ******************************************************************
 VOID WINAPI EMUPATCH(D3DDevice_SetVerticalBlankCallback)
 (
-    D3DVBLANKCALLBACK pCallback
+    X_D3DVBLANKCALLBACK pCallback
 );
 
 // ******************************************************************
@@ -1891,7 +1882,7 @@ void WINAPI EMUPATCH(D3DDevice_SetStipple)( DWORD* pPattern );
 // ******************************************************************
 void WINAPI EMUPATCH(D3DDevice_SetSwapCallback)
 (
-	D3DSWAPCALLBACK		pCallback
+	X_D3DSWAPCALLBACK		pCallback
 );
 
 // ******************************************************************
@@ -2032,6 +2023,17 @@ void WINAPI EMUPATCH(D3D_BlockOnTime)( DWORD Unknown1, int Unknown2 );
 void WINAPI EMUPATCH(D3D_BlockOnResource)( X_D3DResource* pResource );
 
 // ******************************************************************
+// * patch: D3D_DestroyResource
+// ******************************************************************
+void WINAPI EMUPATCH(D3D_DestroyResource)( X_D3DResource* pResource );
+
+// ******************************************************************
+// * patch: D3D_DestroyResource__LTCG
+// ******************************************************************
+void WINAPI EMUPATCH(D3D_DestroyResource__LTCG)();
+
+
+// ******************************************************************
 // * patch: D3DDevice_GetPushBufferOffset
 // ******************************************************************
 VOID WINAPI EMUPATCH(D3DDevice_GetPushBufferOffset)
@@ -2108,5 +2110,7 @@ VOID WINAPI EMUPATCH(D3DDevice_GetMaterial)
 (
 	X_D3DMATERIAL8* pMaterial
 );
+
+} // end of namespace XTL
 
 #endif

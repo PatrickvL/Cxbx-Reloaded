@@ -34,10 +34,9 @@
 
 #include <cmath>
 #include <iomanip> // For std::setfill and std::setw
+
 #include "core\kernel\init\CxbxKrnl.h"
 #include "core\kernel\support\Emu.h"
-#include "core\kernel\support\EmuFS.h"
-#include "core\kernel\support\EmuXTL.h"
 #include "EmuShared.h"
 #include "common\CxbxDebugger.h"
 #include "Logging.h"
@@ -46,6 +45,7 @@
 #include "Intercept.hpp"
 #include "Patches.hpp"
 #include "common\util\hasher.h"
+
 #include <Shlwapi.h>
 #include <shlobj.h>
 #include <unordered_map>
@@ -100,14 +100,14 @@ void* GetXboxFunctionPointer(std::string functionName)
 }
 
 // NOTE: GetDetectedSymbolName do not get to be in XbSymbolDatabase, get symbol string in Cxbx project only.
-std::string GetDetectedSymbolName(xbaddr address, int *symbolOffset)
+std::string GetDetectedSymbolName(const xbaddr address, int * const symbolOffset)
 {
     std::string result = "";
     int closestMatch = MAXINT;
 
     for (auto it = g_SymbolAddresses.begin(); it != g_SymbolAddresses.end(); ++it) {
-        xbaddr symbolAddr = (*it).second;
-        if (symbolAddr == NULL)
+        xbaddr symbolAddr = it->second;
+        if (symbolAddr == xbnull)
             continue;
 
         if (symbolAddr <= address)
@@ -116,7 +116,7 @@ std::string GetDetectedSymbolName(xbaddr address, int *symbolOffset)
             if (closestMatch > distance)
             {
                 closestMatch = distance;
-                result = (*it).first;
+                result = it->first;
             }
         }
     }
@@ -147,10 +147,9 @@ bool VerifySymbolAddressAgainstXRef(char *SymbolName, xbaddr Address, int XRef)
         return true;
     }
 
-    // For XREF_D3DTSS_TEXCOORDINDEX, Kabuki Warriors hits this case
     CxbxPopupMessage(LOG_LEVEL::WARNING, CxbxMsgDlgIcon_Warn,
 		"Verification of %s failed : XREF was 0x%.8X while lookup gave 0x%.8X", SymbolName, XRefAddr, Address);
-    // For XREF_D3DTSS_TEXCOORDINDEX, Kabuki Warriors hits this case
+    // test case : Kabuki Warriors (for XREF_D3DTSS_TEXCOORDINDEX)
     return false;
 }*/
 
@@ -288,18 +287,6 @@ void CDECL EmuRegisterSymbol(const char* library_str,
     printf(output.str().c_str());
 }
 
-// TODO: Move this into a function rather than duplicating from Symbol scanning code
-void EmuD3D_Init_DeferredStates()
-{
-    if (g_SymbolAddresses.find("D3DDeferredRenderState") != g_SymbolAddresses.end()) {
-        XTL::EmuD3DDeferredRenderState = (DWORD*)g_SymbolAddresses["D3DDeferredRenderState"];
-    }
-
-    if (g_SymbolAddresses.find("D3DDeferredTextureState") != g_SymbolAddresses.end()) {
-        XTL::EmuD3DDeferredTextureState = (DWORD*)g_SymbolAddresses["D3DDeferredTextureState"];
-    }
-}
-
 // Update shared structure with GUI process
 void EmuUpdateLLEStatus(uint32_t XbLibScan)
 {
@@ -356,7 +343,7 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
 			if (xdkVersion < BuildVersion) {
 				xdkVersion = BuildVersion;
 			}
-			XbLibFlag = XbSymbolLibrayToFlag(std::string(pLibraryVersion[v].szName, pLibraryVersion[v].szName + 8).c_str());
+			XbLibFlag = XbSymbolDatabase_LibraryToFlag(std::string(pLibraryVersion[v].szName, pLibraryVersion[v].szName + 8).c_str());
 			XbLibScan |= XbLibFlag;
 
 			// Keep certain library versions for plugin usage.
@@ -395,7 +382,7 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
 
 	// Make sure the Symbol Cache directory exists
 	std::string cachePath = std::string(szFolder_CxbxReloadedData) + "\\SymbolCache\\";
-	if (!std::experimental::filesystem::exists(cachePath) && !std::experimental::filesystem::create_directory(cachePath)) {
+	if (!std::filesystem::exists(cachePath) && !std::filesystem::create_directory(cachePath)) {
 		CxbxKrnlCleanup("Couldn't create Cxbx-Reloaded SymbolCache folder!");
 	}
 
@@ -415,17 +402,17 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
 
 	CSimpleIniA symbolCacheData;
 
-	if (std::experimental::filesystem::exists(filename.c_str())) {
-		std::printf("Found Symbol Cache File: %08X.ini\n", uiHash);
+	if (std::filesystem::exists(filename.c_str())) {
+		std::printf("Found Symbol Cache File: %08llX.ini\n", uiHash);
 
 		symbolCacheData.LoadFile(filename.c_str());
 
-		xdkVersion = symbolCacheData.GetLongValue(section_libs, sect_libs_keys.BuildVersion, /*Default=*/0);
+		xdkVersion = (uint16_t)symbolCacheData.GetLongValue(section_libs, sect_libs_keys.BuildVersion, /*Default=*/0);
 
 		// Verify the version of the cache file against the Symbol Database version hash
 		const uint32_t SymbolDatabaseVersionHash = symbolCacheData.GetLongValue(section_info, sect_info_keys.SymbolDatabaseVersionHash, /*Default=*/0);
 
-		if (SymbolDatabaseVersionHash == XbSymbolLibraryVersion()) {
+		if (SymbolDatabaseVersionHash == XbSymbolDatabase_LibraryVersion()) {
 			g_SymbolCacheUsed = true;
 			CSimpleIniA::TNamesDepend symbol_names;
 
@@ -440,8 +427,8 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
 
 				// Iterate through the map of symbol addresses, calling GetEmuPatchAddr on all functions.
 				for (auto it = g_SymbolAddresses.begin(); it != g_SymbolAddresses.end(); ++it) {
-					std::string functionName = (*it).first;
-					xbaddr location = (*it).second;
+					std::string functionName = it->first;
+					xbaddr location = it->second;
 
 					std::stringstream output;
 					output << "SymbolCache: 0x" << std::setfill('0') << std::setw(8) << std::hex << location
@@ -464,8 +451,6 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
 				    || g_SymbolAddresses["D3DDEVICE"] == 0) {
 					EmuLog(LOG_LEVEL::WARNING, "D3DDEVICE was not found!");
 				}
-
-				EmuD3D_Init_DeferredStates();
 			}
 		}
 
@@ -514,11 +499,9 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
         }
 #endif
 
-		XbSymbolSetOutputMessage(EmuOutputMessage);
+		XbSymbolDatabase_SetOutputMessage(EmuOutputMessage);
 
 		XbSymbolScan(pXbeHeader, EmuRegisterSymbol, false);
-
-		EmuD3D_Init_DeferredStates();
 	}
 
 	std::printf("\n");
@@ -527,7 +510,7 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
 	symbolCacheData.Reset();
 
 	// Store Symbol Database version
-	symbolCacheData.SetLongValue(section_info, sect_info_keys.SymbolDatabaseVersionHash, XbSymbolLibraryVersion(), nullptr, /*UseHex =*/false);
+	symbolCacheData.SetLongValue(section_info, sect_info_keys.SymbolDatabaseVersionHash, XbSymbolDatabase_LibraryVersion(), nullptr, /*UseHex =*/false);
 
 	// Store Certificate Details
 	symbolCacheData.SetValue(section_certificate, sect_certificate_keys.Name, tAsciiTitle);

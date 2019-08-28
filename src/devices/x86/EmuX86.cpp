@@ -125,7 +125,7 @@ uint32_t EmuX86_Mem_Read(xbaddr addr, int size)
 			return 0;
 		}
 	}
-	__except (true) {
+	__except (true) { // TODO : EXCEPTION_EXECUTE_HANDLER instead of true?
 		EmuLog(LOG_LEVEL::WARNING, "EmuX86_Mem_Read Failed (0x%08X, %d)", addr, size);
 		return 0;
 	}
@@ -150,7 +150,7 @@ void EmuX86_Mem_Write(xbaddr addr, uint32_t value, int size)
 			return;
 		}
 	}
-	__except (true) {
+	__except (true) { // TODO : EXCEPTION_EXECUTE_HANDLER instead of true?
 		EmuLog(LOG_LEVEL::WARNING, "EmuX86_Mem_Write Failed (0x%08X, 0x%08X, %d)", addr, value, size);
 	}
 }
@@ -3282,7 +3282,7 @@ bool EmuX86_DecodeException(LPEXCEPTION_POINTERS e)
 				// We do not emulate processor specific registers just yet
 				// Some titles attempt to manually set the TSC via this instruction
 				// This needs fixing eventually, but should be acceptible to ignore for now!
-				// Chase: Hollywood Stunt Driver hits this
+				// test-case : Chase: Hollywood Stunt Driver
 				EmuLog(LOG_LEVEL::WARNING, "WRMSR instruction ignored");
 				break;
 			case I_XOR:

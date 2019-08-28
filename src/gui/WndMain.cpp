@@ -32,16 +32,16 @@
 #include "Logging.h"
 #include "WndMain.h"
 #include "DlgAbout.h"
-#include "DlgControllerConfig.h"
+#include "DlgInputConfig.h"
 #include "DlgVideoConfig.h"
 #include "DlgAudioConfig.h"
 #include "DlgNetworkConfig.h"
 #include "DlgEepromConfig.h"
 #include "DlgLoggingConfig.h"
-#include "DlgXboxControllerPortMapping.h"
 #include "common\xbe\XbePrinter.h" // For DumpInformation
 #include "EmuShared.h"
-#include "core\kernel\support\EmuXTL.h"
+#include "core\hle\D3D8\Direct3D9\Direct3D9.h" // For CxbxSetPixelContainerHeader
+#include "core\hle\D3D8\XbConvert.h" // For EmuPC2XB_D3DFormat
 #include "common\Settings.hpp"
 
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxConvertArgToString and CxbxExec
@@ -82,7 +82,7 @@ void ClearSymbolCache(const char sStorageLocation[MAX_PATH])
 			if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
 				fullpath = cacheDir + data.cFileName;
 
-				if (!std::experimental::filesystem::remove(fullpath)) {
+				if (!std::filesystem::remove(fullpath)) {
 					break;
 				}
 			}
@@ -173,7 +173,7 @@ WndMain::WndMain(HINSTANCE x_hInstance) :
 	// initialize members
 	{
 		m_classname = "WndMain";
-		m_wndname   = "Cxbx-Reloaded " _CXBX_VERSION;
+		m_wndname   = "Cxbx-Reloaded " + std::string(CxbxVersionStr);
 	}
 
 	// load configuration from settings file
@@ -272,7 +272,7 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
                     ReleaseDC(hwnd, hDC);
             }
 
-            SetClassLong(hwnd, GCL_HICON, (LONG)LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_CXBX)));
+            SetClassLong(hwnd, GCL_HICON, (LONG)LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_CXBX)));
 			DragAcceptFiles(hwnd, TRUE);
 
 			// Allow Drag and Drop if Cxbx is run with elevated privileges on Windows Vista and above
@@ -299,8 +299,8 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 						                        (XBOX_LED_COLOUR_GREEN << 16) |
 						                        (XBOX_LED_COLOUR_GREEN << 8) |
 						                        (XBOX_LED_COLOUR_GREEN);
-						SetTimer(hwnd, TIMERID_ACTIVE_EMULATION, 1000, (TIMERPROC)NULL);
-						SetTimer(hwnd, TIMERID_LED, XBOX_LED_FLASH_PERIOD, (TIMERPROC)NULL);
+						SetTimer(hwnd, TIMERID_ACTIVE_EMULATION, 1000, (TIMERPROC)nullptr);
+						SetTimer(hwnd, TIMERID_LED, XBOX_LED_FLASH_PERIOD, (TIMERPROC)nullptr);
 						m_hwndChild = GetWindow(hwnd, GW_CHILD);
 						UpdateCaption();
 						RefreshMenus();
@@ -470,47 +470,59 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             {
                 case VK_F5:
                 {
-					// Try to open the most recent Xbe if none is opened yet :
-					if (m_Xbe == nullptr)
-						OpenMRU(0);
+					// Start emulation normally
+					if (!m_bIsStarted) {
+						// Try to open the most recent Xbe if none is opened yet :
+						if (m_Xbe == nullptr)
+							OpenMRU(0);
 
-					if (m_Xbe != nullptr)
-						if (!m_bIsStarted)
+						if (m_Xbe != nullptr)
 							StartEmulation(hwnd);
+
+						break;
+					}
+					// fall through
                 }
-                break;
 
                 case VK_F6:
                 {
-					if(m_bIsStarted)
-                        StopEmulation();
+					// Stop emulation
+					if (m_bIsStarted)
+					{
+						StopEmulation();
+						break;
+					}
+					// fall through
                 }
-                break;
 
 				case VK_F7:
 				{
-					// Try to open the dashboard xbe if none is opened yet :
+					// Open the dashboard xbe
 					if (!m_bIsStarted)
 					{
 						if (m_Xbe != nullptr) { CloseXbe(); }
 
 						OpenDashboard();
+						break;
 					}
+					// fall through
 				}
-				break;
 
 				case VK_F9:
 				{
-					// Try to open the most recent Xbe if none is opened yet :
+					// Start emulation with the debugger
 					if (!m_bIsStarted) {
+						// Try to open the most recent Xbe if none is opened yet
 						if (m_Xbe == nullptr)
 							OpenMRU(0);
 
 						if (m_Xbe != nullptr)
 							StartEmulation(hwnd, debuggerOn);
+
+						break;
 					}
+					// fall through
 				}
-				break;
 
                 default:
                 {
@@ -553,9 +565,9 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 				ofn.lpstrFile = filename;
 				ofn.nMaxFile = MAX_PATH;
 				ofn.nFilterIndex = 1;
-				ofn.lpstrFileTitle = NULL;
+				ofn.lpstrFileTitle = nullptr;
 				ofn.nMaxFileTitle = 0;
-				ofn.lpstrInitialDir = NULL;
+				ofn.lpstrInitialDir = nullptr;
 				ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
 				if (GetOpenFileName(&ofn) == TRUE)
@@ -622,9 +634,9 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 				ofn.lpstrFile = filename;
 				ofn.nMaxFile = MAX_PATH;
 				ofn.nFilterIndex = 1;
-				ofn.lpstrFileTitle = NULL;
+				ofn.lpstrFileTitle = nullptr;
 				ofn.nMaxFileTitle = 0;
-				ofn.lpstrInitialDir = NULL;
+				ofn.lpstrInitialDir = nullptr;
 				ofn.lpstrDefExt = "bmp";
 				ofn.lpstrTitle = "Export Logo Bitmap";
 				ofn.Flags = OFN_PATHMUSTEXIST;
@@ -733,9 +745,9 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 				ofn.lpstrFile = filename;
 				ofn.nMaxFile = MAX_PATH;
 				ofn.nFilterIndex = 1;
-				ofn.lpstrFileTitle = NULL;
+				ofn.lpstrFileTitle = nullptr;
 				ofn.nMaxFileTitle = 0;
-				ofn.lpstrInitialDir = NULL;
+				ofn.lpstrInitialDir = nullptr;
 				ofn.lpstrDefExt = "bmp";
 				ofn.lpstrTitle = "Import Logo Bitmap";
 				ofn.Flags = OFN_PATHMUSTEXIST;
@@ -893,9 +905,9 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 				ofn.lpstrFile = filename;
 				ofn.nMaxFile = MAX_PATH;
 				ofn.nFilterIndex = 1;
-				ofn.lpstrFileTitle = NULL;
+				ofn.lpstrFileTitle = nullptr;
 				ofn.nMaxFileTitle = 0;
-				ofn.lpstrInitialDir = NULL;
+				ofn.lpstrInitialDir = nullptr;
 				ofn.lpstrDefExt = "txt";
 				ofn.Flags = OFN_PATHMUSTEXIST;
 
@@ -948,12 +960,8 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 			}
 			break;
 
-			case ID_SETTINGS_CONFIG_XBOX_CONTROLLER_MAPPING:
-				ShowXboxControllerPortMappingConfig(hwnd);
-				break;
-
-			case ID_SETTINGS_CONFIG_CONTROLLER:
-				ShowControllerConfig(hwnd);
+			case ID_SETTINGS_CONFIG_INPUT:
+				ShowInputConfig(hwnd, m_hwndChild);
 				break;
 
 			case ID_SETTINGS_CONFIG_VIDEO:
@@ -992,17 +1000,17 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 
 				BROWSEINFO bInfo;
 				bInfo.hwndOwner = NULL;
-				bInfo.pidlRoot = NULL;
+				bInfo.pidlRoot = nullptr;
 				bInfo.pszDisplayName = szDir;
 				bInfo.lpszTitle = "Please, select a folder";
 				bInfo.ulFlags = BIF_NEWDIALOGSTYLE, BIF_EDITBOX, BIF_VALIDATE;
-				bInfo.lpfn = NULL;
+				bInfo.lpfn = nullptr;
 				bInfo.lParam = 0;
 				bInfo.iImage = -1;
 
 				LPITEMIDLIST lpItem = SHBrowseForFolder(&bInfo);
 
-				if (lpItem != NULL)
+				if (lpItem != nullptr)
 				{
 					SHGetPathFromIDList(lpItem, szDir);
 
@@ -1070,7 +1078,7 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 				sstream << cacheDir << szTitleName << "-" << std::hex << uiHash << ".ini";
 				std::string fullpath = sstream.str();
 
-				if (std::experimental::filesystem::remove(fullpath)) {
+				if (std::filesystem::remove(fullpath)) {
 					MessageBox(m_hwnd, "This title's Symbol Cache entry has been cleared.", "Cxbx-Reloaded", MB_OK);
 				}
 			}
@@ -1126,9 +1134,9 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 					ofn.lpstrFile = filename;
 					ofn.nMaxFile = MAX_PATH;
 					ofn.nFilterIndex = 1;
-					ofn.lpstrFileTitle = NULL;
+					ofn.lpstrFileTitle = nullptr;
 					ofn.nMaxFileTitle = 0;
-					ofn.lpstrInitialDir = NULL;
+					ofn.lpstrInitialDir = nullptr;
 					ofn.lpstrDefExt = "txt";
 					ofn.Flags = OFN_PATHMUSTEXIST;
 
@@ -1184,9 +1192,9 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 					ofn.lpstrFile = filename;
 					ofn.nMaxFile = MAX_PATH;
 					ofn.nFilterIndex = 1;
-					ofn.lpstrFileTitle = NULL;
+					ofn.lpstrFileTitle = nullptr;
 					ofn.nMaxFileTitle = 0;
-					ofn.lpstrInitialDir = NULL;
+					ofn.lpstrInitialDir = nullptr;
 					ofn.lpstrDefExt = "txt";
 					ofn.Flags = OFN_PATHMUSTEXIST;
 
@@ -1251,12 +1259,28 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
                 StopEmulation();
                 break;
 
-			case ID_HACKS_DISABLEPIXELSHADERS:
-				g_Settings->m_hacks.DisablePixelShaders = !g_Settings->m_hacks.DisablePixelShaders;
+			case ID_HACKS_PIXELSHADERS_RECOMPILE:
+				g_Settings->m_hacks.PixelShaderMode = 0;
+				RefreshMenus();
+				break;
+
+			case ID_HACKS_PIXELSHADERS_INTERPRET:
+				g_Settings->m_hacks.PixelShaderMode = 1;
+				RefreshMenus();
+				break;
+			case ID_HACKS_PIXELSHADERS_DISABLE:
+				g_Settings->m_hacks.PixelShaderMode = 2;
 				RefreshMenus();
 				break;
 
 			case ID_HACKS_RUNXBOXTHREADSONALLCORES:
+				if (g_Settings->m_hacks.UseAllCores == false) {
+					int ret = MessageBox(hwnd, "Activating this hack will make the emulator more likely to crash and/or hang. \
+Please do not report issues with games while this hack is active. Are you sure you want to turn it on?", "Cxbx-Reloaded", MB_YESNO | MB_ICONWARNING | MB_APPLMODAL);
+					if (ret == IDNO) {
+						break;
+					}
+				}
 				g_Settings->m_hacks.UseAllCores = !g_Settings->m_hacks.UseAllCores;
 				RefreshMenus();
 				break;
@@ -1278,7 +1302,7 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             break;
 
             case ID_HELP_HOMEPAGE:
-                ShellExecute(NULL, "open", "https://github.com/Cxbx-Reloaded/Cxbx-Reloaded", NULL, NULL, SW_SHOWNORMAL);
+                ShellExecute(NULL, "open", "https://github.com/Cxbx-Reloaded/Cxbx-Reloaded", nullptr, nullptr, SW_SHOWNORMAL);
                 break;
 
             }
@@ -1290,7 +1314,7 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 		{
 			// Redraw the window on move, prevents corrupt background image that happens
 			// when windows doesn't call the WM_DRAW event when the window is moved too quickly.
-			RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE);
+			RedrawWindow(hwnd, nullptr, NULL, RDW_INVALIDATE);
 			break;
 		}
 
@@ -1372,11 +1396,11 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 // suggest a file name
 void WndMain::SuggestFilename(const char *x_orig_filename, char *x_filename, char x_extension[4])
 {
-    if(strrchr(x_orig_filename, '\\') != NULL)
+    if(strrchr(x_orig_filename, '\\') != nullptr)
     {
         strcpy(x_filename, x_orig_filename);
 		char *loc = strrchr(x_filename, '.');
-		if (loc != NULL)
+		if (loc != nullptr)
 			strncpy(loc, &x_extension[0], 4);
     }
 }
@@ -1425,7 +1449,7 @@ void WndMain::LoadLogo()
         }
     }
 
-    RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE);
+    RedrawWindow(m_hwnd, nullptr, NULL, RDW_INVALIDATE);
 }
 
 // TODO : Move these types to a more appropriate place
@@ -1474,26 +1498,26 @@ void WndMain::LoadGameLogo()
 	gameLogoWidth = 0;
 	gameLogoHeight = 0;
 
-    uint8_t *ImageData = NULL;
+    uint8_t *ImageData = nullptr;
 	XTL::X_D3DPixelContainer XboxPixelContainer = {};
 	XTL::X_D3DPixelContainer *pXboxPixelContainer = &XboxPixelContainer;
 
 	switch (*(DWORD*)pSection) {
 	case MAKEFOURCC('D', 'D', 'S', ' '): {
 		DDS_HEADER *pDDSHeader = (DDS_HEADER *)(pSection + sizeof(DWORD));
-		XTL::D3DFORMAT Format = XTL::D3DFMT_UNKNOWN;
+		D3DFORMAT Format = D3DFMT_UNKNOWN;
 		if (pDDSHeader->ddspf.dwFlags & DDPF_FOURCC) {
 			switch (pDDSHeader->ddspf.dwFourCC) {
-			case MAKEFOURCC('D', 'X', 'T', '1'): Format = XTL::D3DFMT_DXT1; break;
-			case MAKEFOURCC('D', 'X', 'T', '3'): Format = XTL::D3DFMT_DXT3; break;
-			case MAKEFOURCC('D', 'X', 'T', '5'): Format = XTL::D3DFMT_DXT5; break;
+			case MAKEFOURCC('D', 'X', 'T', '1'): Format = D3DFMT_DXT1; break;
+			case MAKEFOURCC('D', 'X', 'T', '3'): Format = D3DFMT_DXT3; break;
+			case MAKEFOURCC('D', 'X', 'T', '5'): Format = D3DFMT_DXT5; break;
 			}
 		}
 		else {
 			// TODO : Determine D3D format based on pDDSHeader->ddspf.dwABitMask, .dwRBitMask, .dwGBitMask and .dwBBitMask
 		}
 
-		if (Format == XTL::D3DFMT_UNKNOWN)
+		if (Format == D3DFMT_UNKNOWN)
 			return;
 
 		ImageData = (uint8_t *)(pSection + sizeof(DWORD) + pDDSHeader->dwSize);
@@ -1501,14 +1525,14 @@ void WndMain::LoadGameLogo()
 		//gameLogoWidth = pDDSHeader->dwWidth;
 
 		// TODO : Use PixelCopy code here to decode. For now, fake it :
-		XTL::CxbxSetPixelContainerHeader(&XboxPixelContainer,
+		CxbxSetPixelContainerHeader(&XboxPixelContainer,
 			0, // Common - could be X_D3DCOMMON_TYPE_TEXTURE
-			(XTL::UINT)pDDSHeader->dwWidth,
-			(XTL::UINT)pDDSHeader->dwHeight,
+			(UINT)pDDSHeader->dwWidth,
+			(UINT)pDDSHeader->dwHeight,
 			1,
-			XTL::EmuPC2XB_D3DFormat(Format),
+			EmuPC2XB_D3DFormat(Format),
 			2,
-			(XTL::UINT)pDDSHeader->dwPitchOrLinearSize);
+			(UINT)pDDSHeader->dwPitchOrLinearSize);
 		break;
 	}
 	case MAKEFOURCC('X', 'P', 'R', '0'):
@@ -1531,7 +1555,7 @@ void WndMain::LoadGameLogo()
 	}
 	}
 
-	void *bitmapData = XTL::ConvertD3DTextureToARGB(pXboxPixelContainer, ImageData, &gameLogoWidth, &gameLogoHeight);
+	void *bitmapData = ConvertD3DTextureToARGB(pXboxPixelContainer, ImageData, &gameLogoWidth, &gameLogoHeight);
 	if (!bitmapData)
 		return;
 
@@ -1560,7 +1584,7 @@ void WndMain::LoadGameLogo()
 	m_GameLogoDC = CreateCompatibleDC(hDC);
 	m_OrigGameLogo = (HBITMAP)SelectObject(m_GameLogoDC, m_GameLogoBMP);
 
-	RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE);
+	RedrawWindow(m_hwnd, nullptr, NULL, RDW_INVALIDATE);
 
 	if (hDC != NULL)
 		ReleaseDC(m_hwnd, hDC);
@@ -1702,8 +1726,14 @@ void WndMain::RefreshMenus()
 			//chk_flag = (g_Settings->m_core.FlagsLLE & LLE_USB) ? MF_CHECKED : MF_UNCHECKED; // Reenable this when LLE USB actually works
 			//CheckMenuItem(settings_menu, ID_EMULATION_LLE_USB, chk_flag);
 
-			chk_flag = (g_Settings->m_hacks.DisablePixelShaders) ? MF_CHECKED : MF_UNCHECKED;
-			CheckMenuItem(settings_menu, ID_HACKS_DISABLEPIXELSHADERS, chk_flag);
+			chk_flag = (g_Settings->m_hacks.PixelShaderMode == 0) ? MF_CHECKED : MF_UNCHECKED;
+			CheckMenuItem(settings_menu, ID_HACKS_PIXELSHADERS_RECOMPILE, chk_flag);
+
+			chk_flag = (g_Settings->m_hacks.PixelShaderMode == 1) ? MF_CHECKED : MF_UNCHECKED;
+			CheckMenuItem(settings_menu, ID_HACKS_PIXELSHADERS_INTERPRET, chk_flag);
+
+			chk_flag = (g_Settings->m_hacks.PixelShaderMode == 2) ? MF_CHECKED : MF_UNCHECKED;
+			CheckMenuItem(settings_menu, ID_HACKS_PIXELSHADERS_DISABLE, chk_flag);
 
 			chk_flag = (g_Settings->m_hacks.UseAllCores) ? MF_CHECKED : MF_UNCHECKED;
 			CheckMenuItem(settings_menu, ID_HACKS_RUNXBOXTHREADSONALLCORES, chk_flag);
@@ -1802,10 +1832,10 @@ void WndMain::UpdateDebugConsoles()
 		if (fileDesc != -1) {
 			FILE* file = _fdopen(fileDesc, "wt");
 
-			if (file != NULL) {
+			if (file != nullptr) {
 				int dup2Result = _dup2(_fileno(file), _fileno(stdout));
 				if (dup2Result == 0) {
-					std::setvbuf(stdout, NULL, _IONBF, 0);
+					std::setvbuf(stdout, nullptr, _IONBF, 0);
 				}
 				std::fclose(file);
 			}
@@ -1859,7 +1889,7 @@ void WndMain::UpdateCaption()
 {
 	char AsciiTitle[MAX_PATH];
 
-	int i = sprintf(AsciiTitle, "Cxbx-Reloaded %s", _CXBX_VERSION);
+	int i = sprintf(AsciiTitle, "Cxbx-Reloaded %s", CxbxVersionStr);
 	if (m_Xbe != nullptr) {
 		if (m_bIsStarted) {
 			i += sprintf(AsciiTitle + i, " : Emulating ");
@@ -1962,7 +1992,7 @@ void WndMain::OpenXbe(const char *x_filename)
 
 		delete m_Xbe; m_Xbe = nullptr;
 
-		RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE);
+		RedrawWindow(m_hwnd, nullptr, NULL, RDW_INVALIDATE);
 
         MessageBox(m_hwnd, ErrorMessage.c_str(), "Cxbx-Reloaded", MB_ICONSTOP | MB_OK);
 
@@ -1980,7 +2010,7 @@ void WndMain::OpenXbe(const char *x_filename)
 		{
 			delete m_Xbe; m_Xbe = nullptr;
 			
-			RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE);
+			RedrawWindow(m_hwnd, nullptr, NULL, RDW_INVALIDATE);
 			
 			UpdateCaption();
 			
@@ -2082,7 +2112,7 @@ void WndMain::CloseXbe()
 	DeleteObject(m_GameLogoDC);
 	DeleteObject(m_GameLogoBMP);
 
-    RedrawWindow(m_hwnd, NULL, NULL, RDW_INVALIDATE);
+    RedrawWindow(m_hwnd, nullptr, NULL, RDW_INVALIDATE);
 }
 
 void WndMain::OpenMRU(int mru)
@@ -2153,9 +2183,9 @@ void WndMain::SaveXbeAs()
     ofn.lpstrFile       = filename;
     ofn.nMaxFile        = MAX_PATH;
     ofn.nFilterIndex    = 1;
-    ofn.lpstrFileTitle  = NULL;
+    ofn.lpstrFileTitle  = nullptr;
     ofn.nMaxFileTitle   = 0;
-    ofn.lpstrInitialDir = NULL;
+    ofn.lpstrInitialDir = nullptr;
     ofn.lpstrDefExt     = "xbe";
     ofn.Flags           = OFN_PATHMUSTEXIST;
 
@@ -2208,13 +2238,13 @@ void WndMain::StartEmulation(HWND hwndParent, DebuggerState LocalDebuggerState /
     {
 
 		char szExeFileName[MAX_PATH];
-		GetModuleFileName(GetModuleHandle(NULL), szExeFileName, MAX_PATH);
+		GetModuleFileName(GetModuleHandle(nullptr), szExeFileName, MAX_PATH);
 
 		bool AttachLocalDebugger = (LocalDebuggerState == debuggerOn);
 		g_EmuShared->SetDebuggingFlag(&AttachLocalDebugger);
 
         std::string szProcArgsBuffer;
-        XTL::CxbxConvertArgToString(szProcArgsBuffer, szExeFileName, m_XbeFilename, hwndParent, g_Settings->m_core.KrnlDebugMode, g_Settings->m_core.szKrnlDebug);
+        CxbxConvertArgToString(szProcArgsBuffer, szExeFileName, m_XbeFilename, hwndParent, g_Settings->m_core.KrnlDebugMode, g_Settings->m_core.szKrnlDebug);
 
         if (AttachLocalDebugger) {
 
@@ -2224,7 +2254,7 @@ void WndMain::StartEmulation(HWND hwndParent, DebuggerState LocalDebuggerState /
             // TODO: Set a configuration variable for this. For now it will be within the same folder as Cxbx.exe
             std::string szProcDbgArgsBuffer = "cxbxr-debugger.exe " + szProcArgsBuffer;
 
-            if (!XTL::CxbxExec(szProcDbgArgsBuffer, &m_hDebuggerProc, true)) {
+            if (!CxbxExec(szProcDbgArgsBuffer, &m_hDebuggerProc, true)) {
                 MessageBox(m_hwnd, "Failed to start emulation with the debugger.\n\nYou will need to build CxbxDebugger manually.", "Cxbx-Reloaded", MB_ICONSTOP | MB_OK);
 
                 printf("WndMain: %s debugger shell failed.\n", m_Xbe->m_szAsciiTitle);
@@ -2237,7 +2267,7 @@ void WndMain::StartEmulation(HWND hwndParent, DebuggerState LocalDebuggerState /
         }
         else {
 
-            if (!XTL::CxbxExec(szProcArgsBuffer, nullptr, false)) {
+            if (!CxbxExec(szProcArgsBuffer, nullptr, false)) {
                 MessageBox(m_hwnd, "Emulation failed.\n\n If this message repeats, the Xbe is not supported.", "Cxbx-Reloaded", MB_ICONSTOP | MB_OK);
 
                 printf("WndMain: %s shell failed.\n", m_Xbe->m_szAsciiTitle);
@@ -2272,7 +2302,7 @@ void WndMain::StopEmulation()
 }
 
 // wrapper function to call CrashMonitor
-DWORD WINAPI WndMain::CrashMonitorWrapper(LPVOID lpParam)
+DWORD WndMain::CrashMonitorWrapper(LPVOID lpParam)
 {
 	CxbxSetThreadName("Cxbx Crash Monitor");
 
@@ -2332,7 +2362,7 @@ void WndMain::CrashMonitor(DWORD dwChildProcID)
 }
 
 // monitor for Debugger to close then set as "available" (For limit to 1 debugger per Cxbx GUI.)
-DWORD WINAPI WndMain::DebuggerMonitor(LPVOID lpVoid)
+DWORD WndMain::DebuggerMonitor(LPVOID lpVoid)
 {
 	CxbxSetThreadName("Cxbx Debugger Monitor");
 	WndMain* pThis = static_cast<WndMain*>(lpVoid);

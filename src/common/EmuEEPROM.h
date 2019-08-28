@@ -27,11 +27,13 @@
 #ifndef EMU_EEPROM_H
 #define EMU_EEPROM_H
 
-#if defined(__cplusplus)
-#pragma once
-extern "C"
+// prevent name collisions
+namespace xboxkrnl
 {
-#endif
+#undef _WIN32 // Compile-in REG_DWORD and friends, since we lack a <windows> include here
+#include <xboxkrnl/xboxkrnl.h> // For XC_VALUE_INDEX and XBOX_EEPROM
+#define _WIN32
+};
 
 #define EEPROM_SIZE sizeof(xboxkrnl::XBOX_EEPROM)
 
@@ -45,7 +47,7 @@ typedef struct EEPROMInfo {
 #define XC_END_MARKER (xboxkrnl::XC_VALUE_INDEX)-1
 
 #define EEPROM_INFO_ENTRY(XC, Member, REG_Type) \
-	{ xboxkrnl::##XC, offsetof(xboxkrnl::XBOX_EEPROM, Member), REG_Type, sizeof(((xboxkrnl::XBOX_EEPROM *)0)->Member) }
+	{ xboxkrnl::XC, offsetof(xboxkrnl::XBOX_EEPROM, Member), REG_Type, sizeof(((xboxkrnl::XBOX_EEPROM *)0)->Member) }
 
 static const EEPROMInfo EEPROMInfos[] = {
 	EEPROM_INFO_ENTRY(XC_TIMEZONE_BIAS,         UserSettings.TimeZoneBias,                REG_DWORD),
@@ -154,9 +156,5 @@ extern xboxkrnl::ULONG XboxFactoryGameRegion;
 extern void EmuEEPROMReset(xboxkrnl::XBOX_EEPROM* eeprom);
 
 void gen_section_CRCs(xboxkrnl::XBOX_EEPROM*);
-
-#if defined(__cplusplus)
-}
-#endif
 
 #endif // EMU_EEPROM_H

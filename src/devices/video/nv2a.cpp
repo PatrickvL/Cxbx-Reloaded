@@ -55,7 +55,6 @@ namespace xboxkrnl
 
 #include "core\kernel\init\CxbxKrnl.h" // For XBOX_MEMORY_SIZE, DWORD, etc
 #include "core\kernel\support\Emu.h"
-#include "core\kernel\support\EmuFS.h"
 #include "core\kernel\exports\EmuKrnl.h"
 #include "core\hle\Intercept.hpp"
 #include "Logging.h"
@@ -159,11 +158,11 @@ static void update_irq(NV2AState *d)
 #include "EmuNV2A_DEBUG.cpp"
 
 
-#define DEBUG_READ32(DEV)              EmuLog(LOG_LEVEL::DEBUG, "Rd32 NV2A " #DEV "(0x%08X) = 0x%08X [Handled %s]", addr, result, DebugNV_##DEV##(addr))
-#define DEBUG_READ32_UNHANDLED(DEV)  { EmuLog(LOG_LEVEL::DEBUG, "Rd32 NV2A " #DEV "(0x%08X) = 0x%08X [Unhandled %s]", addr, result, DebugNV_##DEV##(addr)); return result; }
+#define DEBUG_READ32(DEV)              EmuLog(LOG_LEVEL::DEBUG, "Rd32 NV2A " #DEV "(0x%08X) = 0x%08X [Handled %s]", addr, result, DebugNV_##DEV(addr))
+#define DEBUG_READ32_UNHANDLED(DEV)  { EmuLog(LOG_LEVEL::DEBUG, "Rd32 NV2A " #DEV "(0x%08X) = 0x%08X [Unhandled %s]", addr, result, DebugNV_##DEV(addr)); return result; }
 
-#define DEBUG_WRITE32(DEV)             EmuLog(LOG_LEVEL::DEBUG, "Wr32 NV2A " #DEV "(0x%08X, 0x%08X) [Handled %s]", addr, value, DebugNV_##DEV##(addr))
-#define DEBUG_WRITE32_UNHANDLED(DEV) { EmuLog(LOG_LEVEL::DEBUG, "Wr32 NV2A " #DEV "(0x%08X, 0x%08X) [Unhandled %s]", addr, value, DebugNV_##DEV##(addr)); return; }
+#define DEBUG_WRITE32(DEV)             EmuLog(LOG_LEVEL::DEBUG, "Wr32 NV2A " #DEV "(0x%08X, 0x%08X) [Handled %s]", addr, value, DebugNV_##DEV(addr))
+#define DEBUG_WRITE32_UNHANDLED(DEV) { EmuLog(LOG_LEVEL::DEBUG, "Wr32 NV2A " #DEV "(0x%08X, 0x%08X) [Unhandled %s]", addr, value, DebugNV_##DEV(addr)); return; }
 
 #define DEVICE_READ32(DEV) uint32_t EmuNV2A_##DEV##_Read32(NV2AState *d, xbaddr addr)
 #define DEVICE_READ32_SWITCH() uint32_t result = 0; switch (addr) 
@@ -1157,7 +1156,7 @@ void CxbxReserveNV2AMemory(NV2AState *d)
 		return;
 	}
 
-	printf("[0x%.4X] INIT: Allocated %d MiB of Xbox NV2A PRAMIN memory at 0x%.8X to 0x%.8X\n",
+	printf("[0x%.4X] INIT: Allocated %d MiB of Xbox NV2A PRAMIN memory at 0x%.8p to 0x%.8p\n",
 		GetCurrentThreadId(), d->pramin.ramin_size / ONE_MB, d->pramin.ramin_ptr, d->pramin.ramin_ptr + d->pramin.ramin_size - 1);
 }
 

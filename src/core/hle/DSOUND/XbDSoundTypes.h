@@ -26,12 +26,19 @@
 #ifndef XBDSOUNDTYPES_H
 #define XBDSOUNDTYPES_H
 
-#include <dsound.h> // TODO: FIXME after global XTL namespace issue is resolved.
-// TODO: Port PC dsound.h to xbox edition here base on preivous research.
+namespace XTL {
+
+#include <dsound.h> // TODO: FIXME after global namespace XTL issue is resolved.
+// TODO: Port PC dsound.h to xbox edition here base on previous research.
 // TODO: Also need to use fixed size to able support cross-platform without extra work.
 //       Such as uint32_t, uint16_t, etc.
 
 #define WAVE_FORMAT_XBOX_ADPCM 0x0069
+
+// Xbox SGE Memory layout
+#define                             XTL_DS_SGE_COUNT_MAX 2047
+#define                             XTL_DS_SGE_PAGE_MAX (4 * ONE_KB)
+#define                             XTL_DS_SGE_SIZE_MAX (XTL_DS_SGE_COUNT_MAX * XTL_DS_SGE_PAGE_MAX)
 
 // XDSMIXBIN Flags
 #define XDSMIXBIN_FRONT_LEFT        0
@@ -54,6 +61,7 @@ typedef struct _XDSMIXBINVOLUMEPAIR {
 // ******************************************************************
 // * X_DSMIXBINS
 // ******************************************************************
+// Revision 2 (4039+)
 typedef struct _XDSMIXBINS {
     DWORD                       dwCount;
     X_LPDSMIXBINVOLUMEPAIR     lpMixBinVolumePairs;
@@ -98,6 +106,11 @@ typedef struct _XDSMIXBINS {
 #define X_DSBSTOPEX_ENVELOPE          0x00000001
 #define X_DSBSTOPEX_RELEASEWAVEFORM   0x00000002
 #define X_DSBSTOPEX_ALL               (X_DSBSTOPEX_ENVELOPE | X_DSBSTOPEX_RELEASEWAVEFORM)
+
+// Generic frequency range
+#define XTL_DSXFREQUENCY_ORIGINAL        0x00000000
+//#define XTL_DSGFREQUENCY_MIN             0x00000???
+//#define XTL_DSGFREQUENCY_MAX             0x000?????
 
 #define XTL_DSBCAPS_CTRL3D               0x00000010
 #define XTL_DSBCAPS_CTRLFREQUENCY        0x00000020
@@ -356,4 +369,7 @@ struct X_DSVOICEPROPS {
     LONG lI3DL2DirectVolume;
     LONG lI3DL2RoomVolume;
 };
+
+} // end of namespace XTL
+
 #endif

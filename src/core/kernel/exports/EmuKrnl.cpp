@@ -36,14 +36,12 @@ namespace xboxkrnl
 #include <cstdio>
 #include <cctype>
 #include <clocale>
-//#include <process.h>
 
 #include "Logging.h"
 #include "EmuKrnlLogging.h"
 #include "EmuKrnl.h" // for HalSystemInterrupts
 #include "EmuKrnlKi.h" // for KiLockDispatcherDatabase
 #include "core\kernel\init\CxbxKrnl.h"
-#include "core\kernel\support\EmuXTL.h"
 
 // prevent name collisions
 namespace NtDll
@@ -180,6 +178,8 @@ void CallSoftwareInterrupt(const xboxkrnl::KIRQL SoftwareIrql)
 		}
 		break;
 	}
+
+	HalInterruptRequestRegister ^= (1 << SoftwareIrql);
 }
 
 const DWORD IrqlMasks[] = {
@@ -465,8 +465,7 @@ XBSYSAPI EXPORTNUM(163) xboxkrnl::VOID FASTCALL xboxkrnl::KiUnlockDispatcherData
 // ******************************************************************
 // * 0x0165 - IdexChannelObject
 // ******************************************************************
-// TODO : Determine size, structure & filling behind IdexChannelObject
-XBSYSAPI EXPORTNUM(357) xboxkrnl::BYTE xboxkrnl::IdexChannelObject[0x100] = { };
+XBSYSAPI EXPORTNUM(357) xboxkrnl::IDE_CHANNEL_OBJECT xboxkrnl::IdexChannelObject = { };
 
 // ******************************************************************
 // * 0x0169 - RtlSnprintf()

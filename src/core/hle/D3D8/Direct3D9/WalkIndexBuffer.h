@@ -2,13 +2,12 @@
 #define WALKINDEXBUFFER_H
 
 #include "core\kernel\support\Emu.h"
-#include "core\kernel\support\EmuXTL.h"
 
 extern void(*WalkIndexBuffer)
 (
-	XTL::INDEX16 &LowIndex,
-	XTL::INDEX16 &HighIndex,
-	XTL::INDEX16 *pIndexData,
+	INDEX16 &LowIndex,
+	INDEX16 &HighIndex,
+	INDEX16 *pIndexData,
 	DWORD dwIndexCount
 );
 

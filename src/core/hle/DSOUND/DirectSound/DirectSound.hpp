@@ -18,7 +18,7 @@
 // *  59 Temple Place - Suite 330, Bostom, MA 02111-1307, USA.
 // *
 // *  (c) 2002-2003 Aaron Robinson <caustik@caustik.com>
-// *  (c) 2017-2018 RadWolfie
+// *  (c) 2017-2020 RadWolfie
 // *
 // *  All rights reserved
 // *
@@ -26,11 +26,11 @@
 #ifndef EMUDSOUND_H
 #define EMUDSOUND_H
 
-#undef FIELD_OFFSET     // prevent macro redefinition warnings
-
-#include <dsound.h>
 #include "core\kernel\init\CxbxKrnl.h"
-#include "..\XbDSoundTypes.h"
+#include "core\hle\DSOUND\XbDSoundTypes.h"
+
+typedef struct IDirectSound3DListener8* LPDIRECTSOUND3DLISTENER8;
+typedef struct IDirectSound3DBuffer8* LPDIRECTSOUND3DBUFFER8;
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +41,11 @@ void CxbxInitAudio();
 #ifdef __cplusplus
 }
 #endif
+
+namespace XTL {
+
+#undef FIELD_OFFSET     // prevent macro redefinition warnings
+#include <dsound.h> // TODO: FIXME after global namespace XTL issue is resolved.
 
 // ******************************************************************
 // * X_CDirectSound
@@ -106,6 +111,8 @@ struct X_CDirectSoundBuffer
     DWORD                   Xb_dwHeadroom;
     X_DSENVOLOPEDESC        Xb_EnvolopeDesc;
     X_DSVOICEPROPS          Xb_VoiceProperties;
+    DWORD                   Xb_Frequency;
+    DWORD                   Xb_Flags;
 };
 
 //Custom flags (4 bytes support up to 31 shifts,starting from 0)
@@ -118,6 +125,7 @@ struct X_CDirectSoundBuffer
 #define DSE_FLAG_ENVELOPE               (1 << 13)
 #define DSE_FLAG_ENVELOPE2              (1 << 14) // NOTE: This flag is a requirement for GetStatus to return X_DSSSTATUS_ENVELOPECOMPLETE value.
 #define DSE_FLAG_RECIEVEDATA            (1 << 20)
+#define DSE_FLAG_IS_ACTIVATED           (1 << 21) // Only used for DirectSoundStream class, to acknowledge pause's no activate flag.
 #define DSE_FLAG_DEBUG_MUTE             (1 << 30) // Cxbx-R debugging usage only
 #define DSE_FLAG_BUFFER_EXTERNAL        (1 << 31)
 #define DSE_FLAG_AUDIO_CODECS           (DSE_FLAG_PCM | DSE_FLAG_XADPCM | DSE_FLAG_PCM_UNKNOWN)
@@ -165,9 +173,12 @@ class X_CMcpxStream
 struct host_voice_packet {
     XTL::XMEDIAPACKET xmp_data;
     PVOID   pBuffer_data;
-    DWORD   rangeStart;
-    bool    isWritten;
+    DWORD   nextWriteOffset;
+    DWORD   lastWritePos;
+    DWORD   bufPlayed;
+    DWORD   bufWrittenBytes;
     bool    isPlayed;
+    bool    isStreamEnd;
 };
 
 // ******************************************************************
@@ -247,7 +258,6 @@ class X_CDirectSoundStream
         DWORD                                   X_MaxAttachedPackets;
         std::vector<struct host_voice_packet>   Host_BufferPacketArray;
         DWORD                                   Host_dwWriteOffsetNext;
-        DWORD                                   Host_dwTriggerRange;
         bool                                    Host_isProcessing;
         LPFNXMOCALLBACK                         Xb_lpfnCallback;
         LPVOID                                  Xb_lpvContext;
@@ -258,6 +268,10 @@ class X_CDirectSoundStream
         DWORD                                   Xb_dwHeadroom;
         X_DSENVOLOPEDESC                        Xb_EnvolopeDesc;
         X_DSVOICEPROPS                          Xb_VoiceProperties;
+        DWORD                                   Xb_Frequency;
+        DWORD                                   Host_dwLastWritePos;
+        DWORD                                   Xb_Flags;
+        DWORD                                   Xb_Status;
 };
 
 // ******************************************************************
@@ -468,7 +482,7 @@ HRESULT WINAPI EMUPATCH(IDirectSound_SetMixBinHeadroom)
 HRESULT WINAPI EMUPATCH(IDirectSoundBuffer_SetMixBins)
 (
     X_CDirectSoundBuffer*   pThis,
-    XTL::X_LPDSMIXBINS      pMixBins
+    DWORD                   dwMixBinMask
 );
 
 // ******************************************************************
@@ -949,7 +963,7 @@ HRESULT WINAPI EMUPATCH(CDirectSoundStream_SetI3DL2Source)
 HRESULT WINAPI EMUPATCH(CDirectSoundStream_SetMixBins)
 (
     X_CDirectSoundStream*   pThis,
-    XTL::X_LPDSMIXBINS      pMixBins
+    DWORD                   dwMixBinMask
 );
 
 // s+
@@ -1129,13 +1143,13 @@ HRESULT WINAPI EMUPATCH(CDirectSoundStream_SetLFO)
 );
 
 // ******************************************************************
-// * patch: XAudioCreateAdpcmFormat
+// * patch: XAudioCreateAdpcmFormat // NOTE: Not require to patch
 // ******************************************************************
 VOID WINAPI EMUPATCH(XAudioCreateAdpcmFormat)
 (
-    WORD                   nChannels,
-    DWORD                  nSamplesPerSec,
-    LPXBOXADPCMWAVEFORMAT  pwfx
+    WORD                        nChannels,
+    DWORD                       nSamplesPerSec,
+    OUT LPXBOXADPCMWAVEFORMAT   pwfx
 );
 
 // ******************************************************************
@@ -1656,7 +1670,7 @@ HRESULT WINAPI EMUPATCH(IDirectSoundStream_SetFrequency)
 HRESULT WINAPI EMUPATCH(IDirectSoundStream_SetMixBins)
 (
     X_CDirectSoundStream*   pThis,
-    XTL::X_LPDSMIXBINS      pMixBins);
+    DWORD                   dwMixBinMask);
 
 // ******************************************************************
 // * patch:  CDirectSound3DCalculator_Calculate3D
@@ -1702,5 +1716,9 @@ HRESULT WINAPI EMUPATCH(IDirectSoundStream_Use3DVoiceData)
     X_CDirectSoundStream*   pThis,
     DWORD a2
 );
+
+} // end of extern "C"
+
+} // end of namespace XTL
+
 #endif
-}

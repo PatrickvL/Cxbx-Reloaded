@@ -28,7 +28,8 @@
 
 #include "core\kernel\init\CxbxKrnl.h"
 #include "core\kernel\support\Emu.h"
-#include "core\kernel\support\EmuXTL.h"
+#include "core\hle\D3D8\Direct3D9/Direct3D9.h"
+#include "core\hle\DSOUND\DirectSound\DirectSound.hpp"
 #include "Patches.hpp"
 #include "Intercept.hpp"
 
@@ -48,15 +49,13 @@ const uint32_t PATCH_HLE_OHCI = 1 << 3;
 const uint32_t PATCH_IS_FIBER = 1 << 4;
 
 #define PATCH_ENTRY(Name, Func, Flags) \
-    { Name, { &Func, Flags} }
+    { Name, xbox_patch_t { (void *)&Func, Flags} }
 
 // Map of Xbox Patch names to Emulator Patches
 // A std::string is used as it's possible for a symbol to have multiple names
 // This allows for the eventual importing of Dxbx symbol files and even IDA signatures too!
 std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Direct3D
-	PATCH_ENTRY("D3DCubeTexture_GetCubeMapSurface", XTL::EMUPATCH(D3DCubeTexture_GetCubeMapSurface), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DCubeTexture_GetCubeMapSurface2", XTL::EMUPATCH(D3DCubeTexture_GetCubeMapSurface2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Begin", XTL::EMUPATCH(D3DDevice_Begin), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BeginPush", XTL::EMUPATCH(D3DDevice_BeginPush), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BeginPush2", XTL::EMUPATCH(D3DDevice_BeginPush2), PATCH_HLE_D3D),
@@ -64,6 +63,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_BlockOnFence", XTL::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", XTL::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Clear", XTL::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
+    PATCH_ENTRY("D3DDevice_CopyRects", XTL::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_CreateVertexShader", XTL::EMUPATCH(D3DDevice_CreateVertexShader), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_DeleteVertexShader", XTL::EMUPATCH(D3DDevice_DeleteVertexShader), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_DeleteVertexShader_0", XTL::EMUPATCH(D3DDevice_DeleteVertexShader_0), PATCH_HLE_D3D),
@@ -95,9 +95,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_GetVertexShaderDeclaration", XTL::EMUPATCH(D3DDevice_GetVertexShaderDeclaration), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetVertexShaderFunction", XTL::EMUPATCH(D3DDevice_GetVertexShaderFunction), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetVertexShaderInput", XTL::EMUPATCH(D3DDevice_GetVertexShaderInput), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetVertexShaderSize", XTL::EMUPATCH(D3DDevice_GetVertexShaderSize), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetVertexShaderType", XTL::EMUPATCH(D3DDevice_GetVertexShaderType), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetViewportOffsetAndScale", XTL::EMUPATCH(D3DDevice_GetViewportOffsetAndScale), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetVertexShaderSize", XTL::EMUPATCH(D3DDevice_GetVertexShaderSize), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetVertexShaderType", XTL::EMUPATCH(D3DDevice_GetVertexShaderType), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetViewportOffsetAndScale", XTL::EMUPATCH(D3DDevice_GetViewportOffsetAndScale), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetVisibilityTestResult", XTL::EMUPATCH(D3DDevice_GetVisibilityTestResult), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_InsertCallback", XTL::EMUPATCH(D3DDevice_InsertCallback), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_InsertFence", XTL::EMUPATCH(D3DDevice_InsertFence), PATCH_HLE_D3D),
@@ -132,38 +132,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_SetPalette", XTL::EMUPATCH(D3DDevice_SetPalette), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetPalette_4", XTL::EMUPATCH(D3DDevice_SetPalette_4), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetPixelShader", XTL::EMUPATCH(D3DDevice_SetPixelShader), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetPixelShaderConstant_4", XTL::EMUPATCH(D3DDevice_SetPixelShaderConstant_4), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetPixelShader_0", XTL::EMUPATCH(D3DDevice_SetPixelShader_0), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_BackFillMode", XTL::EMUPATCH(D3DDevice_SetRenderState_BackFillMode), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_CullMode", XTL::EMUPATCH(D3DDevice_SetRenderState_CullMode), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_DoNotCullUncompressed", XTL::EMUPATCH(D3DDevice_SetRenderState_DoNotCullUncompressed), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_Dxt1NoiseEnable", XTL::EMUPATCH(D3DDevice_SetRenderState_Dxt1NoiseEnable), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_EdgeAntiAlias", XTL::EMUPATCH(D3DDevice_SetRenderState_EdgeAntiAlias), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_FillMode", XTL::EMUPATCH(D3DDevice_SetRenderState_FillMode), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_FogColor", XTL::EMUPATCH(D3DDevice_SetRenderState_FogColor), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_FrontFace", XTL::EMUPATCH(D3DDevice_SetRenderState_FrontFace), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_LineWidth", XTL::EMUPATCH(D3DDevice_SetRenderState_LineWidth), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_LogicOp", XTL::EMUPATCH(D3DDevice_SetRenderState_LogicOp), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_MultiSampleAntiAlias", XTL::EMUPATCH(D3DDevice_SetRenderState_MultiSampleAntiAlias), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_MultiSampleMask", XTL::EMUPATCH(D3DDevice_SetRenderState_MultiSampleMask), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_MultiSampleMode", XTL::EMUPATCH(D3DDevice_SetRenderState_MultiSampleMode), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_MultiSampleRenderTargetMode", XTL::EMUPATCH(D3DDevice_SetRenderState_MultiSampleRenderTargetMode), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_NormalizeNormals", XTL::EMUPATCH(D3DDevice_SetRenderState_NormalizeNormals), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_OcclusionCullEnable", XTL::EMUPATCH(D3DDevice_SetRenderState_OcclusionCullEnable), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_PSTextureModes", XTL::EMUPATCH(D3DDevice_SetRenderState_PSTextureModes), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_RopZCmpAlwaysRead", XTL::EMUPATCH(D3DDevice_SetRenderState_RopZCmpAlwaysRead), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_RopZRead", XTL::EMUPATCH(D3DDevice_SetRenderState_RopZRead), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_SampleAlpha", XTL::EMUPATCH(D3DDevice_SetRenderState_SampleAlpha), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_ShadowFunc", XTL::EMUPATCH(D3DDevice_SetRenderState_ShadowFunc), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetRenderState_Simple", XTL::EMUPATCH(D3DDevice_SetRenderState_Simple), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_StencilCullEnable", XTL::EMUPATCH(D3DDevice_SetRenderState_StencilCullEnable), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_StencilEnable", XTL::EMUPATCH(D3DDevice_SetRenderState_StencilEnable), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_StencilFail", XTL::EMUPATCH(D3DDevice_SetRenderState_StencilFail), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_TextureFactor", XTL::EMUPATCH(D3DDevice_SetRenderState_TextureFactor), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_TwoSidedLighting", XTL::EMUPATCH(D3DDevice_SetRenderState_TwoSidedLighting), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_VertexBlend", XTL::EMUPATCH(D3DDevice_SetRenderState_VertexBlend), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_ZBias", XTL::EMUPATCH(D3DDevice_SetRenderState_ZBias), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_ZEnable", XTL::EMUPATCH(D3DDevice_SetRenderState_ZEnable), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetRenderTarget", XTL::EMUPATCH(D3DDevice_SetRenderTarget), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetRenderTargetFast", XTL::EMUPATCH(D3DDevice_SetRenderTargetFast), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetScreenSpaceOffset", XTL::EMUPATCH(D3DDevice_SetScreenSpaceOffset), PATCH_HLE_D3D),
@@ -178,17 +148,6 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_SetStreamSource_8", XTL::EMUPATCH(D3DDevice_SetStreamSource_8), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetSwapCallback", XTL::EMUPATCH(D3DDevice_SetSwapCallback), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetTexture", XTL::EMUPATCH(D3DDevice_SetTexture), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_BorderColor", XTL::EMUPATCH(D3DDevice_SetTextureState_BorderColor), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_BorderColor_0", XTL::EMUPATCH(D3DDevice_SetTextureState_BorderColor_0), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_BorderColor_4", XTL::EMUPATCH(D3DDevice_SetTextureState_BorderColor_4), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_BumpEnv", XTL::EMUPATCH(D3DDevice_SetTextureState_BumpEnv), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_BumpEnv_8", XTL::EMUPATCH(D3DDevice_SetTextureState_BumpEnv_8), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_ColorKeyColor", XTL::EMUPATCH(D3DDevice_SetTextureState_ColorKeyColor), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_ColorKeyColor_0", XTL::EMUPATCH(D3DDevice_SetTextureState_ColorKeyColor_0), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_ColorKeyColor_4", XTL::EMUPATCH(D3DDevice_SetTextureState_ColorKeyColor_4), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_TexCoordIndex", XTL::EMUPATCH(D3DDevice_SetTextureState_TexCoordIndex), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_TexCoordIndex_0", XTL::EMUPATCH(D3DDevice_SetTextureState_TexCoordIndex_0), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTextureState_TexCoordIndex_4", XTL::EMUPATCH(D3DDevice_SetTextureState_TexCoordIndex_4), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetTexture_4", XTL::EMUPATCH(D3DDevice_SetTexture_4), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetTransform", XTL::EMUPATCH(D3DDevice_SetTransform), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetTransform_0", XTL::EMUPATCH(D3DDevice_SetTransform_0), PATCH_HLE_D3D),
@@ -215,11 +174,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_Swap_0", XTL::EMUPATCH(D3DDevice_Swap_0), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SwitchTexture", XTL::EMUPATCH(D3DDevice_SwitchTexture), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_UpdateOverlay", XTL::EMUPATCH(D3DDevice_UpdateOverlay), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DPalette_Lock", XTL::EMUPATCH(D3DPalette_Lock), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DPalette_Lock2", XTL::EMUPATCH(D3DPalette_Lock2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DResource_BlockUntilNotBusy", XTL::EMUPATCH(D3DResource_BlockUntilNotBusy), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DResource_Release", XTL::EMUPATCH(D3DResource_Release), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_BlockOnTime", XTL::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
+    PATCH_ENTRY("D3D_DestroyResource", XTL::EMUPATCH(D3D_DestroyResource), PATCH_HLE_D3D),
+    PATCH_ENTRY("D3D_DestroyResource__LTCG", XTL::EMUPATCH(D3D_DestroyResource__LTCG), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_LazySetPointParams", XTL::EMUPATCH(D3D_LazySetPointParams), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_SetCommonDebugRegisters", XTL::EMUPATCH(D3D_SetCommonDebugRegisters), PATCH_HLE_D3D),
 	PATCH_ENTRY("Direct3D_CreateDevice", XTL::EMUPATCH(Direct3D_CreateDevice), PATCH_HLE_D3D),
@@ -360,7 +318,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("IDirectSound_SetRolloffFactor", XTL::EMUPATCH(IDirectSound_SetRolloffFactor), PATCH_HLE_DSOUND),
 	PATCH_ENTRY("IDirectSound_SetVelocity", XTL::EMUPATCH(IDirectSound_SetVelocity), PATCH_HLE_DSOUND),
 	PATCH_ENTRY("IDirectSound_SynchPlayback", XTL::EMUPATCH(IDirectSound_SynchPlayback), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("XAudioCreateAdpcmFormat", XTL::EMUPATCH(XAudioCreateAdpcmFormat), PATCH_HLE_DSOUND),
+	//PATCH_ENTRY("XAudioCreateAdpcmFormat", XTL::EMUPATCH(XAudioCreateAdpcmFormat), PATCH_HLE_DSOUND), // NOTE: Not require to patch
 	PATCH_ENTRY("XAudioDownloadEffectsImage", XTL::EMUPATCH(XAudioDownloadEffectsImage), PATCH_HLE_DSOUND),
 	PATCH_ENTRY("XAudioSetEffectData", XTL::EMUPATCH(XAudioSetEffectData), PATCH_HLE_DSOUND),
 
@@ -431,7 +389,7 @@ inline bool TitleRequiresUnpatchedFibers()
 
 
 // NOTE: EmuInstallPatch do not get to be in XbSymbolDatabase, do the patches in Cxbx project only.
-inline void EmuInstallPatch(std::string FunctionName, xbaddr FunctionAddr)
+inline void EmuInstallPatch(const std::string FunctionName, const xbaddr FunctionAddr)
 {
 	auto it = g_PatchTable.find(FunctionName);
 	if (it == g_PatchTable.end()) {
@@ -455,7 +413,7 @@ inline void EmuInstallPatch(std::string FunctionName, xbaddr FunctionAddr)
 		return;
 	}
 
-    // HACK: Some titles require unpatched Fibers, otherwise they enter an infinte loop
+    // HACK: Some titles require unpatched Fibers, otherwise they enter an infinite loop
     // while others require patched Fibers, otherwise they outright crash
     // This is caused by limitations of Direct Code Execution and Cxbx-R's threading model
     if ((patch.flags & PATCH_IS_FIBER) && TitleRequiresUnpatchedFibers()) {
@@ -472,12 +430,15 @@ void EmuInstallPatches()
 	for (const auto& it : g_SymbolAddresses) {
 		EmuInstallPatch(it.first, it.second);
 	}
+
+	LookupTrampolines();
 }
 
-void* GetPatchedFunctionTrampoline(std::string functionName)
+void* GetPatchedFunctionTrampoline(const std::string functionName)
 {
-	if (g_FunctionHooks.find(functionName) != g_FunctionHooks.end()) {
-		auto trampoline = g_FunctionHooks[functionName].GetTrampoline();
+	auto it = g_FunctionHooks.find(functionName);
+	if (it != g_FunctionHooks.end()) {
+		auto trampoline = it->second.GetTrampoline();
 		if (trampoline == nullptr) {
 			EmuLogEx(CXBXR_MODULE::HLE, LOG_LEVEL::WARNING, "Failed to get XB_Trampoline for %s", functionName.c_str());
 		}

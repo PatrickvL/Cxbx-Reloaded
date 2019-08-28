@@ -28,8 +28,9 @@
 
 #define LOG_PREFIX CXBXR_MODULE::D3DCVT
 
+#include "common\Settings.hpp" // for g_LibVersion_D3D8
 #include "core\kernel\support\Emu.h"
-#include "core\kernel\support\EmuXTL.h"
+
 #include "XbConvert.h"
 
 // About format color components:
@@ -138,7 +139,7 @@ void X1R5G5B5ToARGBRow_C(const uint8_t* src_x1r5g5b5, uint8_t* dst_argb,
 }
 
 void A8R8G8B8ToARGBRow_C(const uint8_t* src_a8r8g8b8, uint8_t* dst_argb, int width) {
-	memcpy(dst_argb, src_a8r8g8b8, width * sizeof(XTL::D3DCOLOR)); // Cxbx pass-through
+	memcpy(dst_argb, src_a8r8g8b8, width * sizeof(D3DCOLOR)); // Cxbx pass-through
 }
 
 void X8R8G8B8ToARGBRow_C(const uint8_t* src_x8r8g8b8, uint8_t* dst_argb, int width) {
@@ -698,6 +699,11 @@ static __inline uint32_t Clamp(int32_t val) {
 #define SIMD_ALIGNED32(var) __declspec(align(64)) var
 typedef __declspec(align(32)) int16_t lvec16[16];
 typedef __declspec(align(32)) int8_t lvec8[32];
+#elif __GNUC__
+#define SIMD_ALIGNED(var) __attribute__((aligned(16)))var
+#define SIMD_ALIGNED32(var) __attribute__((aligned(64))) var
+typedef __attribute__((aligned(32))) int16_t lvec16[16];
+typedef __attribute__((aligned(32))) int8_t lvec8[32];
 #endif
 
 struct YuvConstants {
@@ -807,7 +813,7 @@ void ____UYVYToARGBRow_C(const uint8_t* src_uyvy,
 	}
 }
 
-static const XTL::FormatToARGBRow ComponentConverters[] = {
+static const FormatToARGBRow ComponentConverters[] = {
 	nullptr, // NoCmpnts,
 	ARGB1555ToARGBRow_C, // A1R5G5B5,
 	X1R5G5B5ToARGBRow_C, // X1R5G5B5, // Test : Convert X into 255
@@ -853,7 +859,7 @@ typedef struct _FormatInfo {
 	uint8_t bits_per_pixel;
 	_FormatStorage stored;
 	_ComponentEncoding components;
-	XTL::D3DFORMAT pc;
+	D3DFORMAT pc;
 	_FormatUsage usage;
 	char *warning;
 } FormatInfo;
@@ -869,82 +875,82 @@ static const FormatInfo FormatInfos[] = {
 	// in the warning field, so EmuXBFormatRequiresConversionToARGB can return a conversion
 	// to ARGB is needed (which is implemented in EMUPATCH(D3DResource_Register).
 
-	/* 0x00 X_D3DFMT_L8           */ {  8, Swzzld, ______L8, XTL::D3DFMT_L8        },
-	/* 0x01 X_D3DFMT_AL8          */ {  8, Swzzld, _____AL8, XTL::D3DFMT_L8        , Texture, "X_D3DFMT_AL8 -> D3DFMT_L8" },
-	/* 0x02 X_D3DFMT_A1R5G5B5     */ { 16, Swzzld, A1R5G5B5, XTL::D3DFMT_A1R5G5B5  },
-	/* 0x03 X_D3DFMT_X1R5G5B5     */ { 16, Swzzld, X1R5G5B5, XTL::D3DFMT_X1R5G5B5  , RenderTarget },
-	/* 0x04 X_D3DFMT_A4R4G4B4     */ { 16, Swzzld, A4R4G4B4, XTL::D3DFMT_A4R4G4B4  },
-	/* 0x05 X_D3DFMT_R5G6B5       */ { 16, Swzzld, __R5G6B5, XTL::D3DFMT_R5G6B5    , RenderTarget },
-	/* 0x06 X_D3DFMT_A8R8G8B8     */ { 32, Swzzld, A8R8G8B8, XTL::D3DFMT_A8R8G8B8  , RenderTarget },
-	/* 0x07 X_D3DFMT_X8R8G8B8     */ { 32, Swzzld, X8R8G8B8, XTL::D3DFMT_X8R8G8B8  , RenderTarget }, // Alias : X_D3DFMT_X8L8V8U8 
+	/* 0x00 X_D3DFMT_L8           */ {  8, Swzzld, ______L8, D3DFMT_L8        },
+	/* 0x01 X_D3DFMT_AL8          */ {  8, Swzzld, _____AL8, D3DFMT_L8        , Texture, "X_D3DFMT_AL8 -> D3DFMT_L8" },
+	/* 0x02 X_D3DFMT_A1R5G5B5     */ { 16, Swzzld, A1R5G5B5, D3DFMT_A1R5G5B5  },
+	/* 0x03 X_D3DFMT_X1R5G5B5     */ { 16, Swzzld, X1R5G5B5, D3DFMT_X1R5G5B5  , RenderTarget },
+	/* 0x04 X_D3DFMT_A4R4G4B4     */ { 16, Swzzld, A4R4G4B4, D3DFMT_A4R4G4B4  },
+	/* 0x05 X_D3DFMT_R5G6B5       */ { 16, Swzzld, __R5G6B5, D3DFMT_R5G6B5    , RenderTarget },
+	/* 0x06 X_D3DFMT_A8R8G8B8     */ { 32, Swzzld, A8R8G8B8, D3DFMT_A8R8G8B8  , RenderTarget },
+	/* 0x07 X_D3DFMT_X8R8G8B8     */ { 32, Swzzld, X8R8G8B8, D3DFMT_X8R8G8B8  , RenderTarget }, // Alias : X_D3DFMT_X8L8V8U8 
 	/* 0x08 undefined             */ {},
 	/* 0x09 undefined             */ {},
 	/* 0x0A undefined             */ {},
-	/* 0x0B X_D3DFMT_P8           */ {  8, Swzzld, ______P8, XTL::D3DFMT_P8        , Texture, "X_D3DFMT_P8 -> D3DFMT_L8" }, // 8-bit palletized
-	/* 0x0C X_D3DFMT_DXT1         */ {  4, Cmprsd, ____DXT1, XTL::D3DFMT_DXT1      }, // opaque/one-bit alpha // NOTE : DXT1 is half byte per pixel, so divide Size and Pitch calculations by two!
+	/* 0x0B X_D3DFMT_P8           */ {  8, Swzzld, ______P8, D3DFMT_P8        , Texture, "X_D3DFMT_P8 -> D3DFMT_L8" }, // 8-bit palletized
+	/* 0x0C X_D3DFMT_DXT1         */ {  4, Cmprsd, ____DXT1, D3DFMT_DXT1      }, // opaque/one-bit alpha // NOTE : DXT1 is half byte per pixel, so divide Size and Pitch calculations by two!
 	/* 0x0D undefined             */ {},
-	/* 0x0E X_D3DFMT_DXT3         */ {  8, Cmprsd, ____DXT3, XTL::D3DFMT_DXT3      }, // Alias : X_D3DFMT_DXT2 // linear alpha
-	/* 0x0F X_D3DFMT_DXT5         */ {  8, Cmprsd, ____DXT5, XTL::D3DFMT_DXT5      }, // Alias : X_D3DFMT_DXT4 // interpolated alpha
-	/* 0x10 X_D3DFMT_LIN_A1R5G5B5 */ { 16, Linear, A1R5G5B5, XTL::D3DFMT_A1R5G5B5  },
-	/* 0x11 X_D3DFMT_LIN_R5G6B5   */ { 16, Linear, __R5G6B5, XTL::D3DFMT_R5G6B5    , RenderTarget },
-	/* 0x12 X_D3DFMT_LIN_A8R8G8B8 */ { 32, Linear, A8R8G8B8, XTL::D3DFMT_A8R8G8B8  , RenderTarget },
-	/* 0x13 X_D3DFMT_LIN_L8       */ {  8, Linear, ______L8, XTL::D3DFMT_L8        , RenderTarget },
+	/* 0x0E X_D3DFMT_DXT3         */ {  8, Cmprsd, ____DXT3, D3DFMT_DXT3      }, // Alias : X_D3DFMT_DXT2 // linear alpha
+	/* 0x0F X_D3DFMT_DXT5         */ {  8, Cmprsd, ____DXT5, D3DFMT_DXT5      }, // Alias : X_D3DFMT_DXT4 // interpolated alpha
+	/* 0x10 X_D3DFMT_LIN_A1R5G5B5 */ { 16, Linear, A1R5G5B5, D3DFMT_A1R5G5B5  },
+	/* 0x11 X_D3DFMT_LIN_R5G6B5   */ { 16, Linear, __R5G6B5, D3DFMT_R5G6B5    , RenderTarget },
+	/* 0x12 X_D3DFMT_LIN_A8R8G8B8 */ { 32, Linear, A8R8G8B8, D3DFMT_A8R8G8B8  , RenderTarget },
+	/* 0x13 X_D3DFMT_LIN_L8       */ {  8, Linear, ______L8, D3DFMT_L8        , RenderTarget },
 	/* 0x14 undefined             */ {},
 	/* 0x15 undefined             */ {},
-	/* 0x16 X_D3DFMT_LIN_R8B8     */ { 16, Linear, ____R8B8, XTL::D3DFMT_R5G6B5    , Texture, "X_D3DFMT_LIN_R8B8 -> D3DFMT_R5G6B5" },
-	/* 0x17 X_D3DFMT_LIN_G8B8     */ { 16, Linear, ____G8B8, XTL::D3DFMT_R5G6B5    , RenderTarget, "X_D3DFMT_LIN_G8B8 -> D3DFMT_R5G6B5" }, // Alias : X_D3DFMT_LIN_V8U8
+	/* 0x16 X_D3DFMT_LIN_R8B8     */ { 16, Linear, ____R8B8, D3DFMT_R5G6B5    , Texture, "X_D3DFMT_LIN_R8B8 -> D3DFMT_R5G6B5" },
+	/* 0x17 X_D3DFMT_LIN_G8B8     */ { 16, Linear, ____G8B8, D3DFMT_R5G6B5    , RenderTarget, "X_D3DFMT_LIN_G8B8 -> D3DFMT_R5G6B5" }, // Alias : X_D3DFMT_LIN_V8U8
 	/* 0x18 undefined             */ {},
-	/* 0x19 X_D3DFMT_A8           */ {  8, Swzzld, ______A8, XTL::D3DFMT_A8        },
-	/* 0x1A X_D3DFMT_A8L8         */ { 16, Swzzld, ____A8L8, XTL::D3DFMT_A8L8      },
-	/* 0x1B X_D3DFMT_LIN_AL8      */ {  8, Linear, _____AL8, XTL::D3DFMT_L8        , Texture, "X_D3DFMT_LIN_AL8 -> D3DFMT_L8" },
-	/* 0x1C X_D3DFMT_LIN_X1R5G5B5 */ { 16, Linear, X1R5G5B5, XTL::D3DFMT_X1R5G5B5  , RenderTarget },
-	/* 0x1D X_D3DFMT_LIN_A4R4G4B4 */ { 16, Linear, A4R4G4B4, XTL::D3DFMT_A4R4G4B4  },
-	/* 0x1E X_D3DFMT_LIN_X8R8G8B8 */ { 32, Linear, X8R8G8B8, XTL::D3DFMT_X8R8G8B8  , RenderTarget }, // Alias : X_D3DFMT_LIN_X8L8V8U8
-	/* 0x1F X_D3DFMT_LIN_A8       */ {  8, Linear, ______A8, XTL::D3DFMT_A8        },
-	/* 0x20 X_D3DFMT_LIN_A8L8     */ { 16, Linear, ____A8L8, XTL::D3DFMT_A8L8      },
+	/* 0x19 X_D3DFMT_A8           */ {  8, Swzzld, ______A8, D3DFMT_A8        },
+	/* 0x1A X_D3DFMT_A8L8         */ { 16, Swzzld, ____A8L8, D3DFMT_A8L8      },
+	/* 0x1B X_D3DFMT_LIN_AL8      */ {  8, Linear, _____AL8, D3DFMT_L8        , Texture, "X_D3DFMT_LIN_AL8 -> D3DFMT_L8" },
+	/* 0x1C X_D3DFMT_LIN_X1R5G5B5 */ { 16, Linear, X1R5G5B5, D3DFMT_X1R5G5B5  , RenderTarget },
+	/* 0x1D X_D3DFMT_LIN_A4R4G4B4 */ { 16, Linear, A4R4G4B4, D3DFMT_A4R4G4B4  },
+	/* 0x1E X_D3DFMT_LIN_X8R8G8B8 */ { 32, Linear, X8R8G8B8, D3DFMT_X8R8G8B8  , RenderTarget }, // Alias : X_D3DFMT_LIN_X8L8V8U8
+	/* 0x1F X_D3DFMT_LIN_A8       */ {  8, Linear, ______A8, D3DFMT_A8        },
+	/* 0x20 X_D3DFMT_LIN_A8L8     */ { 16, Linear, ____A8L8, D3DFMT_A8L8      },
 	/* 0x21 undefined             */ {},
 	/* 0x22 undefined             */ {},
 	/* 0x23 undefined             */ {},
-	/* 0x24 X_D3DFMT_YUY2         */ { 16, Linear, ____YUY2, XTL::D3DFMT_YUY2      },
-	/* 0x25 X_D3DFMT_UYVY         */ { 16, Linear, ____UYVY, XTL::D3DFMT_UYVY      },
+	/* 0x24 X_D3DFMT_YUY2         */ { 16, Linear, ____YUY2, D3DFMT_YUY2      },
+	/* 0x25 X_D3DFMT_UYVY         */ { 16, Linear, ____UYVY, D3DFMT_UYVY      },
 	/* 0x26 undefined             */ {},
-	/* 0x27 X_D3DFMT_L6V5U5       */ { 16, Swzzld, __R6G5B5, XTL::D3DFMT_L6V5U5    }, // Alias : X_D3DFMT_R6G5B5 // XQEMU NOTE : This might be signed
-	/* 0x28 X_D3DFMT_V8U8         */ { 16, Swzzld, ____G8B8, XTL::D3DFMT_V8U8      }, // Alias : X_D3DFMT_G8B8 // XQEMU NOTE : This might be signed
-	/* 0x29 X_D3DFMT_R8B8         */ { 16, Swzzld, ____R8B8, XTL::D3DFMT_R5G6B5    , Texture, "X_D3DFMT_R8B8 -> D3DFMT_R5G6B5" }, // XQEMU NOTE : This might be signed
-	/* 0x2A X_D3DFMT_D24S8        */ { 32, Swzzld, NoCmpnts, XTL::D3DFMT_D24S8     , DepthBuffer },
-	/* 0x2B X_D3DFMT_F24S8        */ { 32, Swzzld, NoCmpnts, XTL::D3DFMT_D24FS8    , DepthBuffer },
-	/* 0x2C X_D3DFMT_D16          */ { 16, Swzzld, NoCmpnts, XTL::D3DFMT_D16       , DepthBuffer }, // Note : X_D3DFMT_D16 is always lockable on Xbox, D3DFMT_D16 on host is not, but D3DFMT_D16_LOCKABLE often fails SetRenderTarget.
-	/* 0x2D X_D3DFMT_F16          */ { 16, Swzzld, NoCmpnts, XTL::D3DFMT_D16       , DepthBuffer, "X_D3DFMT_F16 -> D3DFMT_D16" }, // HACK : PC doesn't have D3DFMT_F16 (Float vs Int) // TODO : Use D3DFMT_R16F?
-	/* 0x2E X_D3DFMT_LIN_D24S8    */ { 32, Linear, NoCmpnts, XTL::D3DFMT_D24S8     , DepthBuffer },
-	/* 0x2F X_D3DFMT_LIN_F24S8    */ { 32, Linear, NoCmpnts, XTL::D3DFMT_D24FS8    , DepthBuffer },
-	/* 0x30 X_D3DFMT_LIN_D16      */ { 16, Linear, NoCmpnts, XTL::D3DFMT_D16       , DepthBuffer }, // Note : X_D3DFMT_D16 is always lockable on Xbox, D3DFMT_D16 on host is not, but D3DFMT_D16_LOCKABLE often fails SetRenderTarget.
-	/* 0x31 X_D3DFMT_LIN_F16      */ { 16, Linear, NoCmpnts, XTL::D3DFMT_D16       , DepthBuffer, "X_D3DFMT_LIN_F16 -> D3DFMT_D16" }, // HACK : PC doesn't have D3DFMT_F16 (Float vs Int) // TODO : Use D3DFMT_R16F?
-	/* 0x32 X_D3DFMT_L16          */ { 16, Swzzld, _____L16, XTL::D3DFMT_L16       },
-	/* 0x33 X_D3DFMT_V16U16       */ { 32, Swzzld, NoCmpnts, XTL::D3DFMT_V16U16    },
+	/* 0x27 X_D3DFMT_L6V5U5       */ { 16, Swzzld, __R6G5B5, D3DFMT_L6V5U5    }, // Alias : X_D3DFMT_R6G5B5 // XQEMU NOTE : This might be signed
+	/* 0x28 X_D3DFMT_V8U8         */ { 16, Swzzld, ____G8B8, D3DFMT_V8U8      }, // Alias : X_D3DFMT_G8B8 // XQEMU NOTE : This might be signed
+	/* 0x29 X_D3DFMT_R8B8         */ { 16, Swzzld, ____R8B8, D3DFMT_R5G6B5    , Texture, "X_D3DFMT_R8B8 -> D3DFMT_R5G6B5" }, // XQEMU NOTE : This might be signed
+	/* 0x2A X_D3DFMT_D24S8        */ { 32, Swzzld, NoCmpnts, D3DFMT_D24S8     , DepthBuffer },
+	/* 0x2B X_D3DFMT_F24S8        */ { 32, Swzzld, NoCmpnts, D3DFMT_D24FS8    , DepthBuffer },
+	/* 0x2C X_D3DFMT_D16          */ { 16, Swzzld, NoCmpnts, D3DFMT_D16       , DepthBuffer }, // Note : X_D3DFMT_D16 is always lockable on Xbox, D3DFMT_D16 on host is not, but D3DFMT_D16_LOCKABLE often fails SetRenderTarget.
+	/* 0x2D X_D3DFMT_F16          */ { 16, Swzzld, NoCmpnts, D3DFMT_D16       , DepthBuffer, "X_D3DFMT_F16 -> D3DFMT_D16" }, // HACK : PC doesn't have D3DFMT_F16 (Float vs Int) // TODO : Use D3DFMT_R16F?
+	/* 0x2E X_D3DFMT_LIN_D24S8    */ { 32, Linear, NoCmpnts, D3DFMT_D24S8     , DepthBuffer },
+	/* 0x2F X_D3DFMT_LIN_F24S8    */ { 32, Linear, NoCmpnts, D3DFMT_D24FS8    , DepthBuffer },
+	/* 0x30 X_D3DFMT_LIN_D16      */ { 16, Linear, NoCmpnts, D3DFMT_D16       , DepthBuffer }, // Note : X_D3DFMT_D16 is always lockable on Xbox, D3DFMT_D16 on host is not, but D3DFMT_D16_LOCKABLE often fails SetRenderTarget.
+	/* 0x31 X_D3DFMT_LIN_F16      */ { 16, Linear, NoCmpnts, D3DFMT_D16       , DepthBuffer, "X_D3DFMT_LIN_F16 -> D3DFMT_D16" }, // HACK : PC doesn't have D3DFMT_F16 (Float vs Int) // TODO : Use D3DFMT_R16F?
+	/* 0x32 X_D3DFMT_L16          */ { 16, Swzzld, _____L16, D3DFMT_L16       },
+	/* 0x33 X_D3DFMT_V16U16       */ { 32, Swzzld, NoCmpnts, D3DFMT_V16U16    },
 	/* 0x34 undefined             */ {},
-	/* 0x35 X_D3DFMT_LIN_L16      */ { 16, Linear, _____L16, XTL::D3DFMT_L16       },
-	/* 0x36 X_D3DFMT_LIN_V16U16   */ { 32, Linear, NoCmpnts, XTL::D3DFMT_V16U16    }, // Note : Seems ununsed on Xbox
-	/* 0x37 X_D3DFMT_LIN_L6V5U5   */ { 16, Linear, __R6G5B5, XTL::D3DFMT_L6V5U5    }, // Alias : X_D3DFMT_LIN_R6G5B5
-	/* 0x38 X_D3DFMT_R5G5B5A1     */ { 16, Swzzld, R5G5B5A1, XTL::D3DFMT_A1R5G5B5  , Texture, "X_D3DFMT_R5G5B5A1 -> D3DFMT_A1R5G5B5" },
-	/* 0x39 X_D3DFMT_R4G4B4A4     */ { 16, Swzzld, R4G4B4A4, XTL::D3DFMT_A4R4G4B4  , Texture, "X_D3DFMT_R4G4B4A4 -> D3DFMT_A4R4G4B4" },
-	/* 0x3A X_D3DFMT_Q8W8V8U8     */ { 32, Swzzld, A8B8G8R8, XTL::D3DFMT_Q8W8V8U8  }, // Alias : X_D3DFMT_A8B8G8R8 // Note : D3DFMT_A8B8G8R8=32 D3DFMT_Q8W8V8U8=63 // TODO : Needs testcase.
-	/* 0x3B X_D3DFMT_B8G8R8A8     */ { 32, Swzzld, B8G8R8A8, XTL::D3DFMT_A8R8G8B8  , Texture, "X_D3DFMT_B8G8R8A8 -> D3DFMT_A8R8G8B8" },
-	/* 0x3C X_D3DFMT_R8G8B8A8     */ { 32, Swzzld, R8G8B8A8, XTL::D3DFMT_A8R8G8B8  , Texture, "X_D3DFMT_R8G8B8A8 -> D3DFMT_A8R8G8B8" },
-	/* 0x3D X_D3DFMT_LIN_R5G5B5A1 */ { 16, Linear, R5G5B5A1, XTL::D3DFMT_A1R5G5B5  , Texture, "X_D3DFMT_LIN_R5G5B5A1 -> D3DFMT_A1R5G5B5" },
-	/* 0x3E X_D3DFMT_LIN_R4G4B4A4 */ { 16, Linear, R4G4B4A4, XTL::D3DFMT_A4R4G4B4  , Texture, "X_D3DFMT_LIN_R4G4B4A4 -> D3DFMT_A4R4G4B4" },
-	/* 0x3F X_D3DFMT_LIN_A8B8G8R8 */ { 32, Linear, A8B8G8R8, XTL::D3DFMT_A8B8G8R8  }, // Note : D3DFMT_A8B8G8R8=32 D3DFMT_Q8W8V8U8=63 // TODO : Needs testcase.
-	/* 0x40 X_D3DFMT_LIN_B8G8R8A8 */ { 32, Linear, B8G8R8A8, XTL::D3DFMT_A8R8G8B8  , Texture, "X_D3DFMT_LIN_B8G8R8A8 -> D3DFMT_A8R8G8B8" },
-	/* 0x41 X_D3DFMT_LIN_R8G8B8A8 */ { 32, Linear, R8G8B8A8, XTL::D3DFMT_A8R8G8B8  , Texture, "X_D3DFMT_LIN_R8G8B8A8 -> D3DFMT_A8R8G8B8" },
+	/* 0x35 X_D3DFMT_LIN_L16      */ { 16, Linear, _____L16, D3DFMT_L16       },
+	/* 0x36 X_D3DFMT_LIN_V16U16   */ { 32, Linear, NoCmpnts, D3DFMT_V16U16    }, // Note : Seems ununsed on Xbox
+	/* 0x37 X_D3DFMT_LIN_L6V5U5   */ { 16, Linear, __R6G5B5, D3DFMT_L6V5U5    }, // Alias : X_D3DFMT_LIN_R6G5B5
+	/* 0x38 X_D3DFMT_R5G5B5A1     */ { 16, Swzzld, R5G5B5A1, D3DFMT_A1R5G5B5  , Texture, "X_D3DFMT_R5G5B5A1 -> D3DFMT_A1R5G5B5" },
+	/* 0x39 X_D3DFMT_R4G4B4A4     */ { 16, Swzzld, R4G4B4A4, D3DFMT_A4R4G4B4  , Texture, "X_D3DFMT_R4G4B4A4 -> D3DFMT_A4R4G4B4" },
+	/* 0x3A X_D3DFMT_Q8W8V8U8     */ { 32, Swzzld, A8B8G8R8, D3DFMT_Q8W8V8U8  }, // Alias : X_D3DFMT_A8B8G8R8 // Note : D3DFMT_A8B8G8R8=32 D3DFMT_Q8W8V8U8=63 // TODO : Needs testcase.
+	/* 0x3B X_D3DFMT_B8G8R8A8     */ { 32, Swzzld, B8G8R8A8, D3DFMT_A8R8G8B8  , Texture, "X_D3DFMT_B8G8R8A8 -> D3DFMT_A8R8G8B8" },
+	/* 0x3C X_D3DFMT_R8G8B8A8     */ { 32, Swzzld, R8G8B8A8, D3DFMT_A8R8G8B8  , Texture, "X_D3DFMT_R8G8B8A8 -> D3DFMT_A8R8G8B8" },
+	/* 0x3D X_D3DFMT_LIN_R5G5B5A1 */ { 16, Linear, R5G5B5A1, D3DFMT_A1R5G5B5  , Texture, "X_D3DFMT_LIN_R5G5B5A1 -> D3DFMT_A1R5G5B5" },
+	/* 0x3E X_D3DFMT_LIN_R4G4B4A4 */ { 16, Linear, R4G4B4A4, D3DFMT_A4R4G4B4  , Texture, "X_D3DFMT_LIN_R4G4B4A4 -> D3DFMT_A4R4G4B4" },
+	/* 0x3F X_D3DFMT_LIN_A8B8G8R8 */ { 32, Linear, A8B8G8R8, D3DFMT_A8B8G8R8  }, // Note : D3DFMT_A8B8G8R8=32 D3DFMT_Q8W8V8U8=63 // TODO : Needs testcase.
+	/* 0x40 X_D3DFMT_LIN_B8G8R8A8 */ { 32, Linear, B8G8R8A8, D3DFMT_A8R8G8B8  , Texture, "X_D3DFMT_LIN_B8G8R8A8 -> D3DFMT_A8R8G8B8" },
+	/* 0x41 X_D3DFMT_LIN_R8G8B8A8 */ { 32, Linear, R8G8B8A8, D3DFMT_A8R8G8B8  , Texture, "X_D3DFMT_LIN_R8G8B8A8 -> D3DFMT_A8R8G8B8" },
 #if 0
 	/* 0x42 to 0x63 undefined     */ {},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},
-	/* 0x64 X_D3DFMT_VERTEXDATA   */ {  8, Linear, NoCmpnts, XTL::D3DFMT_VERTEXDATA },
-	/* 0x65 X_D3DFMT_INDEX16      */ { 16, Linear, NoCmpnts, XTL::D3DFMT_INDEX16    }, // Dxbx addition : X_D3DFMT_INDEX16 is not an Xbox format, but used internally
+	/* 0x64 X_D3DFMT_VERTEXDATA   */ {  8, Linear, NoCmpnts, D3DFMT_VERTEXDATA },
+	/* 0x65 X_D3DFMT_INDEX16      */ { 16, Linear, NoCmpnts, D3DFMT_INDEX16    }, // Dxbx addition : X_D3DFMT_INDEX16 is not an Xbox format, but used internally
 #endif
 };
 
-const XTL::FormatToARGBRow XTL::EmuXBFormatComponentConverter(X_D3DFORMAT Format)
+const FormatToARGBRow EmuXBFormatComponentConverter(XTL::X_D3DFORMAT Format)
 {
-	if (Format <= X_D3DFMT_LIN_R8G8B8A8)
+	if (Format <= XTL::X_D3DFMT_LIN_R8G8B8A8)
 		if (FormatInfos[Format].components != NoCmpnts)
 			return ComponentConverters[FormatInfos[Format].components];
 
@@ -952,7 +958,7 @@ const XTL::FormatToARGBRow XTL::EmuXBFormatComponentConverter(X_D3DFORMAT Format
 }
 
 // Is there a converter available from the supplied format to ARGB?
-bool XTL::EmuXBFormatCanBeConvertedToARGB(X_D3DFORMAT Format)
+bool EmuXBFormatCanBeConvertedToARGB(XTL::X_D3DFORMAT Format)
 {
 	const FormatToARGBRow info = EmuXBFormatComponentConverter(Format);
 	return (info != nullptr);
@@ -960,7 +966,7 @@ bool XTL::EmuXBFormatCanBeConvertedToARGB(X_D3DFORMAT Format)
 
 // Returns if convertion to ARGB is required. This is the case when
 // the format has a warning message and there's a converter present.
-bool XTL::EmuXBFormatRequiresConversionToARGB(X_D3DFORMAT Format)
+bool EmuXBFormatRequiresConversionToARGB(XTL::X_D3DFORMAT Format)
 {
 	if (FormatInfos[Format].warning != nullptr)
 		if (EmuXBFormatCanBeConvertedToARGB(Format))
@@ -969,63 +975,63 @@ bool XTL::EmuXBFormatRequiresConversionToARGB(X_D3DFORMAT Format)
 	return false;
 }
 
-DWORD XTL::EmuXBFormatBitsPerPixel(X_D3DFORMAT Format)
+DWORD EmuXBFormatBitsPerPixel(XTL::X_D3DFORMAT Format)
 {
-	if (Format <= X_D3DFMT_LIN_R8G8B8A8)
+	if (Format <= XTL::X_D3DFMT_LIN_R8G8B8A8)
 		if (FormatInfos[Format].bits_per_pixel > 0) // TODO : Remove this
 			return FormatInfos[Format].bits_per_pixel;
 
 	return 16; // TODO : 8
 }
 
-DWORD XTL::EmuXBFormatBytesPerPixel(X_D3DFORMAT Format)
+DWORD EmuXBFormatBytesPerPixel(XTL::X_D3DFORMAT Format)
 {
 	return ((EmuXBFormatBitsPerPixel(Format) + 4) / 8);
 }
 
-BOOL XTL::EmuXBFormatIsCompressed(X_D3DFORMAT Format)
+BOOL EmuXBFormatIsCompressed(XTL::X_D3DFORMAT Format)
 {
-	if (Format <= X_D3DFMT_LIN_R8G8B8A8)
+	if (Format <= XTL::X_D3DFMT_LIN_R8G8B8A8)
 		return (FormatInfos[Format].stored == Cmprsd);
 
 	return false;
 }
 
-BOOL XTL::EmuXBFormatIsLinear(X_D3DFORMAT Format)
+BOOL EmuXBFormatIsLinear(XTL::X_D3DFORMAT Format)
 {
-	if (Format <= X_D3DFMT_LIN_R8G8B8A8)
+	if (Format <= XTL::X_D3DFMT_LIN_R8G8B8A8)
 		return (FormatInfos[Format].stored == Linear);
 
-	return (Format == X_D3DFMT_VERTEXDATA); // TODO : false;
+	return (Format == XTL::X_D3DFMT_VERTEXDATA); // TODO : false;
 }
 
-BOOL XTL::EmuXBFormatIsSwizzled(X_D3DFORMAT Format)
+BOOL EmuXBFormatIsSwizzled(XTL::X_D3DFORMAT Format)
 {
-	if (Format <= X_D3DFMT_LIN_R8G8B8A8)
+	if (Format <= XTL::X_D3DFMT_LIN_R8G8B8A8)
 		return (FormatInfos[Format].stored == Swzzld);
 
 	return false;
 }
 
-BOOL XTL::EmuXBFormatIsRenderTarget(X_D3DFORMAT Format)
+BOOL EmuXBFormatIsRenderTarget(XTL::X_D3DFORMAT Format)
 {
-	if (Format <= X_D3DFMT_LIN_R8G8B8A8)
+	if (Format <= XTL::X_D3DFMT_LIN_R8G8B8A8)
 		return (FormatInfos[Format].usage == RenderTarget);
 
 	return false;
 }
 
-BOOL XTL::EmuXBFormatIsDepthBuffer(X_D3DFORMAT Format)
+BOOL EmuXBFormatIsDepthBuffer(XTL::X_D3DFORMAT Format)
 {
-	if (Format <= X_D3DFMT_LIN_R8G8B8A8)
+	if (Format <= XTL::X_D3DFMT_LIN_R8G8B8A8)
 		return (FormatInfos[Format].usage == DepthBuffer);
 
 	return false;
 }
 
-XTL::D3DFORMAT XTL::EmuXB2PC_D3DFormat(X_D3DFORMAT Format)
+D3DFORMAT EmuXB2PC_D3DFormat(XTL::X_D3DFORMAT Format)
 {
-	if (Format <= X_D3DFMT_LIN_R8G8B8A8 && Format != -1 /*X_D3DFMT_UNKNOWN*/) // The last bit prevents crashing (Metal Slug 3)
+	if (Format <= XTL::X_D3DFMT_LIN_R8G8B8A8 && Format != -1 /*XTL::X_D3DFMT_UNKNOWN*/) // The last bit prevents crashing (Metal Slug 3)
 	{
 		const FormatInfo *info = &FormatInfos[Format];
 		if (info->warning != nullptr) {
@@ -1036,9 +1042,9 @@ XTL::D3DFORMAT XTL::EmuXB2PC_D3DFormat(X_D3DFORMAT Format)
 	}
 
 	switch (Format) {
-	case X_D3DFMT_VERTEXDATA:
+	case XTL::X_D3DFMT_VERTEXDATA:
 		return D3DFMT_VERTEXDATA;
-	case ((X_D3DFORMAT)0xffffffff):
+	case ((XTL::X_D3DFORMAT)0xffffffff):
 		return D3DFMT_UNKNOWN; // TODO -oCXBX: Not sure if this counts as swizzled or not...
 	default:
 		CxbxKrnlCleanup("EmuXB2PC_D3DFormat: Unknown Format (0x%.08X)", Format);
@@ -1047,80 +1053,80 @@ XTL::D3DFORMAT XTL::EmuXB2PC_D3DFormat(X_D3DFORMAT Format)
 	return D3DFMT_UNKNOWN;
 }
 
-XTL::X_D3DFORMAT XTL::EmuPC2XB_D3DFormat(D3DFORMAT Format, bool bPreferLinear)
+XTL::X_D3DFORMAT EmuPC2XB_D3DFormat(D3DFORMAT Format, bool bPreferLinear)
 {
-	X_D3DFORMAT result;
+	XTL::X_D3DFORMAT result;
     switch(Format)
     {
 	case D3DFMT_YUY2:
-		result = X_D3DFMT_YUY2;
+		result = XTL::X_D3DFMT_YUY2;
 		break;
 	case D3DFMT_UYVY:
-		result = X_D3DFMT_UYVY;
+		result = XTL::X_D3DFMT_UYVY;
 		break;
 	case D3DFMT_R5G6B5:
-		result = bPreferLinear ? X_D3DFMT_LIN_R5G6B5 : X_D3DFMT_R5G6B5;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_R5G6B5 : XTL::X_D3DFMT_R5G6B5;
 		break;
 	case D3DFMT_D24S8:
-		result = bPreferLinear ? X_D3DFMT_LIN_D24S8 : X_D3DFMT_D24S8;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_D24S8 : XTL::X_D3DFMT_D24S8;
 		break;
 	case D3DFMT_DXT5:
-		result = X_D3DFMT_DXT5; // Compressed
+		result = XTL::X_D3DFMT_DXT5; // Compressed
 		break;
 	case D3DFMT_DXT4:
-		result = X_D3DFMT_DXT4;  // Compressed // Same as X_D3DFMT_DXT5
+		result = XTL::X_D3DFMT_DXT4;  // Compressed // Same as XTL::X_D3DFMT_DXT5
 		break;
 	case D3DFMT_DXT3:
-		result = X_D3DFMT_DXT3; // Compressed
+		result = XTL::X_D3DFMT_DXT3; // Compressed
 		break;
 	case D3DFMT_DXT2:
-		result = X_D3DFMT_DXT2; // Compressed // Same as X_D3DFMT_DXT3
+		result = XTL::X_D3DFMT_DXT2; // Compressed // Same as XTL::X_D3DFMT_DXT3
 		break;
 	case D3DFMT_DXT1:
-		result = X_D3DFMT_DXT1; // Compressed
+		result = XTL::X_D3DFMT_DXT1; // Compressed
 		break;
 	case D3DFMT_A1R5G5B5:
-		result = bPreferLinear ? X_D3DFMT_LIN_A1R5G5B5 : X_D3DFMT_A1R5G5B5;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_A1R5G5B5 : XTL::X_D3DFMT_A1R5G5B5;
 		break;
 	case D3DFMT_X8R8G8B8:
-		result = bPreferLinear ? X_D3DFMT_LIN_X8R8G8B8 : X_D3DFMT_X8R8G8B8;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_X8R8G8B8 : XTL::X_D3DFMT_X8R8G8B8;
 		break;
 	case D3DFMT_A8R8G8B8:
-		result = bPreferLinear ? X_D3DFMT_LIN_A8R8G8B8 : X_D3DFMT_A8R8G8B8;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_A8R8G8B8 : XTL::X_D3DFMT_A8R8G8B8;
 		break;
 	case D3DFMT_A4R4G4B4:
-		result = bPreferLinear ? X_D3DFMT_LIN_A4R4G4B4 : X_D3DFMT_A4R4G4B4;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_A4R4G4B4 : XTL::X_D3DFMT_A4R4G4B4;
 		break;
 	case D3DFMT_X1R5G5B5:
-		result = bPreferLinear ? X_D3DFMT_LIN_X1R5G5B5 : X_D3DFMT_X1R5G5B5;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_X1R5G5B5 : XTL::X_D3DFMT_X1R5G5B5;
 		break;
 	case D3DFMT_A8:
-		result = bPreferLinear ? X_D3DFMT_LIN_A8 : X_D3DFMT_A8;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_A8 : XTL::X_D3DFMT_A8;
 		break;
 	case D3DFMT_L8:
-		result = bPreferLinear ? X_D3DFMT_LIN_L8 : X_D3DFMT_L8;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_L8 : XTL::X_D3DFMT_L8;
 		break;
 	case D3DFMT_D16:
-		result = bPreferLinear ? X_D3DFMT_LIN_D16 : X_D3DFMT_D16;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_D16 : XTL::X_D3DFMT_D16;
 		break;
 	case D3DFMT_D16_LOCKABLE:
-		result = X_D3DFMT_D16_LOCKABLE;
+		result = XTL::X_D3DFMT_D16_LOCKABLE;
 		break; 
 	case D3DFMT_UNKNOWN:
-		result = ((X_D3DFORMAT)0xffffffff); // TODO : return X_D3DFMT_UNKNOWN ?
+		result = ((XTL::X_D3DFORMAT)0xffffffff); // TODO : return XTL::X_D3DFMT_UNKNOWN ?
 		break;
 	// Dxbx additions :
 	case D3DFMT_L6V5U5:
-		result = bPreferLinear ? X_D3DFMT_LIN_L6V5U5 : X_D3DFMT_L6V5U5;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_L6V5U5 : XTL::X_D3DFMT_L6V5U5;
 		break;
 	case D3DFMT_V8U8:
-		result = bPreferLinear ? X_D3DFMT_LIN_V8U8 : X_D3DFMT_V8U8;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_V8U8 : XTL::X_D3DFMT_V8U8;
 		break;
 	case D3DFMT_V16U16:
-		result = bPreferLinear ? X_D3DFMT_LIN_V16U16 : X_D3DFMT_V16U16;
+		result = bPreferLinear ? XTL::X_D3DFMT_LIN_V16U16 : XTL::X_D3DFMT_V16U16;
 		break;
 	case D3DFMT_VERTEXDATA:
-		result = X_D3DFMT_VERTEXDATA;
+		result = XTL::X_D3DFMT_VERTEXDATA;
 		break;
 	default:
 		CxbxKrnlCleanup("EmuPC2XB_D3DFormat: Unknown Format (%d)", Format);
@@ -1129,7 +1135,7 @@ XTL::X_D3DFORMAT XTL::EmuPC2XB_D3DFormat(D3DFORMAT Format, bool bPreferLinear)
     return result;
 }
 
-DWORD XTL::EmuXB2PC_D3DLock(DWORD Flags)
+DWORD EmuXB2PC_D3DLock(DWORD Flags)
 {
     DWORD NewFlags = 0;
 
@@ -1150,28 +1156,28 @@ DWORD XTL::EmuXB2PC_D3DLock(DWORD Flags)
 }
 
 // convert from xbox to pc multisample formats
-XTL::D3DMULTISAMPLE_TYPE XTL::EmuXB2PC_D3DMultiSampleFormat(DWORD Type)
+D3DMULTISAMPLE_TYPE EmuXB2PC_D3DMultiSampleFormat(DWORD Type)
 {
 	D3DMULTISAMPLE_TYPE result;
 	switch (Type & 0xFFFF)
 	{
-	case X_D3DMULTISAMPLE_NONE:
+	case XTL::X_D3DMULTISAMPLE_NONE:
 		result = D3DMULTISAMPLE_NONE;
 		break;
-	case X_D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_LINEAR: 
-	case X_D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_QUINCUNX: 
-	case X_D3DMULTISAMPLE_2_SAMPLES_SUPERSAMPLE_HORIZONTAL_LINEAR: 
-	case X_D3DMULTISAMPLE_2_SAMPLES_SUPERSAMPLE_VERTICAL_LINEAR:
+	case XTL::X_D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_LINEAR: 
+	case XTL::X_D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_QUINCUNX: 
+	case XTL::X_D3DMULTISAMPLE_2_SAMPLES_SUPERSAMPLE_HORIZONTAL_LINEAR: 
+	case XTL::X_D3DMULTISAMPLE_2_SAMPLES_SUPERSAMPLE_VERTICAL_LINEAR:
 		result = D3DMULTISAMPLE_2_SAMPLES;
 		break;
-	case X_D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_LINEAR: 
-	case X_D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_GAUSSIAN: 
-	case X_D3DMULTISAMPLE_4_SAMPLES_SUPERSAMPLE_LINEAR: 
-	case X_D3DMULTISAMPLE_4_SAMPLES_SUPERSAMPLE_GAUSSIAN:
+	case XTL::X_D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_LINEAR: 
+	case XTL::X_D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_GAUSSIAN: 
+	case XTL::X_D3DMULTISAMPLE_4_SAMPLES_SUPERSAMPLE_LINEAR: 
+	case XTL::X_D3DMULTISAMPLE_4_SAMPLES_SUPERSAMPLE_GAUSSIAN:
 		result = D3DMULTISAMPLE_4_SAMPLES;
 		break;
-	case X_D3DMULTISAMPLE_9_SAMPLES_MULTISAMPLE_GAUSSIAN: 
-	case X_D3DMULTISAMPLE_9_SAMPLES_SUPERSAMPLE_GAUSSIAN:
+	case XTL::X_D3DMULTISAMPLE_9_SAMPLES_MULTISAMPLE_GAUSSIAN: 
+	case XTL::X_D3DMULTISAMPLE_9_SAMPLES_SUPERSAMPLE_GAUSSIAN:
 		result = D3DMULTISAMPLE_9_SAMPLES;
 		break;
 	default:
@@ -1182,39 +1188,43 @@ XTL::D3DMULTISAMPLE_TYPE XTL::EmuXB2PC_D3DMultiSampleFormat(DWORD Type)
 }
 
 // lookup table for converting vertex count to primitive count
-UINT XTL::EmuD3DVertexToPrimitive[11][2] =
+const unsigned g_XboxPrimitiveTypeInfo[11][2] =
 {
+	// First number is the starting number of vertices the draw requires
+	// Second number the number of vertices per primitive
+	// Example : Triangle list, has no starting vertices, and uses 3 vertices for each triangle
+	// Example : Triangle strip, starts with 2 vertices, and adds 1 for each triangle
     {0, 0}, // NULL
-    {1, 0}, // X_D3DPT_POINTLIST
-    {2, 0}, // X_D3DPT_LINELIST
-    {1, 1}, // X_D3DPT_LINELOOP
-    {1, 1}, // X_D3DPT_LINESTRIP
-    {3, 0}, // X_D3DPT_TRIANGLELIST
-    {1, 2}, // X_D3DPT_TRIANGLESTRIP
-    {1, 2}, // X_D3DPT_TRIANGLEFAN
-    {4, 0}, // X_D3DPT_QUADLIST
-    {2, 2}, // X_D3DPT_QUADSTRIP
-    {1, 0}, // X_D3DPT_POLYGON
+	{0, 1}, // X_D3DPT_POINTLIST
+	{0, 2}, // X_D3DPT_LINELIST
+	{1, 1}, // X_D3DPT_LINELOOP
+	{1, 1}, // X_D3DPT_LINESTRIP
+	{0, 3}, // X_D3DPT_TRIANGLELIST
+	{2, 1}, // X_D3DPT_TRIANGLESTRIP
+	{2, 1}, // X_D3DPT_TRIANGLEFAN
+	{0, 4}, // X_D3DPT_QUADLIST
+	{2, 2}, // X_D3DPT_QUADSTRIP
+	{0, 1}, // X_D3DPT_POLYGON
 };
 
 // conversion table for xbox->pc primitive types
-XTL::D3DPRIMITIVETYPE XTL::EmuPrimitiveTypeLookup[] =
+const D3DPRIMITIVETYPE g_XboxPrimitiveTypeToHost[] =
 {
-    /* NULL                 = 0         */ (XTL::D3DPRIMITIVETYPE)0,
-    /* D3DPT_POINTLIST      = 1,        */ XTL::D3DPT_POINTLIST,
-    /* D3DPT_LINELIST       = 2,        */ XTL::D3DPT_LINELIST,
-    /* D3DPT_LINELOOP       = 3,  Xbox  */ XTL::D3DPT_LINESTRIP,
-    /* D3DPT_LINESTRIP      = 4,        */ XTL::D3DPT_LINESTRIP,
-    /* D3DPT_TRIANGLELIST   = 5,        */ XTL::D3DPT_TRIANGLELIST,
-    /* D3DPT_TRIANGLESTRIP  = 6,        */ XTL::D3DPT_TRIANGLESTRIP,
-    /* D3DPT_TRIANGLEFAN    = 7,        */ XTL::D3DPT_TRIANGLEFAN,
-    /* D3DPT_QUADLIST       = 8,  Xbox  */ XTL::D3DPT_TRIANGLELIST,
-    /* D3DPT_QUADSTRIP      = 9,  Xbox  */ XTL::D3DPT_TRIANGLESTRIP,
-    /* D3DPT_POLYGON        = 10, Xbox  */ XTL::D3DPT_TRIANGLEFAN,
-    /* D3DPT_MAX            = 11,       */ (XTL::D3DPRIMITIVETYPE)11
+    /* NULL                   = 0         */ (D3DPRIMITIVETYPE)0,
+    /* X_D3DPT_POINTLIST      = 1,        */ D3DPT_POINTLIST,
+    /* X_D3DPT_LINELIST       = 2,        */ D3DPT_LINELIST,
+    /* X_D3DPT_LINELOOP       = 3,  Xbox  */ D3DPT_LINESTRIP,
+    /* X_D3DPT_LINESTRIP      = 4,        */ D3DPT_LINESTRIP,
+    /* X_D3DPT_TRIANGLELIST   = 5,        */ D3DPT_TRIANGLELIST,
+    /* X_D3DPT_TRIANGLESTRIP  = 6,        */ D3DPT_TRIANGLESTRIP,
+    /* X_D3DPT_TRIANGLEFAN    = 7,        */ D3DPT_TRIANGLEFAN,
+    /* X_D3DPT_QUADLIST       = 8,  Xbox  */ D3DPT_TRIANGLELIST,
+    /* X_D3DPT_QUADSTRIP      = 9,  Xbox  */ D3DPT_TRIANGLESTRIP,
+    /* X_D3DPT_POLYGON        = 10, Xbox  */ D3DPT_TRIANGLEFAN,
+    /* X_D3DPT_MAX            = 11,       */ (D3DPRIMITIVETYPE)11
 };
 
-void XTL::EmuUnswizzleBox
+void EmuUnswizzleBox
 (
 	CONST PVOID pSrcBuff,
 	CONST DWORD dwWidth,
@@ -1328,12 +1338,17 @@ void XTL::EmuUnswizzleBox
 	}
 } // EmuUnswizzleBox NOPATCH
 
-namespace XTL
-{
-
+// Notes :
+// * most renderstates were introduced in the (lowest known) XDK version : 3424
+// * additional renderstates were introduced between 3434 and 4627
+// * we MUST list exact versions for each of those, since their inserts impacts mapping!
+// * renderstates were finalized in 4627 (so no change after that version)
+// * renderstates after D3DRS_MULTISAMPLEMASK have no host mapping, thus no impact
+// * D3DRS_MULTISAMPLETYPE seems the only renderstate that got removed (after 3944, before 4039)
+// * all renderstates marked 3424 are also verified present in 3944
 const RenderStateInfo DxbxRenderStateInfo[] = {
 
-	//  String                                Ord   Version Type                     Method Native
+	// String                                 Ord  Version Type                   Method              Native
 	{ "D3DRS_PSALPHAINPUTS0"              /*=   0*/, 3424, xtDWORD,               NV2A_RC_IN_ALPHA(0) },
 	{ "D3DRS_PSALPHAINPUTS1"              /*=   1*/, 3424, xtDWORD,               NV2A_RC_IN_ALPHA(1) },
 	{ "D3DRS_PSALPHAINPUTS2"              /*=   2*/, 3424, xtDWORD,               NV2A_RC_IN_ALPHA(2) },
@@ -1413,69 +1428,70 @@ const RenderStateInfo DxbxRenderStateInfo[] = {
 	{ "D3DRS_BLENDCOLOR"                  /*=  75*/, 3424, xtD3DCOLOR,            NV2A_BLEND_COLOR, D3DRS_BLENDFACTOR, "D3DCOLOR for D3DBLEND_CONSTANTCOLOR" },
 	// D3D9 D3DRS_BLENDFACTOR : D3DCOLOR used for a constant blend factor during alpha blending for devices that support D3DPBLENDCAPS_BLENDFACTOR
 	{ "D3DRS_SWATHWIDTH"                  /*=  76*/, 3424, xtD3DSWATH,            NV2A_SWATH_WIDTH },
-	{ "D3DRS_POLYGONOFFSETZSLOPESCALE"    /*=  77*/, 3424, xtFloat,               NV2A_POLYGON_OFFSET_FACTOR, D3DRS_NONE, "float Z factor for shadow maps" },
+	{ "D3DRS_POLYGONOFFSETZSLOPESCALE"    /*=  77*/, 3424, xtFloat,               NV2A_POLYGON_OFFSET_FACTOR, D3DRS_UNSUPPORTED, "float Z factor for shadow maps" },
 	{ "D3DRS_POLYGONOFFSETZOFFSET"        /*=  78*/, 3424, xtFloat,               NV2A_POLYGON_OFFSET_UNITS },
 	{ "D3DRS_POINTOFFSETENABLE"           /*=  79*/, 3424, xtBOOL,                NV2A_POLYGON_OFFSET_POINT_ENABLE },
 	{ "D3DRS_WIREFRAMEOFFSETENABLE"       /*=  80*/, 3424, xtBOOL,                NV2A_POLYGON_OFFSET_LINE_ENABLE },
 	{ "D3DRS_SOLIDOFFSETENABLE"           /*=  81*/, 3424, xtBOOL,                NV2A_POLYGON_OFFSET_FILL_ENABLE },
-	{ "D3DRS_DEPTHCLIPCONTROL"            /*=  82*/, 4627, xtD3DDCC,              NV2A_DEPTHCLIPCONTROL },
-	{ "D3DRS_STIPPLEENABLE"               /*=  83*/, 4627, xtBOOL,                NV2A_POLYGON_STIPPLE_ENABLE },
-	{ "D3DRS_SIMPLE_UNUSED8"              /*=  84*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_SIMPLE_UNUSED7"              /*=  85*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_SIMPLE_UNUSED6"              /*=  86*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_SIMPLE_UNUSED5"              /*=  87*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_SIMPLE_UNUSED4"              /*=  88*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_SIMPLE_UNUSED3"              /*=  89*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_SIMPLE_UNUSED2"              /*=  90*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_SIMPLE_UNUSED1"              /*=  91*/, 4627, xtDWORD,               0 },
+	{ "D3DRS_DEPTHCLIPCONTROL"            /*=  82*/, 4432, xtD3DDCC,              NV2A_DEPTHCLIPCONTROL }, // Verified absent in 4361, present in 4432  TODO : Might be introduced around 4400?
+	{ "D3DRS_STIPPLEENABLE"               /*=  83*/, 4627, xtBOOL,                NV2A_POLYGON_STIPPLE_ENABLE }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_SIMPLE_UNUSED8"              /*=  84*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_SIMPLE_UNUSED7"              /*=  85*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_SIMPLE_UNUSED6"              /*=  86*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_SIMPLE_UNUSED5"              /*=  87*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_SIMPLE_UNUSED4"              /*=  88*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_SIMPLE_UNUSED3"              /*=  89*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_SIMPLE_UNUSED2"              /*=  90*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_SIMPLE_UNUSED1"              /*=  91*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
 	// End of "simple" render states, continuing with "deferred" render states :
-	{ "D3DRS_FOGENABLE"                   /*=  92*/, 3424, xtBOOL,                NV2A_FOG_ENABLE, D3DRS_FOGENABLE },
-	{ "D3DRS_FOGTABLEMODE"                /*=  93*/, 3424, xtD3DFOGMODE,          NV2A_FOG_MODE, D3DRS_FOGTABLEMODE },
-	{ "D3DRS_FOGSTART"                    /*=  94*/, 3424, xtFloat,               NV2A_FOG_COORD_DIST, D3DRS_FOGSTART },
-	{ "D3DRS_FOGEND"                      /*=  95*/, 3424, xtFloat,               NV2A_FOG_MODE, D3DRS_FOGEND },
-	{ "D3DRS_FOGDENSITY"                  /*=  96*/, 3424, xtFloat,               NV2A_FOG_EQUATION_CONSTANT, D3DRS_FOGDENSITY }, // + NV2A_FOG_EQUATION_LINEAR + NV2A_FOG_EQUATION_QUADRATIC
-	{ "D3DRS_RANGEFOGENABLE"              /*=  97*/, 3424, xtBOOL,                NV2A_FOG_COORD_DIST, D3DRS_RANGEFOGENABLE },
-	{ "D3DRS_WRAP0"                       /*=  98*/, 3424, xtD3DWRAP,             NV2A_TX_WRAP(0), D3DRS_WRAP0 },
-	{ "D3DRS_WRAP1"                       /*=  99*/, 3424, xtD3DWRAP,             NV2A_TX_WRAP(1), D3DRS_WRAP1 },
-	{ "D3DRS_WRAP2"                       /*= 100*/, 3424, xtD3DWRAP,             NV2A_TX_WRAP(2), D3DRS_WRAP2 },
-	{ "D3DRS_WRAP3"                       /*= 101*/, 3424, xtD3DWRAP,             NV2A_TX_WRAP(3), D3DRS_WRAP3 },
-	{ "D3DRS_LIGHTING"                    /*= 102*/, 3424, xtBOOL,                NV2A_LIGHT_MODEL, D3DRS_LIGHTING }, // TODO : Needs push-buffer data conversion
-	{ "D3DRS_SPECULARENABLE"              /*= 103*/, 3424, xtBOOL,                NV2A_RC_FINAL0, D3DRS_SPECULARENABLE },
-	{ "D3DRS_LOCALVIEWER"                 /*= 104*/, 3424, xtBOOL,                0, D3DRS_LOCALVIEWER },
-	{ "D3DRS_COLORVERTEX"                 /*= 105*/, 3424, xtBOOL,                0, D3DRS_COLORVERTEX },
-	{ "D3DRS_BACKSPECULARMATERIALSOURCE"  /*= 106*/, 3424, xtD3DMCS,              0 }, // nsp.
-	{ "D3DRS_BACKDIFFUSEMATERIALSOURCE"   /*= 107*/, 3424, xtD3DMCS,              0 }, // nsp.
-	{ "D3DRS_BACKAMBIENTMATERIALSOURCE"   /*= 108*/, 3424, xtD3DMCS,              0 }, // nsp.
-	{ "D3DRS_BACKEMISSIVEMATERIALSOURCE"  /*= 109*/, 3424, xtD3DMCS,              0 }, // nsp.
-	{ "D3DRS_SPECULARMATERIALSOURCE"      /*= 110*/, 3424, xtD3DMCS,              NV2A_COLOR_MATERIAL, D3DRS_SPECULARMATERIALSOURCE },
-	{ "D3DRS_DIFFUSEMATERIALSOURCE"       /*= 111*/, 3424, xtD3DMCS,              0, D3DRS_DIFFUSEMATERIALSOURCE },
-	{ "D3DRS_AMBIENTMATERIALSOURCE"       /*= 112*/, 3424, xtD3DMCS,              0, D3DRS_AMBIENTMATERIALSOURCE },
-	{ "D3DRS_EMISSIVEMATERIALSOURCE"      /*= 113*/, 3424, xtD3DMCS,              0, D3DRS_EMISSIVEMATERIALSOURCE },
-	{ "D3DRS_BACKAMBIENT"                 /*= 114*/, 3424, xtD3DCOLOR,            NV2A_LIGHT_MODEL_BACK_SIDE_PRODUCT_AMBIENT_PLUS_EMISSION_R }, // ..NV2A_MATERIAL_FACTOR_BACK_B nsp. Was NV2A_LIGHT_MODEL_BACK_AMBIENT_R
-	{ "D3DRS_AMBIENT"                     /*= 115*/, 3424, xtD3DCOLOR,            NV2A_LIGHT_MODEL_FRONT_SIDE_PRODUCT_AMBIENT_PLUS_EMISSION_R, D3DRS_AMBIENT }, // ..NV2A_LIGHT_MODEL_FRONT_AMBIENT_B + NV2A_MATERIAL_FACTOR_FRONT_R..NV2A_MATERIAL_FACTOR_FRONT_A  Was NV2A_LIGHT_MODEL_FRONT_AMBIENT_R
-	{ "D3DRS_POINTSIZE"                   /*= 116*/, 3424, xtFloat,               NV2A_POINT_PARAMETER(0), D3DRS_POINTSIZE },
-	{ "D3DRS_POINTSIZE_MIN"               /*= 117*/, 3424, xtFloat,               0, D3DRS_POINTSIZE_MIN },
-	{ "D3DRS_POINTSPRITEENABLE"           /*= 118*/, 3424, xtBOOL,                NV2A_POINT_SMOOTH_ENABLE, D3DRS_POINTSPRITEENABLE },
-	{ "D3DRS_POINTSCALEENABLE"            /*= 119*/, 3424, xtBOOL,                NV2A_POINT_PARAMETERS_ENABLE, D3DRS_POINTSCALEENABLE },
-	{ "D3DRS_POINTSCALE_A"                /*= 120*/, 3424, xtFloat,               0, D3DRS_POINTSCALE_A },
-	{ "D3DRS_POINTSCALE_B"                /*= 121*/, 3424, xtFloat,               0, D3DRS_POINTSCALE_B },
-	{ "D3DRS_POINTSCALE_C"                /*= 122*/, 3424, xtFloat,               0, D3DRS_POINTSCALE_C },
-	{ "D3DRS_POINTSIZE_MAX"               /*= 123*/, 3424, xtFloat,               0, D3DRS_POINTSIZE_MAX },
-	{ "D3DRS_PATCHEDGESTYLE"              /*= 124*/, 3424, xtDWORD,               0, D3DRS_PATCHEDGESTYLE }, // D3DPATCHEDGESTYLE?
-	{ "D3DRS_PATCHSEGMENTS"               /*= 125*/, 3424, xtDWORD,               0 }, // nsp. // D3DRS_PATCHSEGMENTS exists in Direct3D 8, but not in 9 !?
+	// Verified as XDK 3911 Deferred RenderStates (3424 yet to do)
+	{ "D3DRS_FOGENABLE"                   /*=  92*/, 3424, xtBOOL,                NV2A_FOG_ENABLE, D3DRS_FOGENABLE }, // TRUE to enable fog blending
+	{ "D3DRS_FOGTABLEMODE"                /*=  93*/, 3424, xtD3DFOGMODE,          NV2A_FOG_MODE, D3DRS_FOGTABLEMODE }, // D3DFOGMODE
+	{ "D3DRS_FOGSTART"                    /*=  94*/, 3424, xtFloat,               NV2A_FOG_COORD_DIST, D3DRS_FOGSTART }, // float fog start (for both vertex and pixel fog)
+	{ "D3DRS_FOGEND"                      /*=  95*/, 3424, xtFloat,               NV2A_FOG_MODE, D3DRS_FOGEND }, // float fog end
+	{ "D3DRS_FOGDENSITY"                  /*=  96*/, 3424, xtFloat,               NV2A_FOG_EQUATION_CONSTANT, D3DRS_FOGDENSITY }, // float fog density // + NV2A_FOG_EQUATION_LINEAR + NV2A_FOG_EQUATION_QUADRATIC
+	{ "D3DRS_RANGEFOGENABLE"              /*=  97*/, 3424, xtBOOL,                NV2A_FOG_COORD_DIST, D3DRS_RANGEFOGENABLE }, // TRUE to enable range-based fog
+	{ "D3DRS_WRAP0"                       /*=  98*/, 3424, xtD3DWRAP,             NV2A_TX_WRAP(0), D3DRS_WRAP0 }, // D3DWRAP* flags (D3DWRAP_U, D3DWRAPCOORD_0, etc.) for 1st texture coord.
+	{ "D3DRS_WRAP1"                       /*=  99*/, 3424, xtD3DWRAP,             NV2A_TX_WRAP(1), D3DRS_WRAP1 }, // D3DWRAP* flags (D3DWRAP_U, D3DWRAPCOORD_0, etc.) for 2nd texture coord.
+	{ "D3DRS_WRAP2"                       /*= 100*/, 3424, xtD3DWRAP,             NV2A_TX_WRAP(2), D3DRS_WRAP2 }, // D3DWRAP* flags (D3DWRAP_U, D3DWRAPCOORD_0, etc.) for 3rd texture coord.
+	{ "D3DRS_WRAP3"                       /*= 101*/, 3424, xtD3DWRAP,             NV2A_TX_WRAP(3), D3DRS_WRAP3 }, // D3DWRAP* flags (D3DWRAP_U, D3DWRAPCOORD_0, etc.) for 4th texture coord.
+	{ "D3DRS_LIGHTING"                    /*= 102*/, 3424, xtBOOL,                NV2A_LIGHT_MODEL, D3DRS_LIGHTING }, // TRUE to enable lighting // TODO : Needs push-buffer data conversion
+	{ "D3DRS_SPECULARENABLE"              /*= 103*/, 3424, xtBOOL,                NV2A_RC_FINAL0, D3DRS_SPECULARENABLE }, // TRUE to enable specular
+	{ "D3DRS_LOCALVIEWER"                 /*= 104*/, 3424, xtBOOL,                0, D3DRS_LOCALVIEWER }, // TRUE to enable camera-relative specular highlights
+	{ "D3DRS_COLORVERTEX"                 /*= 105*/, 3424, xtBOOL,                0, D3DRS_COLORVERTEX }, // TRUE to enable per-vertex color
+	{ "D3DRS_BACKSPECULARMATERIALSOURCE"  /*= 106*/, 3424, xtD3DMCS,              0 }, // D3DMATERIALCOLORSOURCE (Xbox extension) nsp.
+	{ "D3DRS_BACKDIFFUSEMATERIALSOURCE"   /*= 107*/, 3424, xtD3DMCS,              0 }, // D3DMATERIALCOLORSOURCE (Xbox extension) nsp.
+	{ "D3DRS_BACKAMBIENTMATERIALSOURCE"   /*= 108*/, 3424, xtD3DMCS,              0 }, // D3DMATERIALCOLORSOURCE (Xbox extension) nsp.
+	{ "D3DRS_BACKEMISSIVEMATERIALSOURCE"  /*= 109*/, 3424, xtD3DMCS,              0 }, // D3DMATERIALCOLORSOURCE (Xbox extension) nsp.
+	{ "D3DRS_SPECULARMATERIALSOURCE"      /*= 110*/, 3424, xtD3DMCS,              NV2A_COLOR_MATERIAL, D3DRS_SPECULARMATERIALSOURCE }, // D3DMATERIALCOLORSOURCE
+	{ "D3DRS_DIFFUSEMATERIALSOURCE"       /*= 111*/, 3424, xtD3DMCS,              0, D3DRS_DIFFUSEMATERIALSOURCE }, // D3DMATERIALCOLORSOURCE
+	{ "D3DRS_AMBIENTMATERIALSOURCE"       /*= 112*/, 3424, xtD3DMCS,              0, D3DRS_AMBIENTMATERIALSOURCE }, // D3DMATERIALCOLORSOURCE
+	{ "D3DRS_EMISSIVEMATERIALSOURCE"      /*= 113*/, 3424, xtD3DMCS,              0, D3DRS_EMISSIVEMATERIALSOURCE }, // D3DMATERIALCOLORSOURCE
+	{ "D3DRS_BACKAMBIENT"                 /*= 114*/, 3424, xtD3DCOLOR,            NV2A_LIGHT_MODEL_BACK_SIDE_PRODUCT_AMBIENT_PLUS_EMISSION_R }, // D3DCOLOR (Xbox extension) // ..NV2A_MATERIAL_FACTOR_BACK_B nsp. Was NV2A_LIGHT_MODEL_BACK_AMBIENT_R
+	{ "D3DRS_AMBIENT"                     /*= 115*/, 3424, xtD3DCOLOR,            NV2A_LIGHT_MODEL_FRONT_SIDE_PRODUCT_AMBIENT_PLUS_EMISSION_R, D3DRS_AMBIENT }, // D3DCOLOR // ..NV2A_LIGHT_MODEL_FRONT_AMBIENT_B + NV2A_MATERIAL_FACTOR_FRONT_R..NV2A_MATERIAL_FACTOR_FRONT_A  Was NV2A_LIGHT_MODEL_FRONT_AMBIENT_R
+	{ "D3DRS_POINTSIZE"                   /*= 116*/, 3424, xtFloat,               NV2A_POINT_PARAMETER(0), D3DRS_POINTSIZE }, // float point size
+	{ "D3DRS_POINTSIZE_MIN"               /*= 117*/, 3424, xtFloat,               0, D3DRS_POINTSIZE_MIN }, // float point size min threshold
+	{ "D3DRS_POINTSPRITEENABLE"           /*= 118*/, 3424, xtBOOL,                NV2A_POINT_SMOOTH_ENABLE, D3DRS_POINTSPRITEENABLE }, // TRUE to enable point sprites
+	{ "D3DRS_POINTSCALEENABLE"            /*= 119*/, 3424, xtBOOL,                NV2A_POINT_PARAMETERS_ENABLE, D3DRS_POINTSCALEENABLE }, // TRUE to enable point size scaling
+	{ "D3DRS_POINTSCALE_A"                /*= 120*/, 3424, xtFloat,               0, D3DRS_POINTSCALE_A }, // float point attenuation A value
+	{ "D3DRS_POINTSCALE_B"                /*= 121*/, 3424, xtFloat,               0, D3DRS_POINTSCALE_B }, // float point attenuation B value
+	{ "D3DRS_POINTSCALE_C"                /*= 122*/, 3424, xtFloat,               0, D3DRS_POINTSCALE_C }, // float point attenuation C value
+	{ "D3DRS_POINTSIZE_MAX"               /*= 123*/, 3424, xtFloat,               0, D3DRS_POINTSIZE_MAX }, // float point size max threshold
+	{ "D3DRS_PATCHEDGESTYLE"              /*= 124*/, 3424, xtDWORD,               0, D3DRS_PATCHEDGESTYLE }, // D3DPATCHEDGESTYLE
+	{ "D3DRS_PATCHSEGMENTS"               /*= 125*/, 3424, xtDWORD,               0 }, // DWORD number of segments per edge when drawing patches, nsp (D3DRS_PATCHSEGMENTS exists in Direct3D 8, but not in 9)
 	// TODO -oDxbx : Is X_D3DRS_SWAPFILTER really a xtD3DMULTISAMPLE_TYPE?
-	{ "D3DRS_SWAPFILTER"                  /*= 126*/, 4039, xtD3DMULTISAMPLE_TYPE, 0, D3DRS_NONE, "D3DTEXF_LINEAR etc. filter to use for Swap" }, // nsp.
-	{ "D3DRS_PRESENTATIONINTERVAL"        /*= 127*/, 4627, xtDWORD,               0 }, // nsp.
-	{ "D3DRS_DEFERRED_UNUSED8"            /*= 128*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_DEFERRED_UNUSED7"            /*= 129*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_DEFERRED_UNUSED6"            /*= 130*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_DEFERRED_UNUSED5"            /*= 131*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_DEFERRED_UNUSED4"            /*= 132*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_DEFERRED_UNUSED3"            /*= 133*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_DEFERRED_UNUSED2"            /*= 134*/, 4627, xtDWORD,               0 },
-	{ "D3DRS_DEFERRED_UNUSED1"            /*= 135*/, 4627, xtDWORD,               0 },
+	{ "D3DRS_SWAPFILTER"                  /*= 126*/, 4039, xtD3DMULTISAMPLE_TYPE, 0, D3DRS_UNSUPPORTED, "D3DTEXF_LINEAR etc. filter to use for Swap" }, // nsp. Verified absent in 3944, present in 4039  TODO : Might be introduced in 4034?
+	{ "D3DRS_PRESENTATIONINTERVAL"        /*= 127*/, 4627, xtDWORD,               0 }, // nsp. Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DEFERRED_UNUSED8"            /*= 128*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DEFERRED_UNUSED7"            /*= 129*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DEFERRED_UNUSED6"            /*= 130*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DEFERRED_UNUSED5"            /*= 131*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DEFERRED_UNUSED4"            /*= 132*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DEFERRED_UNUSED3"            /*= 133*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DEFERRED_UNUSED2"            /*= 134*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DEFERRED_UNUSED1"            /*= 135*/, 4627, xtDWORD,               0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
 	// End of "deferred" render states, continuing with "complex" render states :
-	{ "D3DRS_PSTEXTUREMODES"              /*= 136*/, 3424, xtDWORD,               0 },
+	{ "D3DRS_PSTEXTUREMODES"              /*= 136*/, 3424, xtDWORD,               0 }, // This is where pPSDef->PSTextureModes is stored (outside the pPSDEF - see DxbxUpdateActivePixelShader)
 	{ "D3DRS_VERTEXBLEND"                 /*= 137*/, 3424, xtD3DVERTEXBLENDFLAGS, NV2A_SKIN_MODE, D3DRS_VERTEXBLEND },
 	{ "D3DRS_FOGCOLOR"                    /*= 138*/, 3424, xtD3DCOLOR,            NV2A_FOG_COLOR, D3DRS_FOGCOLOR }, // SwapRgb
 	{ "D3DRS_FILLMODE"                    /*= 139*/, 3424, xtD3DFILLMODE,         NV2A_POLYGON_MODE_FRONT, D3DRS_FILLMODE },
@@ -1493,20 +1509,25 @@ const RenderStateInfo DxbxRenderStateInfo[] = {
 	{ "D3DRS_EDGEANTIALIAS"               /*= 151*/, 3424, xtBOOL,                NV2A_LINE_SMOOTH_ENABLE, D3DRS_ANTIALIASEDLINEENABLE }, // Was D3DRS_EDGEANTIALIAS. Dxbx note : No Xbox ext. (according to Direct3D8) !
 	{ "D3DRS_MULTISAMPLEANTIALIAS"        /*= 152*/, 3424, xtBOOL,                NV2A_MULTISAMPLE_CONTROL, D3DRS_MULTISAMPLEANTIALIAS },
 	{ "D3DRS_MULTISAMPLEMASK"             /*= 153*/, 3424, xtDWORD,               NV2A_MULTISAMPLE_CONTROL, D3DRS_MULTISAMPLEMASK },
-//  { "D3DRS_MULTISAMPLETYPE"             /*= 154*/, 3424, xtD3DMULTISAMPLE_TYPE, 0 }, // [-3911] \_ aliasses  D3DMULTISAMPLE_TYPE
-	{ "D3DRS_MULTISAMPLEMODE"             /*= 154*/, 4361, xtD3DMULTISAMPLEMODE,  0 }, // [4361+] /            D3DMULTISAMPLEMODE for the backbuffer
-	{ "D3DRS_MULTISAMPLERENDERTARGETMODE" /*= 155*/, 4242, xtD3DMULTISAMPLEMODE,  NV2A_RT_FORMAT },
-	{ "D3DRS_SHADOWFUNC"                  /*= 156*/, 3424, xtD3DCMPFUNC,          NV2A_TX_RCOMP },
-	{ "D3DRS_LINEWIDTH"                   /*= 157*/, 3424, xtFloat,               NV2A_LINE_WIDTH },
-	{ "D3DRS_SAMPLEALPHA"                 /*= 158*/, 4627, xtD3DSAMPLEALPHA,      0 }, // TODO : Later than 3424, but earlier then 4627?
-	{ "D3DRS_DXT1NOISEENABLE"             /*= 159*/, 3424, xtBOOL,                NV2A_CLEAR_DEPTH_VALUE },
-	{ "D3DRS_YUVENABLE"                   /*= 160*/, 3911, xtBOOL,                NV2A_CONTROL0 },
-	{ "D3DRS_OCCLUSIONCULLENABLE"         /*= 161*/, 3911, xtBOOL,                NV2A_OCCLUDE_ZSTENCIL_EN },
-	{ "D3DRS_STENCILCULLENABLE"           /*= 162*/, 3911, xtBOOL,                NV2A_OCCLUDE_ZSTENCIL_EN },
-	{ "D3DRS_ROPZCMPALWAYSREAD"           /*= 163*/, 3911, xtBOOL,                0 },
-	{ "D3DRS_ROPZREAD"                    /*= 164*/, 3911, xtBOOL,                0 },
-	{ "D3DRS_DONOTCULLUNCOMPRESSED"       /*= 165*/, 3911, xtBOOL,                0 }
+	{ "D3DRS_MULTISAMPLETYPE"             /*= 154*/, 3424, xtD3DMULTISAMPLE_TYPE, 0, D3DRS_UNSUPPORTED, "aliasses D3DMULTISAMPLE_TYPE, removed from 4039 onward", 4039 }, // Verified present in 3944, removed in 4039  TODO : Might be removed in 4034?
+	{ "D3DRS_MULTISAMPLEMODE"             /*= 155*/, 4039, xtD3DMULTISAMPLEMODE,  0 }, // D3DMULTISAMPLEMODE for the backbuffer. Verified absent in 3944, present in 4039  TODO : Might be introduced in 4034?
+	{ "D3DRS_MULTISAMPLERENDERTARGETMODE" /*= 156*/, 4034, xtD3DMULTISAMPLEMODE,  NV2A_RT_FORMAT }, // Verified absent in 3944, present in 4039. Presence in 4034 is based on test-case : The Simpsons Road Rage
+	{ "D3DRS_SHADOWFUNC"                  /*= 157*/, 3424, xtD3DCMPFUNC,          NV2A_TX_RCOMP },
+	{ "D3DRS_LINEWIDTH"                   /*= 158*/, 3424, xtFloat,               NV2A_LINE_WIDTH },
+	{ "D3DRS_SAMPLEALPHA"                 /*= 159*/, 4627, xtD3DSAMPLEALPHA,      0 }, // Verified absent in 4531, present in 4627  TODO : might be introduced in between?
+	{ "D3DRS_DXT1NOISEENABLE"             /*= 160*/, 3424, xtBOOL,                NV2A_CLEAR_DEPTH_VALUE },
+	{ "D3DRS_YUVENABLE"                   /*= 161*/, 3911, xtBOOL,                NV2A_CONTROL0 }, // Verified present in 3944
+	{ "D3DRS_OCCLUSIONCULLENABLE"         /*= 162*/, 3911, xtBOOL,                NV2A_OCCLUDE_ZSTENCIL_EN }, // Verified present in 3944
+	{ "D3DRS_STENCILCULLENABLE"           /*= 163*/, 3911, xtBOOL,                NV2A_OCCLUDE_ZSTENCIL_EN }, // Verified present in 3944
+	{ "D3DRS_ROPZCMPALWAYSREAD"           /*= 164*/, 3911, xtBOOL,                0 }, // Verified present in 3944
+	{ "D3DRS_ROPZREAD"                    /*= 165*/, 3911, xtBOOL,                0 }, // Verified present in 3944
+	{ "D3DRS_DONOTCULLUNCOMPRESSED"       /*= 166*/, 3911, xtBOOL,                0 } // Verified present in 3944
 };
+
+const RenderStateInfo& GetDxbxRenderStateInfo(int State)
+{
+	return DxbxRenderStateInfo[State];
+}
 
 /*Direct3D8 states unused :
 	D3DRS_LINEPATTERN
@@ -1561,8 +1582,6 @@ Direct3D9 states unused :
 	D3DRS_BLENDOPALPHA = 209   // Blending operation for the alpha channel when D3DRS_SEPARATEDESTALPHAENABLE is TRUE
 */
 
-}; // end of namespace XTL 
-
 #if 0
 /* Generic swizzle function, usable for both x and y dimensions.
 When passing x, Max should be 2*height, and Shift should be 0
@@ -1594,8 +1613,6 @@ uint32 Swizzle(uint32 value, uint32 max, uint32 shift)
 
 typedef uint16 TRGB16;
 
-using namespace XTL; // for X_D3DFMT_*
-
 // test-case: Frogger, Turok, Crazy Taxi 3 and many more
 bool WndMain::ReadS3TCFormatIntoBitmap(uint32 format, unsigned char *data, uint32 dataSize, int width, int height, int pitch, void*& bitmap)
 {
@@ -1608,14 +1625,14 @@ bool WndMain::ReadS3TCFormatIntoBitmap(uint32 format, unsigned char *data, uint3
 	j = k = p = x = y = 0;
 
 	// sanity checks
-	if (format != X_D3DFMT_DXT1 && format != X_D3DFMT_DXT3 && format != X_D3DFMT_DXT5)
+	if (format != XTL::X_D3DFMT_DXT1 && format != XTL::X_D3DFMT_DXT3 && format != XTL::X_D3DFMT_DXT5)
 		return false;
 	if (!(width > 0) || !(height > 0))
 		return false;
 
 	while (j < dataSize) {
 
-		if (format != X_D3DFMT_DXT1) // Skip X_D3DFMT_DXT3 and X_D3DFMT_DXT5 alpha data (ported from Dxbx)
+		if (format != XTL::X_D3DFMT_DXT1) // Skip XTL::X_D3DFMT_DXT3 and XTL::X_D3DFMT_DXT5 alpha data (ported from Dxbx)
 			j += 8;
 
 		// Read two 16-bit pixels
@@ -1698,13 +1715,13 @@ bool WndMain::ReadSwizzledFormatIntoBitmap(uint32 format, unsigned char *data, u
 	TRGB32* yscanline;
 
 	// sanity checks
-	if (format != X_D3DFMT_A8R8G8B8 && format != X_D3DFMT_X8R8G8B8)
+	if (format != XTL::X_D3DFMT_A8R8G8B8 && format != XTL::X_D3DFMT_X8R8G8B8)
 		return false;
 	if (!(width > 0) || !(height > 0))
 		return false;
 
 	xSwizzle = (uint32*)malloc(sizeof(uint32) * width);
-	if (xSwizzle == NULL)
+	if (xSwizzle == nullptr)
 		return false;
 
 	for (x = 0; x < width; x++)
@@ -1736,13 +1753,13 @@ bool WndMain::ReadSwizzled16bitFormatIntoBitmap(uint32 format, unsigned char *da
 	TRGB16* yscanline;
 
 	// sanity checks
-	if (format != X_D3DFMT_R5G6B5)
+	if (format != XTL::X_D3DFMT_R5G6B5)
 		return false;
 	if (!(width > 0) || !(height > 0))
 		return false;
 
 	xSwizzle = (uint32*)malloc(sizeof(uint32) * width);
-	if (xSwizzle == NULL)
+	if (xSwizzle == nullptr)
 		return false;
 
 	for (x = 0; x < width; x++)

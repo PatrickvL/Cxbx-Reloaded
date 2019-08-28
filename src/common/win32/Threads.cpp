@@ -41,6 +41,7 @@ typedef struct tagTHREADNAME_INFO
 } THREADNAME_INFO;
 #pragma pack(pop)  
 
+#ifdef _MSC_VER
 void SetThreadName(DWORD dwThreadID, const char* szThreadName)
 {
 	if (!IsDebuggerPresent())
@@ -51,15 +52,22 @@ void SetThreadName(DWORD dwThreadID, const char* szThreadName)
 	info.szName = szThreadName;
 	info.dwThreadID = dwThreadID;
 	info.dwFlags = 0;
-#pragma warning(push)  
-#pragma warning(disable: 6320 6322)  
 	__try {
 		RaiseException(MS_VC_EXCEPTION, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
 	}
+#pragma warning(suppress : 6320) // silence /analyze: Exception-filter expression is the constant
+	// EXCEPTION_EXECUTE_HANDLER. This might mask exceptions that were
+	// not intended to be handled
+#pragma warning(suppress : 6322) // silence /analyze: Empty _except block
 	__except (EXCEPTION_EXECUTE_HANDLER) {
 	}
-#pragma warning(pop)  
 }
+#else
+void SetThreadName(DWORD dwThreadID, const char* szThreadName)
+{
+	// TODO: Use SetThreadDescription
+}
+#endif
 
 void SetCurrentThreadName(const char* szThreadName)
 {

@@ -25,19 +25,16 @@
 #ifndef XBPIXELSHADER_H
 #define XBPIXELSHADER_H
 
-#pragma once
-
 #include "Cxbx.h"
 
+#include "core\hle\D3D8\XbD3D8Types.h"
+
 // dump pixel shader definition to file
-void DumpPixelShaderDefToFile( X_D3DPIXELSHADERDEF* pPSDef, const char* pszCode );
+void DumpPixelShaderDefToFile( XTL::X_D3DPIXELSHADERDEF* pPSDef, const char* pszCode );
 // print relevant contents to the debug console
-void PrintPixelShaderDefContents( X_D3DPIXELSHADERDEF* pDSDef );
+void PrintPixelShaderDefContents(XTL::X_D3DPIXELSHADERDEF* pDSDef );
 
 // Pixel shader emulation
 VOID CxbxUpdateActivePixelShader(const bool bTargetHLSL); // NOPATCH
-
-// TODO: Remove this once the Render State code has been fully ported from Dxbx/Wip_LessVertexPatching
-extern DWORD TemporaryPixelShaderRenderStates[X_D3DRS_PSTEXTUREMODES + 1];
 
 #endif // PIXELSHADER_H

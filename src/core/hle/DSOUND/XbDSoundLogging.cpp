@@ -26,6 +26,8 @@
 #include <dsound.h> // Temporary placeholder until XbDSoundTypes.h is cross-platform + filled in the blanks
 #include "Logging.h"
 #include "XbDSoundLogging.hpp"
+#include "common/Settings.hpp"
+
 // For XTL::DSBUFFERDESC and XTL::DSSTREAMDESC temporary usage
 extern LOGRENDER_HEADER(WAVEFORMATEX)
 extern LOGRENDER_HEADER(D3DVECTOR)
@@ -136,7 +138,7 @@ ENUM2STR_START(XMP_STATUS)
 	ENUM2STR_CASE(XMP_STATUS_PENDING)
 	ENUM2STR_CASE(XMP_STATUS_FLUSHED)
 	ENUM2STR_CASE(XMP_STATUS_FAILURE)
-	ENUM2STR_CASE(XMP_STATUS_RELEASE_CXBXR) // NOTE: Custom status for Cxbx-Reloaded.
+	ENUM2STR_CASE((int)XMP_STATUS_RELEASE_CXBXR) // NOTE: Custom status for Cxbx-Reloaded.
 ENUM2STR_END_and_LOGRENDER(XMP_STATUS)
 
 FLAGS2STR_START(XMO_STREAMF)
@@ -181,8 +183,7 @@ LOGRENDER(X_DSMIXBINS)
 {
 	return os
 		LOGRENDER_MEMBER(dwCount)
-		// TODO: Need to make a loop somehow for complete output base on dwCount variable.
-		LOGRENDER_MEMBER_TYPE(X_LPDSMIXBINVOLUMEPAIR, lpMixBinVolumePairs)
+		LOGRENDER_MEMBER_ARRAY_TYPE(X_DSMIXBINVOLUMEPAIR, lpMixBinVolumePairs, dwCount)
 		;
 }
 
@@ -313,27 +314,51 @@ LOGRENDER(XBOXADPCMWAVEFORMAT)
 // DSound Buffer class usage
 LOGRENDER(X_DSBUFFERDESC)
 {
-	return os
-		LOGRENDER_MEMBER(dwSize)
-		LOGRENDER_MEMBER_TYPE(DSBCAPS_FLAG, dwFlags)
-		LOGRENDER_MEMBER(dwBufferBytes)
-		LOGRENDER_MEMBER_TYPE(LPWAVEFORMATEX, lpwfxFormat)
-		LOGRENDER_MEMBER(lpMixBinsOutput) // TODO: Need loop support since lpMixBinsOutput is dynamic array.
-		LOGRENDER_MEMBER(dwInputMixBin)
-		;
+	if (g_LibVersion_DSOUND < 4039) {
+		return os
+			LOGRENDER_MEMBER(dwSize)
+			LOGRENDER_MEMBER_TYPE(DSBCAPS_FLAG, dwFlags)
+			LOGRENDER_MEMBER(dwBufferBytes)
+			LOGRENDER_MEMBER_TYPE(LPWAVEFORMATEX, lpwfxFormat)
+			LOGRENDER_MEMBER_TYPE(DWORD, lpMixBinsOutput)
+			LOGRENDER_MEMBER(dwInputMixBin)
+			;
+	}
+	else {
+		return os
+			LOGRENDER_MEMBER(dwSize)
+			LOGRENDER_MEMBER_TYPE(DSBCAPS_FLAG, dwFlags)
+			LOGRENDER_MEMBER(dwBufferBytes)
+			LOGRENDER_MEMBER_TYPE(LPWAVEFORMATEX, lpwfxFormat)
+			LOGRENDER_MEMBER(lpMixBinsOutput)
+			LOGRENDER_MEMBER(dwInputMixBin)
+			;
+	}
 }
 
 // DSound Stream class usage
 LOGRENDER(X_DSSTREAMDESC)
 {
-	return os
-		LOGRENDER_MEMBER_TYPE(DSSCAPS_FLAG, dwFlags)
-		LOGRENDER_MEMBER(dwMaxAttachedPackets)
-		LOGRENDER_MEMBER_TYPE(LPWAVEFORMATEX, lpwfxFormat)
-		LOGRENDER_MEMBER_TYPE(void*, lpfnCallback)
-		LOGRENDER_MEMBER(lpvContext)
-		LOGRENDER_MEMBER(lpMixBinsOutput) // TODO: Need loop support since lpMixBinsOutput is dynamic array.
-		;
+	if (g_LibVersion_DSOUND < 4039) {
+		return os
+			LOGRENDER_MEMBER_TYPE(DSSCAPS_FLAG, dwFlags)
+			LOGRENDER_MEMBER(dwMaxAttachedPackets)
+			LOGRENDER_MEMBER_TYPE(LPWAVEFORMATEX, lpwfxFormat)
+			LOGRENDER_MEMBER_TYPE(void*, lpfnCallback)
+			LOGRENDER_MEMBER(lpvContext)
+			LOGRENDER_MEMBER_TYPE(DWORD, lpMixBinsOutput)
+			;
+	}
+	else {
+		return os
+			LOGRENDER_MEMBER_TYPE(DSSCAPS_FLAG, dwFlags)
+			LOGRENDER_MEMBER(dwMaxAttachedPackets)
+			LOGRENDER_MEMBER_TYPE(LPWAVEFORMATEX, lpwfxFormat)
+			LOGRENDER_MEMBER_TYPE(void*, lpfnCallback)
+			LOGRENDER_MEMBER(lpvContext)
+			LOGRENDER_MEMBER(lpMixBinsOutput)
+			;
+	}
 }
 
 // DSound XMedia class usage

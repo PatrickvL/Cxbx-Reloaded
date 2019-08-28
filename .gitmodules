@@ -1,6 +1,6 @@
 [submodule "import/subhook"]
 	path = import/subhook
-	url = https://github.com/Cxbx-Reloaded/subhook
+	url = https://github.com/Zeex/subhook.git
 [submodule "import/cs_x86"]
 	path = import/cs_x86
 	url = https://github.com/x1nixmzeng/cs_x86
@@ -18,3 +18,6 @@
 	path = import/libtomcrypt
 	url = https://github.com/libtom/libtomcrypt
 	branch = master
+[submodule "import/SDL2"]
+	path = import/SDL2
+	url = https://github.com/SDL-mirror/SDL
