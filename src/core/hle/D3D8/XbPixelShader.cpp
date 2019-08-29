@@ -49,7 +49,7 @@
 #include "core\hle\D3D8\Direct3D9\FixedFunctionPixelShader.hlsli"
 #include "common/FilePaths.hpp" // For szFilePath_CxbxReloaded_Exe
 
-#include "C:\Program Files (x86)\CMake\bin\projects\cxbx\RegisterCombinerInterpreter.h" // g_ps30_main
+#include "core\hle\D3D8\RegisterCombinerInterpreter.h" // g_ps30_main
 
 #include <assert.h> // assert()
 #include <process.h>
@@ -1059,6 +1059,7 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 
 			Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
 #else
+		// TODO : Check if the shader will fit in g_D3DCaps.MaxPixelShader30InstructionSlots
 		Result = g_pD3DDevice->CreatePixelShader((DWORD*)g_ps30_main, &pHLSLPixelShader);
 #endif
 			pShaderBuffer->Release();
