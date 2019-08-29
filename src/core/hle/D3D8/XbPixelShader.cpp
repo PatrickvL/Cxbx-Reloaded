@@ -61,7 +61,7 @@
 
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxKrnlCleanup()
 
-#include "C:\Program Files (x86)\CMake\bin\projects\cxbx\RegisterCombinerInterpreter.h" // g_ps30_main
+#include "core\hle\D3D8\RegisterCombinerInterpreter.h" // g_ps30_main
 
 #include <assert.h> // assert()
 #include <process.h>
@@ -5990,6 +5990,7 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 		Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
 		pShaderBuffer->Release();
 #else
+		// TODO : Check if the shader will fit in g_D3DCaps.MaxPixelShader30InstructionSlots
 		Result = g_pD3DDevice->CreatePixelShader((DWORD*)g_ps30_main, &pHLSLPixelShader);
 #endif
 		if (FAILED(Result)) {

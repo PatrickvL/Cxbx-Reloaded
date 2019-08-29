@@ -270,6 +270,7 @@ file (GLOB CXBXR_SOURCE_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Direct3D9/VertexShader.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Direct3D9/VertexShaderSource.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Direct3D9/WalkIndexBuffer.cpp"
+ "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/RegisterCombinerInterpreter.fx"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/ResourceTracker.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbConvert.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbD3D8Logging.cpp"

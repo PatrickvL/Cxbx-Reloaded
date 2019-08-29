@@ -1195,7 +1195,24 @@ texture tex3;
 
 // TODO : Declare all possible samplers (type + configuration) and use according to settings
 sampler1D samp1d;
-sampler2D samp2d;
+sampler2D samp2d = sampler_state { // https://docs.microsoft.com/en-us/windows/win32/direct3d9/effect-states#sampler-states
+    // Sampler state (see https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dsamplerstatetype)
+    AddressU = /* D3DTEXTUREADDRESS::D3DTADDRESS_*/CLAMP;
+    AddressV = /* D3DTEXTUREADDRESS::D3DTADDRESS_*/CLAMP;
+    AddressW = /* D3DTEXTUREADDRESS::D3DTADDRESS_*/CLAMP;
+    BorderColor = /* D3DCOLOR = */0xFF0000FF; // Red
+    Filter = /* D3DTEXTUREFILTERTYPE::D3DTEXF_*/LINEAR;
+    MaxAnisotropy = /* D3DSAMP_MAXANISOTROPY = */1;
+    MaxMipLevel = /* D3DSAMP_MAXMIPLEVEL = */0;
+    MinFilter = /* D3DTEXTUREFILTERTYPE::D3DTEXF_*/POINT;
+    MipFilter = /* D3DTEXTUREFILTERTYPE::D3DTEXF_*/NONE;
+    MipLODBias = /* D3DSAMP_MIPMAPLODBIAS = */0;
+    //SRGBTexture = /* D3DSAMP_SRGBTEXTURE = */0;
+    MaxLOD = 0;
+    MinLOD = 0;
+    // sampler-comparison state
+    ComparisonFunc = 0;
+};
 sampler3D samp3d;
 samplerCUBE samp6s;
 
@@ -1238,23 +1255,26 @@ void fetch_texture(inout ps_state state, uniform byte_t texture_stage, uniform f
 	set_plain_register_as_float4(state, texture_register, texture_value);
 }
 
-struct VS_OUTPUT // TODO : Complete and pass this in through code (and/or vertex shader?)
+struct CxbxPSInput // TODO : Complete and pass this in through code (and/or vertex shader?)
 {
-	//float4 Position : VPOS; // vertex position (screen space)
-	float4 Position : POSITION; // vertex position (object space)
+    //float4 Position : VPOS; // vertex position (screen space)	// Above shader model 3.0 : POSITION; // vertex position (object space)
+    float W; //??
 	float4 Diffuse : COLOR0; // DIFFUSE; // vertex diffuse color (note that COLOR0 is clamped from 0..1)
 	float4 Specular : COLOR1; // SPECULAR; // vertex specular color (note that COLOR0 is clamped from 0..1)
-	float3 FogColor : FOGCOLOR;
-	float Fog : FOG;
+    float4 Diffuse2 : COLOR2;
+    float4 Specular2 : COLOR3;
+//	float3 FogColor : FOGCOLOR;
+    float Fog : FOG;
     float4 TextureCoords0 : TEXCOORD0; // vertex texture coords 
     float4 TextureCoords1 : TEXCOORD1; // vertex texture coords 
     float4 TextureCoords2 : TEXCOORD2; // vertex texture coords 
     float4 TextureCoords3 : TEXCOORD3; // vertex texture coords 
 	// TODO : VFACE; // Negative is backfacing
-} In;
+};
 
-float4 main() : COLOR0
+float4 main(uniform CxbxPSInput aInput) : COLOR
 {
+return aInput.Diffuse; // TODO : Even this stays black; Input doesn't seem to work? FIXME!!
 	nointerpolation ps_state state = (ps_state) 0; // Clearing like this avoids error X3508: 'do_color_combiner_stage': output parameter 'state' not completely initialized
 	// Note, the above also sets state.RegisterValues[PS_REGISTER_ZERO] to 0!
 
@@ -1271,15 +1291,17 @@ float4 main() : COLOR0
 	texture_modes[3] = (fmod(texture_mode_bytes[2], 16) * 2) + floor(texture_mode_bytes[1] / 128); // 2:[3..0],1:[7]
 
 	// Process all four texture stages :
-	fetch_texture(state, 0, In.TextureCoords0, texture_modes[0]);
-	fetch_texture(state, 1, In.TextureCoords1, texture_modes[1]);
-	fetch_texture(state, 2, In.TextureCoords2, texture_modes[2]);
-	fetch_texture(state, 3, In.TextureCoords3, texture_modes[3]);
+	fetch_texture(state, 0, aInput.TextureCoords0, texture_modes[0]);
+// TODO : Fix input reading : return get_plain_register_as_float4(state, PS_REGISTER_T0);
+	fetch_texture(state, 1, aInput.TextureCoords1, texture_modes[1]);
+	fetch_texture(state, 2, aInput.TextureCoords2, texture_modes[2]);
+	fetch_texture(state, 3, aInput.TextureCoords3, texture_modes[3]);
 
 	// Calculate initial register values :
-	float4 FOG_value = float4(In.FogColor, In.Fog);
-    float4 V0_value = In.Diffuse; // TODO : Is this correct?
-    float4 V1_value = In.Specular; // TODO : Is this correct?
+    float4 V0_value = aInput.Diffuse; // TODO : Is this correct?
+    float4 V1_value = aInput.Specular; // TODO : Is this correct?
+	//float4 FOG_value = float4(aInput.FogColor, Input.Fog);
+	float4 FOG_value = float4(aInput.Diffuse2.rgb, aInput.Fog);
     float4 R0_value = float4(1.0f, 1.0f, 1.0f, get_plain_register_as_float4(state, PS_REGISTER_T0).a); // TODO : Is this correct?
 
 	// Set initial register values :
@@ -1352,3 +1374,15 @@ float4 main() : COLOR0
 
     return do_final_combiner(state);
 }
+
+/*
+technique Technique1
+{
+    pass Pass1
+    {
+        EffectName = "XboxRegisterCombiner";
+        //VertexShader = compile vs_4_0 mainVS();
+        PixelShader = compile ps_3_0 main(CxbxPSInput);
+    }
+}
+*/

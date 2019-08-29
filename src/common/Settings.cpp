@@ -668,7 +668,7 @@ bool Settings::Save(std::string file_path)
 
 	// ==== Hack Begin ==========
 
-	m_si.SetLongValue(section_hack, sect_hack_keys.PixelShaderMode, m_hacks.PixelShaderMode, nullptr, true);
+	m_si.SetLongValue(section_hack, sect_hack_keys.PixelShaderMode, m_hacks.PixelShaderMode, nullptr, true, true);
 	m_si.SetBoolValue(section_hack, sect_hack_keys.UseAllCores, m_hacks.UseAllCores, nullptr, true);
 	m_si.SetBoolValue(section_hack, sect_hack_keys.SkipRdtscPatching, m_hacks.SkipRdtscPatching, nullptr, true);
 

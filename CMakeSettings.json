@@ -3,26 +3,37 @@
     {
       "name": "x86-Release",
       "configurationType": "Release",
-      "inheritEnvironments": [
-        "msvc_x86"
-      ],
+      "inheritEnvironments": [ "msvc_x86" ],
       "buildRoot": "${workspaceRoot}\\build\\${name}",
       "installRoot": "${workspaceRoot}\\bin\\Release",
       "cmakeCommandArgs": "",
       "buildCommandArgs": "/v:m",
-      "ctestCommandArgs": ""
+      "ctestCommandArgs": "",
+      "generator": "Visual Studio 16 2019",
+      "cmakeExecutable": "C:/Program Files/CMake/bin/cmake.exe",
+      "variables": [
+        {
+          "name": "CAPSTONE_ARM_SUPPORT",
+          "value": "False",
+          "type": "BOOL"
+        },
+        {
+          "name": "CAPSTONE_ARM64_SUPPORT",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
     },
     {
       "name": "x86-Debug",
       "configurationType": "Debug",
-      "inheritEnvironments": [
-        "msvc_x86"
-      ],
+      "inheritEnvironments": [ "msvc_x86" ],
       "buildRoot": "${workspaceRoot}\\build\\${name}",
       "installRoot": "${workspaceRoot}\\bin\\Debug",
       "cmakeCommandArgs": "",
       "buildCommandArgs": "/v:m",
-      "ctestCommandArgs": ""
+      "ctestCommandArgs": "",
+      "variables": []
     }
   ]
 }
