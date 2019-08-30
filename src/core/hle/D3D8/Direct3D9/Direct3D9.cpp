@@ -189,6 +189,7 @@ static	DWORD						g_dwVertexShaderUsage = 0; // Unused. If needed, move to XbVer
 
 static XTL::DWORD                   g_VertexShaderSlots[X_VSH_MAX_INSTRUCTION_COUNT];
        XTL::DWORD                   g_Xbox_VertexShader_Handle = 0;
+       XTL::DWORD                   g_CurrentXboxVertexShaderAddress = 0; // TODO : Rename to g_Xbox_VertexShader_Address
 
 // Static Function(s)
 static BOOL WINAPI                  EmuEnumDisplayDevices(GUID FAR *lpGUID, LPSTR lpDriverDescription, LPSTR lpDriverName, LPVOID lpContext, HMONITOR hm);
@@ -2619,6 +2620,46 @@ static void EmuVerifyResourceIsRegistered(XTL::X_D3DResource *pResource, DWORD D
 	CreateHostResource(pResource, D3DUsage, iTextureStage, dwSize);
 }
 
+void CxbxVertexShaderLoad(DWORD Handle, DWORD Address)
+{
+	using namespace XTL;
+
+	if (!VshHandleIsVertexShader(Handle)) {
+		LOG_TEST_CASE("D3DDevice_LoadVertexShader called without a shader!");
+		return;
+	}
+
+	if (Address >= VSH_XBOX_MAX_INSTRUCTION_COUNT) {
+		LOG_TEST_CASE("D3DDevice_LoadVertexShader would start too high!");
+		return;
+	}
+
+	X_D3DVertexShader* XboxVertexShader = VshHandleToXboxVertexShader(Handle);
+	if (Address + XboxVertexShader->TotalSize > VSH_XBOX_MAX_INSTRUCTION_COUNT) {
+		LOG_TEST_CASE("D3DDevice_LoadVertexShader would exceed too far!");
+		return;
+	}
+
+	// Copy the function data into the indicated address slots :
+	for (DWORD i = 0; i < XboxVertexShader->TotalSize; i++) {
+		g_VertexShaderSlots[Address + i] = XboxVertexShader->FunctionData[i];
+	}
+}
+
+inline void CxbxVertexShaderSelect(DWORD Handle, DWORD Address)
+{
+	// Address always indicates a previously loaded vertex shader slot (from where the program is used).
+	// Handle can be null if the current Xbox VertexShader is assigned
+	// Handle can be an address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
+	// If Handle is assigned, it becomes the new current Xbox VertexShader,
+	// which resets a bit of state (nv2a execution mode, viewport, ?)
+	// Either way, the given address slot is selected as the start of the current vertex shader program
+	if (Handle)
+		g_CurrentXboxVertexShaderHandle = Handle;
+
+	g_CurrentXboxVertexShaderAddress = Address;
+}
+
 // TODO : Move to own file
 constexpr UINT QuadToTriangleVertexCount(UINT NrOfQuadVertices)
 {
@@ -3406,7 +3447,14 @@ VOID __stdcall XTL::EMUPATCH(D3DDevice_LoadVertexShader_0)
 		mov Handle, ecx
 	}
 
-	return EMUPATCH(D3DDevice_LoadVertexShader)(Handle, Address);
+	XB_trampoline(VOID, __stdcall, D3DDevice_LoadVertexShader_0, ());
+	__asm {
+		mov eax, Address // TODO : Is this really needed?
+		mov ecx, Handle // TODO : Is this really needed?
+		call XB_D3DDevice_LoadVertexShader_0
+	}
+
+	CxbxVertexShaderLoad(Handle, Address); // TODO : Check if the order is correct (otherwise, swap how they're read from EAX, ECX)
 }
 
 // This uses a custom calling convention where parameter is passed in EAX
@@ -3419,8 +3467,14 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShader_4)
 	DWORD           Handle;
 	__asm mov Handle, eax;
 
-	LOG_FORWARD("D3DDevice_LoadVertexShader");
-	return EMUPATCH(D3DDevice_LoadVertexShader)(Handle, Address);
+	XB_trampoline(VOID, WINAPI, D3DDevice_LoadVertexShader_4, (DWORD));
+	__asm {
+		mov eax, Handle // TODO : Is this really needed?
+		push Address
+		call XB_D3DDevice_LoadVertexShader_4
+	}
+
+	CxbxVertexShaderLoad(Handle, Address);
 }
 
 // ******************************************************************
@@ -3439,16 +3493,11 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShader)
 
 	// Handle is always address of an X_D3DVertexShader struct, thus always or-ed with 1 (X_D3DFVF_RESERVED0)
 	// Address is the slot (offset) from which the program must be written onwards (as whole DWORDS)
-	// D3DDevice_LoadVertexShader pushes the program contained in the Xbox VertexShader struct to the NV2A
-    if(Address < 136) {
-        CxbxVertexShader * pCxbxVertexShader = GetCxbxVertexShader(Handle);
-		if (pCxbxVertexShader) {
-			for (DWORD i = Address; i < pCxbxVertexShader->XboxNrAddressSlots; i++) {
-				// TODO: This seems very fishy
-				g_VertexShaderSlots[i] = Handle;
-			}
-		}
-    }
+	// D3DDevice_LoadVertexShader pushes TotalSize of DWORDS from FunctionData contained in the X_D3DVertexShader struct to the NV2A
+	XB_trampoline(VOID, WINAPI, D3DDevice_LoadVertexShader, (DWORD, DWORD));
+	XB_D3DDevice_LoadVertexShader(Handle, Address);
+
+	CxbxVertexShaderLoad(Handle, Address);
 }
 
 // LTCG specific D3DDevice_SelectVertexShader function...
@@ -3466,7 +3515,14 @@ VOID __stdcall XTL::EMUPATCH(D3DDevice_SelectVertexShader_0)
 		mov Address, ebx
 	}
 
-	return EMUPATCH(D3DDevice_SelectVertexShader)(Handle, Address);
+	XB_trampoline(VOID, __stdcall, D3DDevice_SelectVertexShader_0, ());
+	__asm {
+		mov eax, Address // TODO : Is this really needed?
+		mov ebx, Handle // TODO : Is this really needed?
+		call XB_D3DDevice_SelectVertexShader_0
+	}
+
+	CxbxVertexShaderSelect(Handle, Address);
 }
 
 // LTCG specific D3DDevice_SelectVertexShader function...
@@ -3480,7 +3536,14 @@ VOID __stdcall XTL::EMUPATCH(D3DDevice_SelectVertexShader_4)
 	DWORD           Handle;
 	__asm mov Handle, eax;
 
-	return EMUPATCH(D3DDevice_SelectVertexShader)(Handle, Address);
+	XB_trampoline(VOID, __stdcall, D3DDevice_SelectVertexShader_4, (DWORD));
+	__asm {
+		mov eax, Handle // TODO : Is this really needed?
+		mov ebx, Address
+		call XB_D3DDevice_SelectVertexShader_4
+	}
+
+	CxbxVertexShaderSelect(Handle, Address);
 }
 
 // ******************************************************************
@@ -3497,25 +3560,30 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SelectVertexShader)
 		LOG_FUNC_ARG(Address)
 		LOG_FUNC_END;
 
-	HRESULT hRet = D3D_OK;
+	XB_trampoline(VOID, WINAPI, D3DDevice_SelectVertexShader, (DWORD, DWORD));
+	XB_D3DDevice_SelectVertexShader(Handle, Address);
 
-	// Address always indicates a previously loaded vertex shader slot (from where the program is used).
-	// Handle can be null if the current Xbox VertexShader is assigned
-	// Handle can be an address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
-	// If Handle is assigned, it becomes the new current Xbox VertexShader,
-	// which resets a bit of state (nv2a execution mode, viewport, ?)
-	// Either way, the given address slot is selected as the start of the current vertex shader program
-	g_Xbox_VertexShader_Handle = Handle;
+	CxbxVertexShaderSelect(Handle, Address);
+}
 
-	CxbxVertexShader *pCxbxVertexShader = nullptr;
+void CxbxVertexShaderConvert1()
+{
+	using namespace XTL;
+
+	LOG_INIT;
+
+	DWORD Handle = g_Xbox_VertexShader_Handle; // TMP glue
+	DWORD Address = g_CurrentXboxVertexShaderAddress; // TMP glue
+
+	CxbxVertexShader* pCxbxVertexShader = nullptr;
 	DWORD HostFVF = 0;
 
-    if(VshHandleIsVertexShader(Handle))
-    {
-        pCxbxVertexShader = GetCxbxVertexShader(Handle);
-    }
+	if (VshHandleIsVertexShader(Handle))
+	{
+		pCxbxVertexShader = GetCxbxVertexShader(Handle);
+	}
     else if(Handle == xbnull)
-    {
+	{
 		HostFVF = D3DFVF_XYZ | D3DFVF_TEX0;
 	}
     else if(Address < 136)
@@ -3546,7 +3614,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SelectVertexShader)
 		SetOverrideFlags(pCxbxVertexShader);
 	}
 
-	hRet = g_pD3DDevice->SetVertexDeclaration(pHostVertexDeclaration);
+	HRESULT hRet = g_pD3DDevice->SetVertexDeclaration(pHostVertexDeclaration);
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexDeclaration()");
 	hRet = g_pD3DDevice->SetVertexShader(pHostVertexShader);
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShader()");
@@ -4139,6 +4207,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetShaderConstantMode)
     g_Xbox_VertexShaderConstantMode = Mode;
 }
 
+#if 0
 // ******************************************************************
 // * patch: D3DDevice_CreateVertexShader
 // ******************************************************************
@@ -4167,23 +4236,36 @@ HRESULT WINAPI XTL::EMUPATCH(D3DDevice_CreateVertexShader)
 	// Parse results are pushed to the push buffer
 	// Sets other fields
 	// pHandle recieves the addres of the new shader, or-ed with 1 (D3DFVF_RESERVED0)
-	XB_trampoline(HRESULT, WINAPI, D3DDevice_CreateVertexShader, (CONST DWORD*, CONST DWORD*, DWORD*, DWORD));
+}
+#endif
+
+void CxbxVertexShaderCreate()
+{
+#if 0
+	using namespace XTL;
+
+	LOG_INIT;
 
     HRESULT hRet = D3D_OK;
+	X_D3DVertexShader *pXboxVertexShader = xbnullptr;
 
+	XB_trampoline(HRESULT, WINAPI, D3DDevice_CreateVertexShader, (CONST DWORD*, CONST DWORD*, DWORD*, DWORD));
     if (XB_D3DDevice_CreateVertexShader) {
         HRESULT hRet = XB_D3DDevice_CreateVertexShader(pDeclaration, pFunction, pHandle, Usage);
         if (FAILED(hRet)) {
             LOG_TEST_CASE("XB_D3DDevice_CreateVertexShader failed");
             RETURN(hRet);
         }
+
+		pXboxVertexShader = (X_D3DVertexShader *)pHandle;
     } else {
         // Due to how our LoadVertexShader patch is implemented, it may call this function without the Xbox version existing
         // As a result, we have to build our own vertex shader handle if the trampoline was not found
         // We don't do the full steps listed above intentionally so: If this situation is reached, the game
         // does not have a CreateVertexShader function, so those actions should not happen anyway!
         LOG_TEST_CASE("CreateVertexShader with no trampoline");
-        *pHandle = ((DWORD)malloc(sizeof(X_D3DVertexShader)) & D3DFVF_RESERVED0);
+		pXboxVertexShader = (X_D3DVertexShader *)malloc(sizeof(X_D3DVertexShader));
+        *pHandle = ((DWORD)pXboxVertexShader) | D3DFVF_RESERVED0;
     }
 
 	if (g_pD3DDevice == nullptr) {
@@ -4323,6 +4405,7 @@ HRESULT WINAPI XTL::EMUPATCH(D3DDevice_CreateVertexShader)
     }
 
     return hRet;
+#endif
 }
 
 // LTCG specific D3DDevice_SetVertexShaderConstant function...
@@ -6766,10 +6849,22 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexShader)
 	// If the shader contains a program, the handle is passed to
 	// D3DDevice_LoadVertexShader and D3DDevice_SelectVertexShader.
 	// Otherwise the shader is send using push buffer commands.
-
-    HRESULT hRet = D3D_OK;
-
     g_Xbox_VertexShader_Handle = Handle;
+	g_CurrentXboxVertexShaderAddress = 0;
+
+	// Pass through to the Xbox implementation of this function
+	XB_trampoline(VOID, WINAPI, D3DDevice_SetVertexShader, (DWORD));
+	XB_D3DDevice_SetVertexShader(Handle);
+}
+
+void CxbxVertexShaderConvert2()
+{
+	using namespace XTL;
+
+	LOG_INIT;
+
+	HRESULT hRet = D3D_OK;
+    DWORD Handle = g_Xbox_VertexShader_Handle;
 
 	if (VshHandleIsVertexShader(Handle)) {
  		CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(Handle);
@@ -7969,6 +8064,7 @@ void WINAPI XTL::EMUPATCH(D3DDevice_SetSoftDisplayFilter)
 	LOG_IGNORED();
 }
 
+#if 0
 // ******************************************************************
 // * patch: D3DDevice_GetVertexShaderSize
 // ******************************************************************
@@ -7990,7 +8086,9 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_GetVertexShaderSize)
         *pSize = pVertexShader ? pVertexShader->XboxNrAddressSlots : 0;
     }
 }
+#endif
 
+#if 0
 // LTCG specific D3DDevice_DeleteVertexShader function...
 // This uses a custom calling convention where parameter is passed in EAX
 // UNTESTED - Need test-case!
@@ -8054,7 +8152,9 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DeleteVertexShader)
 		free(pCxbxVertexShader);
 	}
 }
+#endif
 
+#if 0
 // ******************************************************************
 // * patch: D3DDevice_SelectVertexShaderDirect
 // ******************************************************************
@@ -8069,8 +8169,9 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SelectVertexShaderDirect)
 		LOG_FUNC_ARG(Address)
 		LOG_FUNC_END;
 
-	CxbxImpl_SelectVertexShaderDirect(pVAF, Address);
+	CxbxImpl_SelectVertexShaderDirect(pVAF, Address); // Always calls D3DDevice_SelectVertexShader, which we DO patch
 }
+#endif
 
 // ******************************************************************
 // * patch: D3DDevice_GetShaderConstantMode
@@ -8088,6 +8189,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_GetShaderConstantMode)
     }
 }
 
+#if 0
 // ******************************************************************
 // * patch: D3DDevice_GetVertexShader
 // ******************************************************************
@@ -8103,6 +8205,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_GetVertexShader)
         (*pHandle) = g_Xbox_VertexShader_Handle;
     }
 }
+#endif
 
 // ******************************************************************
 // * patch: D3DDevice_GetVertexShaderConstant
@@ -8350,10 +8453,12 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
 
 	// Create a vertex shader with the new vertex program data
 	DWORD hNewXboxShader = 0;
+#if 0 // TODO : FIXME 
 	HRESULT hr = EMUPATCH(D3DDevice_CreateVertexShader)(pXboxVertexDeclaration, pFunction, &hNewXboxShader, 0);
 
 	if( FAILED( hr ) )
 		CxbxKrnlCleanup("Error creating new vertex shader!" );
+#endif
 
 	EMUPATCH(D3DDevice_LoadVertexShader)(hNewXboxShader, Address);
 	EMUPATCH(D3DDevice_SelectVertexShader)(hNewXboxShader, Address);
@@ -8363,6 +8468,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
 	EmuLog(LOG_LEVEL::WARNING, "Vertex Shader Cache Size: %d", g_LoadVertexShaderProgramCache.size());
 }
 
+#if 0
 // ******************************************************************
 // * patch: D3DDevice_GetVertexShaderType
 // ******************************************************************
@@ -8387,7 +8493,9 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_GetVertexShaderType)
 		}
     }
 }
+#endif
 
+#if 0
 // ******************************************************************
 // * patch: D3DDevice_GetVertexShaderDeclaration
 // ******************************************************************
@@ -8434,7 +8542,9 @@ HRESULT WINAPI XTL::EMUPATCH(D3DDevice_GetVertexShaderDeclaration)
     
     return hRet;
 }
+#endif
 
+#if 0
 // ******************************************************************
 // * patch: D3DDevice_GetVertexShaderFunction
 // ******************************************************************
@@ -8479,6 +8589,7 @@ HRESULT WINAPI XTL::EMUPATCH(D3DDevice_GetVertexShaderFunction)
     
     return hRet;
 }
+#endif
 
 // ******************************************************************
 // * patch: D3DDevice_SetDepthClipPlanes
