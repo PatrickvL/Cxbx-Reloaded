@@ -1044,6 +1044,8 @@ typedef struct _X_VERTEXSHADERINPUT
 }
 X_VERTEXSHADERINPUT;
 
+const int X_VSH_NBR_ATTRIBUTES = 16;
+
 // ******************************************************************
 // * X_VERTEXATTRIBUTEFORMAT
 // ******************************************************************
