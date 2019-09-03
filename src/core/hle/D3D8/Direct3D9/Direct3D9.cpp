@@ -73,6 +73,7 @@ XboxRenderStateConverter XboxRenderStates;
 XboxTextureStateConverter XboxTextureStates;
 
 typedef uint16_t binary16_t; // Quick and dirty way to indicate IEEE754–2008 'half-precision floats'
+#define PUSH_METHOD_MASK 0x00001FFC // Avoid including nv2a_int.h
 
 // Allow use of time duration literals (making 16ms, etc possible)
 using namespace std::literals::chrono_literals;
@@ -6846,6 +6847,10 @@ XTL::IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferSingleAttribute(XTL::X_D3
 	return nullptr;
 }
 
+// Converts Xbox vertex declaration towards a host vertex declaration,
+// splitting up each attribute into a separate stream per host element,
+// so that we can use an unmodified host clone of the Xbox vertex buffer
+// for all compatible data types, and separate host streams for conversions.
 void CxbxUpdateActiveVertexDeclaration(XTL::X_D3DVertexShader* pXboxVertexShader)
 {
 	using namespace XTL;
@@ -6855,7 +6860,7 @@ void CxbxUpdateActiveVertexDeclaration(XTL::X_D3DVertexShader* pXboxVertexShader
 	LOG_INIT;
 
 	HRESULT hRet = D3D_OK;
-	D3DVERTEXELEMENT HostVertexElements[X_VSH_NBR_ATTRIBUTES] = { 0 };
+	D3DVERTEXELEMENT HostVertexElements[X_VSH_NBR_ATTRIBUTES + 1] = { 0 };
 
 	// TODO : If SetVertexShaderInput got called with a VertexShader, should we use that one instead?
 
@@ -6903,7 +6908,7 @@ void CxbxUpdateActiveVertexDeclaration(XTL::X_D3DVertexShader* pXboxVertexShader
 			XTL::X_STREAMINPUT *pXboxStreamInput = (g_SetVertexShaderInputs != xbnullptr) ? &(g_SetVertexShaderInputs[XboxStreamIndex]) : &(g_SetStreamSources[XboxStreamIndex]);
 			// Fetch the Xbox vertex buffer for this input stream :
 			X_D3DVertexBuffer *pXboxVertexBuffer = pXboxStreamInput->VertexBuffer;
-	// TODO : What if pXboxVertexBuffer is null?
+	// TODO : What if pXboxVertexBuffer is null? (This implies that the Xbox vertex declaration mentions a stream that's not yet been set using D3DDevice_SetVertexShaderInput or D3DDevice_SetStreamSource*
 			// Decode the Xbox NV2A attribute format, including mapping to host :
 			XboxVertexAttributeDeclarationDecoded_t DecodedAttribute;
 			CxbxDecodeVertexAttributeFormat(pAttributeSlot->Format, &DecodedAttribute);
@@ -6979,18 +6984,59 @@ void CxbxUpdateActiveVertexDeclaration(XTL::X_D3DVertexShader* pXboxVertexShader
 		}
 	}
 
+	// Mark the end of the vertex element declaration array :
+	HostVertexElements[X_VSH_NBR_ATTRIBUTES] = D3DDECL_END();
 	// Set the vertex declaration we've prepare above :
 	IDirect3DVertexDeclaration *pHostVertexDeclaration = nullptr;
 	hRet = g_pD3DDevice->CreateVertexDeclaration(HostVertexElements, &pHostVertexDeclaration);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateVertexDeclaration");
+	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateVertexDeclaration"); // TODO : Why does this fail?!?
 	hRet = g_pD3DDevice->SetVertexDeclaration(pHostVertexDeclaration);
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexDeclaration");
-	pHostVertexDeclaration->Release();
+	// Now that the declaration is set (or not, when conversion failed?)
+	if (pHostVertexDeclaration)
+	{
+		// Throw away the temporary object reference already (host still holds a reference anyway):
+		hRet = pHostVertexDeclaration->Release();
+		DEBUG_D3DRESULT(hRet, "pHostVertexDeclaration->Release");
+	}
 }
 
+// Transfers the constants present in an Xbox vertex shader to host.
 void CxbxUpdateActiveVertexConstants(XTL::X_D3DVertexShader* pXboxVertexShader)
 {
-	// TODO
+	using namespace XTL;
+
+	LOG_INIT;
+
+	assert(pXboxVertexShader);
+
+	// Does this vertex shader contain more than just a program?
+	if (pXboxVertexShader->TotalSize > pXboxVertexShader->FunctionSize)
+		return;
+
+	// Each function token takes 4 DWORDs, constants start after that :
+	int DWORDOffset = pXboxVertexShader->FunctionSize * 4;
+	do {
+		// Parse the NV2A method for loading the vertex shader constant address :
+		DWORD NV2AMethodLoad = pXboxVertexShader->FunctionData[DWORDOffset++];
+		assert(NV2AMethodLoad == 0x00041EA4); // == (count)1 << 18 | (SUBCH_3D)0 << 13 | NV097_SET_TRANSFORM_CONSTANT_LOAD
+		UINT StartRegister = pXboxVertexShader->FunctionData[DWORDOffset++];
+		assert(StartRegister < X_D3DVS_CONSTREG_COUNT);
+
+		// Parse the NV2A method for sending vertex shader constant data :
+		DWORD NV2AMethodConstant = pXboxVertexShader->FunctionData[DWORDOffset++];
+		assert((NV2AMethodConstant & PUSH_METHOD_MASK) == 0x00000B80); // == count << 18 | (SUBCH_3D)0 << 13 | NV097_SET_TRANSFORM_CONSTANT
+		UINT Vector4fCount = NV2AMethodConstant >> 18;
+		assert(Vector4fCount > 0 && Vector4fCount < 8); // There can be at most 8 constants per batch
+
+		// Set this batch of constant data on host :
+		float *ConstantData = (float*)&(pXboxVertexShader->FunctionData[DWORDOffset]);
+		HRESULT hRet = g_pD3DDevice->SetVertexShaderConstantF(StartRegister, ConstantData, Vector4fCount);
+		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShaderConstantF");
+
+		// Each constant takes 4 floats, so skip that number of DWORD's for the next batch :
+		DWORDOffset += 4 * Vector4fCount;
+	} while (DWORDOffset < pXboxVertexShader->TotalSize);
 }
 
 void CxbxUpdateActiveVertexProgram(XTL::X_D3DVertexShader* pXboxVertexShader)
@@ -7005,12 +7051,13 @@ void CxbxUpdateActiveVertexShader()
 	assert(g_pD3DDevice);
 
 	X_D3DVertexShader* pXboxVertexShader = CxbxGetVertexShader();
+	if (pXboxVertexShader == xbnullptr)
+		return;
 
 	// There's three components that we need to handle here :
 	// 1) The vertex declaration - these can be found in the XboxVertexShader struct
 	// 2) The vertex constants - these can be found in the XboxVertexShader struct
 	// 3) The vertex shader program, which we stored in g_VertexShaderSlots
-
 	CxbxUpdateActiveVertexDeclaration(pXboxVertexShader);
 	CxbxUpdateActiveVertexConstants(pXboxVertexShader);
 	CxbxUpdateActiveVertexProgram(pXboxVertexShader);
