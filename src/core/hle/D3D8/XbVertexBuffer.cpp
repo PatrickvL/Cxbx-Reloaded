@@ -57,10 +57,11 @@ UINT   g_InlineVertexBuffer_DataSize = 0;
 extern DWORD				g_dwPrimPerFrame = 0;
 
 // Copy of active Xbox D3D Vertex Streams (and strides), set by [D3DDevice|CxbxImpl]_SetStreamSource*
-extern UINT g_D3DStreamStrides[X_VSH_MAX_STREAMS];
+XTL::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS] = { 0 }; // Note : .Offset member is never set (so always 0)
 
 extern XTL::X_D3DSurface* g_pXbox_RenderTarget;
 extern XTL::X_D3DSurface* g_pXbox_BackBufferSurface;
+
 void *GetDataFromXboxResource(XTL::X_D3DResource *pXboxResource);
 bool GetHostRenderTargetDimensions(DWORD* pHostWidth, DWORD* pHostHeight, IDirect3DSurface* pHostRenderTarget = nullptr);
 uint32_t GetPixelContainerWidth(XTL::X_D3DPixelContainer* pPixelContainer);
