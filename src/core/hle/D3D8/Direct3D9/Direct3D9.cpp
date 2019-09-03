@@ -6764,7 +6764,7 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 	//int NrOfDimensions = (AttributeFormat == X_D3DVSDT_NORMPACKED3) ? 3 : (AttributeFormat == X_D3DVSDT_FLOAT2H) ? 4 : XboxNrOfUnits;
 
 #define X ((D3DDECLTYPE)-1) // Marks an invalid entry
-	static D3DDECLTYPE HostDeclTypeMap[7/*NV2AType*/][8/*NV2ASize*/] = {
+	static const D3DDECLTYPE HostDeclTypeMap[7/*NV2AType*/][8/*NV2ASize*/] = {
 		// 0x?0 : X_D3DVSDT_D3DCOLOR=0x40
 		{ X, X, X, X, D3DDECLTYPE_D3DCOLOR, X, X, X },
 		// 0x?1 : X_D3DVSDT_NORMSHORT1=0x11, X_D3DVSDT_NORMSHORT2=0x21, X_D3DVSDT_NORMSHORT3=0x31, X_D3DVSDT_NORMSHORT4=0x41
@@ -6786,7 +6786,7 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 	D3DDECLTYPE HostDeclType = HostDeclTypeMap[NV2AType][NV2ASize];
 
 	// Definition of all known host D3DDECLTYPE enums (number of units, size of each unit and optional capability to check)
-	static struct {
+	static const struct {
 		int NrOfUnits; int SizeOfUnit; DWORD D3DDTCAPS;
 	} c_HostDeclTypeInfo[(int)D3DDECLTYPE_UNUSED + 1] =  {
 		/*D3DDECLTYPE_FLOAT1     =  0 */ { 1, sizeof(float) },
@@ -6852,7 +6852,10 @@ void CxbxUpdateActiveVertexDeclaration(XTL::X_D3DVertexShader* pXboxVertexShader
 
 	assert(pXboxVertexShader);
 
-	D3DVERTEXELEMENT HostVertexElements[X_VSH_NBR_ATTRIBUTES] = { 0};
+	LOG_INIT;
+
+	HRESULT hRet = D3D_OK;
+	D3DVERTEXELEMENT HostVertexElements[X_VSH_NBR_ATTRIBUTES] = { 0 };
 
 	// TODO : If SetVertexShaderInput got called with a VertexShader, should we use that one instead?
 
@@ -6864,8 +6867,32 @@ void CxbxUpdateActiveVertexDeclaration(XTL::X_D3DVertexShader* pXboxVertexShader
 		IDirect3DVertexBuffer *pHostVertexBuffer = nullptr;
 		UINT StreamStride = 0;
 		UINT StreamOffset = 0;
-		// Is the attribute in use at all (do this as early as possible to avoid needless processing) ?
-		if (pAttributeSlot->Format != X_D3DVSDT_NONE)
+		// Does this attribute use no storage present the vertex (check this as early as possible to avoid needless processing) ?
+		if (pAttributeSlot->Format == X_D3DVSDT_NONE)
+		{
+			// Handle tesselating attributes
+			switch (pAttributeSlot->TesselationType) {
+			case 0: break; // AUTONONE
+			case 1: // AUTONORMAL
+				// Note : .Stream, .Offset and .Type are copied from pAttributeSlot->TesselationSource in a post-processing step below,
+				// because these could go through an Xbox to host conversion step, so must be copied over afterwards.
+				HostVertexElements[AttributeIndex].Method = D3DDECLMETHOD_CROSSUV; // for D3DVSD_TESSNORMAL
+				HostVertexElements[AttributeIndex].Usage = D3DDECLUSAGE_NORMAL; // TODO : Is this correct?
+				HostVertexElements[AttributeIndex].UsageIndex = 1; // TODO : Is this correct?
+				break;
+			case 2: // AUTOTEXCOORD
+				// HostVertexElements[AttributeIndex].Stream = 0; // The input stream is unused (but must be set to 0), which is already done above
+				// HostVertexElements[AttributeIndex].Offset = 0; // The input offset is unused (but must be set to 0), which is already done above
+				HostVertexElements[AttributeIndex].Type = D3DDECLTYPE_UNUSED; // The input type for D3DDECLMETHOD_UV must be D3DDECLTYPE_UNUSED (the output type implied by D3DDECLMETHOD_UV is D3DDECLTYPE_FLOAT2)
+				HostVertexElements[AttributeIndex].Method = D3DDECLMETHOD_UV; // For X_D3DVSD_MASK_TESSUV
+				HostVertexElements[AttributeIndex].Usage = D3DDECLUSAGE_NORMAL; // Note : In Fixed Function Vertex Pipeline, D3DDECLMETHOD_UV must specify usage D3DDECLUSAGE_TEXCOORD or D3DDECLUSAGE_BLENDWEIGHT. TODO : So, what to do?
+				HostVertexElements[AttributeIndex].UsageIndex = 1; // TODO ; Is this correct?
+				break;
+			default:
+				assert(false); // invalid TesselationType
+			}
+		}
+		else
 		{
 			// Each attribute specifies the Xbox stream number it must be read from :
 			unsigned XboxStreamIndex = pAttributeSlot->IndexOfStream;
@@ -6876,6 +6903,7 @@ void CxbxUpdateActiveVertexDeclaration(XTL::X_D3DVertexShader* pXboxVertexShader
 			XTL::X_STREAMINPUT *pXboxStreamInput = (g_SetVertexShaderInputs != xbnullptr) ? &(g_SetVertexShaderInputs[XboxStreamIndex]) : &(g_SetStreamSources[XboxStreamIndex]);
 			// Fetch the Xbox vertex buffer for this input stream :
 			X_D3DVertexBuffer *pXboxVertexBuffer = pXboxStreamInput->VertexBuffer;
+	// TODO : What if pXboxVertexBuffer is null?
 			// Decode the Xbox NV2A attribute format, including mapping to host :
 			XboxVertexAttributeDeclarationDecoded_t DecodedAttribute;
 			CxbxDecodeVertexAttributeFormat(pAttributeSlot->Format, &DecodedAttribute);
@@ -6883,32 +6911,86 @@ void CxbxUpdateActiveVertexDeclaration(XTL::X_D3DVertexShader* pXboxVertexShader
 			assert(pXboxVertexBuffer);
 			assert(DecodedAttribute.XboxSizeInBytes > 0);
 
+			int HostAttributeOffsetInVertex;
+
 			// Can we use the Xbox attribute as-is?
 			if (DecodedAttribute.IsCompatible) {
 				// All we need to do, is use the host counterpart with unmodified Xbox contents :
 				pHostVertexBuffer = CxbxConvertXboxVertexBufferCompletely(pXboxVertexBuffer);
 				StreamStride = pXboxStreamInput->Stride;
 				StreamOffset = pXboxStreamInput->Offset; // Can only become non-zero when g_SetVertexShaderInputs is active-assigned
-				HostVertexElements[AttributeIndex].Stream = 0; // TODO : Complete
+				HostAttributeOffsetInVertex = StreamOffset;
 			}
 			else
 			{
 				pHostVertexBuffer = CxbxConvertXboxVertexBufferSingleAttribute(pXboxVertexBuffer, &DecodedAttribute, pXboxStreamInput->Offset);
 				// TODO : Should we map StreamOffset?
 				assert(StreamStride == 0); // This dedicated VertexBuffer has no other contents, so it has no stride. TODO : Or must we set DecodedAttribute.HostSizeInBytes?
-				// TODO : Populate HostVertexElements
+				HostAttributeOffsetInVertex = 0; // The dedicated stream contains only this attribute, so it's offset in the 'vertex' stream must be zero
 			}
+
+			static const struct {
+				D3DDECLUSAGE Usage;
+				BYTE UsageIndex = 0;
+			} c_XboxAtrributeInfo[X_VSH_NBR_ATTRIBUTES] = { // TODO : Review this - perhaps everything
+				/*[ 0]:*/{ D3DDECLUSAGE_POSITION }, // for X_D3DVSDE_POSITION -- TODO : Use D3DDECLUSAGE_POSITIONT instead?
+				/*[ 1]:*/{ D3DDECLUSAGE_BLENDWEIGHT }, // for X_D3DVSDE_BLENDWEIGHT
+				/*[ 2]:*/{ D3DDECLUSAGE_NORMAL, 0 } , // for X_D3DVSDE_NORMAL -- TODO : Is this correct?
+				/*[ 3]:*/{ D3DDECLUSAGE_COLOR, 0 } , // for X_D3DVSDE_DIFFUSE
+				/*[ 4]:*/{ D3DDECLUSAGE_COLOR, 1 } , // for X_D3DVSDE_SPECULAR
+				/*[ 5]:*/{ D3DDECLUSAGE_FOG } , // for X_D3DVSDE_FOG
+				/*[ 6]:*/{ D3DDECLUSAGE_PSIZE } , // for X_D3DVSDE_POINTSIZE
+				/*[ 7]:*/{ D3DDECLUSAGE_COLOR, 2 } , // for X_D3DVSDE_BACKDIFFUSE
+				/*[ 8]:*/{ D3DDECLUSAGE_COLOR, 3 } , // for X_D3DVSDE_BACKSPECULAR
+				/*[ 9]:*/{ D3DDECLUSAGE_TEXCOORD, 0 } , // for X_D3DVSDE_TEXCOORD0
+				/*[10]:*/{ D3DDECLUSAGE_TEXCOORD, 1 } , // for X_D3DVSDE_TEXCOORD1
+				/*[11]:*/{ D3DDECLUSAGE_TEXCOORD, 2 } , // for X_D3DVSDE_TEXCOORD2
+				/*[12]:*/{ D3DDECLUSAGE_TEXCOORD, 3 } , // for X_D3DVSDE_TEXCOORD3
+				/*[13]:*/{ D3DDECLUSAGE_TEXCOORD, 4 } , // TODO : Is this a generic attribute?
+				/*[14]:*/{ D3DDECLUSAGE_TEXCOORD, 5 } , // TODO : Is this a generic attribute?
+				/*[15]:*/{ D3DDECLUSAGE_TEXCOORD, 6 } , // TODO : Is this a generic attribute?
+			};
+
+			HostVertexElements[AttributeIndex].Stream = AttributeIndex; // Stream index matches attribute index (each one has it's own stream)
+			HostVertexElements[AttributeIndex].Offset = HostAttributeOffsetInVertex; // TODO : Or offset in *the stream* in bytes?
+			HostVertexElements[AttributeIndex].Type = DecodedAttribute.HostDeclType; // Host vertex data type
+			HostVertexElements[AttributeIndex].Method = D3DDECLMETHOD_DEFAULT; // Processing method. The input type for D3DDECLMETHOD_DEFAULT can be anything. The output type is the same as the input type.
+			HostVertexElements[AttributeIndex].Usage = c_XboxAtrributeInfo[AttributeIndex].Usage; // Attribute semantics
+			HostVertexElements[AttributeIndex].UsageIndex = c_XboxAtrributeInfo[AttributeIndex].UsageIndex; // Attribute semantic index
 		}
 
-		g_pD3DDevice->SetStreamSource(AttributeIndex, pHostVertexBuffer, StreamOffset + pAttributeSlot->Offset, StreamStride);
+		// Give each attribute (vertex element in host terms) it's own vertex stream :
+		hRet = g_pD3DDevice->SetStreamSource(AttributeIndex, pHostVertexBuffer, StreamOffset + pAttributeSlot->Offset, StreamStride);
+		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetStreamSource");
 	}
 
-	/* TODO :
-	IDirect3DVertexDeclaration *pHostVertexDeclaration = nullptr;
+	// Post-process host vertex elements that have a D3DDECLMETHOD_CROSSUV method :
+	for (int AttributeIndex = 0; AttributeIndex < X_VSH_NBR_ATTRIBUTES; AttributeIndex++) {
+		if (HostVertexElements[AttributeIndex].Method == D3DDECLMETHOD_CROSSUV)
+		{
+			int TesselationSource = pXboxVertexShader->VertexAttribute.Slots[AttributeIndex].TesselationSource;
+			// Copy over the Stream, Offset and Type of the host vertex element that serves as 'TesselationSource' :
+			HostVertexElements[AttributeIndex].Stream = HostVertexElements[TesselationSource].Stream;
+			HostVertexElements[AttributeIndex].Offset = HostVertexElements[TesselationSource].Offset;
+			HostVertexElements[AttributeIndex].Type = HostVertexElements[TesselationSource].Type;
+			// Note, the input type for D3DDECLMETHOD_CROSSUV can be D3DDECLTYPE_FLOAT[43], D3DDECLTYPE_D3DCOLOR, D3DDECLTYPE_UBYTE4, or D3DDECLTYPE_SHORT4
+			// (the output type implied by D3DDECLMETHOD_CROSSUV is D3DDECLTYPE_FLOAT3).
+			// TODO : Should we assert this?
+		}
+	}
 
-	g_pD3DDevice->CreateVertexDeclaration(&HostVertexElements, &pHostVertexDeclaration);
-	g_pD3DDevice->SetVertexDeclaration(pHostVertexDeclaration);
-	*/
+	// Set the vertex declaration we've prepare above :
+	IDirect3DVertexDeclaration *pHostVertexDeclaration = nullptr;
+	hRet = g_pD3DDevice->CreateVertexDeclaration(HostVertexElements, &pHostVertexDeclaration);
+	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateVertexDeclaration");
+	hRet = g_pD3DDevice->SetVertexDeclaration(pHostVertexDeclaration);
+	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexDeclaration");
+	pHostVertexDeclaration->Release();
+}
+
+void CxbxUpdateActiveVertexConstants(XTL::X_D3DVertexShader* pXboxVertexShader)
+{
+	// TODO
 }
 
 void CxbxUpdateActiveVertexProgram(XTL::X_D3DVertexShader* pXboxVertexShader)
@@ -6924,11 +7006,13 @@ void CxbxUpdateActiveVertexShader()
 
 	X_D3DVertexShader* pXboxVertexShader = CxbxGetVertexShader();
 
-	// There's two components that we need to handle here :
+	// There's three components that we need to handle here :
 	// 1) The vertex declaration - these can be found in the XboxVertexShader struct
-	// 2) The vertex shader program, which we stored in g_VertexShaderSlots
+	// 2) The vertex constants - these can be found in the XboxVertexShader struct
+	// 3) The vertex shader program, which we stored in g_VertexShaderSlots
 
 	CxbxUpdateActiveVertexDeclaration(pXboxVertexShader);
+	CxbxUpdateActiveVertexConstants(pXboxVertexShader);
 	CxbxUpdateActiveVertexProgram(pXboxVertexShader);
 	return;
 
