@@ -61,6 +61,7 @@ XTL::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS] = { 0 }; // Note : 
 
 extern XTL::X_D3DSurface* g_pXbox_RenderTarget;
 extern XTL::X_D3DSurface* g_pXbox_BackBufferSurface;
+
 void *GetDataFromXboxResource(XTL::X_D3DResource *pXboxResource);
 bool GetHostRenderTargetDimensions(DWORD* pHostWidth, DWORD* pHostHeight, IDirect3DSurface* pHostRenderTarget = nullptr);
 uint32_t GetPixelContainerWidth(XTL::X_D3DPixelContainer* pPixelContainer);
