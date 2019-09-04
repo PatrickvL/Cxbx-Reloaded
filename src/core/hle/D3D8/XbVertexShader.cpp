@@ -48,11 +48,11 @@ namespace XTL {
 	LOG_CHECK_ENABLED(LOG_LEVEL::DEBUG) \
 		if(g_bPrintfOn) printf
 
-extern XTL::X_STREAMINPUT g_SetStreamSources[16]; // Declared in XbVertexBuffer.cpp, set by SetStreamSource
+extern XTL::X_STREAMINPUT g_SetStreamSources[X_VSH_MAX_STREAMS]; // Declared in XbVertexBuffer.cpp, set by SetStreamSource
 
 // Set by CxbxImpl_SetVertexShaderInput() :
-int g_Xbox_SetVertexShaderInput_Count = 0;
-XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[16] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
+unsigned g_Xbox_SetVertexShaderInput_Count = 0;
+XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
 XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 };
 
 // Variables set by CxbxImpl_SetVertexShader() and CxbxImpl_SelectVertexShader() :
@@ -60,7 +60,7 @@ DWORD g_Xbox_VertexShader_Handle = 0;
 DWORD g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
 // Set by CxbxImpl_LoadVertexShader() / CxbxImpl_LoadVertexShaderProgram() :
-DWORD g_Xbox_VertexShader_FunctionSlots[X_VSH_MAX_INSTRUCTION_COUNT * 4] = { 0 }; // Each slot takes either 4 DWORDS (for instructions) or 4 floats (for constants)
+DWORD g_Xbox_VertexShader_FunctionSlots[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE] = { 0 }; // Each slot takes either 4 DWORDS (for instructions) or 4 floats (for constants)
 
 // Set by CxbxLocateVertexShader()
 DWORD* g_XboxAddr_pVertexShader = xbnullptr; // TODO : Get this symbol from g_SymbolAddresses["D3DDevice.m_pVertexShader"]; or whats its name
@@ -1916,23 +1916,24 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 
 	HRESULT hRet;
 
-	DWORD NV2AVertexProgram[X_VSH_MAX_INSTRUCTION_COUNT * 4]; // This receives the actual program, without NV097_SET_TRANSFORM_PROGRAM interleaves
+	DWORD NV2AVertexProgram[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE]; // This receives the actual program, without NV097_SET_TRANSFORM_PROGRAM interleaves
 	unsigned CurrentProgramIndex = 0;
 	UINT ConstantStartRegister = 0;
 
-	DWORD* ProgramData = &(g_Xbox_VertexShader_FunctionSlots[g_Xbox_VertexShader_FunctionSlots_StartAddress * 4]);
+	DWORD* ProgramData = &(g_Xbox_VertexShader_FunctionSlots[g_Xbox_VertexShader_FunctionSlots_StartAddress * X_VSH_INSTRUCTION_SIZE]);
 	while (*ProgramData != 0) // Each program ends with a zero DWORD
 	{
 		// Parse the limited set of Vertex program NV2A Push buffer commands :
 		DWORD NV2ACommand = *ProgramData++;
 		switch (PUSH_METHOD(NV2ACommand)) {
 		case 0x00000B00: { // == NV097_SET_TRANSFORM_PROGRAM
-			unsigned NumberOfInstructions = PUSH_COUNT(NV2ACommand); // Fetch the number of instructions
-			unsigned NumberOfDWORDs = NumberOfInstructions * 4;
 			// Copy a batch of instructions :
-			memcpy(&(NV2AVertexProgram[CurrentProgramIndex]), ProgramData, NumberOfDWORDs * sizeof(DWORD));
-			CurrentProgramIndex += NumberOfDWORDs;
+			unsigned NumberOfInstructions = PUSH_COUNT(NV2ACommand); // Fetch the number of instructions
+			unsigned SizeInBytes = NumberOfInstructions * X_VSH_INSTRUCTION_SIZE_BYTES;
+			memcpy(&(NV2AVertexProgram[CurrentProgramIndex]), ProgramData, SizeInBytes);
 			// Each instruction takes 4 DWORD, so skip that number of DWORD's for the next batch :
+			unsigned NumberOfDWORDs = NumberOfInstructions * X_VSH_INSTRUCTION_SIZE;
+			CurrentProgramIndex += NumberOfDWORDs;
 			ProgramData += NumberOfDWORDs;
 			continue;
 		}
@@ -1947,7 +1948,7 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 			hRet = g_pD3DDevice->SetVertexShaderConstantF(ConstantStartRegister, (float*)ProgramData, Vector4fCount);
 			//DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShaderConstantF");
 			// Each constant takes 4 floats, so skip that number of DWORD's for the next batch :
-			unsigned NumberOfDWORDs = Vector4fCount * 4;
+			unsigned NumberOfDWORDs = Vector4fCount * X_VSH_INSTRUCTION_SIZE;
 			ProgramData += NumberOfDWORDs;
 			continue;
 		}
@@ -2018,9 +2019,11 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 	}
 
 	// Copy the function data into the indicated address slots :
-	for (unsigned i = 0; i < XboxVertexShader->TotalSize * 4; i++) { // Each slot is either 4 DWORDS or 4 floats
-		g_Xbox_VertexShader_FunctionSlots[Address + i] = XboxVertexShader->FunctionData[i];
-	}
+	DWORD NumberOfSlots = XboxVertexShader->TotalSize;
+	// Each slot is either 4 DWORDS or 4 floats
+	DWORD SizeInBytes = NumberOfSlots * X_VSH_INSTRUCTION_SIZE_BYTES;
+	// Copy this data towards our storage for this, at the indicated address offset :
+	memcpy(&(g_Xbox_VertexShader_FunctionSlots[Address * X_VSH_INSTRUCTION_SIZE]), XboxVertexShader->FunctionData, SizeInBytes);
 }
 
 void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
@@ -2070,10 +2073,10 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, XTL::X_STREAM
 void CxbxImpl_LoadVertexShaderProgram(DWORD* pFunction, DWORD Address)
 {
 	// The second word in the function indicates it's size, expressed in 4-DWORD-sized slots :
-	DWORD NumberOfFourDWORDSlots = *pFunction++ >> 16;
+	DWORD NumberOfSlots = *pFunction++ >> 16;
 	// Copy this data towards our storage for this, at the indicated address offset :
-	DWORD SizeInBytes = NumberOfFourDWORDSlots * 4 * sizeof(DWORD);
-	memcpy(&(g_Xbox_VertexShader_FunctionSlots[Address * 4]), pFunction, SizeInBytes);
+	DWORD SizeInBytes = NumberOfSlots * X_VSH_INSTRUCTION_SIZE_BYTES;
+	memcpy(&(g_Xbox_VertexShader_FunctionSlots[Address * X_VSH_INSTRUCTION_SIZE]), pFunction, SizeInBytes);
 }
 
 // TODO : Replace this with an XREF in XbSymbolDatabase, since this is re-inventing the wheel:
@@ -2348,7 +2351,7 @@ bool CxbxLocateVertexShader()
 		}
 		else if (Address < 136)
 		{
-			X_D3DVertexShader* pXboxVertexShader = (X_D3DVertexShader*)g_Xbox_VertexShader_FunctionSlots[Address * 4];
+			X_D3DVertexShader* pXboxVertexShader = (X_D3DVertexShader*)g_Xbox_VertexShader_FunctionSlots[Address * X_VSH_INSTRUCTION_SIZE];
 
 			if (pXboxVertexShader == nullptr)
 			{
