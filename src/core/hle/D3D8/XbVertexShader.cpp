@@ -1746,12 +1746,19 @@ void CxbxUpdateActiveVertexDeclaration()
 
 	LOG_INIT;
 
+	X_D3DVertexShader* pXboxVertexShader = CxbxGetVertexShader();
+	if (pXboxVertexShader == xbnullptr)
+	{
+		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
+		return;
+	}
+
 	// Take overrides (on declarations and streaminputs, as set by SetVertexShaderInput) into account :
 	X_VERTEXATTRIBUTEFORMAT *pVertexAttributes = (g_Xbox_SetVertexShaderInput_Count > 0) ? &g_Xbox_SetVertexShaderInput_Attributes : &pXboxVertexShader->VertexAttribute;
 	X_STREAMINPUT *pStreamInputs = (g_Xbox_SetVertexShaderInput_Count > 0) ? g_Xbox_SetVertexShaderInput_Data : g_SetStreamSources;
 
 	HRESULT hRet = D3D_OK;
-	D3DVERTEXELEMENT HostVertexElements[X_VSH_NBR_ATTRIBUTES + 1] = { 0 };
+	D3DVERTEXELEMENT HostVertexElements[X_VSH_NBR_ATTRIBUTES + 1] = { 0 }; // +1 is for the closing D3DDECL_END() when all possible attributes are declared
 
 	// Here, parse the Xbox declaration, converting it to a host declaration
 	for (int AttributeIndex = 0; AttributeIndex < X_VSH_NBR_ATTRIBUTES; AttributeIndex++) {
@@ -1915,17 +1922,15 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 
 	assert(g_Xbox_VertexShader_FunctionSlots_StartAddress < X_VSH_MAX_INSTRUCTION_COUNT);
 
-	HRESULT hRet;
-
+	static UINT ConstantStartRegister = 0;
+	unsigned CurrentProgramIndex = 0; // Note : Make this static, if below code would be extended to parse NV097_SET_TRANSFORM_PROGRAM_LOAD
 	DWORD NV2AVertexProgram[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE]; // This receives the actual program, without NV097_SET_TRANSFORM_PROGRAM interleaves
-	unsigned CurrentProgramIndex = 0;
-	UINT ConstantStartRegister = 0;
-
+	HRESULT hRet;
 	DWORD* ProgramData = &(g_Xbox_VertexShader_FunctionSlots[g_Xbox_VertexShader_FunctionSlots_StartAddress * X_VSH_INSTRUCTION_SIZE]);
 	while (*ProgramData != 0) // Each program ends with a zero DWORD
 	{
 		// Parse the limited set of Vertex program NV2A Push buffer commands :
-		DWORD NV2ACommand = *ProgramData++;
+		NV2AMETHOD NV2ACommand = *ProgramData++;
 		switch (PUSH_METHOD(NV2ACommand)) {
 		case 0x00000B00: { // == NV097_SET_TRANSFORM_PROGRAM
 			// Copy a batch of instructions :
@@ -1978,16 +1983,7 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 
 void CxbxUpdateActiveVertexShader()
 {
-	using namespace XTL;
-
 	assert(g_pD3DDevice);
-
-	X_D3DVertexShader* pXboxVertexShader = CxbxGetVertexShader();
-	if (pXboxVertexShader == xbnullptr)
-	{
-		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
-		return;
-	}
 
 	CxbxUpdateActiveVertexDeclaration();
 	CxbxParseAndConvertVertexShaderFunctionSlots();
@@ -1997,6 +1993,11 @@ void CxbxCopyVertexShaderFunctionSlots(unsigned Address, unsigned NumberOfSlots,
 {
 	if (Address >= X_VSH_MAX_INSTRUCTION_COUNT) {
 		LOG_TEST_CASE("CxbxCopyVertexShaderFunctionSlots would start too high!");
+		return;
+	}
+
+	if (NumberOfSlots == 0) {
+		LOG_TEST_CASE("CxbxCopyVertexShaderFunctionSlots received zero slots?");
 		return;
 	}
 
@@ -2059,7 +2060,7 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, XTL::X_STREAM
 	if (Handle == NULL)
 	{
 		// Xbox doesn't remember a null-handle - this may be an XDK bug!
-		// pStreamInputs is ignored
+		// StreamCount and pStreamInputs arguments are ignored
 		g_Xbox_SetVertexShaderInput_Count = 0;
 	}
 	else
@@ -2096,22 +2097,23 @@ void CxbxLocateVertexShaderSetter(DWORD Handle, DWORD Address)
 
 	if (XB_D3DDevice_SelectVertexShader)
 		XB_D3DDevice_SelectVertexShader(Handle, Address);
-	else
-		if (XB_D3DDevice_SelectVertexShader_0)
-			__asm {
-			mov eax, Address // TODO : Is this really needed?
-			mov ebx, Handle // TODO : Is this really needed?
-			call XB_D3DDevice_SelectVertexShader_0
+	else if (XB_D3DDevice_SelectVertexShader_0)
+		__asm {
+		mov eax, Address // TODO : Is this really needed?
+		mov ebx, Handle // TODO : Is this really needed?
+		call XB_D3DDevice_SelectVertexShader_0
 		}
-	if (XB_D3DDevice_SelectVertexShader_4)
+	else if (XB_D3DDevice_SelectVertexShader_4)
 		__asm {
 		mov eax, Handle // TODO : Is this really needed?
 		mov ebx, Address
 		call XB_D3DDevice_SelectVertexShader_4
-	}
-	else
+		}
+	else if (XB_D3DDevice_SetVertexShader)
 		// Pass through to the Xbox implementation of this function
 		XB_D3DDevice_SetVertexShader(Handle);
+	else
+		assert(false);
 }
 
 // TODO : Replace this with an XREF in XbSymbolDatabase, since this is re-inventing the wheel:

@@ -998,6 +998,9 @@ void CxbxImpl_SetStreamSource(UINT StreamNumber, XTL::X_D3DVertexBuffer* pStream
 	}
 
 	assert(StreamNumber < X_VSH_MAX_STREAMS);
+		LOG_TEST_CASE("CxbxImpl_SetStreamSource : StreamNumber >= 16");
+		return; // Avoid bounds overflow
+	}
 
 	g_Xbox_SetStreamSource[StreamNumber].VertexBuffer = pStreamData;
 	g_Xbox_SetStreamSource[StreamNumber].Stride = Stride;
