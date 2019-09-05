@@ -1758,10 +1758,10 @@ void CxbxUpdateActiveVertexDeclaration()
 	X_STREAMINPUT *pStreamInputs = (g_Xbox_SetVertexShaderInput_Count > 0) ? g_Xbox_SetVertexShaderInput_Data : g_SetStreamSources;
 
 	HRESULT hRet = D3D_OK;
-	D3DVERTEXELEMENT HostVertexElements[X_VSH_NBR_ATTRIBUTES + 1] = { 0 }; // +1 is for the closing D3DDECL_END() when all possible attributes are declared
+	D3DVERTEXELEMENT HostVertexElements[X_VSH_MAX_ATTRIBUTES + 1] = { 0 }; // +1 is for the closing D3DDECL_END() when all possible attributes are declared
 
 	// Here, parse the Xbox declaration, converting it to a host declaration
-	for (int AttributeIndex = 0; AttributeIndex < X_VSH_NBR_ATTRIBUTES; AttributeIndex++) {
+	for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
 		// Fetch the Xbox stream for this attribute :
 		X_VERTEXSHADERINPUT *pAttributeSlot = &(pVertexAttributes->Slots[AttributeIndex]);
 		// We'll call g_pD3DDevice->SetStreamSource for each attribute with these (initially empty) arguments :
@@ -1833,7 +1833,7 @@ void CxbxUpdateActiveVertexDeclaration()
 			static const struct {
 				D3DDECLUSAGE Usage;
 				BYTE UsageIndex = 0;
-			} c_XboxAtrributeInfo[X_VSH_NBR_ATTRIBUTES] = { // TODO : Review this - perhaps everything
+			} c_XboxAtrributeInfo[X_VSH_MAX_ATTRIBUTES] = { // TODO : Review this - perhaps everything
 				/*[ 0]:*/{ D3DDECLUSAGE_POSITION }, // for X_D3DVSDE_POSITION -- TODO : Use D3DDECLUSAGE_POSITIONT instead?
 				/*[ 1]:*/{ D3DDECLUSAGE_BLENDWEIGHT }, // for X_D3DVSDE_BLENDWEIGHT
 				/*[ 2]:*/{ D3DDECLUSAGE_NORMAL, 0 } , // for X_D3DVSDE_NORMAL -- TODO : Is this correct?
@@ -1866,7 +1866,7 @@ void CxbxUpdateActiveVertexDeclaration()
 	}
 
 	// Post-process host vertex elements that have a D3DDECLMETHOD_CROSSUV method :
-	for (int AttributeIndex = 0; AttributeIndex < X_VSH_NBR_ATTRIBUTES; AttributeIndex++) {
+	for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
 		if (HostVertexElements[AttributeIndex].Method == D3DDECLMETHOD_CROSSUV)
 		{
 			int TesselationSource = pVertexAttributes->Slots[AttributeIndex].TesselationSource;
@@ -1885,7 +1885,7 @@ void CxbxUpdateActiveVertexDeclaration()
 	// Usage+UsageIndex are correctly connected to the corresponding vertex shader registers) !?!
 
 	// Mark the end of the vertex element declaration array :
-	HostVertexElements[X_VSH_NBR_ATTRIBUTES] = D3DDECL_END();
+	HostVertexElements[X_VSH_MAX_ATTRIBUTES] = D3DDECL_END();
 	// Set the vertex declaration we've prepare above :
 	IDirect3DVertexDeclaration *pHostVertexDeclaration = nullptr;
 	hRet = g_pD3DDevice->CreateVertexDeclaration(HostVertexElements, &pHostVertexDeclaration);
@@ -1908,6 +1908,7 @@ XTL::IDirect3DVertexShader *CxbxRecompileVertexProgram(DWORD *NV2AVertexProgram,
 	IDirect3DVertexShader *pHostVertexShader = nullptr;
 
 	// TODO : Implement (including cache)
+	// EmuRecompileVshFunction(NV2AVertexProgram)
 
 	return pHostVertexShader;
 }
@@ -2079,10 +2080,27 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, XTL::X_STREAM
 
 void CxbxImpl_LoadVertexShaderProgram(DWORD* pFunction, DWORD Address)
 {
+	using namespace XTL;
+
+	LOG_INIT;
+
+	assert(pFunction);
+
+	// Verify the vertex shader header
+	X_VSH_SHADER_HEADER *ShaderHeader = (X_VSH_SHADER_HEADER*)pFunction;
+	switch (ShaderHeader->Version) {
+	case VERSION_XVS: // 0x2078 // 'x ' Xbox vertex shader
+	case VERSION_XVSS: // 0x7378 // 'xs' Xbox vertex state shader
+	case VERSION_XVSW: // 0x7778 // 'xw' Xbox vertex read/write shader
+		break;
+	default:
+		LOG_TEST_CASE("CxbxImpl_LoadVertexShaderProgram : Unexpected vertex shader header version?");
+	}
+
 	// The second word in the function indicates it's size, expressed in 4-DWORD-sized slots :
-	DWORD NumberOfSlots = *pFunction++ >> 16;
+	DWORD NumberOfSlots = ShaderHeader->NumInst;
 	// Copy this data towards our storage for this, at the indicated address offset :
-	CxbxCopyVertexShaderFunctionSlots(Address, NumberOfSlots, pFunction);
+	CxbxCopyVertexShaderFunctionSlots(Address, NumberOfSlots, &pFunction[1]);
 }
 
 // TODO : Replace this with an XREF in XbSymbolDatabase, since this is re-inventing the wheel:
@@ -2321,10 +2339,10 @@ bool CxbxLocateVertexShader()
 			static const float ColorBlack[4] = { 0,0,0,0 };
 			static const float ColorWhite[4] = { 1,1,1,1 };
 
-			g_pD3DDevice->SetVertexShaderConstantF(X_D3DVS_CONSTREG_VERTEXDATA4F_BASE + X_D3DVSDE_DIFFUSE, ColorWhite, 1);
-			g_pD3DDevice->SetVertexShaderConstantF(X_D3DVS_CONSTREG_VERTEXDATA4F_BASE + X_D3DVSDE_BACKDIFFUSE, ColorWhite, 1);
-			g_pD3DDevice->SetVertexShaderConstantF(X_D3DVS_CONSTREG_VERTEXDATA4F_BASE + X_D3DVSDE_SPECULAR, ColorBlack, 1);
-			g_pD3DDevice->SetVertexShaderConstantF(X_D3DVS_CONSTREG_VERTEXDATA4F_BASE + X_D3DVSDE_BACKSPECULAR, ColorBlack, 1);
+			g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VERTEXDATA4F_BASE + X_D3DVSDE_DIFFUSE, ColorWhite, 1);
+			g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VERTEXDATA4F_BASE + X_D3DVSDE_BACKDIFFUSE, ColorWhite, 1);
+			g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VERTEXDATA4F_BASE + X_D3DVSDE_SPECULAR, ColorBlack, 1);
+			g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VERTEXDATA4F_BASE + X_D3DVSDE_BACKSPECULAR, ColorBlack, 1);
 		}
 		else {
 			hRet = g_pD3DDevice->SetVertexShader(nullptr);
