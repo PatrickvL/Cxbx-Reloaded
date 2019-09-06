@@ -53,7 +53,7 @@ extern XTL::X_STREAMINPUT g_SetStreamSources[X_VSH_MAX_STREAMS]; // Declared in 
 // Set by CxbxImpl_SetVertexShaderInput() :
 unsigned g_Xbox_SetVertexShaderInput_Count = 0;
 XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
-XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 };
+XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
 
 // Variables set by CxbxImpl_SetVertexShader() and CxbxImpl_SelectVertexShader() :
 DWORD g_Xbox_VertexShader_Handle = 0;
@@ -1653,7 +1653,7 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 	//int NrOfDimensions = (AttributeFormat == X_D3DVSDT_NORMPACKED3) ? 3 : (AttributeFormat == X_D3DVSDT_FLOAT2H) ? 4 : XboxNrOfUnits;
 
 #define X ((D3DDECLTYPE)-1) // Marks an invalid entry
-	static const D3DDECLTYPE HostDeclTypeMap[7/*NV2AType*/][8/*NV2ASize*/] = {
+	static const D3DDECLTYPE c_HostDeclTypeMap[7/*NV2AType*/][8/*NV2ASize*/] = {
 		// 0x?0 : X_D3DVSDT_D3DCOLOR=0x40
 		{ X, X, X, X, D3DDECLTYPE_D3DCOLOR, X, X, X },
 		// 0x?1 : X_D3DVSDT_NORMSHORT1=0x11, X_D3DVSDT_NORMSHORT2=0x21, X_D3DVSDT_NORMSHORT3=0x31, X_D3DVSDT_NORMSHORT4=0x41
@@ -1672,7 +1672,7 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 #undef X
 
 	// Lookup optimal host D3DDECLTYPE (might have a different number of units and/or unit size) :
-	D3DDECLTYPE HostDeclType = HostDeclTypeMap[NV2AType][NV2ASize];
+	D3DDECLTYPE HostDeclType = c_HostDeclTypeMap[NV2AType][NV2ASize];
 
 	// Definition of all known host D3DDECLTYPE enums (number of units, size of each unit and optional capability to check)
 	static const struct {
@@ -1758,11 +1758,16 @@ void CxbxUpdateActiveVertexDeclaration()
 	X_STREAMINPUT *pStreamInputs = (g_Xbox_SetVertexShaderInput_Count > 0) ? g_Xbox_SetVertexShaderInput_Data : g_SetStreamSources;
 
 	HRESULT hRet = D3D_OK;
-	D3DVERTEXELEMENT HostVertexElements[X_VSH_MAX_ATTRIBUTES + 1] = { 0 }; // +1 is for the closing D3DDECL_END() when all possible attributes are declared
+	std::array<D3DVERTEXELEMENT, X_VSH_MAX_ATTRIBUTES + 1> HostVertexElements; // +1 is for the closing D3DDECL_END() when all possible attributes are declared
+	// Initialize all elements to D3DDECL_END()
+	// Later we'll need to create a valid declaration from only the elements that we set
+	// D3DDECL_END() has a stream number out of the valid range, so all we need to do is sort the array
+	HostVertexElements.fill(D3DDECL_END());
+	assert(HostVertexElements[0].Stream > X_VSH_MAX_ATTRIBUTES);
 
 	// Here, parse the Xbox declaration, converting it to a host declaration
 	for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
-		// Fetch the Xbox stream for this attribute :
+		// Fetch the Xbox stream from the pVertexAttributes slots array (this pointer honors overrides) :
 		X_VERTEXSHADERINPUT *pAttributeSlot = &(pVertexAttributes->Slots[AttributeIndex]);
 		// We'll call g_pD3DDevice->SetStreamSource for each attribute with these (initially empty) arguments :
 		IDirect3DVertexBuffer *pHostVertexBuffer = nullptr;
@@ -1776,7 +1781,7 @@ void CxbxUpdateActiveVertexDeclaration()
 			case 0: break; // AUTONONE
 			case 1: // AUTONORMAL
 				// Note : .Stream, .Offset and .Type are copied from pAttributeSlot->TesselationSource in a post-processing step below,
-				// because these could go through an Xbox to host conversion step, so must be copied over afterwards.
+				// because these could all go through an Xbox to host conversion step, so must be copied over afterwards.
 				HostVertexElements[AttributeIndex].Method = D3DDECLMETHOD_CROSSUV; // for D3DVSD_TESSNORMAL
 				HostVertexElements[AttributeIndex].Usage = D3DDECLUSAGE_NORMAL; // TODO : Is this correct?
 				HostVertexElements[AttributeIndex].UsageIndex = 1; // TODO : Is this correct?
@@ -1800,11 +1805,15 @@ void CxbxUpdateActiveVertexDeclaration()
 			// When input streams are overriden, the stream indices referenced by attribute slots should stay in bounds!
 			assert((g_Xbox_SetVertexShaderInput_Count == 0) || (XboxStreamIndex < g_Xbox_SetVertexShaderInput_Count));
 
-			// Fetch the input stream from the pStreamInputs array (this argument honors overrides) :
+			// Fetch the input stream from the pStreamInputs array (this pointer honors overrides) :
 			XTL::X_STREAMINPUT *pXboxStreamInput = &(pStreamInputs[XboxStreamIndex]);
 			// Fetch the Xbox vertex buffer for this input stream :
 			X_D3DVertexBuffer *pXboxVertexBuffer = pXboxStreamInput->VertexBuffer;
 	// TODO : What if pXboxVertexBuffer is null? (This implies that the Xbox vertex declaration mentions a stream that's not yet been set using D3DDevice_SetVertexShaderInput or D3DDevice_SetStreamSource*
+			// For now, just skip the vertex element :
+			if (pXboxVertexBuffer == xbnullptr)
+				continue;
+
 			// Decode the Xbox NV2A attribute format, including mapping to host :
 			XboxVertexAttributeDeclarationDecoded_t DecodedAttribute;
 			CxbxDecodeVertexAttributeFormat(pAttributeSlot->Format, &DecodedAttribute);
@@ -1880,15 +1889,18 @@ void CxbxUpdateActiveVertexDeclaration()
 		}
 	}
 
-	// TODO : Host doesn't seem to allow gaps, nor is D3DDECLTYPE_UNUSED allowed (apart from D3DDECLMETHOD_UV),
-	// so it seems we need to condense the declarations here afterwards after all (and hope that the elements'
+	// Note, that host doesn't allow D3DDECLTYPE_UNUSED (apart from D3DDECLMETHOD_UV),
+	// so we might need to condense the declarations here afterwards (and hope that the elements'
 	// Usage+UsageIndex are correctly connected to the corresponding vertex shader registers) !?!
 
-	// Mark the end of the vertex element declaration array :
-	HostVertexElements[X_VSH_MAX_ATTRIBUTES] = D3DDECL_END();
+	// Sort elements according to restrictions (see http://doc.51windows.net/Directx9_SDK/graphics/programmingguide/gettingstarted/vertexdeclaration/vertexdeclaration.htm
+	// All unmodified D3DDECL_END() elements (there's at least one) are moved to the end, giving a valid D3D9 VertexDeclaration :
+	std::sort(HostVertexElements.begin(), HostVertexElements.end(), [](D3DVERTEXELEMENT& x, D3DVERTEXELEMENT& y)
+		{ return std::tie(x.Stream, x.Method, x.Offset, x.Usage, x.UsageIndex) < std::tie(y.Stream, y.Method, y.Offset, y.Usage, y.UsageIndex); });
+
 	// Set the vertex declaration we've prepare above :
 	IDirect3DVertexDeclaration *pHostVertexDeclaration = nullptr;
-	hRet = g_pD3DDevice->CreateVertexDeclaration(HostVertexElements, &pHostVertexDeclaration);
+	hRet = g_pD3DDevice->CreateVertexDeclaration(HostVertexElements.data(), &pHostVertexDeclaration);
 	//DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateVertexDeclaration"); // TODO : Why does this fail?!?
 	hRet = g_pD3DDevice->SetVertexDeclaration(pHostVertexDeclaration);
 	//DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexDeclaration");
@@ -2041,7 +2053,7 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 		// Handle can be an address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
 		// If Handle is assigned, it becomes the new current Xbox VertexShader,
 		// which resets a bit of state (nv2a execution mode, viewport, ?)
-		g_Xbox_VertexShader_Handle = Handle;
+		g_Xbox_VertexShader_Handle = Handle; // TODO : Remove bit here, or on use??
 
 	// Either way, the given address slot is selected as the start of the current vertex shader program
 	// Address always indicates a previously loaded vertex shader slot (from where the program is used).
@@ -2050,7 +2062,21 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 
 void CxbxImpl_SetVertexShader(DWORD Handle)
 {
-	g_Xbox_VertexShader_Handle = Handle;
+	using namespace XTL;
+
+	// Do we already know the location of the Xbox D3Device.m_pVertexShader symbol,
+	// and is the user-supplied handle a FVF?
+	if (g_XboxAddr_pVertexShader && VshHandleIsFVF(Handle))
+	{
+		// Then we're more interested in what the D3DDevice_SetVertexShader trampoline
+		// stored in the Xbox D3Device.m_pVertexShader field :
+		g_Xbox_VertexShader_Handle = *g_XboxAddr_pVertexShader;
+	}
+	else
+	{
+		g_Xbox_VertexShader_Handle = Handle;
+	}
+
 	g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 }
 
@@ -2074,7 +2100,7 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, XTL::X_STREAM
 		// Xbox DOES store the Handle, but since it merely returns this through (unpatched) D3DDevice_GetVertexShaderInput, we don't have to.
 		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This indicates g_Xbox_SetVertexShaderInput_Data has to be used
 		memcpy(g_Xbox_SetVertexShaderInput_Data, pStreamInputs, StreamCount * sizeof(XTL::X_STREAMINPUT)); // Make a copy of the supplied StreamInputs array
-		g_Xbox_SetVertexShaderInput_Attributes = pXboxVertexShader->VertexAttribute; // Copy this vertex shaders's attributes
+		g_Xbox_SetVertexShaderInput_Attributes = pXboxVertexShader->VertexAttribute; // Copy this vertex shaders's attribute slots
 	}
 }
 
