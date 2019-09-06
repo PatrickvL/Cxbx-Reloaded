@@ -6555,11 +6555,11 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexShader)
 	// D3DDevice_LoadVertexShader and D3DDevice_SelectVertexShader.
 	// Otherwise the shader is send using push buffer commands.
 
-	CxbxImpl_SetVertexShader(Handle);
-
 	// Pass through to the Xbox implementation of this function
 	XB_trampoline(VOID, WINAPI, D3DDevice_SetVertexShader, (DWORD));
 	XB_D3DDevice_SetVertexShader(Handle);
+
+	CxbxImpl_SetVertexShader(Handle); // AFTER trampoline, to catch it's results!
 }
 
 // TODO : Move to own file
