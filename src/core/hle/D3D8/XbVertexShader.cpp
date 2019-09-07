@@ -1947,11 +1947,10 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 		switch (PUSH_METHOD(NV2ACommand)) {
 		case 0x00000B00: { // == NV097_SET_TRANSFORM_PROGRAM
 			// Copy a batch of instructions :
-			unsigned NumberOfInstructions = PUSH_COUNT(NV2ACommand); // Fetch the number of instructions
-			unsigned SizeInBytes = NumberOfInstructions * X_VSH_INSTRUCTION_SIZE_BYTES;
+			unsigned NumberOfDWORDs = PUSH_COUNT(NV2ACommand); // Fetch the number of instruction dwords
+			unsigned SizeInBytes = NumberOfDWORDs * sizeof(DWORD);
 			memcpy(&(NV2AVertexProgram[CurrentProgramIndex]), ProgramData, SizeInBytes);
-			// Each instruction takes 4 DWORD, so skip that number of DWORD's for the next batch :
-			unsigned NumberOfDWORDs = NumberOfInstructions * X_VSH_INSTRUCTION_SIZE;
+			// Skip this number of DWORD's for the next batch :
 			CurrentProgramIndex += NumberOfDWORDs;
 			ProgramData += NumberOfDWORDs;
 			continue;
@@ -2164,8 +2163,8 @@ void CxbxLocateVertexShaderSetter(DWORD Handle, DWORD Address)
 // Scan the XBE memory for the location of the m_pVertexShader variable, by setting it indirectly
 bool CxbxLocateVertexShader()
 {
-	const DWORD Handle1 = 0x5EAC0000;
-	const DWORD Handle2 = 0xF14DEE80;
+	DWORD Handle1 = 0x5EAC0000;
+	DWORD Handle2 = 0xF14DEE80;
 	DWORD Address = 135;
 	DWORD HandleToRestore = g_Xbox_VertexShader_Handle;
 	DWORD AddressToRestore = g_Xbox_VertexShader_FunctionSlots_StartAddress;
@@ -2187,6 +2186,9 @@ bool CxbxLocateVertexShader()
 				CxbxLocateVertexShaderSetter(HandleToRestore, AddressToRestore);
 				return true;
 			}
+
+			// We had a false positive, so now we need to scan for the other value we set :
+			std::swap(Handle1, Handle2);
 		}
 	}
 
