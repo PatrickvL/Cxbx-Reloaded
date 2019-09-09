@@ -1931,8 +1931,6 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 {
 	using namespace XTL;
 
-	LOG_INIT;
-
 	assert(g_Xbox_VertexShader_FunctionSlots_StartAddress < X_VSH_MAX_INSTRUCTION_COUNT);
 
 	static UINT ConstantStartRegister = 0;
@@ -1989,7 +1987,8 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 			//DEBUG_D3DRESULT(hRet, "pHostVertexShader->Release()");
 		}
 	}
-	else; // what?
+	else
+		LOG_TEST_CASE("Parsing didn't result in a shader program?");
 }
 
 
@@ -2004,17 +2003,17 @@ void CxbxUpdateActiveVertexShader()
 void CxbxCopyVertexShaderFunctionSlots(unsigned Address, unsigned NumberOfSlots, void *FunctionData)
 {
 	if (Address >= X_VSH_MAX_INSTRUCTION_COUNT) {
-		LOG_TEST_CASE("CxbxCopyVertexShaderFunctionSlots would start too high!");
+		LOG_TEST_CASE("Address would start too high!");
 		return;
 	}
 
 	if (NumberOfSlots == 0) {
-		LOG_TEST_CASE("CxbxCopyVertexShaderFunctionSlots received zero slots?");
+		LOG_TEST_CASE("Received zero slots?");
 		return;
 	}
 
 	if (Address + NumberOfSlots > X_VSH_MAX_INSTRUCTION_COUNT) {
-		LOG_TEST_CASE("CxbxCopyVertexShaderFunctionSlots would write too far!");
+		LOG_TEST_CASE("Copy would overflow available instruction slots!");
 		return;
 	}
 
@@ -2047,12 +2046,17 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 
 void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 {
+	using namespace XTL;
+
 	// Handle can be null if the current Xbox VertexShader is assigned
 	if (Handle)
+	{
+		assert(!VshHandleIsFVF(Handle));
 		// Handle can be an address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
 		// If Handle is assigned, it becomes the new current Xbox VertexShader,
 		// which resets a bit of state (nv2a execution mode, viewport, ?)
 		g_Xbox_VertexShader_Handle = Handle; // TODO : Remove bit here, or on use??
+	}
 
 	// Either way, the given address slot is selected as the start of the current vertex shader program
 	// Address always indicates a previously loaded vertex shader slot (from where the program is used).
@@ -2063,17 +2067,18 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 {
 	using namespace XTL;
 
-	// Do we already know the location of the Xbox D3Device.m_pVertexShader symbol,
-	// and is the user-supplied handle a FVF?
-	if (g_XboxAddr_pVertexShader && VshHandleIsFVF(Handle))
+	// Is the user-supplied handle a FVF?
+	if (VshHandleIsFVF(Handle))
 	{
 		// Then we're more interested in what the D3DDevice_SetVertexShader trampoline
 		// stored in the Xbox D3Device.m_pVertexShader field :
 		g_Xbox_VertexShader_Handle = *g_XboxAddr_pVertexShader;
+		// g_Xbox_VertexShader_FVF = Handle; // enable if we ever need the Xbox FVF
 	}
 	else
 	{
 		g_Xbox_VertexShader_Handle = Handle;
+		// g_Xbox_VertexShader_FVF = 0;
 	}
 
 	g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
@@ -2107,19 +2112,26 @@ void CxbxImpl_LoadVertexShaderProgram(DWORD* pFunction, DWORD Address)
 {
 	using namespace XTL;
 
-	LOG_INIT;
-
 	assert(pFunction);
 
+	X_VSH_SHADER_HEADER* ShaderHeader = (X_VSH_SHADER_HEADER*)pFunction;
+
 	// Verify the vertex shader header
-	X_VSH_SHADER_HEADER *ShaderHeader = (X_VSH_SHADER_HEADER*)pFunction;
-	switch (ShaderHeader->Version) {
-	case VERSION_XVS: // 0x2078 // 'x ' Xbox vertex shader
-	case VERSION_XVSS: // 0x7378 // 'xs' Xbox vertex state shader
-	case VERSION_XVSW: // 0x7778 // 'xw' Xbox vertex read/write shader
-		break;
-	default:
-		LOG_TEST_CASE("CxbxImpl_LoadVertexShaderProgram : Unexpected vertex shader header version?");
+	{
+		switch (ShaderHeader->Version) {
+		case VERSION_XVS: // 0x2078 // 'x ' Xbox vertex shader
+		case VERSION_XVSS: // 0x7378 // 'xs' Xbox vertex state shader
+		case VERSION_XVSW: // 0x7778 // 'xw' Xbox vertex read/write shader
+			break;
+		default:
+			LOG_TEST_CASE("Unexpected vertex shader header version?");
+		}
+
+		if (ShaderHeader->NumInst == 0)
+			LOG_TEST_CASE("Unexpected vertex shader header zero length?");
+
+		if (ShaderHeader->NumInst > X_VSH_MAX_INSTRUCTION_COUNT)
+			LOG_TEST_CASE("Too large vertex shader header length?");
 	}
 
 	// The second word in the function indicates it's size, expressed in 4-DWORD-sized slots :
