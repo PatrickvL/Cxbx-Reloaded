@@ -1686,7 +1686,7 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 		/*D3DDECLTYPE_UBYTE4     =  5 */ { 4, sizeof(uint8_t), D3DDTCAPS_UBYTE4 },
 		/*D3DDECLTYPE_SHORT2     =  6 */ { 2, sizeof(int16_t) },
 		/*D3DDECLTYPE_SHORT4     =  7 */ { 4, sizeof(int16_t) },
-		/*D3DDECLTYPE_UBYTE4N    =  8 */ { 4, sizeof(uint8_t), D3DDTCAPS_UBYTE4 },
+		/*D3DDECLTYPE_UBYTE4N    =  8 */ { 4, sizeof(uint8_t), D3DDTCAPS_UBYTE4N },
 		/*D3DDECLTYPE_SHORT2N    =  9 */ { 2, sizeof(int16_t), D3DDTCAPS_SHORT2N },
 		/*D3DDECLTYPE_SHORT4N    = 10 */ { 4, sizeof(int16_t), D3DDTCAPS_SHORT4N },
 		// For completeness, these are not used in HostDeclTypeMap :
