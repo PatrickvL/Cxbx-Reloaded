@@ -78,8 +78,8 @@ typedef struct _CxbxVertexShader
 {
 	// These are the parameters given by the XBE,
 	// we save them to be able to return them when necessary.
-	DWORD* pXboxDeclarationCopy;
-	DWORD                 XboxDeclarationCount; // Xbox's number of DWORD-sized X_D3DVSD* tokens
+//	DWORD* pXboxDeclarationCopy;
+//	DWORD                 XboxDeclarationCount; // Xbox's number of DWORD-sized X_D3DVSD* tokens
 	DWORD                 XboxFunctionSize;
 	DWORD* pXboxFunctionCopy;
 	UINT                  XboxNrAddressSlots;
