@@ -35,6 +35,7 @@
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For PUSH_METHOD, PUSH_COUNT
 #include "core\hle\Intercept.hpp" // For XB_trampoline
+#include "devices\video\nv2a_regs.h" // For NV097_SET_TRANSFORM_PROGRAM et al
 
 namespace XTL {
 	#include "XbD3D8Types.h" // For X_D3DVSDE_*
@@ -1865,8 +1866,19 @@ void CxbxUpdateActiveVertexDeclaration()
 			HostVertexElements[AttributeIndex].Offset = HostAttributeOffsetInVertex; // TODO : Or offset in *the stream* in bytes?
 			HostVertexElements[AttributeIndex].Type = DecodedAttribute.HostDeclType; // Host vertex data type
 			HostVertexElements[AttributeIndex].Method = D3DDECLMETHOD_DEFAULT; // Processing method. The input type for D3DDECLMETHOD_DEFAULT can be anything. The output type is the same as the input type.
-			HostVertexElements[AttributeIndex].Usage = c_XboxAtrributeInfo[AttributeIndex].Usage; // Attribute semantics
-			HostVertexElements[AttributeIndex].UsageIndex = c_XboxAtrributeInfo[AttributeIndex].UsageIndex; // Attribute semantic index
+			if (false/*IsFixedFunction?*/) {
+				HostVertexElements[AttributeIndex].Usage = c_XboxAtrributeInfo[AttributeIndex].Usage; // Attribute semantics
+				HostVertexElements[AttributeIndex].UsageIndex = c_XboxAtrributeInfo[AttributeIndex].UsageIndex; // Attribute semantic index
+			}
+			else {
+				// D3DDECLUSAGE_TEXCOORD can be useds for any user-defined data
+				// We need this because there is no reliable way to detect the real usage
+				// Xbox has no concept of 'usage types', it only requires a list of attribute register numbers.
+				// So we treat them all as 'user-defined' with an Index of the Vertex Register Index
+				// this prevents information loss in shaders due to non-matching dcl types!
+				HostVertexElements[AttributeIndex].Usage = D3DDECLUSAGE_TEXCOORD; // Attribute semantics
+				HostVertexElements[AttributeIndex].UsageIndex = AttributeIndex; // Attribute semantic index
+			}
 		}
 
 		// Give each attribute (vertex element in host terms) it's own vertex stream :
@@ -1943,7 +1955,7 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 		// Parse the limited set of Vertex program NV2A Push buffer commands :
 		NV2AMETHOD NV2ACommand = *ProgramData++;
 		switch (PUSH_METHOD(NV2ACommand)) {
-		case 0x00000B00: { // == NV097_SET_TRANSFORM_PROGRAM
+		case NV097_SET_TRANSFORM_PROGRAM: { // == 0x00000B00
 			// Copy a batch of instructions :
 			unsigned NumberOfDWORDs = PUSH_COUNT(NV2ACommand); // Fetch the number of instruction dwords
 			unsigned SizeInBytes = NumberOfDWORDs * sizeof(DWORD);
@@ -1953,11 +1965,11 @@ void CxbxParseAndConvertVertexShaderFunctionSlots()
 			ProgramData += NumberOfDWORDs;
 			continue;
 		}
-		case 0x00001EA4: // == NV097_SET_TRANSFORM_CONSTANT_LOAD
+		case NV097_SET_TRANSFORM_CONSTANT_LOAD: // == 0x00001EA4
 			ConstantStartRegister = *ProgramData++; // Remember the starting constant register
 			assert(ConstantStartRegister < X_D3DVS_CONSTREG_COUNT);
 			continue;
-		case 0x00000B80: { // == NV097_SET_TRANSFORM_CONSTANT
+		case NV097_SET_TRANSFORM_CONSTANT: { // == 0x00000B80
 			UINT Vector4fCount = PUSH_COUNT(NV2ACommand); // Fetch the number of constants
 			assert(Vector4fCount > 0 && Vector4fCount < 8); // There can be at most 8 constants per batch
 			// Set this batch of constant data on host :
