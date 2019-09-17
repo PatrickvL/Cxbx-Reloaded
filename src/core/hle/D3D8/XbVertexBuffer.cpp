@@ -821,7 +821,7 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 
 VOID EmuFlushIVB()
 {
-	XTL::CxbxUpdateNativeD3DResources();
+	CxbxUpdateNativeD3DResources();
 
     // Parse IVB table with current FVF shader if possible.
     bool bFVF = VshHandleIsFVF(g_Xbox_VertexShader_Handle);
