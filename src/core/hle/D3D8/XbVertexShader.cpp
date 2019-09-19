@@ -1643,7 +1643,7 @@ typedef struct {
 	int XboxNrOfUnits;
 	int XboxSizeInBytes;
 	//int NrOfDimensions;
-	XTL::D3DDECLTYPE HostDeclType;
+	D3DDECLTYPE HostDeclType;
 	bool IsCompatible;
 	int HostNrOfUnits;
 	int HostSizeInBytes;
@@ -1651,8 +1651,6 @@ typedef struct {
 
 void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeDeclarationDecoded_t* pDecoded)
 {
-	using namespace XTL;
-
 	int NV2AType = (AttributeFormat & 0x0F) >> 0;
 	int NV2ASize = (AttributeFormat & 0xF0) >> 4;
 
@@ -1660,7 +1658,7 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 	assert(NV2ASize <= 4 || NV2ASize == 7); // only 0..4 and 7 are valid sizes
 
 	int XboxBytesPerUnit = 1 << (NV2AType & 3); // 0 and 4 use byte units, 1 and 5 use short units, 2 and 6 use float/dword units.
-	int XboxNrOfUnits = (AttributeFormat == X_D3DVSDT_FLOAT2H) ? 3 : NV2ASize; // Identity-map sizes to units, except X_D3DVSDT_FLOAT2H becomes 3 units (the only one that has NV2ASize == 7)
+	int XboxNrOfUnits = (AttributeFormat == XTL::X_D3DVSDT_FLOAT2H) ? 3 : NV2ASize; // Identity-map sizes to units, except X_D3DVSDT_FLOAT2H becomes 3 units (the only one that has NV2ASize == 7)
 	int XboxSizeInBytes = XboxNrOfUnits * XboxBytesPerUnit;
 	//int NrOfDimensions = (AttributeFormat == X_D3DVSDT_NORMPACKED3) ? 3 : (AttributeFormat == X_D3DVSDT_FLOAT2H) ? 4 : XboxNrOfUnits;
 
@@ -1736,18 +1734,18 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 	pDecoded->HostSizeInBytes = HostSizeInBytes;
 }
 
-XTL::IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferCompletely(XTL::X_D3DVertexBuffer* pXboxVertexBuffer)
+IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferCompletely(XTL::X_D3DVertexBuffer* pXboxVertexBuffer)
 {
 	void *pXboxVertexData = GetDataFromXboxResource(pXboxVertexBuffer);
 	unsigned dwHostVertexDataSize = g_VMManager.QuerySize((VAddr)pXboxVertexData, true); // TODO : Replace this with DrawContext-based size of the vertex buffer!
 
-	XTL::IDirect3DVertexBuffer* pNewHostVertexBuffer = nullptr;
+	IDirect3DVertexBuffer* pNewHostVertexBuffer = nullptr;
 
 	HRESULT hRet = g_pD3DDevice->CreateVertexBuffer(
 		dwHostVertexDataSize,
 		D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
 		0,
-		XTL::D3DPOOL_DEFAULT,
+		D3DPOOL_DEFAULT,
 		&pNewHostVertexBuffer,
 		nullptr
 	);
@@ -1769,9 +1767,9 @@ XTL::IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferCompletely(XTL::X_D3DVert
 	return pNewHostVertexBuffer;
 }
 
-XTL::IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferSingleAttribute(XTL::X_D3DVertexBuffer* pXboxVertexBuffer, XboxVertexAttributeDeclarationDecoded_t* pDecodedAttribute, unsigned AttriubuteOffsetInStream)
+IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferSingleAttribute(XTL::X_D3DVertexBuffer* pXboxVertexBuffer, XboxVertexAttributeDeclarationDecoded_t* pDecodedAttribute, unsigned AttriubuteOffsetInStream)
 {
-	XTL::IDirect3DVertexBuffer* pNewHostVertexBuffer = nullptr;
+	IDirect3DVertexBuffer* pNewHostVertexBuffer = nullptr;
 	// TODO
 	return pNewHostVertexBuffer;
 }
@@ -1890,8 +1888,6 @@ void CxbxUpdateActiveVertexDeclaration(
 	XTL::X_STREAMINPUT *pStreamInputs
 )
 {
-	using namespace XTL;
-
 	LOG_INIT;
 
 	RegVIsPresentInDeclaration.fill(false); // Glue to VshWriteShader / VshConvertShader
@@ -1908,13 +1904,13 @@ void CxbxUpdateActiveVertexDeclaration(
 	// Here, parse the Xbox declaration, converting it to a host declaration
 	for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
 		// Fetch the Xbox stream from the pVertexAttributes slots array (this pointer honors overrides) :
-		X_VERTEXSHADERINPUT *pAttributeSlot = &(pVertexAttributes->Slots[AttributeIndex]);
+		XTL::X_VERTEXSHADERINPUT *pAttributeSlot = &(pVertexAttributes->Slots[AttributeIndex]);
 		// We'll call g_pD3DDevice->SetStreamSource for each attribute with these (initially empty) arguments :
 		IDirect3DVertexBuffer *pHostVertexBuffer = nullptr;
 		UINT StreamStride = 0;
 		UINT StreamOffset = 0;
 		// Does this attribute use no storage present the vertex (check this as early as possible to avoid needless processing) ?
-		if (pAttributeSlot->Format == X_D3DVSDT_NONE)
+		if (pAttributeSlot->Format == XTL::X_D3DVSDT_NONE)
 		{
 			// Handle tesselating attributes
 			switch (pAttributeSlot->TesselationType) {
@@ -1948,7 +1944,7 @@ void CxbxUpdateActiveVertexDeclaration(
 			// Fetch the input stream from the pStreamInputs array (this pointer honors overrides) :
 			XTL::X_STREAMINPUT *pXboxStreamInput = &(pStreamInputs[XboxStreamIndex]);
 			// Fetch the Xbox vertex buffer for this input stream :
-			X_D3DVertexBuffer *pXboxVertexBuffer = pXboxStreamInput->VertexBuffer;
+			XTL::X_D3DVertexBuffer *pXboxVertexBuffer = pXboxStreamInput->VertexBuffer;
 	// TODO : What if pXboxVertexBuffer is null? (This implies that the Xbox vertex declaration mentions a stream that's not yet been set using D3DDevice_SetVertexShaderInput or D3DDevice_SetStreamSource*
 			// For now, just skip the vertex element :
 			if (pXboxVertexBuffer == xbnullptr)
