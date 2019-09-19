@@ -2112,6 +2112,8 @@ void CxbxParseXboxFunctionSlotsAndSetConstantsOnHost()
 		case NV097_SET_TRANSFORM_PROGRAM: { // == 0x00000B00
 			// Copy a batch of instructions :
 			unsigned NumberOfDWORDs = PUSH_COUNT(NV2ACommand); // Fetch the number of instruction dwords
+			assert(NumberOfDWORDs > 0); // There should at least be one instruction
+			assert((NumberOfDWORDs & 3) == 0); // Instructions are expected to come in 4 DWORD pairs
 			unsigned SizeInBytes = NumberOfDWORDs * sizeof(DWORD);
 			memcpy(&(NV2AVertexProgram[CurrentProgramIndex]), ProgramData, SizeInBytes);
 			// Skip this number of DWORD's for the next batch :
@@ -2125,6 +2127,7 @@ void CxbxParseXboxFunctionSlotsAndSetConstantsOnHost()
 			continue;
 		case NV097_SET_TRANSFORM_CONSTANT: { // == 0x00000B80
 			UINT Vector4fCount = PUSH_COUNT(NV2ACommand); // Fetch the number of constants
+			// TODO : Are constants counted in DWORD's too?
 			assert(Vector4fCount > 0 && Vector4fCount < 8); // There can be at most 8 constants per batch
 			// Set this batch of constant data on host :
 			hRet = g_pD3DDevice->SetVertexShaderConstantF(ConstantStartRegister, (float*)ProgramData, Vector4fCount);

@@ -1011,9 +1011,11 @@ typedef DWORD X_VERTEXSHADERCONSTANTMODE;
 #define X_VST_STATE                   3
 
 // Xbox vertex shader counts
-#define X_VSH_MAX_ATTRIBUTES           16
-#define X_VSH_MAX_STREAMS              16
-#define X_VSH_MAX_INSTRUCTION_COUNT    136  // The maximum Xbox shader instruction count
+#define X_VSH_MAX_ATTRIBUTES          16
+#define X_VSH_MAX_STREAMS             16
+#define X_VSH_MAX_INSTRUCTION_COUNT   136  // The maximum Xbox shader instruction count
+#define X_VSH_INSTRUCTION_SIZE        4
+#define X_VSH_INSTRUCTION_SIZE_BYTES  (X_VSH_INSTRUCTION_SIZE * sizeof(DWORD))
 
 // Xbox Vertex Shader versions
 #define VERSION_XVS                    0x2078 // 'x ' Xbox vertex shader
@@ -1027,9 +1029,6 @@ typedef struct
 	uint16_t NumInst;
 }
 X_VSH_SHADER_HEADER;
-
-#define X_VSH_INSTRUCTION_SIZE       4
-#define X_VSH_INSTRUCTION_SIZE_BYTES (X_VSH_INSTRUCTION_SIZE * sizeof(DWORD))
 
 // ******************************************************************
 // * X_VERTEXSHADERINPUT
@@ -1068,12 +1067,12 @@ struct X_D3DVertexShader
 {
 	// Note : Debug XBE's have a 'Vshd' DWORD signature prefixing this!
 	DWORD RefCount; // Based on the observation this member is set to 1 in D3DDevice_CreateVertexShader and decreased in D3DDevice_DeleteVertexShader
-	DWORD Flags;
+	DWORD Flags; // Seems to contain at solely the four X_D3DUSAGE_PERSISTENT* flags
 	DWORD FunctionSize; // ?Also known as ProgramSize?
-	DWORD TotalSize; // seems to include both the function and ?constants?
+	DWORD TotalSize; // Sum of FunctionSize + constant count, expressed in instruction slots, taking 4 DWORD's per slot (see X_VSH_INSTRUCTION_SIZE)
 	DWORD NumberOfDimensionsPerTexture; // Guesswork, since all 4 bytes (for all 4 textures) are most often set to 0 (or 2 when a texture isn't used) and 1, 3 and 4 also occur (and nothing else)
 	X_VERTEXATTRIBUTEFORMAT VertexAttribute;
-	DWORD FunctionData[X_VSH_MAX_INSTRUCTION_COUNT]; // probably the binary function data and ?constants? (data continues futher outside this struct, up to TotalSize DWORD's)
+	DWORD FunctionData[1]; // The binary function data and constants (contents continues futher outside this struct, up to TotalSize * 4 (=X_VSH_INSTRUCTION_SIZE) DWORD's)
 };
 
 // vertex shader input registers for fixed function vertex shader
