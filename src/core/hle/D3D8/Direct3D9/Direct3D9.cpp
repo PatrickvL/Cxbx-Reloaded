@@ -76,34 +76,34 @@ XboxTextureStateConverter XboxTextureStates;
 using namespace std::literals::chrono_literals;
 
 // Global(s)
-HWND                                g_hEmuWindow   = NULL; // rendering window
-IDirect3DDevice                    *g_pD3DDevice   = nullptr; // Direct3D Device
+HWND									g_hEmuWindow = NULL; // rendering window
+IDirect3DDevice							*g_pD3DDevice = nullptr; // Direct3D Device
 
 // Static Variable(s)
 static IDirectDrawSurface7         *g_pDDSPrimary  = nullptr; // DirectDraw7 Primary Surface
 static IDirectDrawClipper          *g_pDDClipper   = nullptr; // DirectDraw7 Clipper
 static IDirectDraw7                *g_pDD7          = nullptr; // DirectDraw7
-static HMONITOR                     g_hMonitor      = NULL; // Handle to DirectDraw monitor
+static	HMONITOR						g_hMonitor = NULL; // Handle to DirectDraw monitor
 static GUID                         g_ddguid = { 0 }; // DirectDraw driver GUID
 static DDCAPS                       g_DriverCaps = { 0 };
 
-static bool                         g_bSupportsFormatSurface[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false };// Does device support surface format?
-static bool                         g_bSupportsFormatSurfaceRenderTarget[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false };// Does device support surface format?
-static bool                         g_bSupportsFormatSurfaceDepthStencil[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false };// Does device support surface format?
-static bool                         g_bSupportsFormatTexture[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support texture format?
-static bool                         g_bSupportsFormatTextureRenderTarget[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false };// Does device support texture format?
-static bool                         g_bSupportsFormatTextureDepthStencil[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false };// Does device support texture format?
-static bool                         g_bSupportsFormatVolumeTexture[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support surface format?
-static bool                         g_bSupportsFormatCubeTexture[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support surface format?
-static HBRUSH                       g_hBgBrush = NULL; // Background Brush
-static volatile bool                g_bRenderWindowActive = false;
+static	bool							g_bSupportsFormatSurface[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support surface format?
+static	bool							g_bSupportsFormatSurfaceRenderTarget[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support surface format?
+static	bool							g_bSupportsFormatSurfaceDepthStencil[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support surface format?
+static	bool							g_bSupportsFormatTexture[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support texture format?
+static	bool							g_bSupportsFormatTextureRenderTarget[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support texture format?
+static	bool							g_bSupportsFormatTextureDepthStencil[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support texture format?
+static	bool							g_bSupportsFormatVolumeTexture[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support surface format?
+static	bool							g_bSupportsFormatCubeTexture[XTL::X_D3DFMT_LIN_R8G8B8A8 + 1] = { false }; // Does device support surface format?
+static HBRUSH                       g_hBgBrush      = NULL; // Background Brush
+static	volatile bool					g_bRenderWindowActive = false;
 static BOOL                         g_bIsFauxFullscreen = FALSE;
 static DWORD						g_OverlaySwap = 0; // Set in D3DDevice_UpdateOverlay
 static int                          g_iWireframe = 0; // wireframe toggle
 static bool                         g_bHack_UnlockFramerate = false; // ignore the xbox presentation interval
-static bool                         g_bHasDepth = false;    // Does device have a Depth Buffer?
-static bool                         g_bHasStencil = false;  // Does device have a Stencil Buffer?
-static DWORD						g_dwPrimPerFrame = 0;	// Number of primitives within one frame
+static	bool							g_bHasDepth = false; // Does device have a Depth Buffer?
+static	bool							g_bHasStencil = false; // Does device have a Stencil Buffer?
+static	DWORD							g_dwPrimPerFrame = 0; // Number of primitives within one frame
 
 static Settings::s_video            g_XBVideo;
 
@@ -146,11 +146,24 @@ static bool                         g_bHack_DisableHostGPUQueries = false; // TO
 static IDirect3DQuery              *g_pHostQueryWaitForIdle = nullptr;
 static IDirect3DQuery              *g_pHostQueryCallbackEvent = nullptr;
 
-static std::condition_variable		g_VBConditionVariable;	// Used in BlockUntilVerticalBlank
-static std::mutex					g_VBConditionMutex;		// Used in BlockUntilVerticalBlank
+// D3D based variables
+/* Unused :
+static	XTL::DWORD						*g_Xbox_D3DDevice; // TODO: This should be a D3DDevice structure
+static	DWORD							 g_dwVertexShaderUsage = 0; // Unused. If needed, move to XbVertexShader.cpp
+*/
+// Static Function(s)
+static	BOOL WINAPI						EmuEnumDisplayDevices(GUID FAR *lpGUID, LPSTR lpDriverDescription, LPSTR lpDriverName, LPVOID lpContext, HMONITOR hm);
+static	DWORD WINAPI					EmuRenderWindow(LPVOID);
+static	DWORD WINAPI					EmuCreateDeviceProxy(LPVOID);
+static	LRESULT WINAPI					EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static	DWORD WINAPI					EmuUpdateTickCount(LPVOID);
+static	inline void						EmuVerifyResourceIsRegistered(XTL::X_D3DResource *pResource, DWORD D3DUsage, int iTextureStage, DWORD dwSize);
+static	void							UpdateCurrentMSpFAndFPS(); // Used for benchmarking/fps count
+
 
 // Vertex shader symbols, declared in XbVertexShader.cpp :
 extern DWORD g_Xbox_VertexShader_Handle;
+
 extern bool CxbxLocateVertexShader();
 extern void CxbxUpdateActiveVertexShader();
 extern void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address);
@@ -162,6 +175,8 @@ extern void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, XTL::X
 // Vertex buffer symbols, declared in XbVertexBuffer.cpp
 extern void CxbxImpl_SetStreamSource(UINT StreamNumber, XTL::X_D3DVertexBuffer* pStreamData, UINT Stride);
 
+static std::condition_variable		g_VBConditionVariable;	// Used in BlockUntilVerticalBlank
+static std::mutex					g_VBConditionMutex;		// Used in BlockUntilVerticalBlank
 static DWORD                        g_VBLastSwap = 0;
 
 static XTL::DWORD                   g_Xbox_PresentationInterval_Default = D3DPRESENT_INTERVAL_IMMEDIATE;
