@@ -142,7 +142,7 @@ static unsigned int WINAPI PCSTProxy
 		// Debugging notice : When the below line shows up with an Exception dialog and a
 		// message like: "Exception thrown at 0x00026190 in cxbx.exe: 0xC0000005: Access
 		// violation reading location 0xFD001804.", then this is AS-DESIGNED behaviour!
-		// (To avoid repetitions, uncheck "Break when this exception type is thrown").
+		// (To avoid repetitions, under "Except when thrown from:", check "cxbx.exe".)
 		routine(xboxkrnl::PKSTART_ROUTINE(StartRoutine), StartContext);
 	}
 	__except (EmuException(GetExceptionInformation()))

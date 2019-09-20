@@ -189,7 +189,6 @@ static XTL::DWORD                  *g_pXbox_BeginPush_Buffer = xbnullptr; // pri
 static XTL::PVOID                   g_pXbox_Palette_Data[XTL::X_D3DTS_STAGECOUNT] = { xbnullptr, xbnullptr, xbnullptr, xbnullptr }; // cached palette pointer
 static unsigned                     g_Xbox_Palette_Size[XTL::X_D3DTS_STAGECOUNT] = { 0 }; // cached palette size
 
-
        XTL::X_D3DBaseTexture       *g_pXbox_SetTexture[XTL::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by our D3DDevice_SetTexture and D3DDevice_SwitchTexture patches
 static XTL::X_D3DBaseTexture        CxbxActiveTextureCopies[XTL::X_D3DTS_STAGECOUNT] = {}; // Set by D3DDevice_SwitchTexture. Cached active texture
 
