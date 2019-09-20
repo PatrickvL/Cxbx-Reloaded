@@ -2700,7 +2700,7 @@ XTL::X_D3DSurface * WINAPI XTL::EMUPATCH(D3DDevice_GetRenderTarget2)()
 
 	LOG_FUNC();
 
-	X_D3DSurface *result = g_pXboxRenderTarget;
+	X_D3DSurface *result = g_pXbox_RenderTarget;
 
 	if (result)
 		result->Common++; // EMUPATCH(D3DResource_AddRef)(result);
@@ -2734,7 +2734,7 @@ XTL::X_D3DSurface * WINAPI XTL::EMUPATCH(D3DDevice_GetDepthStencilSurface2)()
 
 	LOG_FUNC();
 
-	X_D3DSurface *result = g_pXboxDepthStencil;
+	X_D3DSurface *result = g_pXbox_DepthStencil;
 
 	if (result)
 		result->Common++; // EMUPATCH(D3DResource_AddRef)(result);
@@ -3680,8 +3680,8 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_GetViewport)
 		if (GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height)) {
 
 			// Get current Xbox render target dimensions
-			DWORD XboxRenderTarget_Width = GetPixelContainerWidth(g_pXboxRenderTarget);
-			DWORD XboxRenderTarget_Height = GetPixelContainerHeigth(g_pXboxRenderTarget);
+			DWORD XboxRenderTarget_Width = GetPixelContainerWidth(g_pXbox_RenderTarget);
+			DWORD XboxRenderTarget_Height = GetPixelContainerHeigth(g_pXbox_RenderTarget);
 
 			// Scale host back to Xbox dimensions (avoiding hard-coding 640 x 480)
 			pViewport->X = ScaleDWORD(HostViewPort.X, HostRenderTarget_Width, XboxRenderTarget_Width);
@@ -4136,7 +4136,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
 
 	// D3DDevice_LoadVertexShaderProgram splits the given function buffer into batch-wise pushes to the NV2A
 
-	load_shader_program_key_t shaderCacheKey = ((load_shader_program_key_t)g_XboxVertexShaderHandle << 32) | (DWORD)pFunction;
+	load_shader_program_key_t shaderCacheKey = ((load_shader_program_key_t)g_Xbox_VertexShaderHandle << 32) | (DWORD)pFunction;
     
 	// If the shader key was located in the cache, use the cached shader
 	// TODO: When do we clear the cache? In this approach, shaders are
@@ -4150,8 +4150,8 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
 
     DWORD *pXboxVertexDeclaration = nullptr;
 
-    if (VshHandleIsVertexShader(g_XboxVertexShaderHandle)) {
-        CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(g_XboxVertexShaderHandle);
+    if (VshHandleIsVertexShader(g_Xbox_VertexShaderHandle)) {
+        CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(g_Xbox_VertexShaderHandle);
 
         // If we failed to fetch an active pixel shader, log and do nothing
         if (pCxbxVertexShader == nullptr) {
@@ -4175,7 +4175,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
 		CxbxXboxVertexDeclaration[index++] = X_D3DVSD_STREAM(0);
 
         // Write Position
-        DWORD position = (g_XboxVertexShaderHandle & X_D3DFVF_POSITION_MASK);
+        DWORD position = (g_Xbox_VertexShaderHandle & X_D3DFVF_POSITION_MASK);
         if (position == X_D3DFVF_XYZRHW) {
 			CxbxXboxVertexDeclaration[index++] = X_D3DVSD_REG(X_D3DVSDE_POSITION, X_D3DVSDT_FLOAT4);
         } else {
@@ -4197,32 +4197,32 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
         }
 
         // Write Normal, Diffuse, and Specular
-        if (g_XboxVertexShaderHandle & X_D3DFVF_NORMAL) {
+        if (g_Xbox_VertexShaderHandle & X_D3DFVF_NORMAL) {
 			CxbxXboxVertexDeclaration[index++] = X_D3DVSD_REG(X_D3DVSDE_NORMAL, X_D3DVSDT_FLOAT3);
         }
-        if (g_XboxVertexShaderHandle & X_D3DFVF_DIFFUSE) {
+        if (g_Xbox_VertexShaderHandle & X_D3DFVF_DIFFUSE) {
 			CxbxXboxVertexDeclaration[index++] = X_D3DVSD_REG(X_D3DVSDE_DIFFUSE, X_D3DVSDT_D3DCOLOR);
         }
-        if (g_XboxVertexShaderHandle & X_D3DFVF_SPECULAR) {
+        if (g_Xbox_VertexShaderHandle & X_D3DFVF_SPECULAR) {
 			CxbxXboxVertexDeclaration[index++] = X_D3DVSD_REG(X_D3DVSDE_SPECULAR, X_D3DVSDT_D3DCOLOR);
         }
 
         // Write Texture Coordinates
-        int textureCount = (g_XboxVertexShaderHandle & X_D3DFVF_TEXCOUNT_MASK) >> X_D3DFVF_TEXCOUNT_SHIFT;
+        int textureCount = (g_Xbox_VertexShaderHandle & X_D3DFVF_TEXCOUNT_MASK) >> X_D3DFVF_TEXCOUNT_SHIFT;
 		assert(textureCount <= 4); // Safeguard, since the X_D3DFVF_TEXCOUNT bitfield could contain invalid values (5 up to 15)
         for (int i = 0; i < textureCount; i++) {
             int numberOfCoordinates = 0;
 
-            if ((g_XboxVertexShaderHandle & X_D3DFVF_TEXCOORDSIZE1(i)) == (DWORD)X_D3DFVF_TEXCOORDSIZE1(i)) {
+            if ((g_Xbox_VertexShaderHandle & X_D3DFVF_TEXCOORDSIZE1(i)) == (DWORD)X_D3DFVF_TEXCOORDSIZE1(i)) {
                 numberOfCoordinates = X_D3DVSDT_FLOAT1;
             }
-            if ((g_XboxVertexShaderHandle & X_D3DFVF_TEXCOORDSIZE2(i)) == (DWORD)X_D3DFVF_TEXCOORDSIZE2(i)) {
+            if ((g_Xbox_VertexShaderHandle & X_D3DFVF_TEXCOORDSIZE2(i)) == (DWORD)X_D3DFVF_TEXCOORDSIZE2(i)) {
                 numberOfCoordinates = X_D3DVSDT_FLOAT2;
             }
-            if ((g_XboxVertexShaderHandle & X_D3DFVF_TEXCOORDSIZE3(i)) == (DWORD)X_D3DFVF_TEXCOORDSIZE3(i)) {
+            if ((g_Xbox_VertexShaderHandle & X_D3DFVF_TEXCOORDSIZE3(i)) == (DWORD)X_D3DFVF_TEXCOORDSIZE3(i)) {
                 numberOfCoordinates = X_D3DVSDT_FLOAT3;
             }
-            if ((g_XboxVertexShaderHandle & X_D3DFVF_TEXCOORDSIZE4(i)) == (DWORD)X_D3DFVF_TEXCOORDSIZE4(i)) {
+            if ((g_Xbox_VertexShaderHandle & X_D3DFVF_TEXCOORDSIZE4(i)) == (DWORD)X_D3DFVF_TEXCOORDSIZE4(i)) {
                 numberOfCoordinates = X_D3DVSDT_FLOAT4;
             }
 

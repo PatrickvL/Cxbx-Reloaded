@@ -50,20 +50,20 @@ namespace xboxkrnl
 #include <bitset>
 
 // External symbols :
-extern XTL::X_STREAMINPUT g_SetStreamSources[X_VSH_MAX_STREAMS]; // Declared in XbVertexBuffer.cpp, set by CxbxImpl_SetStreamSource
+extern XTL::X_STREAMINPUT g_SetStreamSources[X_VSH_MAX_STREAMS]; // Declared in XbVertexBuffer.cpp, set by [D3DDevice|CxbxImpl]_SetStreamSource*
 extern XTL::X_VERTEXSHADERCONSTANTMODE g_Xbox_VertexShaderConstantMode; // Declared in Direct3D9.cpp
 void* GetDataFromXboxResource(XTL::X_D3DResource* pXboxResource); // Implemented in Direct3D9.cpp
 
-// Variables set by CxbxImpl_SetVertexShaderInput() :
+// Variables set by [D3DDevice|CxbxImpl]_SetVertexShaderInput() :
 unsigned g_Xbox_SetVertexShaderInput_Count = 0;
 XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
 XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
 
-// Variables set by CxbxImpl_SetVertexShader() and CxbxImpl_SelectVertexShader() :
+// Variables set by [D3DDevice|CxbxImpl]_SetVertexShader() and [D3DDevice|CxbxImpl]_SelectVertexShader() :
 DWORD g_Xbox_VertexShader_Handle = 0;
 DWORD g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
-// Variable set by CxbxImpl_LoadVertexShader() / CxbxImpl_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
+// Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
 DWORD g_Xbox_VertexShader_FunctionSlots[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE] = { 0 }; // Each slot takes either 4 DWORDS (for instructions) or 4 floats (for constants)
 
 // Variable set by CxbxLocateVertexShader() :
@@ -1617,9 +1617,9 @@ XTL::X_D3DVertexShader* GetXboxVertexShader()
 		// and D3DDevice_SelectVertexShader* patches.
 
 		// Note, that once we have a fail-safe way to determine the location of the
-		// Xbox Device.m_pVertexShader symbol and the accompanying Address, we no longer need
-		// this statement block and our patches on D3DDevice_SetVertexShader and
-		// D3DDevice_SelectVertexShader* !
+		// Xbox Device.m_pVertexShader symbol, the FVF and the accompanying Address,
+		// we no longer need this statement block, nor patches on D3DDevice_SetVertexShader
+		// nor D3DDevice_SelectVertexShader* !
 
 		// Now, to convert, we do need to have a valid vertex shader :
 		if (g_Xbox_VertexShader_Handle == 0) {
@@ -2162,7 +2162,7 @@ void CxbxUpdateActiveVertexShader()
 		return;
 	}
 
-	// Take overrides (on declarations and streaminputs, as set by SetVertexShaderInput) into account :
+	// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
 	X_VERTEXATTRIBUTEFORMAT *pVertexAttributes = (g_Xbox_SetVertexShaderInput_Count > 0) ? &g_Xbox_SetVertexShaderInput_Attributes : &pXboxVertexShader->VertexAttribute;
 	X_STREAMINPUT *pStreamInputs = (g_Xbox_SetVertexShaderInput_Count > 0) ? g_Xbox_SetVertexShaderInput_Data : g_SetStreamSources;
 
