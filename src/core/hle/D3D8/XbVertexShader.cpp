@@ -1649,8 +1649,99 @@ typedef struct {
 	int HostSizeInBytes;
 } XboxVertexAttributeDeclarationDecoded_t;
 
+// VSDT validity check (hand-optimized to avoid the memory accesses that compiled switch-statements would incur)
+bool X_D3DVSDT_IsValid(const uint32_t VSDT)
+{
+	if (VSDT & 0xFFFFFF88) return false; // Bit 31-7 or 3 should never be set
+
+	using namespace XTL;
+// With that out of the way, compact the valid bits (6,5,4,2,1 and 0) efficiently into the least significant 6 bits :
+#define _COMPACT_VALID_BITS(x) (((x & 1) << 2) | (x >> 1))
+// Define a 64-bit mask containing a set bit for each valid (compacted) VSDT value :
+#define _BITMASK(x) ((uint64_t)1 << _COMPACT_VALID_BITS(x))
+	static constexpr uint64_t AllValidTypesBitmask = 0
+		| _BITMASK(X_D3DVSDT_D3DCOLOR)
+		| _BITMASK(X_D3DVSDT_PBYTE1)
+		| _BITMASK(X_D3DVSDT_PBYTE2)
+		| _BITMASK(X_D3DVSDT_PBYTE3)
+		| _BITMASK(X_D3DVSDT_PBYTE4)
+		| _BITMASK(X_D3DVSDT_NORMSHORT1)
+		| _BITMASK(X_D3DVSDT_NORMSHORT2)
+		| _BITMASK(X_D3DVSDT_NORMSHORT3)
+		| _BITMASK(X_D3DVSDT_NORMSHORT4)
+		| _BITMASK(X_D3DVSDT_SHORT1)
+		| _BITMASK(X_D3DVSDT_SHORT2)
+		| _BITMASK(X_D3DVSDT_SHORT3)
+		| _BITMASK(X_D3DVSDT_SHORT4)
+		| _BITMASK(X_D3DVSDT_NONE)
+		| _BITMASK(X_D3DVSDT_FLOAT1)
+		| _BITMASK(X_D3DVSDT_FLOAT2)
+		| _BITMASK(X_D3DVSDT_FLOAT3)
+		| _BITMASK(X_D3DVSDT_FLOAT4)
+		| _BITMASK(X_D3DVSDT_FLOAT2H)
+		| _BITMASK(X_D3DVSDT_NORMPACKED3);
+
+	// Now, return validity of the given VSDT value by checking it's appearance in this bit mask :
+	// (Note, shifting the bitmask and returning bit 0 is faster than checking the VSDT'th bit)
+	return (AllValidTypesBitmask >> _COMPACT_VALID_BITS(VSDT)) & 1;
+#undef _COMPACT_VALID_BITS
+#undef _MASK
+}
+
+/* Determine size for the following X_D3DVSDT_* types (value) :
+	X_D3DVSDT_D3DCOLOR    (0x40) =  4 : sizeof(uint32_t) * 1
+	X_D3DVSDT_PBYTE1      (0x14) =  1 : sizeof(uint8_t ) * 1
+	X_D3DVSDT_PBYTE2      (0x24) =  2 : sizeof(uint8_t ) * 2
+	X_D3DVSDT_PBYTE3      (0x34) =  3 : sizeof(uint8_t ) * 3
+	X_D3DVSDT_PBYTE4      (0x44) =  4 : sizeof(uint8_t ) * 4
+
+	X_D3DVSDT_NORMSHORT1  (0x11) =  2 : sizeof(uint16_t) * 1
+	X_D3DVSDT_NORMSHORT2  (0x21) =  4 : sizeof(uint16_t) * 2
+	X_D3DVSDT_NORMSHORT3  (0x31) =  6 : sizeof(uint16_t) * 3
+	X_D3DVSDT_NORMSHORT4  (0x41) =  8 : sizeof(uint16_t) * 4
+	X_D3DVSDT_SHORT1      (0x15) =  2 : sizeof(uint16_t) * 1
+	X_D3DVSDT_SHORT2      (0x25) =  4 : sizeof(uint16_t) * 2
+	X_D3DVSDT_SHORT3      (0x35) =  6 : sizeof(uint16_t) * 3
+	X_D3DVSDT_SHORT4      (0x45) =  8 : sizeof(uint16_t) * 4
+
+	X_D3DVSDT_NONE        (0x02) =  0 : sizeof(float   ) * 0
+	X_D3DVSDT_FLOAT1      (0x12) =  4 : sizeof(float   ) * 1
+	X_D3DVSDT_FLOAT2      (0x22) =  8 : sizeof(float   ) * 2
+	X_D3DVSDT_FLOAT3      (0x32) = 12 : sizeof(float   ) * 3
+	X_D3DVSDT_FLOAT4      (0x42) = 16 : sizeof(float   ) * 4
+	X_D3DVSDT_FLOAT2H     (0x72) = 12 : sizeof(float   ) * 3 (NOT 7!)
+	X_D3DVSDT_NORMPACKED3 (0x16) =  4 : sizeof(uint32_t) * 1
+
+No other inputs should be given (they will produce unreliable sizes).
+*/
+unsigned X_D3DVSDT_SizeInBytes(const uint8_t VSDT) // VSDT = VSDGetDataType(dwDecl) a.k.a. SizeAndType
+{
+	// First handle the case that doesn't fit the code below :
+	if (VSDT == XTL::X_D3DVSDT_FLOAT2H) // == 0x72
+		return 12; // == 3 * sizeof(float)
+
+	unsigned Shift = VSDT & 0x3;
+	// Shift becomes 0 for VSDT 0x?4 (X_D3DVSDT_PBYTE1, etc) and 0x?0 (X_D3DVSDT_D3DCOLOR),
+	// Shift becomes 1 for VSDT 0x?5 (X_D3DVSDT_SHORT1, etc) and 0x?1 (X_D3DVSDT_NORMSHORT1, etc),
+	// Shift becomes 2 for VSDT 0x?6 (X_D3DVSDT_NORMPACKED3) and 0x?2 (X_D3DVSDT_NONE, X_D3DVSDT_FLOAT1, etc).
+
+	// A Shift of 0 equals factor (1 << 0) == 1 == sizeof(uint8_t)
+	// A Shift of 1 equals factor (1 << 1) == 2 == sizeof(uint16_t)
+	// A Shift of 2 equals factor (1 << 2) == 4 == sizeof(float) == sizeof(uint32_t)
+	unsigned Size = (VSDT >> 4) & 0xF;
+
+	// Note, X_D3DVSDT_D3DCOLOR    (0x40) has Size 4, resulting in 4 << 0 == 4, which still equals sizeof(uint32_t)!
+	// Note, X_D3DVSDT_NONE        (0x02) has Size 0, resulting in 0 << 2 == 0, which still equals 0!
+	// Note, X_D3DVSDT_NORMPACKED3 (0x16) has Size 1, resulting in 1 << 2 == 4, which still equals sizeof(uint32_t)!
+	return Size << Shift;
+}
+
 void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeDeclarationDecoded_t* pDecoded)
 {
+	assert(X_D3DVSDT_IsValid(AttributeFormat));
+
+	int XboxSizeInBytes = X_D3DVSDT_SizeInBytes((uint8_t)AttributeFormat);
+
 	int NV2AType = (AttributeFormat & 0x0F) >> 0;
 	int NV2ASize = (AttributeFormat & 0xF0) >> 4;
 
@@ -1659,7 +1750,7 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 
 	int XboxBytesPerUnit = 1 << (NV2AType & 3); // 0 and 4 use byte units, 1 and 5 use short units, 2 and 6 use float/dword units.
 	int XboxNrOfUnits = (AttributeFormat == XTL::X_D3DVSDT_FLOAT2H) ? 3 : NV2ASize; // Identity-map sizes to units, except X_D3DVSDT_FLOAT2H becomes 3 units (the only one that has NV2ASize == 7)
-	int XboxSizeInBytes = XboxNrOfUnits * XboxBytesPerUnit;
+	assert(XboxSizeInBytes == XboxNrOfUnits * XboxBytesPerUnit); // Temporary check if X_D3DVSDT_SizeInBytes() output matches the previous determination method
 	//int NrOfDimensions = (AttributeFormat == X_D3DVSDT_NORMPACKED3) ? 3 : (AttributeFormat == X_D3DVSDT_FLOAT2H) ? 4 : XboxNrOfUnits;
 
 #define X ((D3DDECLTYPE)-1) // Marks an invalid entry
