@@ -62,10 +62,14 @@ XTL::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS] = { 0 }; // Note : 
 extern XTL::X_D3DSurface* g_pXbox_RenderTarget;
 extern XTL::X_D3DSurface* g_pXbox_BackBufferSurface;
 
-void *GetDataFromXboxResource(XTL::X_D3DResource *pXboxResource); // implemented in Direct3D9.cpp
-bool GetHostRenderTargetDimensions(DWORD* pHostWidth, DWORD* pHostHeight, IDirect3DSurface* pHostRenderTarget = nullptr);
-uint32_t GetPixelContainerWidth(XTL::X_D3DPixelContainer* pPixelContainer);
-uint32_t GetPixelContainerHeight(XTL::X_D3DPixelContainer* pPixelContainer);
+// Resource related functions, declared in Direct3D9.cpp :
+extern void *GetDataFromXboxResource(XTL::X_D3DResource *pXboxResource);
+extern bool GetHostRenderTargetDimensions(DWORD* pHostWidth, DWORD* pHostHeight, IDirect3DSurface* pHostRenderTarget = nullptr);
+extern uint32_t GetPixelContainerWidth(XTL::X_D3DPixelContainer* pPixelContainer);
+extern uint32_t GetPixelContainerHeight(XTL::X_D3DPixelContainer* pPixelContainer);
+
+// implemented in XbVertexShader.cpp
+extern void CxbxUpdateActiveVertexShader(unsigned VerticesInBuffer);
 
 void CxbxPatchedStream::Activate(CxbxDrawContext *pDrawContext, UINT uiStream) const
 {
@@ -783,6 +787,8 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 		if (pDrawContext->VerticesInBuffer < dwHighestVertexCount)
 			pDrawContext->VerticesInBuffer = dwHighestVertexCount;
 	}
+
+	CxbxUpdateActiveVertexShader(pDrawContext->VerticesInBuffer);
 
     // Get the number of streams
     m_uiNbrStreams = GetNbrStreams(pDrawContext);
