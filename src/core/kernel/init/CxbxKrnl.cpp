@@ -389,7 +389,6 @@ HANDLE CxbxRestoreContiguousMemory(char *szFilePath_memory_bin)
 		/* dwFileOffsetLow */0,
 		tiledMemorySize,
 		(void *)XBOX_WRITE_COMBINED_BASE);
-
 	if (tiled_memory != (void *)XBOX_WRITE_COMBINED_BASE)
 	{
 		if (tiled_memory)
@@ -401,7 +400,6 @@ HANDLE CxbxRestoreContiguousMemory(char *szFilePath_memory_bin)
 
 	printf("[0x%.4X] INIT: Mapped contiguous memory to Xbox tiled memory at 0x%.8X to 0x%.8X\n",
 		GetCurrentThreadId(), XBOX_WRITE_COMBINED_BASE, XBOX_WRITE_COMBINED_BASE + tiledMemorySize - 1);
-
 
 	return hFileMapping;
 }
@@ -460,12 +458,12 @@ HANDLE CxbxRestorePageTablesMemory(char* szFilePath_page_tables)
 
 	// Map PageTables.bin contents into memory :
 	void *memory = (void *)MapViewOfFileEx(
-	hFileMapping,
-	FILE_MAP_READ | FILE_MAP_WRITE,
-	/* dwFileOffsetHigh */0,
-	/* dwFileOffsetLow */0,
-	4 * ONE_MB,
-	(void *)PAGE_TABLES_BASE);
+		hFileMapping,
+		FILE_MAP_READ | FILE_MAP_WRITE,
+		/* dwFileOffsetHigh */0,
+		/* dwFileOffsetLow */0,
+		4 * ONE_MB,
+		(void *)PAGE_TABLES_BASE);
 	if (memory != (void *)PAGE_TABLES_BASE)
 	{
 		if (memory)
