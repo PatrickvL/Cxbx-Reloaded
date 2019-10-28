@@ -2394,13 +2394,17 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 	}
 
 	X_D3DVertexShader* XboxVertexShader = VshHandleToXboxVertexShader(Handle);
-	if (Address + XboxVertexShader->TotalSize > X_VSH_MAX_INSTRUCTION_COUNT) {
+	if (Address + XboxVertexShader->FunctionSize > X_VSH_MAX_INSTRUCTION_COUNT) {
 		LOG_TEST_CASE("D3DDevice_LoadVertexShader would exceed too far!");
 		return;
 	}
 
+	// TODO : XboxVertexShader->TotalSize (which includes constants) would overflow;
+	// So, how should we store those (or allow CxbxParseXboxFunctionSlotsAndSetConstantsOnHost
+	// to fetches constants from g_Xbox_VertexShader_FunctionSlots)?
+
 	// Copy the function data into the indicated address slots :
-	CxbxCopyVertexShaderFunctionSlots(Address, XboxVertexShader->TotalSize, XboxVertexShader->FunctionData);
+	CxbxCopyVertexShaderFunctionSlots(Address, XboxVertexShader->FunctionSize, XboxVertexShader->FunctionData);
 }
 
 void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
@@ -2539,7 +2543,7 @@ bool CxbxLocateVertexShader()
 {
 	DWORD Handle1 = 0x5EAC0000;
 	DWORD Handle2 = 0xF14DEE80;
-	DWORD Address = 135;
+	DWORD Address = 0;// 135;
 	DWORD HandleToRestore = g_Xbox_VertexShader_Handle;
 	DWORD AddressToRestore = g_Xbox_VertexShader_FunctionSlots_StartAddress;
 
