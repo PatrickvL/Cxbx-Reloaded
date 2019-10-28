@@ -1826,15 +1826,17 @@ void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeD
 	pDecoded->HostSizeInBytes = HostSizeInBytes;
 }
 
-IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferCompletely(XTL::X_D3DVertexBuffer* pXboxVertexBuffer)
+IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferCompletely(
+	XTL::X_D3DVertexBuffer* pXboxVertexBuffer,
+	unsigned VertexDataSizeInBytes
+)
 {
 	void *pXboxVertexData = GetDataFromXboxResource(pXboxVertexBuffer);
-	unsigned dwHostVertexDataSize = g_VMManager.QuerySize((VAddr)pXboxVertexData, true); // TODO : Replace this with DrawContext-based size of the vertex buffer!
 
 	IDirect3DVertexBuffer* pNewHostVertexBuffer = nullptr;
 
 	HRESULT hRet = g_pD3DDevice->CreateVertexBuffer(
-		dwHostVertexDataSize,
+		VertexDataSizeInBytes,
 		D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
 		0,
 		D3DPOOL_DEFAULT,
@@ -1846,23 +1848,68 @@ IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferCompletely(XTL::X_D3DVertexBuf
 		CxbxKrnlCleanup("Failed to create vertex buffer");
 	}
 
-	// If we need to lock a host vertex buffer, do so now
-
 	uint8_t* pHostVertexData = nullptr;
-	hRet = pNewHostVertexBuffer->Lock(0, 0, (D3DLockData * *)& pHostVertexData, D3DLOCK_DISCARD);
+	hRet = pNewHostVertexBuffer->Lock(0, 0, (D3DLockData **)&pHostVertexData, D3DLOCK_DISCARD);
 	if (FAILED(hRet)) {
 		CxbxKrnlCleanup("Couldn't lock vertex buffer");
 	}
 
-	memcpy(pHostVertexData, pXboxVertexData, dwHostVertexDataSize);
+	memcpy(pHostVertexData, pXboxVertexData, VertexDataSizeInBytes);
+
+	hRet = pNewHostVertexBuffer->Unlock();
+	if (FAILED(hRet)) {
+		CxbxKrnlCleanup("Couldn't unlock vertex buffer");
+	}
 
 	return pNewHostVertexBuffer;
 }
 
-IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferSingleAttribute(XTL::X_D3DVertexBuffer* pXboxVertexBuffer, XboxVertexAttributeDeclarationDecoded_t* pDecodedAttribute, unsigned AttriubuteOffsetInStream)
+IDirect3DVertexBuffer* CxbxConvertXboxVertexBufferSingleAttribute(
+	XTL::X_D3DVertexBuffer* pXboxVertexBuffer,
+	unsigned VerticesInBuffer,
+	XboxVertexAttributeDeclarationDecoded_t* pDecodedAttribute,
+	unsigned AttributeOffsetInStream
+)
 {
+	uint8_t* pXboxVertexData = (uint8_t *)GetDataFromXboxResource(pXboxVertexBuffer);
+
+	unsigned VertexDataSizeInBytes = VerticesInBuffer * pDecodedAttribute->HostSizeInBytes;
+
 	IDirect3DVertexBuffer* pNewHostVertexBuffer = nullptr;
-	// TODO
+
+	HRESULT hRet = g_pD3DDevice->CreateVertexBuffer(
+		VertexDataSizeInBytes,
+		D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
+		0,
+		D3DPOOL_DEFAULT,
+		&pNewHostVertexBuffer,
+		nullptr
+	);
+
+	if (FAILED(hRet)) {
+		CxbxKrnlCleanup("Failed to create vertex buffer");
+	}
+
+	uint8_t* pHostVertexData = nullptr;
+	hRet = pNewHostVertexBuffer->Lock(0, 0, (D3DLockData **)&pHostVertexData, D3DLOCK_DISCARD);
+	if (FAILED(hRet)) {
+		CxbxKrnlCleanup("Couldn't lock vertex buffer");
+	}
+
+	pXboxVertexData += AttributeOffsetInStream;
+
+	unsigned XboxStreamStride = 0; // TODO : Get this from somewhere
+	for (unsigned i = 0; i < VerticesInBuffer; i++) {
+		// TODO : Copy-convert Xbox vertex attribute to host
+		pXboxVertexData += XboxStreamStride;
+		pHostVertexData += pDecodedAttribute->HostSizeInBytes;
+	}
+
+	hRet = pNewHostVertexBuffer->Unlock();
+	if (FAILED(hRet)) {
+		CxbxKrnlCleanup("Couldn't unlock vertex buffer");
+	}
+
 	return pNewHostVertexBuffer;
 }
 
@@ -1974,10 +2021,7 @@ void DumpXboxVertexAttributes(
 // splitting up each attribute into a separate stream per host element,
 // so that we can use an unmodified host clone of the Xbox vertex buffer
 // for all compatible data types, and separate host streams for conversions.
-void CxbxUpdateActiveVertexDeclaration(
-	XTL::X_VERTEXATTRIBUTEFORMAT *pVertexAttributes,
-	XTL::X_STREAMINPUT *pStreamInputs
-)
+void CxbxUpdateActiveVertexDeclaration(XTL::X_VERTEXATTRIBUTEFORMAT *pVertexAttributes)
 {
 	LOG_INIT;
 
@@ -1993,13 +2037,12 @@ void CxbxUpdateActiveVertexDeclaration(
 	assert(HostVertexElements[0].Stream > X_VSH_MAX_ATTRIBUTES);
 
 	// Here, parse the Xbox declaration, converting it to a host declaration
+	UINT StreamOffsets[16] = { 0 };
 	for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
 		// Fetch the Xbox stream from the pVertexAttributes slots array (this pointer honors overrides) :
 		XTL::X_VERTEXSHADERINPUT *pAttributeSlot = &(pVertexAttributes->Slots[AttributeIndex]);
 		// We'll call g_pD3DDevice->SetStreamSource for each attribute with these (initially empty) arguments :
 		IDirect3DVertexBuffer *pHostVertexBuffer = nullptr;
-		UINT StreamStride = 0;
-		UINT StreamOffset = 0;
 		// Does this attribute use no storage present the vertex (check this as early as possible to avoid needless processing) ?
 		if (pAttributeSlot->Format == XTL::X_D3DVSDT_NONE)
 		{
@@ -2032,39 +2075,27 @@ void CxbxUpdateActiveVertexDeclaration(
 			// When input streams are overriden, the stream indices referenced by attribute slots should stay in bounds!
 			assert((g_Xbox_SetVertexShaderInput_Count == 0) || (XboxStreamIndex < g_Xbox_SetVertexShaderInput_Count));
 
-			// Fetch the input stream from the pStreamInputs array (this pointer honors overrides) :
-			XTL::X_STREAMINPUT *pXboxStreamInput = &(pStreamInputs[XboxStreamIndex]);
-			// Fetch the Xbox vertex buffer for this input stream :
-			XTL::X_D3DVertexBuffer *pXboxVertexBuffer = pXboxStreamInput->VertexBuffer;
-	// TODO : What if pXboxVertexBuffer is null? (This implies that the Xbox vertex declaration mentions a stream that's not yet been set using D3DDevice_SetVertexShaderInput or D3DDevice_SetStreamSource*
-			// For now, just skip the vertex element :
-			if (pXboxVertexBuffer == xbnullptr)
-				continue;
-
 			// Decode the Xbox NV2A attribute format, including mapping to host :
 			XboxVertexAttributeDeclarationDecoded_t DecodedAttribute;
 			CxbxDecodeVertexAttributeFormat(pAttributeSlot->Format, &DecodedAttribute);
 			// All non-X_D3DVSDT_NONE formats should have valid data :
-			assert(pXboxVertexBuffer);
 			assert(DecodedAttribute.XboxSizeInBytes > 0);
 
-			int HostAttributeOffsetInVertex;
+			int HostAttributeOffset;
 
 			// Can we use the Xbox attribute as-is?
 			if (DecodedAttribute.IsCompatible) {
 				// All we need to do, is use the host counterpart with unmodified Xbox contents :
-				pHostVertexBuffer = CxbxConvertXboxVertexBufferCompletely(pXboxVertexBuffer);
-				StreamStride = pXboxStreamInput->Stride;
-				StreamOffset = pXboxStreamInput->Offset; // Can only become non-zero when g_Xbox_SetVertexShaderInput_Data is active
-				HostAttributeOffsetInVertex = StreamOffset;
+				HostAttributeOffset = StreamOffsets[XboxStreamIndex];
+				// TODO : What about pXboxStreamInput->Offset; // Can only become non-zero when g_Xbox_SetVertexShaderInput_Data is active
 			}
 			else
 			{
-				pHostVertexBuffer = CxbxConvertXboxVertexBufferSingleAttribute(pXboxVertexBuffer, &DecodedAttribute, pXboxStreamInput->Offset);
 				// TODO : Should we map StreamOffset?
-				assert(StreamStride == 0); // This dedicated VertexBuffer has no other contents, so it has no stride. TODO : Or must we set DecodedAttribute.HostSizeInBytes?
-				HostAttributeOffsetInVertex = 0; // The dedicated stream contains only this attribute, so it's offset in the 'vertex' stream must be zero
+				HostAttributeOffset = 0; // The dedicated stream contains only this attribute, so it's offset in the 'vertex' stream must be zero
 			}
+
+			StreamOffsets[XboxStreamIndex] += DecodedAttribute.XboxSizeInBytes; // Note : This implies stream offsets are listed in increasing order!
 
 			static const struct {
 				D3DDECLUSAGE Usage;
@@ -2089,10 +2120,10 @@ void CxbxUpdateActiveVertexDeclaration(
 			};
 
 			HostVertexElements[AttributeIndex].Stream = AttributeIndex; // Stream index matches attribute index (each one has it's own stream)
-			HostVertexElements[AttributeIndex].Offset = HostAttributeOffsetInVertex; // TODO : Or offset in *the stream* in bytes?
+			HostVertexElements[AttributeIndex].Offset = HostAttributeOffset; // Offset of this attribute in it's stream, measured in bytes
 			HostVertexElements[AttributeIndex].Type = DecodedAttribute.HostDeclType; // Host vertex data type
 			HostVertexElements[AttributeIndex].Method = D3DDECLMETHOD_DEFAULT; // Processing method. The input type for D3DDECLMETHOD_DEFAULT can be anything. The output type is the same as the input type.
-			if (false/*IsFixedFunction?*/) {
+			if (false/*TODO : Honour IsFixedFunction?*/) {
 				HostVertexElements[AttributeIndex].Usage = c_XboxAtrributeInfo[AttributeIndex].Usage; // Attribute semantics
 				HostVertexElements[AttributeIndex].UsageIndex = c_XboxAtrributeInfo[AttributeIndex].UsageIndex; // Attribute semantic index
 			}
@@ -2109,10 +2140,6 @@ void CxbxUpdateActiveVertexDeclaration(
 			// Add this register to the list of declared registers
 			RegVIsPresentInDeclaration[AttributeIndex] = true; // glue
 		}
-
-		// Give each attribute (vertex element in host terms) it's own vertex stream :
-		hRet = g_pD3DDevice->SetStreamSource(AttributeIndex, pHostVertexBuffer, StreamOffset + pAttributeSlot->Offset, StreamStride);
-		//DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetStreamSource");
 	}
 
 	// Post-process host vertex elements that have a D3DDECLMETHOD_CROSSUV method :
@@ -2151,6 +2178,73 @@ void CxbxUpdateActiveVertexDeclaration(
 		// Throw away the temporary object reference already (host still holds a reference anyway):
 		hRet = pHostVertexDeclaration->Release();
 		//DEBUG_D3DRESULT(hRet, "pHostVertexDeclaration->Release");
+	}
+}
+
+// Converts Xbox vertex stream buffers towards a host vertex buffers,
+// using an unmodified host clone of the Xbox vertex buffer
+// for all compatible data types, and separate host streams for incompatible ones.
+void CxbxConvertActiveVertexStreams(
+	XTL::X_VERTEXATTRIBUTEFORMAT* pVertexAttributes,
+	XTL::X_STREAMINPUT* pStreamInputs,
+	unsigned VerticesInBuffer
+)
+{
+	LOG_INIT;
+
+	// Here, parse the Xbox declaration, converting it to a host declaration
+	for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
+		// Fetch the Xbox stream from the pVertexAttributes slots array (this pointer honors overrides) :
+		XTL::X_VERTEXSHADERINPUT* pAttributeSlot = &(pVertexAttributes->Slots[AttributeIndex]);
+		// We'll call g_pD3DDevice->SetStreamSource for each attribute with these (initially empty) arguments :
+		IDirect3DVertexBuffer* pHostVertexBuffer = nullptr;
+		UINT StreamStride = 0;
+		UINT StreamOffset = 0;
+		// Does this attribute use no storage present the vertex (check this as early as possible to avoid needless processing) ?
+		if (pAttributeSlot->Format != XTL::X_D3DVSDT_NONE) {
+			// Each attribute specifies the Xbox stream number it must be read from :
+			unsigned XboxStreamIndex = pAttributeSlot->IndexOfStream;
+			// When input streams are overriden, the stream indices referenced by attribute slots should stay in bounds!
+			assert((g_Xbox_SetVertexShaderInput_Count == 0) || (XboxStreamIndex < g_Xbox_SetVertexShaderInput_Count));
+
+			// Fetch the input stream from the pStreamInputs array (this pointer honors overrides) :
+			XTL::X_STREAMINPUT* pXboxStreamInput = &(pStreamInputs[XboxStreamIndex]);
+			// Fetch the Xbox vertex buffer for this input stream :
+			XTL::X_D3DVertexBuffer* pXboxVertexBuffer = pXboxStreamInput->VertexBuffer;
+			// TODO : What if pXboxVertexBuffer is null? (This implies that the Xbox vertex declaration mentions a stream that's not yet been set using D3DDevice_SetVertexShaderInput or D3DDevice_SetStreamSource*
+			// For now, just skip the vertex element :
+			if (pXboxVertexBuffer == xbnullptr)
+				continue;
+
+			// Decode the Xbox NV2A attribute format, including mapping to host :
+			XboxVertexAttributeDeclarationDecoded_t DecodedAttribute;
+			CxbxDecodeVertexAttributeFormat(pAttributeSlot->Format, &DecodedAttribute);
+			// All non-X_D3DVSDT_NONE formats should have valid data :
+			assert(pXboxVertexBuffer);
+			assert(DecodedAttribute.XboxSizeInBytes > 0);
+
+			// Can we use the Xbox attribute as-is?
+			if (DecodedAttribute.IsCompatible) {
+				// All we need to do, is use the host counterpart with unmodified Xbox contents :
+				pHostVertexBuffer = CxbxConvertXboxVertexBufferCompletely(pXboxVertexBuffer, VerticesInBuffer * pXboxStreamInput->Stride);
+				StreamStride = pXboxStreamInput->Stride;
+				StreamOffset = pXboxStreamInput->Offset; // Can only become non-zero when g_Xbox_SetVertexShaderInput_Data is active
+			}
+			else
+			{
+				pHostVertexBuffer = CxbxConvertXboxVertexBufferSingleAttribute(pXboxVertexBuffer, VerticesInBuffer, &DecodedAttribute, pXboxStreamInput->Offset);
+				// TODO : Should we map StreamOffset?
+				assert(StreamStride == 0); // This dedicated VertexBuffer has no other contents, so it has no stride. TODO : Or must we set DecodedAttribute.HostSizeInBytes?
+			}
+		}
+
+		// Give each attribute (vertex element in host terms) it's own vertex stream :
+		HRESULT hRet = g_pD3DDevice->SetStreamSource(
+			/*StreamNumber=*/AttributeIndex,
+			/*pStreamData=*/pHostVertexBuffer,
+			/*OffsetInBytes=*/StreamOffset + pAttributeSlot->Offset,
+			/*Stride=*/StreamStride);
+		//DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetStreamSource");
 	}
 }
 
@@ -2238,7 +2332,7 @@ void CxbxParseXboxFunctionSlotsAndSetConstantsOnHost()
 	NV2AVertexProgram_Size = CurrentProgramIndex;
 }
 
-void CxbxUpdateActiveVertexShader()
+void CxbxUpdateActiveVertexShader(unsigned VerticesInBuffer)
 {
 	using namespace XTL;
 
@@ -2259,9 +2353,10 @@ void CxbxUpdateActiveVertexShader()
 
 	DumpXboxVertexAttributes(pVertexAttributes);
 
-	CxbxUpdateActiveVertexDeclaration(pVertexAttributes, pStreamInputs);
+	CxbxUpdateActiveVertexDeclaration(pVertexAttributes);
 	CxbxParseXboxFunctionSlotsAndSetConstantsOnHost();
 	CxbxRecompileVertexProgram();
+	CxbxConvertActiveVertexStreams(pVertexAttributes, pStreamInputs, VerticesInBuffer);
 }
 
 void CxbxCopyVertexShaderFunctionSlots(unsigned Address, unsigned NumberOfSlots, void *FunctionData)

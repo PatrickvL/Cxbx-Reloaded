@@ -172,7 +172,6 @@ static	void							UpdateCurrentMSpFAndFPS(); // Used for benchmarking/fps count
 extern DWORD g_Xbox_VertexShader_Handle;
 
 extern bool CxbxLocateVertexShader();
-extern void CxbxUpdateActiveVertexShader();
 extern void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address);
 extern void CxbxImpl_LoadVertexShaderProgram(DWORD* pFunction, DWORD Address);
 extern void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address);
@@ -6985,7 +6984,6 @@ void CxbxUpdateNativeD3DResources()
         DxbxUpdateActivePixelShader();
     }
 
-	CxbxUpdateActiveVertexShader();
 /* TODO : Port these :
 	DxbxUpdateActiveTextures();
 	DxbxUpdateDeferredStates(); // BeginPush sample shows us that this must come *after* texture update!
