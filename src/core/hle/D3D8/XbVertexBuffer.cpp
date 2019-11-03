@@ -68,6 +68,9 @@ extern bool GetHostRenderTargetDimensions(DWORD* pHostWidth, DWORD* pHostHeight,
 extern uint32_t GetPixelContainerWidth(XTL::X_D3DPixelContainer* pPixelContainer);
 extern uint32_t GetPixelContainerHeight(XTL::X_D3DPixelContainer* pPixelContainer);
 
+// implemented in XbVertexShader.cpp
+extern void CxbxUpdateActiveVertexShader(unsigned VerticesInBuffer);
+
 void CxbxPatchedStream::Activate(CxbxDrawContext *pDrawContext, UINT uiStream) const
 {
 	//LOG_INIT // Allows use of DEBUG_D3DRESULT
@@ -784,6 +787,8 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 		if (pDrawContext->VerticesInBuffer < dwHighestVertexCount)
 			pDrawContext->VerticesInBuffer = dwHighestVertexCount;
 	}
+
+	CxbxUpdateActiveVertexShader(pDrawContext->VerticesInBuffer);
 
     // Get the number of streams
     m_uiNbrStreams = GetNbrStreams(pDrawContext);

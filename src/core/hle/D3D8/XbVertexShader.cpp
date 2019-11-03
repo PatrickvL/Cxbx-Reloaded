@@ -45,6 +45,8 @@
           XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
 XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
 
+typedef uint16_t binary16_t; // Quick and dirty way to indicate IEEE754-2008 'half-precision floats'
+
 
 #define DbgVshPrintf \
 	LOG_CHECK_ENABLED(LOG_LEVEL::DEBUG) \
@@ -1563,6 +1565,350 @@ void SetCxbxVertexShader(DWORD XboxVertexShaderHandle, CxbxVertexShader* shader)
 	}
 
 	g_CxbxVertexShaders[XboxVertexShaderHandle] = shader;
+}
+
+XTL::X_D3DVertexShader* GetXboxVertexShader()
+{
+	using namespace XTL;
+
+	X_D3DVertexShader* pXboxVertexShader = xbnullptr;
+
+	{
+		// Note, that once we have a fail-safe way to determine the location of the
+		// Xbox Device.m_pVertexShader symbol, the FVF and the accompanying Address,
+		// we no longer need this statement block, nor patches on D3DDevice_SetVertexShader
+		// nor D3DDevice_SelectVertexShader* !
+
+		// Now, to convert, we do need to have a valid vertex shader :
+		if (g_Xbox_VertexShader_Handle == 0) {
+			LOG_TEST_CASE("Unassigned Xbox vertex shader!");
+			return nullptr;
+		}
+
+		if (!VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
+			LOG_TEST_CASE("Xbox vertex shader lacks X_D3DFVF_RESERVED0 bit!");
+			return nullptr;
+		}
+
+		pXboxVertexShader = VshHandleToXboxVertexShader(g_Xbox_VertexShader_Handle);
+	}
+
+	return pXboxVertexShader;
+}
+
+typedef struct {
+	int XboxDeclarationFormat; // X_D3DVSDT_* key
+	int XboxNrOfUnits;
+	int XboxSizeInBytes;
+	//int NrOfDimensions;
+	D3DDECLTYPE HostDeclType;
+	bool IsCompatible;
+	int HostNrOfUnits;
+	int HostSizeInBytes;
+} XboxVertexAttributeDeclarationDecoded_t;
+
+// VSDT validity check (hand-optimized to avoid the memory accesses that compiled switch-statements would incur)
+bool X_D3DVSDT_IsValid(const uint32_t VSDT)
+{
+	if (VSDT & 0xFFFFFF88) return false; // Bit 31-7 or 3 should never be set
+
+	using namespace XTL;
+// With that out of the way, compact the valid bits (6,5,4,2,1 and 0) efficiently into the least significant 6 bits :
+#define _COMPACT_VALID_BITS(x) (((x & 1) << 2) | (x >> 1))
+// Define a 64-bit mask containing a set bit for each valid (compacted) VSDT value :
+#define _BITMASK(x) ((uint64_t)1 << _COMPACT_VALID_BITS(x))
+	static constexpr uint64_t AllValidTypesBitmask = 0
+		| _BITMASK(X_D3DVSDT_D3DCOLOR)
+		| _BITMASK(X_D3DVSDT_PBYTE1)
+		| _BITMASK(X_D3DVSDT_PBYTE2)
+		| _BITMASK(X_D3DVSDT_PBYTE3)
+		| _BITMASK(X_D3DVSDT_PBYTE4)
+		| _BITMASK(X_D3DVSDT_NORMSHORT1)
+		| _BITMASK(X_D3DVSDT_NORMSHORT2)
+		| _BITMASK(X_D3DVSDT_NORMSHORT3)
+		| _BITMASK(X_D3DVSDT_NORMSHORT4)
+		| _BITMASK(X_D3DVSDT_SHORT1)
+		| _BITMASK(X_D3DVSDT_SHORT2)
+		| _BITMASK(X_D3DVSDT_SHORT3)
+		| _BITMASK(X_D3DVSDT_SHORT4)
+		| _BITMASK(X_D3DVSDT_NONE)
+		| _BITMASK(X_D3DVSDT_FLOAT1)
+		| _BITMASK(X_D3DVSDT_FLOAT2)
+		| _BITMASK(X_D3DVSDT_FLOAT3)
+		| _BITMASK(X_D3DVSDT_FLOAT4)
+		| _BITMASK(X_D3DVSDT_FLOAT2H)
+		| _BITMASK(X_D3DVSDT_NORMPACKED3);
+
+	// Now, return validity of the given VSDT value by checking it's appearance in this bit mask :
+	// (Note, shifting the bitmask and returning bit 0 is faster than checking the VSDT'th bit)
+	return (AllValidTypesBitmask >> _COMPACT_VALID_BITS(VSDT)) & 1;
+#undef _COMPACT_VALID_BITS
+#undef _MASK
+}
+
+/* Determine size for the following X_D3DVSDT_* types (value) :
+	X_D3DVSDT_D3DCOLOR    (0x40) =  4 : sizeof(uint32_t) * 1 (equal to sizeof(uint8_t) * 4)
+	X_D3DVSDT_PBYTE1      (0x14) =  1 : sizeof(uint8_t ) * 1
+	X_D3DVSDT_PBYTE2      (0x24) =  2 : sizeof(uint8_t ) * 2
+	X_D3DVSDT_PBYTE3      (0x34) =  3 : sizeof(uint8_t ) * 3
+	X_D3DVSDT_PBYTE4      (0x44) =  4 : sizeof(uint8_t ) * 4
+
+	X_D3DVSDT_NORMSHORT1  (0x11) =  2 : sizeof(uint16_t) * 1
+	X_D3DVSDT_NORMSHORT2  (0x21) =  4 : sizeof(uint16_t) * 2
+	X_D3DVSDT_NORMSHORT3  (0x31) =  6 : sizeof(uint16_t) * 3
+	X_D3DVSDT_NORMSHORT4  (0x41) =  8 : sizeof(uint16_t) * 4
+	X_D3DVSDT_SHORT1      (0x15) =  2 : sizeof(uint16_t) * 1
+	X_D3DVSDT_SHORT2      (0x25) =  4 : sizeof(uint16_t) * 2
+	X_D3DVSDT_SHORT3      (0x35) =  6 : sizeof(uint16_t) * 3
+	X_D3DVSDT_SHORT4      (0x45) =  8 : sizeof(uint16_t) * 4
+
+	X_D3DVSDT_NONE        (0x02) =  0 : sizeof(float   ) * 0
+	X_D3DVSDT_FLOAT1      (0x12) =  4 : sizeof(float   ) * 1
+	X_D3DVSDT_FLOAT2      (0x22) =  8 : sizeof(float   ) * 2
+	X_D3DVSDT_FLOAT3      (0x32) = 12 : sizeof(float   ) * 3
+	X_D3DVSDT_FLOAT4      (0x42) = 16 : sizeof(float   ) * 4
+	X_D3DVSDT_FLOAT2H     (0x72) = 12 : sizeof(float   ) * 3 (NOT 7!)
+
+	X_D3DVSDT_NORMPACKED3 (0x16) =  4 : sizeof(uint32_t) * 1
+
+No other inputs should be given (they will produce unreliable sizes).
+*/
+unsigned X_D3DVSDT_SizeInBytes(const uint8_t VSDT) // VSDT = VSDGetDataType(dwDecl) a.k.a. SizeAndType
+{
+	// First handle the case that doesn't fit the code below :
+	if (VSDT == XTL::X_D3DVSDT_FLOAT2H) // == 0x72
+		return 12; // == 3 * sizeof(float)
+
+	unsigned Shift = VSDT & 0x3;
+	// Shift becomes 0 for VSDT 0x?4 (X_D3DVSDT_PBYTE1, etc) and 0x?0 (X_D3DVSDT_D3DCOLOR),
+	// Shift becomes 1 for VSDT 0x?5 (X_D3DVSDT_SHORT1, etc) and 0x?1 (X_D3DVSDT_NORMSHORT1, etc),
+	// Shift becomes 2 for VSDT 0x?6 (X_D3DVSDT_NORMPACKED3) and 0x?2 (X_D3DVSDT_NONE, X_D3DVSDT_FLOAT1, etc).
+	// A Shift of 0 equals factor (1 << 0) == 1 == sizeof(uint8_t)
+	// A Shift of 1 equals factor (1 << 1) == 2 == sizeof(uint16_t)
+	// A Shift of 2 equals factor (1 << 2) == 4 == sizeof(float) == sizeof(uint32_t)
+
+	unsigned Size = VSDT >> 4; // No need to AND with 0xF, since VSDT (as an uint8_t) has only 8 bits anyway
+
+	// Note, X_D3DVSDT_D3DCOLOR    (0x40) has Size 4, resulting in 4 << 0 == 4, which still equals sizeof(uint32_t)!
+	// Note, X_D3DVSDT_NONE        (0x02) has Size 0, resulting in 0 << 2 == 0, which still equals 0!
+	// Note, X_D3DVSDT_NORMPACKED3 (0x16) has Size 1, resulting in 1 << 2 == 4, which still equals sizeof(uint32_t)!
+	return Size << Shift;
+}
+
+void CxbxDecodeVertexAttributeFormat(DWORD AttributeFormat, XboxVertexAttributeDeclarationDecoded_t* pDecoded)
+{
+	assert(X_D3DVSDT_IsValid(AttributeFormat));
+
+	int XboxSizeInBytes = X_D3DVSDT_SizeInBytes((uint8_t)AttributeFormat);
+
+	int NV2AType = (AttributeFormat & 0x0F) >> 0;
+	int NV2ASize = (AttributeFormat & 0xF0) >> 4;
+
+	assert(NV2AType <= 6 && NV2AType != 3); // only 0,1,2 and 4,5,6 are valid types (0:X_D3DVSDT_D3DCOLOR,1:X_D3DVSDT_NORMSHORT*,2:X_D3DVSDT_FLOAT* and 4:X_D3DVSDT_PBYTE*,5:X_D3DVSDT_SHORT*,6:X_D3DVSDT_NORMPACKED3)
+	assert(NV2ASize <= 4 || NV2ASize == 7); // only 0..4 and 7 are valid sizes
+
+	int XboxBytesPerUnit = 1 << (NV2AType & 3); // 0 and 4 use byte units, 1 and 5 use short units, 2 and 6 use float/dword units.
+	int XboxNrOfUnits = (AttributeFormat == XTL::X_D3DVSDT_FLOAT2H) ? 3 : NV2ASize; // Identity-map sizes to units, except X_D3DVSDT_FLOAT2H becomes 3 units (the only one that has NV2ASize == 7)
+	assert(XboxSizeInBytes == XboxNrOfUnits * XboxBytesPerUnit); // Temporary check if X_D3DVSDT_SizeInBytes() output matches the previous determination method
+	//int NrOfDimensions = (AttributeFormat == X_D3DVSDT_NORMPACKED3) ? 3 : (AttributeFormat == X_D3DVSDT_FLOAT2H) ? 4 : XboxNrOfUnits;
+
+#define X ((D3DDECLTYPE)-1) // Marks an invalid entry
+	static const D3DDECLTYPE c_HostDeclTypeMap[7/*NV2AType*/][8/*NV2ASize*/] = {
+		// 0x?0 : X_D3DVSDT_D3DCOLOR=0x40
+		{ X, X, X, X, D3DDECLTYPE_D3DCOLOR, X, X, X },
+		// 0x?1 : X_D3DVSDT_NORMSHORT1=0x11, X_D3DVSDT_NORMSHORT2=0x21, X_D3DVSDT_NORMSHORT3=0x31, X_D3DVSDT_NORMSHORT4=0x41
+		{ X, D3DDECLTYPE_SHORT2N, D3DDECLTYPE_SHORT2N, D3DDECLTYPE_SHORT4N, D3DDECLTYPE_SHORT4N, X, X, X },
+		// 0x?2 : X_D3DVSDT_NONE=0x02, X_D3DVSDT_FLOAT1=0x12, X_D3DVSDT_FLOAT2=0x22,X_D3DVSDT_FLOAT3=0x32,X_D3DVSDT_FLOAT4=0x42, X_D3DVSDT_FLOAT2H=0x72
+		{ D3DDECLTYPE_UNUSED, D3DDECLTYPE_FLOAT1, D3DDECLTYPE_FLOAT2, D3DDECLTYPE_FLOAT3, D3DDECLTYPE_FLOAT4, X, X, D3DDECLTYPE_FLOAT4 },
+		// 0x03 : unused
+		{ X, X, X, X, X, X, X, X },
+		// 0x?4 : X_D3DVSDT_PBYTE1=0x14, X_D3DVSDT_PBYTE2=0x24, X_D3DVSDT_PBYTE3=0x34, X_D3DVSDT_PBYTE4=0x44
+		{ X, D3DDECLTYPE_UBYTE4N, D3DDECLTYPE_UBYTE4N, D3DDECLTYPE_UBYTE4N, D3DDECLTYPE_UBYTE4N, X, X, X },
+		// 0x?5 : X_D3DVSDT_SHORT1=0x15, X_D3DVSDT_SHORT2=0x25, X_D3DVSDT_SHORT3=0x35, X_D3DVSDT_SHORT4=0x45
+		{ X, D3DDECLTYPE_SHORT2, D3DDECLTYPE_SHORT2, D3DDECLTYPE_SHORT4, D3DDECLTYPE_SHORT4, X, X, X },
+		// 0x?6 : X_D3DVSDT_NORMPACKED3 = 0x16
+		{ X, D3DDECLTYPE_FLOAT3, X, X, X, X, X, X }
+	};
+#undef X
+
+	// Lookup optimal host D3DDECLTYPE (might have a different number of units and/or unit size) :
+	D3DDECLTYPE HostDeclType = c_HostDeclTypeMap[NV2AType][NV2ASize];
+
+	// Definition of all known host D3DDECLTYPE enums (number of units, size of each unit and optional capability to check)
+	static const struct {
+		int NrOfUnits; int SizeOfUnit; DWORD D3DDTCAPS;
+	} c_HostDeclTypeInfo[(int)D3DDECLTYPE_UNUSED + 1] =  {
+		/*D3DDECLTYPE_FLOAT1     =  0 */ { 1, sizeof(float) },
+		/*D3DDECLTYPE_FLOAT2     =  1 */ { 2, sizeof(float) },
+		/*D3DDECLTYPE_FLOAT3     =  2 */ { 3, sizeof(float) },
+		/*D3DDECLTYPE_FLOAT4     =  3 */ { 4, sizeof(float) },
+		/*D3DDECLTYPE_D3DCOLOR   =  4 */ { 4, sizeof(uint8_t) }, // Makes sizeof(D3DCOLOR)
+		/*D3DDECLTYPE_UBYTE4     =  5 */ { 4, sizeof(uint8_t), D3DDTCAPS_UBYTE4 },
+		/*D3DDECLTYPE_SHORT2     =  6 */ { 2, sizeof(int16_t) },
+		/*D3DDECLTYPE_SHORT4     =  7 */ { 4, sizeof(int16_t) },
+		/*D3DDECLTYPE_UBYTE4N    =  8 */ { 4, sizeof(uint8_t), D3DDTCAPS_UBYTE4N },
+		/*D3DDECLTYPE_SHORT2N    =  9 */ { 2, sizeof(int16_t), D3DDTCAPS_SHORT2N },
+		/*D3DDECLTYPE_SHORT4N    = 10 */ { 4, sizeof(int16_t), D3DDTCAPS_SHORT4N },
+		// For completeness, these are not used in HostDeclTypeMap :
+		/*D3DDECLTYPE_USHORT2N   = 11 */ { 2, sizeof(int16_t), D3DDTCAPS_USHORT2N },
+		/*D3DDECLTYPE_USHORT4N   = 12 */ { 4, sizeof(int16_t), D3DDTCAPS_USHORT4N },
+		/*D3DDECLTYPE_UDEC3      = 13 */ { 1, sizeof(DWORD), D3DDTCAPS_UDEC3 },
+		/*D3DDECLTYPE_DEC3N      = 14 */ { 1, sizeof(DWORD), D3DDTCAPS_DEC3N },
+		/*D3DDECLTYPE_FLOAT16_2  = 15 */ { 2, sizeof(binary16_t), D3DDTCAPS_FLOAT16_2 },
+		/*D3DDECLTYPE_FLOAT16_4  = 16 */ { 4, sizeof(binary16_t), D3DDTCAPS_FLOAT16_4 },
+		/*D3DDECLTYPE_UNUSED     = 17 */ { 0 } // dynamic size
+	};
+
+	// Is there a capability flag to check?
+	if (c_HostDeclTypeInfo[HostDeclType].D3DDTCAPS) {
+		// and is it unsupported on this driver ?
+		if ((g_D3DCaps.DeclTypes & c_HostDeclTypeInfo[HostDeclType].D3DDTCAPS) == 0) {
+			// Then fallback to the required number of floats :
+			HostDeclType = (D3DDECLTYPE)((int)D3DDECLTYPE_FLOAT1 + XboxNrOfUnits - 1);
+		}
+	}
+
+	// Gather info on the host declaration (potentially a fallback), and check if it is Xbox compatible :
+	int HostNrOfUnits = c_HostDeclTypeInfo[HostDeclType].NrOfUnits;
+	int HostSizeInBytes = HostNrOfUnits * c_HostDeclTypeInfo[HostDeclType].SizeOfUnit;
+	bool IsCompatible = (XboxNrOfUnits == HostNrOfUnits) && (XboxSizeInBytes == HostSizeInBytes);
+
+	// Return the results :
+	pDecoded->XboxDeclarationFormat = AttributeFormat; // Key during conversion
+	pDecoded->XboxNrOfUnits = XboxNrOfUnits; // Needed for conversion
+	pDecoded->XboxSizeInBytes = XboxSizeInBytes; // Amount of space taken in vertex
+	//pDecoded->NrOfDimensions = NrOfDimensions; //
+	pDecoded->HostDeclType = HostDeclType;
+	pDecoded->IsCompatible = IsCompatible;
+	pDecoded->HostNrOfUnits = HostNrOfUnits;
+	pDecoded->HostSizeInBytes = HostSizeInBytes;
+}
+
+void DumpXboxVertexAttributes(
+	XTL::X_VERTEXATTRIBUTEFORMAT* pVertexAttributes
+)
+{
+	using namespace XTL;
+
+	DbgVshPrintf("VERTEXSHADERINPUT Slots[] =\n{\n");
+
+	// Here, parse the Xbox declaration, dumping it like it was an Xbox declaration
+	for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
+		// Fetch the Xbox stream from the pVertexAttributes slots array (this pointer honors overrides) :
+		X_VERTEXSHADERINPUT* pAttributeSlot = &(pVertexAttributes->Slots[AttributeIndex]);
+
+		unsigned AttributeFormat = pAttributeSlot->Format;
+		unsigned Dump_Type = (AttributeFormat & 0x0F) >> 0;
+		unsigned Dump_Size = (AttributeFormat & 0xF0) >> 4;
+
+		if (Dump_Size >= 5) Dump_Type = 3; // Dump all Size's above 4 as an illegal type (X_D3DVSDT_FLOAT2H dumping is fixed up two lines down)
+		if (Dump_Type >= 7) Dump_Type = 3; // Dump all Type's above 6 as an illegal type
+		if (Dump_Type == 3) Dump_Size = 0; // Dump all illegal types without a size suffix
+		if (AttributeFormat == X_D3DVSDT_FLOAT2H)     Dump_Type = 7; // 0x72 = Size 7, Type 2 : Dump c_FormatTypeStr[7] (Dump_Size is already reset to zero)
+		if (AttributeFormat == X_D3DVSDT_NONE)        Dump_Type = 8; // 0x02 = Size 0, Type 2 : Dump c_FormatTypeStr[8] (Dump_Size is already zero)
+		if (AttributeFormat == X_D3DVSDT_NORMPACKED3) Dump_Size = 0; // 0x16 = Size 1, Type 6 : Don't dump Size suffix (since c_FormatTypeStr[6] already has a "3" suffix)
+		if (AttributeFormat == X_D3DVSDT_D3DCOLOR)    Dump_Size = 0; // 0x40 = Size 4, Type 0 : Don't dump Size suffix (since X_D3DVSDT_D3DCOLOR has no size suffix)
+
+		static constexpr char *c_FormatTypeStr[9] = { // Indexed with Dump_Type
+			/*[0]*/"X_D3DVSDT_D3DCOLOR",
+			/*[1]*/"X_D3DVSDT_NORMSHORT",
+			/*[2]*/"X_D3DVSDT_FLOAT",
+			/*[3]*/"Illegal!",
+			/*[4]*/"X_D3DVSDT_PBYTE",
+			/*[5]*/"X_D3DVSDT_SHORT",
+			/*[6]*/"X_D3DVSDT_NORMPACKED3", // Longest, 21 characters
+			/*[7]*/"X_D3DVSDT_FLOAT2H",
+			/*[8]*/"X_D3DVSDT_NONE"
+		};
+
+		static constexpr char *c_FormatSizeStr[5] = { // Indexed with Dump_Size
+			/*[0]*/" ", // no suffix
+			/*[1]*/"1",
+			/*[2]*/"2",
+			/*[3]*/"3",
+			/*[4]*/"4"
+		};
+
+		unsigned Dump_Tess = pAttributeSlot->TesselationType;
+		if (Dump_Tess > 3) Dump_Tess = 3; // Illegal!
+
+		static constexpr char *c_TessTypeStr[4] = { // Indexed with Dump_Tess
+			/*[0]*/"AUTONONE",
+			/*[1]*/"AUTONORMAL",
+			/*[2]*/"AUTOTEXCOORD", // Longest, 12 characters
+			/*[3]*/"Illegal!"
+		};
+
+		DbgVshPrintf("\t/*%2d*/{Stream:%2d, Offset:%2d, Format:0x%.02X/*=%21s%s*/, TessType:%1d/*=%-12s*/, TessSource:%2d},",
+			AttributeIndex,
+			pAttributeSlot->IndexOfStream,
+			pAttributeSlot->Offset,
+			pAttributeSlot->Format, c_FormatTypeStr[Dump_Type], c_FormatSizeStr[Dump_Size],
+			pAttributeSlot->TesselationType, c_TessTypeStr[Dump_Tess],
+			pAttributeSlot->TesselationSource
+			);
+
+		// Decode the Xbox NV2A attribute format, including mapping to host :
+		XboxVertexAttributeDeclarationDecoded_t DecodedAttribute;
+		CxbxDecodeVertexAttributeFormat(AttributeFormat, &DecodedAttribute);
+
+		static constexpr char* c_HostDeclTypeStr[1 + (int)D3DDECLTYPE::D3DDECLTYPE_UNUSED] = {
+			"D3DDECLTYPE_FLOAT1",
+			"D3DDECLTYPE_FLOAT2",
+			"D3DDECLTYPE_FLOAT3",
+			"D3DDECLTYPE_FLOAT4",
+			"D3DDECLTYPE_D3DCOLOR", // Longest, 20 characters
+			"D3DDECLTYPE_UBYTE4",
+			"D3DDECLTYPE_SHORT2",
+			"D3DDECLTYPE_SHORT4",
+			"D3DDECLTYPE_UBYTE4N",
+			"D3DDECLTYPE_SHORT2N",
+			"D3DDECLTYPE_SHORT4N",
+			// For completeness, these are not used in HostDeclType :
+			"D3DDECLTYPE_USHORT2N",
+			"D3DDECLTYPE_USHORT4N",
+			"D3DDECLTYPE_UDEC3",
+			"D3DDECLTYPE_DEC3N",
+			"D3DDECLTYPE_FLOAT16_2",
+			"D3DDECLTYPE_FLOAT16_4",
+			"D3DDECLTYPE_UNUSED",
+		};
+
+		DbgVshPrintf(" // Xbox Units:%d, Bytes:%2d  Host Units:%d, Bytes:%2d, DeclType:%20s%s\n",
+			DecodedAttribute.XboxNrOfUnits,
+			DecodedAttribute.XboxSizeInBytes,
+			//DecodedAttribute.NrOfDimensions,
+			DecodedAttribute.HostNrOfUnits,
+			DecodedAttribute.HostSizeInBytes,
+			c_HostDeclTypeStr[DecodedAttribute.HostDeclType],
+			DecodedAttribute.IsCompatible ? "" : " /* xbox ext. */"
+			);
+	}
+
+	DbgVshPrintf("};\n");
+}
+
+void CxbxUpdateActiveVertexShader(unsigned VerticesInBuffer)
+{
+	using namespace XTL;
+
+	LOG_INIT;
+
+	assert(g_pD3DDevice);
+
+	X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
+	if (pXboxVertexShader == xbnullptr)
+	{
+		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
+		return;
+	}
+
+	// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
+	X_VERTEXATTRIBUTEFORMAT *pVertexAttributes = (g_Xbox_SetVertexShaderInput_Count > 0) ? &g_Xbox_SetVertexShaderInput_Attributes : &pXboxVertexShader->VertexAttribute;
+
+	LOG_CHECK_ENABLED(LOG_LEVEL::DEBUG)
+		if (g_bPrintfOn) 
+			DumpXboxVertexAttributes(pVertexAttributes);
 }
 
 void CxbxImpl_SetVertexShaderInput
