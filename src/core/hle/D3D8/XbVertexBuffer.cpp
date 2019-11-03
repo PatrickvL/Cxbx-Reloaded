@@ -61,10 +61,12 @@ XTL::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS] = { 0 }; // Note : 
 
 extern XTL::X_D3DSurface* g_pXbox_RenderTarget;
 extern XTL::X_D3DSurface* g_pXbox_BackBufferSurface;
-void *GetDataFromXboxResource(XTL::X_D3DResource *pXboxResource);
-bool GetHostRenderTargetDimensions(DWORD* pHostWidth, DWORD* pHostHeight, IDirect3DSurface* pHostRenderTarget = nullptr);
-uint32_t GetPixelContainerWidth(XTL::X_D3DPixelContainer* pPixelContainer);
-uint32_t GetPixelContainerHeight(XTL::X_D3DPixelContainer* pPixelContainer);
+
+// Resource related functions, declared in Direct3D9.cpp :
+extern void *GetDataFromXboxResource(XTL::X_D3DResource *pXboxResource);
+extern bool GetHostRenderTargetDimensions(DWORD* pHostWidth, DWORD* pHostHeight, IDirect3DSurface* pHostRenderTarget = nullptr);
+extern uint32_t GetPixelContainerWidth(XTL::X_D3DPixelContainer* pPixelContainer);
+extern uint32_t GetPixelContainerHeight(XTL::X_D3DPixelContainer* pPixelContainer);
 
 void CxbxPatchedStream::Activate(CxbxDrawContext *pDrawContext, UINT uiStream) const
 {
@@ -761,7 +763,7 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 
     m_pVertexShaderInfo = nullptr;
     if (VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
-        m_pVertexShaderInfo = &(GetCxbxVertexShader(g_Xbox_VertexShader_Handle)->VertexShaderInfo);
+        m_pVertexShaderInfo = &(GetCxbxVertexShader(g_Xbox_VertexShader_Handle)->VertexShaderInfo); // Not GetCxbxVertexShaderInfo, which returns NULL when no stream NeedPatch
     }
 
 	// If we are drawing from an offset, we know that the vertex count must have
