@@ -40,6 +40,12 @@
 #include <array>
 #include <bitset>
 
+// Variables set by [D3DDevice|CxbxImpl]_SetVertexShaderInput() :
+                    unsigned g_Xbox_SetVertexShaderInput_Count = 0;
+          XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
+XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
+
+
 #define DbgVshPrintf \
 	LOG_CHECK_ENABLED(LOG_LEVEL::DEBUG) \
 		if(g_bPrintfOn) printf
@@ -1566,14 +1572,36 @@ void CxbxImpl_SetVertexShaderInput
 	XTL::X_STREAMINPUT* pStreamInputs
 )
 {
-	LOG_INIT
+	using namespace XTL;
 
 	// If Handle is NULL, all VertexShader input state is cleared.
 	// Otherwise, Handle is the address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
 	// (Thus, a FVF handle is an invalid argument.)
-	//
 
-	LOG_UNIMPLEMENTED();
+	if (Handle == NULL)
+	{
+		// Xbox doesn't remember a null-handle - this may be an XDK bug!
+		// StreamCount and pStreamInputs arguments are ignored
+		g_Xbox_SetVertexShaderInput_Count = 0;
+	}
+	else
+	{
+		assert(VshHandleIsVertexShader(Handle));
+
+		X_D3DVertexShader *pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
+		assert(pXboxVertexShader);
+
+		// Xbox DOES store the Handle, but since it merely returns this through (unpatched) D3DDevice_GetVertexShaderInput; we don't have to.
+
+		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This > 0 indicates g_Xbox_SetVertexShaderInput_Data has to be used
+		if (StreamCount > 0) {
+			assert(StreamCount <= X_VSH_MAX_STREAMS);
+			assert(pStreamInputs != xbnullptr);
+			memcpy(g_Xbox_SetVertexShaderInput_Data, pStreamInputs, StreamCount * sizeof(XTL::X_STREAMINPUT)); // Make a copy of the supplied StreamInputs array
+		}
+
+		g_Xbox_SetVertexShaderInput_Attributes = pXboxVertexShader->VertexAttribute; // Copy this vertex shaders's attribute slots
+	}
 }
 
 void CxbxImpl_SelectVertexShaderDirect
@@ -1587,7 +1615,6 @@ void CxbxImpl_SelectVertexShaderDirect
 	// When pVAF is non-null, this vertex attribute format takes precedence over the the one	
 	LOG_UNIMPLEMENTED();
 }
-
 std::string DebugPrependLineNumbers(std::string shaderString) {
 	std::stringstream shader(shaderString);
 	auto debugShader = std::stringstream();

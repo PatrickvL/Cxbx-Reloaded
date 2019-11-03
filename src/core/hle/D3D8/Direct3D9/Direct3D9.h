@@ -1592,27 +1592,7 @@ VOID WINAPI EMUPATCH(D3DDevice_GetVertexShaderConstant)
 );
 
 // ******************************************************************
-// * patch: D3DDevice_SetVertexShaderInputDirect
-// ******************************************************************
-VOID WINAPI EMUPATCH(D3DDevice_SetVertexShaderInputDirect)
-(
-    X_VERTEXATTRIBUTEFORMAT *pVAF,
-    UINT                     StreamCount,
-    X_STREAMINPUT           *pStreamInputs
-);
-
-// ******************************************************************
-// * patch: D3DDevice_GetVertexShaderInput
-// ******************************************************************
-HRESULT WINAPI EMUPATCH(D3DDevice_GetVertexShaderInput)
-(
-    DWORD              *pHandle,
-    UINT               *pStreamCount,
-    X_STREAMINPUT      *pStreamInputs
-);
-
-// ******************************************************************
-// * patch: D3DDevice_GetVertexShaderInput
+// * patch: D3DDevice_SetVertexShaderInput
 // ******************************************************************
 VOID WINAPI EMUPATCH(D3DDevice_SetVertexShaderInput)
 (
