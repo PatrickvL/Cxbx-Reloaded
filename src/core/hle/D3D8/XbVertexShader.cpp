@@ -48,6 +48,12 @@ XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // 
 typedef uint16_t binary16_t; // Quick and dirty way to indicate IEEE754-2008 'half-precision floats'
 
 
+// Variables set by [D3DDevice|CxbxImpl]_SetVertexShaderInput() :
+                    unsigned g_Xbox_SetVertexShaderInput_Count = 0;
+          XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
+XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
+
+
 #define DbgVshPrintf \
 	LOG_CHECK_ENABLED(LOG_LEVEL::DEBUG) \
 		if(g_bPrintfOn) printf
@@ -1895,7 +1901,6 @@ void CxbxImpl_SetVertexShaderInput
 		X_D3DVertexShader *pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
 		assert(pXboxVertexShader);
 
-		// Note : Xbox DOES store Handle internally, but we don't have to, since Xbox only ever returns it through (unpatched) D3DDevice_GetVertexShaderInput
 
 		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This > 0 indicates g_Xbox_SetVertexShaderInput_Data has to be used (see GetXboxVertexAttributes and GetXboxVertexStreamData)
 		if (StreamCount > 0) {
