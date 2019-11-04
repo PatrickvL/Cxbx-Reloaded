@@ -252,16 +252,14 @@ void HLE_draw_inline_elements(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
-	if (IsValidCurrentShader()) {
-		unsigned int uiIndexCount = pg->inline_elements_length;
-		CxbxDrawContext DrawContext = {};
+	unsigned int uiIndexCount = pg->inline_elements_length;
+	CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = (XTL::X_D3DPRIMITIVETYPE)pg->primitive_mode;
-		DrawContext.dwVertexCount = uiIndexCount;
-		DrawContext.pXboxIndexData = d->pgraph.inline_elements;
+	DrawContext.XboxPrimitiveType = (XTL::X_D3DPRIMITIVETYPE)pg->primitive_mode;
+	DrawContext.dwVertexCount = uiIndexCount;
+	DrawContext.pXboxIndexData = d->pgraph.inline_elements;
 
-		CxbxDrawIndexed(DrawContext);
-	}
+	CxbxDrawIndexed(DrawContext);
 }
 
 DWORD ABGR_to_ARGB(const uint32_t color)

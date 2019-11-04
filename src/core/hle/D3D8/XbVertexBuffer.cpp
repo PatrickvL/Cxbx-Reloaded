@@ -785,7 +785,7 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 			pDrawContext->VerticesInBuffer = dwHighestVertexCount;
 	}
 
-	CxbxUpdateActiveVertexShader(pDrawContext->VerticesInBuffer);
+	CxbxUpdateActiveVertexShader(pDrawContext->VerticesInBuffer); // Note : Not called from CxbxUpdateNativeD3DResources (would be too soon)
 
     // Get the number of streams
     m_uiNbrStreams = GetNbrStreams(pDrawContext);

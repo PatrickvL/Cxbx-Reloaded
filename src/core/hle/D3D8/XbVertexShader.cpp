@@ -41,9 +41,9 @@
 #include <bitset>
 
 // Variables set by [D3DDevice|CxbxImpl]_SetVertexShaderInput() :
-                    unsigned g_Xbox_SetVertexShaderInput_Count = 0;
+                    unsigned g_Xbox_SetVertexShaderInput_Count = 0; // Read by GetXboxVertexAttributes
           XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
-XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
+XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Read by GetXboxVertexAttributes when g_Xbox_SetVertexShaderInput_Count > 0
 
 typedef uint16_t binary16_t; // Quick and dirty way to indicate IEEE754-2008 'half-precision floats'
 
@@ -1494,41 +1494,6 @@ extern void FreeVertexDynamicPatch(CxbxVertexShader *pVertexShader)
     pVertexShader->VertexShaderInfo.NumberOfVertexStreams = 0;
 }
 
-// Checks for failed vertex shaders, and shaders that would need patching
-boolean VshHandleIsValidShader(DWORD XboxVertexShaderHandle)
-{
-#if 0
-	//printf( "VS = 0x%.08X\n", XboxVertexShaderHandle );
-
-    CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(XboxVertexShaderHandle);
-    if (pCxbxVertexShader) {
-        if (pCxbxVertexShader->XboxStatus != 0)
-        {
-            return FALSE;
-        }
-        /*
-        for (uint32 i = 0; i < pCxbxVertexShader->VertexShaderInfo.NumberOfVertexStreams; i++)
-        {
-            if (pCxbxVertexShader->VertexShaderInfo.VertexStreams[i].NeedPatch)
-            {
-                // Just for caching purposes
-                pCxbxVertexShader->XboxStatus = 0x80000001;
-                return FALSE;
-            }
-        }
-        */
-    }
-#endif
-    return TRUE;
-}
-
-extern boolean IsValidCurrentShader(void)
-{
-	// Dxbx addition : There's no need to call
-	// XTL_EmuIDirect3DDevice_GetVertexShader, just check g_Xbox_VertexShader_Handle :
-	return VshHandleIsValidShader(g_Xbox_VertexShader_Handle);
-}
-
 CxbxVertexShaderInfo *GetCxbxVertexShaderInfo(DWORD XboxVertexShaderHandle)
 {
     CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(XboxVertexShaderHandle);
@@ -1594,6 +1559,14 @@ XTL::X_D3DVertexShader* GetXboxVertexShader()
 	}
 
 	return pXboxVertexShader;
+}
+
+XTL::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributes(XTL::X_D3DVertexShader *pXboxVertexShader)
+{
+	assert(pXboxVertexShader != xbnullptr); // Despite possibly not being used, the pXboxVertexShader argument must always be assigned
+
+	// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
+	return (g_Xbox_SetVertexShaderInput_Count > 0) ? &g_Xbox_SetVertexShaderInput_Attributes : &pXboxVertexShader->VertexAttribute;
 }
 
 typedef struct {
@@ -1903,8 +1876,7 @@ void CxbxUpdateActiveVertexShader(unsigned VerticesInBuffer)
 		return;
 	}
 
-	// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
-	X_VERTEXATTRIBUTEFORMAT *pVertexAttributes = (g_Xbox_SetVertexShaderInput_Count > 0) ? &g_Xbox_SetVertexShaderInput_Attributes : &pXboxVertexShader->VertexAttribute;
+	X_VERTEXATTRIBUTEFORMAT *pVertexAttributes = GetXboxVertexAttributes(pXboxVertexShader);
 
 	LOG_CHECK_ENABLED(LOG_LEVEL::DEBUG)
 		if (g_bPrintfOn) 
@@ -1937,9 +1909,9 @@ void CxbxImpl_SetVertexShaderInput
 		X_D3DVertexShader *pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
 		assert(pXboxVertexShader);
 
-		// Xbox DOES store the Handle, but since it merely returns this through (unpatched) D3DDevice_GetVertexShaderInput; we don't have to.
+		// Note : Xbox DOES store Handle internally, but we don't have to, since Xbox only ever returns it through (unpatched) D3DDevice_GetVertexShaderInput
 
-		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This > 0 indicates g_Xbox_SetVertexShaderInput_Data has to be used
+		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This > 0 indicates g_Xbox_SetVertexShaderInput_Data has to be used (see GetXboxVertexAttributes)
 		if (StreamCount > 0) {
 			assert(StreamCount <= X_VSH_MAX_STREAMS);
 			assert(pStreamInputs != xbnullptr);

@@ -84,7 +84,6 @@ typedef struct _CxbxVertexShader
 	DWORD* pXboxFunctionCopy;
 	UINT                  XboxNrAddressSlots;
 	DWORD                 XboxVertexShaderType;
-	// DWORD              XboxStatus; // Used by VshHandleIsValidShader()
 
 	// The resulting host variables
 	DWORD HostFVF; // Flexible Vertex Format (used when there's no host vertex shader)
@@ -117,9 +116,6 @@ extern HRESULT EmuRecompileVshFunction
 );
 
 extern void FreeVertexDynamicPatch(CxbxVertexShader *pVertexShader);
-
-// Checks for failed vertex shaders, and shaders that would need patching
-extern boolean IsValidCurrentShader(void);
 
 inline boolean VshHandleIsVertexShader(DWORD Handle) { return (Handle & X_D3DFVF_RESERVED0) ? TRUE : FALSE; }
 inline boolean VshHandleIsFVF(DWORD Handle) { return !VshHandleIsVertexShader(Handle); }

@@ -4214,8 +4214,6 @@ HRESULT WINAPI XTL::EMUPATCH(D3DDevice_CreateVertexShader)
 	pCxbxVertexShader->HostFVF = 0;
 	pCxbxVertexShader->pHostVertexShader = nullptr;
 	pCxbxVertexShader->XboxDeclarationCount = XboxDeclarationCount;
-	// Save the status, to remove things later
-	// pCxbxVertexShader->XboxStatus = hRet; // Not even used by VshHandleIsValidShader()
 
     if(SUCCEEDED(hRet))
     {
@@ -6907,7 +6905,6 @@ void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 	assert(DrawContext.dwStartVertex == 0);
 	assert(DrawContext.pXboxIndexData != nullptr);
 	assert(DrawContext.dwVertexCount > 0); // TODO : If this fails, make responsible callers do an early-exit
-	assert(IsValidCurrentShader());
 
 	bool bConvertQuadListToTriangleList = (DrawContext.XboxPrimitiveType == XTL::X_D3DPT_QUADLIST);
 	ConvertedIndexBuffer& CacheEntry = CxbxUpdateActiveIndexBuffer(DrawContext.pXboxIndexData, DrawContext.dwVertexCount, bConvertQuadListToTriangleList);
@@ -7386,99 +7383,97 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawVertices)
 	// TODO : Call unpatched D3DDevice_SetStateVB(0);
 
 	CxbxUpdateNativeD3DResources();
-    if (IsValidCurrentShader()) {
-		CxbxDrawContext DrawContext = {};
+	CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = PrimitiveType;
-		DrawContext.dwVertexCount = VertexCount;
-		DrawContext.dwStartVertex = StartVertex;
+	DrawContext.XboxPrimitiveType = PrimitiveType;
+	DrawContext.dwVertexCount = VertexCount;
+	DrawContext.dwStartVertex = StartVertex;
 
-		VertexBufferConverter.Apply(&DrawContext);
-		if (DrawContext.XboxPrimitiveType == X_D3DPT_QUADLIST) {
-			if (StartVertex == 0) {
-				//LOG_TEST_CASE("X_D3DPT_QUADLIST (StartVertex == 0)"); // disabled, hit too often
-				// test-case : ?X-Marbles
-				// test-case XDK Samples : AlphaFog, AntiAlias, BackBufferScale, BeginPush, Cartoon, TrueTypeFont (?maybe PlayField?)
-			} else {
-				LOG_TEST_CASE("X_D3DPT_QUADLIST (StartVertex > 0)");
-				// https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/issues/1156
-				// test-case : All - Star Baseball '03
-				// test-case : Army Men Major Malfunction
-				// test-case : Big Mutha Truckers
-				// test-case : BLiNX: the time sweeper
-				// test-case : Blood Wake
-				// test-case : Call of Duty: Finest Hour
-				// test-case : Flight academy
-				// test-case : FIFA World Cup 2002
-				// test-case : GENMA ONIMUSHA 
-				// test-case : Halo - Combat Evolved
-				// test-case : Harry Potter and the Sorcerer's Stone
-				// test-case : Heroes of the Pacific
-				// test-case : Hummer Badlands
-				// test-case : Knights Of The Temple 2
-				// test-case : LakeMasters Bass fishing
-				// test-case : MetalDungeon
-				// test-case : NFL Fever 2003 Demo - main menu
-				// test-case : Night Caster 2
-				// test-case : Pinball Hall of Fame
-				// test-case : Robotech : Battlecry
-				// test-case : SpiderMan 2
-				// test-case : Splinter Cell Demo
-				// test-case : Stubbs the Zombie
-				// test-case : Tony Hawk's Pro Skater 2X (main menu entries)
-				// test-case : Worms 3D Special Edition
-				// test-case : XDK sample Lensflare (4, for 10 flare-out quads that use a linear texture; rendered incorrectly: https://youtu.be/idwlxHl9nAA?t=439)
-				DrawContext.dwStartVertex = StartVertex; // Breakpoint location for testing.
-			}
-
-			// Draw quadlists using a single 'quad-to-triangle mapping' index buffer :
-			// Assure & activate that special index buffer :
-			CxbxAssureQuadListD3DIndexBuffer(/*NrOfQuadIndices=*/DrawContext.dwVertexCount);
-			// This API's StartVertex argument is multiplied by vertex stride and added to the start of the vertex buffer;
-			// BaseVertexIndex offers the same functionality on host :
-			UINT BaseVertexIndex = DrawContext.dwStartVertex;
-			// Convert quad vertex count to triangle vertex count :
-			UINT NumVertices = QuadToTriangleVertexCount(DrawContext.dwVertexCount);
-			// Convert quad primitive count to triangle primitive count :
-			UINT primCount = DrawContext.dwHostPrimitiveCount * TRIANGLES_PER_QUAD;
-			// See https://docs.microsoft.com/en-us/windows/win32/direct3d9/rendering-from-vertex-and-index-buffers
-			// for an explanation on the function of the BaseVertexIndex, MinVertexIndex, NumVertices and StartIndex arguments.
-			// Emulate drawing quads by drawing each quad with two indexed triangles :
-			HRESULT hRet = g_pD3DDevice->DrawIndexedPrimitive(
-				/*PrimitiveType=*/D3DPT_TRIANGLELIST,
-				BaseVertexIndex,
-				/*MinVertexIndex=*/0,
-				NumVertices,
-				/*startIndex=*/0,
-				primCount
-			);
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitive(X_D3DPT_QUADLIST)");
-
-			g_dwPrimPerFrame += primCount;
+	VertexBufferConverter.Apply(&DrawContext);
+	if (DrawContext.XboxPrimitiveType == X_D3DPT_QUADLIST) {
+		if (StartVertex == 0) {
+			//LOG_TEST_CASE("X_D3DPT_QUADLIST (StartVertex == 0)"); // disabled, hit too often
+			// test-case : ?X-Marbles
+			// test-case XDK Samples : AlphaFog, AntiAlias, BackBufferScale, BeginPush, Cartoon, TrueTypeFont (?maybe PlayField?)
+		} else {
+			LOG_TEST_CASE("X_D3DPT_QUADLIST (StartVertex > 0)");
+			// https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/issues/1156
+			// test-case : All - Star Baseball '03
+			// test-case : Army Men Major Malfunction
+			// test-case : Big Mutha Truckers
+			// test-case : BLiNX: the time sweeper
+			// test-case : Blood Wake
+			// test-case : Call of Duty: Finest Hour
+			// test-case : Flight academy
+			// test-case : FIFA World Cup 2002
+			// test-case : GENMA ONIMUSHA 
+			// test-case : Halo - Combat Evolved
+			// test-case : Harry Potter and the Sorcerer's Stone
+			// test-case : Heroes of the Pacific
+			// test-case : Hummer Badlands
+			// test-case : Knights Of The Temple 2
+			// test-case : LakeMasters Bass fishing
+			// test-case : MetalDungeon
+			// test-case : NFL Fever 2003 Demo - main menu
+			// test-case : Night Caster 2
+			// test-case : Pinball Hall of Fame
+			// test-case : Robotech : Battlecry
+			// test-case : SpiderMan 2
+			// test-case : Splinter Cell Demo
+			// test-case : Stubbs the Zombie
+			// test-case : Tony Hawk's Pro Skater 2X (main menu entries)
+			// test-case : Worms 3D Special Edition
+			// test-case : XDK sample Lensflare (4, for 10 flare-out quads that use a linear texture; rendered incorrectly: https://youtu.be/idwlxHl9nAA?t=439)
+			DrawContext.dwStartVertex = StartVertex; // Breakpoint location for testing.
 		}
-		else {
-			// if (StartVertex > 0) LOG_TEST_CASE("StartVertex > 0 (non-quad)"); // Verified test case : XDK Sample (PlayField)
-			HRESULT hRet = g_pD3DDevice->DrawPrimitive(
-				EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
-				DrawContext.dwStartVertex,
-				DrawContext.dwHostPrimitiveCount
-			);
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawPrimitive");
 
-			g_dwPrimPerFrame += DrawContext.dwHostPrimitiveCount;
-			if (DrawContext.XboxPrimitiveType == X_D3DPT_LINELOOP) {
-				// Close line-loops using a final single line, drawn from the end to the start vertex
-				LOG_TEST_CASE("X_D3DPT_LINELOOP"); // TODO : Text-cases needed
+		// Draw quadlists using a single 'quad-to-triangle mapping' index buffer :
+		// Assure & activate that special index buffer :
+		CxbxAssureQuadListD3DIndexBuffer(/*NrOfQuadIndices=*/DrawContext.dwVertexCount);
+		// This API's StartVertex argument is multiplied by vertex stride and added to the start of the vertex buffer;
+		// BaseVertexIndex offers the same functionality on host :
+		UINT BaseVertexIndex = DrawContext.dwStartVertex;
+		// Convert quad vertex count to triangle vertex count :
+		UINT NumVertices = QuadToTriangleVertexCount(DrawContext.dwVertexCount);
+		// Convert quad primitive count to triangle primitive count :
+		UINT primCount = DrawContext.dwHostPrimitiveCount * TRIANGLES_PER_QUAD;
+		// See https://docs.microsoft.com/en-us/windows/win32/direct3d9/rendering-from-vertex-and-index-buffers
+		// for an explanation on the function of the BaseVertexIndex, MinVertexIndex, NumVertices and StartIndex arguments.
+		// Emulate drawing quads by drawing each quad with two indexed triangles :
+		HRESULT hRet = g_pD3DDevice->DrawIndexedPrimitive(
+			/*PrimitiveType=*/D3DPT_TRIANGLELIST,
+			BaseVertexIndex,
+			/*MinVertexIndex=*/0,
+			NumVertices,
+			/*startIndex=*/0,
+			primCount
+		);
+		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitive(X_D3DPT_QUADLIST)");
 
-				assert(DrawContext.dwBaseVertexIndex == 0); // if this fails, it needs to be added to LowIndex and HighIndex :
-				INDEX16 LowIndex = (INDEX16)DrawContext.dwStartVertex;
-				INDEX16 HighIndex = (INDEX16)(DrawContext.dwStartVertex + DrawContext.dwHostPrimitiveCount);
-				// Draw the closing line using a helper function (which will SetIndices)
-				CxbxDrawIndexedClosingLine(LowIndex, HighIndex);
-				// NOTE : We don't restore the previously active index buffer
-			}
+		g_dwPrimPerFrame += primCount;
+	}
+	else {
+		// if (StartVertex > 0) LOG_TEST_CASE("StartVertex > 0 (non-quad)"); // Verified test case : XDK Sample (PlayField)
+		HRESULT hRet = g_pD3DDevice->DrawPrimitive(
+			EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
+			DrawContext.dwStartVertex,
+			DrawContext.dwHostPrimitiveCount
+		);
+		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawPrimitive");
+
+		g_dwPrimPerFrame += DrawContext.dwHostPrimitiveCount;
+		if (DrawContext.XboxPrimitiveType == X_D3DPT_LINELOOP) {
+			// Close line-loops using a final single line, drawn from the end to the start vertex
+			LOG_TEST_CASE("X_D3DPT_LINELOOP"); // TODO : Text-cases needed
+
+			assert(DrawContext.dwBaseVertexIndex == 0); // if this fails, it needs to be added to LowIndex and HighIndex :
+			INDEX16 LowIndex = (INDEX16)DrawContext.dwStartVertex;
+			INDEX16 HighIndex = (INDEX16)(DrawContext.dwStartVertex + DrawContext.dwHostPrimitiveCount);
+			// Draw the closing line using a helper function (which will SetIndices)
+			CxbxDrawIndexedClosingLine(LowIndex, HighIndex);
+			// NOTE : We don't restore the previously active index buffer
 		}
-    }
+	}
 
 	CxbxHandleXboxCallbacks();
 }
@@ -7510,16 +7505,14 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawVerticesUP)
 
 	CxbxUpdateNativeD3DResources();
 
-    if (IsValidCurrentShader()) {
-		CxbxDrawContext DrawContext = {};
+	CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = PrimitiveType;
-		DrawContext.dwVertexCount = VertexCount;
-		DrawContext.pXboxVertexStreamZeroData = pVertexStreamZeroData;
-		DrawContext.uiXboxVertexStreamZeroStride = VertexStreamZeroStride;
+	DrawContext.XboxPrimitiveType = PrimitiveType;
+	DrawContext.dwVertexCount = VertexCount;
+	DrawContext.pXboxVertexStreamZeroData = pVertexStreamZeroData;
+	DrawContext.uiXboxVertexStreamZeroStride = VertexStreamZeroStride;
 
-		CxbxDrawPrimitiveUP(DrawContext);
-    }
+	CxbxDrawPrimitiveUP(DrawContext);
 
 	CxbxHandleXboxCallbacks();
 }
@@ -7553,18 +7546,16 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawIndexedVertices)
 
 	CxbxUpdateNativeD3DResources();
 
-	if (IsValidCurrentShader()) {
-		CxbxDrawContext DrawContext = {};
+	CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = PrimitiveType;
-		DrawContext.dwVertexCount = VertexCount;
-		DrawContext.dwBaseVertexIndex = g_Xbox_BaseVertexIndex; // Multiplied by vertex stride and added to the vertex buffer start
-		DrawContext.pXboxIndexData = pIndexData; // Used to derive VerticesInBuffer
+	DrawContext.XboxPrimitiveType = PrimitiveType;
+	DrawContext.dwVertexCount = VertexCount;
+	DrawContext.dwBaseVertexIndex = g_Xbox_BaseVertexIndex; // Multiplied by vertex stride and added to the vertex buffer start
+	DrawContext.pXboxIndexData = pIndexData; // Used to derive VerticesInBuffer
 
-		// Test case JSRF draws all geometry through this function (only sparks are drawn via another method)
-		// using X_D3DPT_TRIANGLELIST and X_D3DPT_TRIANGLESTRIP PrimitiveType
-		CxbxDrawIndexed(DrawContext);
-	}
+	// Test case JSRF draws all geometry through this function (only sparks are drawn via another method)
+	// using X_D3DPT_TRIANGLELIST and X_D3DPT_TRIANGLESTRIP PrimitiveType
+	CxbxDrawIndexed(DrawContext);
 
 	CxbxHandleXboxCallbacks();
 }
@@ -7598,77 +7589,75 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 
 	CxbxUpdateNativeD3DResources();
 
-	if (IsValidCurrentShader()) {
-		CxbxDrawContext DrawContext = {};
-		INDEX16* pXboxIndexData = (INDEX16*)pIndexData;
+	CxbxDrawContext DrawContext = {};
+	INDEX16* pXboxIndexData = (INDEX16*)pIndexData;
 
-		DrawContext.XboxPrimitiveType = PrimitiveType;
-		DrawContext.dwVertexCount = VertexCount;
-		DrawContext.pXboxIndexData = pXboxIndexData; // Used to derive VerticesInBuffer
-		// Note : D3DDevice_DrawIndexedVerticesUP does NOT use g_Xbox_BaseVertexIndex, so keep DrawContext.dwBaseVertexIndex at 0!
-		DrawContext.pXboxVertexStreamZeroData = pVertexStreamZeroData;
-		DrawContext.uiXboxVertexStreamZeroStride = VertexStreamZeroStride;
+	DrawContext.XboxPrimitiveType = PrimitiveType;
+	DrawContext.dwVertexCount = VertexCount;
+	DrawContext.pXboxIndexData = pXboxIndexData; // Used to derive VerticesInBuffer
+	// Note : D3DDevice_DrawIndexedVerticesUP does NOT use g_Xbox_BaseVertexIndex, so keep DrawContext.dwBaseVertexIndex at 0!
+	DrawContext.pXboxVertexStreamZeroData = pVertexStreamZeroData;
+	DrawContext.uiXboxVertexStreamZeroStride = VertexStreamZeroStride;
 
-		// Determine LowIndex and HighIndex *before* VerticesInBuffer gets derived
-		WalkIndexBuffer(DrawContext.LowIndex, DrawContext.HighIndex, pXboxIndexData, VertexCount);
+	// Determine LowIndex and HighIndex *before* VerticesInBuffer gets derived
+	WalkIndexBuffer(DrawContext.LowIndex, DrawContext.HighIndex, pXboxIndexData, VertexCount);
 
-		VertexBufferConverter.Apply(&DrawContext);
+	VertexBufferConverter.Apply(&DrawContext);
 
-		INDEX16* pHostIndexData;
-		UINT PrimitiveCount = DrawContext.dwHostPrimitiveCount;
+	INDEX16* pHostIndexData;
+	UINT PrimitiveCount = DrawContext.dwHostPrimitiveCount;
 
-		bool bConvertQuadListToTriangleList = (DrawContext.XboxPrimitiveType == X_D3DPT_QUADLIST);
-		if (bConvertQuadListToTriangleList) {
-			LOG_TEST_CASE("X_D3DPT_QUADLIST");
-			// Test-case : Buffy: The Vampire Slayer
-			// Test-case : XDK samples : FastLoad, BackBufferScale, DisplacementMap, Donuts3D, VolumeLight, PersistDisplay, PolynomialTextureMaps, SwapCallback, Tiling, VolumeFog, DebugKeyboard, Gamepad
-			// Convert draw arguments from quads to triangles :
-			pHostIndexData = CxbxCreateQuadListToTriangleListIndexData(pXboxIndexData, VertexCount);
-			PrimitiveCount *= TRIANGLES_PER_QUAD;
-			// Note, that LowIndex and HighIndex won't change due to this quad-to-triangle conversion,
-			// so it's less work to WalkIndexBuffer over the input instead of the converted index buffer.
-		} else {
-			// LOG_TEST_CASE("DrawIndexedPrimitiveUP"); // Test-case : Burnout, Namco Museum 50th Anniversary
-			pHostIndexData = pXboxIndexData;
+	bool bConvertQuadListToTriangleList = (DrawContext.XboxPrimitiveType == X_D3DPT_QUADLIST);
+	if (bConvertQuadListToTriangleList) {
+		LOG_TEST_CASE("X_D3DPT_QUADLIST");
+		// Test-case : Buffy: The Vampire Slayer
+		// Test-case : XDK samples : FastLoad, BackBufferScale, DisplacementMap, Donuts3D, VolumeLight, PersistDisplay, PolynomialTextureMaps, SwapCallback, Tiling, VolumeFog, DebugKeyboard, Gamepad
+		// Convert draw arguments from quads to triangles :
+		pHostIndexData = CxbxCreateQuadListToTriangleListIndexData(pXboxIndexData, VertexCount);
+		PrimitiveCount *= TRIANGLES_PER_QUAD;
+		// Note, that LowIndex and HighIndex won't change due to this quad-to-triangle conversion,
+		// so it's less work to WalkIndexBuffer over the input instead of the converted index buffer.
+	} else {
+		// LOG_TEST_CASE("DrawIndexedPrimitiveUP"); // Test-case : Burnout, Namco Museum 50th Anniversary
+		pHostIndexData = pXboxIndexData;
+	}
+
+	HRESULT hRet = g_pD3DDevice->DrawIndexedPrimitiveUP(
+		/*PrimitiveType=*/EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
+		/*MinVertexIndex=*/DrawContext.LowIndex,
+		/*NumVertexIndices=*/(DrawContext.HighIndex - DrawContext.LowIndex) + 1,
+		PrimitiveCount,
+		pHostIndexData,
+		/*IndexDataFormat=*/D3DFMT_INDEX16,
+		DrawContext.pHostVertexStreamZeroData,
+		DrawContext.uiHostVertexStreamZeroStride
+	);
+	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitiveUP");
+
+	if (bConvertQuadListToTriangleList) {
+		CxbxReleaseQuadListToTriangleListIndexData(pHostIndexData);
+	}
+
+	g_dwPrimPerFrame += PrimitiveCount;
+	if (DrawContext.XboxPrimitiveType == X_D3DPT_LINELOOP) {
+		// Close line-loops using a final single line, drawn from the end to the start vertex
+		LOG_TEST_CASE("X_D3DPT_LINELOOP"); // TODO : Which titles reach this test-case?
+		// Read the end and start index from the supplied index data
+		INDEX16 LowIndex = pXboxIndexData[0];
+		INDEX16 HighIndex = pXboxIndexData[DrawContext.dwHostPrimitiveCount];
+		// If needed, swap so highest index is higher than lowest (duh)
+		if (HighIndex < LowIndex) {
+			std::swap(HighIndex, LowIndex);
 		}
 
-		HRESULT hRet = g_pD3DDevice->DrawIndexedPrimitiveUP(
-			/*PrimitiveType=*/EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
-			/*MinVertexIndex=*/DrawContext.LowIndex,
-			/*NumVertexIndices=*/(DrawContext.HighIndex - DrawContext.LowIndex) + 1,
-			PrimitiveCount,
-			pHostIndexData,
-			/*IndexDataFormat=*/D3DFMT_INDEX16,
+		// Close line-loops using a final single line, drawn from the end to the start vertex :
+		CxbxDrawIndexedClosingLineUP(
+			LowIndex,
+			HighIndex,
 			DrawContext.pHostVertexStreamZeroData,
 			DrawContext.uiHostVertexStreamZeroStride
 		);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitiveUP");
-
-		if (bConvertQuadListToTriangleList) {
-			CxbxReleaseQuadListToTriangleListIndexData(pHostIndexData);
-		}
-
-		g_dwPrimPerFrame += PrimitiveCount;
-		if (DrawContext.XboxPrimitiveType == X_D3DPT_LINELOOP) {
-			// Close line-loops using a final single line, drawn from the end to the start vertex
-			LOG_TEST_CASE("X_D3DPT_LINELOOP"); // TODO : Which titles reach this test-case?
-			// Read the end and start index from the supplied index data
-			INDEX16 LowIndex = pXboxIndexData[0];
-			INDEX16 HighIndex = pXboxIndexData[DrawContext.dwHostPrimitiveCount];
-			// If needed, swap so highest index is higher than lowest (duh)
-			if (HighIndex < LowIndex) {
-				std::swap(HighIndex, LowIndex);
-			}
-
-			// Close line-loops using a final single line, drawn from the end to the start vertex :
-			CxbxDrawIndexedClosingLineUP(
-				LowIndex,
-				HighIndex,
-				DrawContext.pHostVertexStreamZeroData,
-				DrawContext.uiHostVertexStreamZeroStride
-			);
-		}
-    }
+	}
 
 	CxbxHandleXboxCallbacks();
 }
