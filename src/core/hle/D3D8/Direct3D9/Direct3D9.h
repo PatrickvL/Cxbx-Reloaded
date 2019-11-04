@@ -63,11 +63,11 @@ extern VOID EmuD3DCleanup();
 
 extern IDirect3DDevice *g_pD3DDevice;
 
-extern DWORD g_Xbox_VertexShader_Handle;
-
-extern XTL::X_PixelShader *g_pXbox_PixelShader;
-
+extern XTL::X_D3DSurface     *g_pXbox_RenderTarget;
+extern XTL::X_D3DSurface     *g_pXbox_BackBufferSurface;
 extern XTL::X_D3DBaseTexture *g_pXbox_SetTexture[XTL::X_D3DTS_STAGECOUNT];
+extern XTL::X_PixelShader    *g_pXbox_PixelShader;
+extern XTL::DWORD             g_Xbox_VertexShader_Handle;
 
 namespace XTL {
 

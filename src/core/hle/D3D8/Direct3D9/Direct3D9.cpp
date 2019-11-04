@@ -97,7 +97,7 @@ static bool                         g_bSupportsFormatCubeTexture[XTL::X_D3DFMT_L
 static HBRUSH                       g_hBgBrush = NULL; // Background Brush
 static volatile bool                g_bRenderWindowActive = false;
 static BOOL                         g_bIsFauxFullscreen = FALSE;
-static DWORD						g_OverlaySwap = 0; // Set in D3DDevice_UpdateOverlay
+static DWORD                        g_UpdateOverlay_LastVBlank = 0;
 static int                          g_iWireframe = 0; // wireframe toggle
 static bool                         g_bHack_UnlockFramerate = false; // ignore the xbox presentation interval
 static bool                         g_bHasDepth = false;    // Does device have a Depth Buffer?
@@ -122,12 +122,13 @@ static size_t                       g_QuadToTriangleIndexData_Size = 0; // = NrO
 static CxbxVertexBufferConverter VertexBufferConverter = {};
 
 struct {
+	// Arguments to D3DDevice_UpdateOverlay :
 	XTL::X_D3DSurface Surface;
 	RECT SrcRect;
 	RECT DstRect;
 	BOOL EnableColorKey;
 	D3DCOLOR ColorKey;
-} g_OverlayProxy;
+} g_Xbox_UpdateOverlay_Proxy;
 
 typedef struct {
 	// Arguments to D3DDevice_InsertCallback :
@@ -140,7 +141,6 @@ static std::queue<s_Xbox_Callback>  g_Xbox_CallbackQueue;
 static bool                         g_bHack_DisableHostGPUQueries = false; // TODO : Make configurable
 static IDirect3DQuery              *g_pHostQueryWaitForIdle = nullptr;
 static IDirect3DQuery              *g_pHostQueryCallbackEvent = nullptr;
-
 
 // Vertex shader symbols, declared in XbVertexShader.cpp :
 extern void CxbxImpl_SelectVertexShaderDirect(XTL::X_VERTEXATTRIBUTEFORMAT* pVAF, DWORD Address);
@@ -155,10 +155,10 @@ static DWORD                        g_VBLastSwap = 0;
 
 static XTL::DWORD                   g_Xbox_PresentationInterval_Default = D3DPRESENT_INTERVAL_IMMEDIATE;
        XTL::DWORD                   g_Xbox_PresentationInterval_Override = 0;
-static XTL::X_D3DSWAPDATA			g_Xbox_SwapData = {0}; // current swap information
-static XTL::X_D3DSWAPCALLBACK		g_pXbox_SwapCallback = xbnullptr;	// Swap/Present callback routine
-static XTL::X_D3DVBLANKDATA			g_Xbox_VBlankData = {0}; // current vertical blank information
-static XTL::X_D3DVBLANKCALLBACK     g_pXbox_VerticalBlankCallback   = xbnullptr; // Vertical-Blank callback routine
+static XTL::X_D3DSWAPDATA           g_Xbox_SwapData = {0}; // current swap information
+static XTL::X_D3DSWAPCALLBACK       g_pXbox_SwapCallback = xbnullptr; // Swap/Present callback routine
+static XTL::X_D3DVBLANKDATA         g_Xbox_VBlankData = {0}; // current vertical blank information
+static XTL::X_D3DVBLANKCALLBACK     g_pXbox_VerticalBlankCallback = xbnullptr; // Vertical-Blank callback routine
 
        XTL::X_D3DSurface           *g_pXbox_BackBufferSurface = xbnullptr;
 static XTL::X_D3DSurface           *g_pXbox_DefaultDepthStencilSurface = xbnullptr;
@@ -174,7 +174,7 @@ static XTL::PVOID                   g_pXbox_Palette_Data[XTL::X_D3DTS_STAGECOUNT
 static unsigned                     g_Xbox_Palette_Size[XTL::X_D3DTS_STAGECOUNT] = { 0 }; // cached palette size
 
 
-       XTL::X_D3DBaseTexture       *g_pXbox_SetTexture[XTL::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by our D3DDevice_SetTexture and D3DDevice_SwitchTexture patches
+       XTL::X_D3DBaseTexture       *g_pXbox_SetTexture[XTL::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by D3DDevice_SetTexture (to an Xbox texture), and D3DDevice_SwitchTexture (to a pointer into CxbxActiveTextureCopies)
 static XTL::X_D3DBaseTexture        CxbxActiveTextureCopies[XTL::X_D3DTS_STAGECOUNT] = {}; // Set by D3DDevice_SwitchTexture. Cached active texture
 
 /* Unused :
@@ -2013,7 +2013,7 @@ static DWORD WINAPI EmuUpdateTickCount(LPVOID)
 			g_VBConditionVariable.notify_all();
 
 			// TODO: Fixme.  This may not be right...
-			g_Xbox_SwapData.SwapVBlank = 1;
+			g_Xbox_SwapData.SwapVBlank = 1; // TODO : Copy over g_Xbox_VBlankData.VBlank?
 
             if(g_pXbox_VerticalBlankCallback != xbnullptr)
             {
@@ -2709,6 +2709,16 @@ void CxbxRemoveIndexBuffer(PWORD pData)
 	// HACK: Never Free
 }
 
+void CxbxImpl_SetIndices(XTL::X_D3DIndexBuffer* pIndexData, XTL::UINT BaseVertexIndex)
+{
+	// Note : The supplied Xbox IndexBuffer doesn't need to be stored by us,
+	// since D3DDevice_DrawIndexedVertices gets called with it's IndexData
+	// argument set to this Xbox IndexBuffer's Data (+ StartIndex) anyway.
+
+	// Cache the base vertex index
+	g_Xbox_BaseVertexIndex = BaseVertexIndex;
+}
+
 IDirect3DIndexBuffer* CxbxCreateIndexBuffer(unsigned IndexCount)
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
@@ -3019,8 +3029,8 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetIndices_4)
     __asm {
         mov pIndexData, ebx
     }
-    // Cache the base vertex index
-    g_Xbox_BaseVertexIndex = BaseVertexIndex;
+
+	CxbxImpl_SetIndices(pIndexData, BaseVertexIndex);
 
     // Call LTCG-specific trampoline
     XB_trampoline(VOID, WINAPI, D3DDevice_SetIndices_4, (UINT));
@@ -3030,7 +3040,6 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetIndices_4)
         call XB_D3DDevice_SetIndices_4;
     }
 }
-
 
 // ******************************************************************
 // * patch: D3DDevice_SetIndices
@@ -3047,7 +3056,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetIndices)
 		LOG_FUNC_END;
 
 	// Cache the base vertex index then call the Xbox function
-	g_Xbox_BaseVertexIndex = BaseVertexIndex;
+	CxbxImpl_SetIndices(pIndexData, BaseVertexIndex);
 
 	XB_trampoline(VOID, WINAPI, D3DDevice_SetIndices, (X_D3DIndexBuffer*, UINT));
 	XB_D3DDevice_SetIndices(pIndexData, BaseVertexIndex);
@@ -3157,7 +3166,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_GetDisplayFieldStatus)(X_D3DFIELD_STATUS *pF
 	pFieldStatus->VBlankCount = g_Xbox_VBlankData.VBlank;
 
 	// If we are interlaced, return the current field, otherwise, return progressive scan
-	if (displayMode.Flags & X_D3DPRESENTFLAG_INTERLACED) {
+	if (displayMode.Flags & X_D3DPRESENTFLAG_INTERLACED) { // TODO : Should we do this for X_D3DPRESENTFLAG_FIELD as well?
 		pFieldStatus->Field = (g_Xbox_VBlankData.VBlank % 2 == 0) ? X_D3DFIELD_ODD : X_D3DFIELD_EVEN;
 	} else {
 		pFieldStatus->Field = X_D3DFIELD_PROGRESSIVE;
@@ -3499,6 +3508,12 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetGammaRamp)
 		LOG_FUNC_ARG(dwFlags)
 		LOG_FUNC_ARG(pRamp)
 		LOG_FUNC_END;
+
+	// TODO : Call this trampoline, so that EMUPATCH(D3DDevice_GetGammaRamp) can be removed :
+	//XB_trampoline(VOID, WINAPI, D3DDevice_SetGammaRamp, (DWORD, CONST X_D3DGAMMARAMP*));
+	//XB_D3DDevice_SetGammaRamp(dwFlags, pRamp);
+	// Note, that this trampoline can lead to 1 write to NV_PRMDIO_WRITE_MODE_ADDRESS (0x806813C8) and
+	// 768 writes to NV_PRMDIO_PALETTE_DATA (0x806813C9) for probably the entire gamma ramp palette.
 
     // remove D3DSGR_IMMEDIATE
     DWORD dwPCFlags = dwFlags & (~0x00000002);
@@ -4424,7 +4439,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetTexture_4)
 	//	LOG_FUNC_END;
 	EmuLog(LOG_LEVEL::DEBUG, "D3DDevice_SetTexture_4(Stage : %d pTexture : %08x);", Stage, pTexture);
 
-	// Call the Xbox implementation of this function, to properly handle reference counting for us
+	// TODO : Call the Xbox implementation of this function, to properly handle reference counting for us
 	//XB_trampoline(VOID, WINAPI, D3DDevice_SetTexture_4, (X_D3DBaseTexture*));
 	//XB_D3DDevice_SetTexture_4(pTexture);
 
@@ -4519,7 +4534,7 @@ VOID __fastcall XTL::EMUPATCH(D3DDevice_SwitchTexture)
 
 			// Use the above modified copy, instead of altering the active Xbox texture
 			g_pXbox_SetTexture[Stage] = &CxbxActiveTextureCopies[Stage];
-			// Note : Since g_pXbox_SetTexture and CxbxActiveTextureCopies are host-managed,
+			// Note : Since EmuD3DActiveTexture and CxbxActiveTextureCopies are host-managed,
 			// Xbox code should never alter these members (so : no reference counting, etc).
 			// As long as that's guaranteed, this is a safe way to emulate SwitchTexture.
 			// (GetHostResourceKey also avoids using any Xbox texture resource memory address.)
@@ -5055,7 +5070,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_Clear)
         rect.y2 *= g_RenderScaleFactor;
         hRet = g_pD3DDevice->Clear(Count, &rect, HostFlags, Color, Z, Stencil);
     } else {
-        hRet = g_pD3DDevice->Clear(Count, pRects, HostFlags, Color, Z, Stencil);
+        hRet = g_pD3DDevice->Clear(Count, nullptr, HostFlags, Color, Z, Stencil);
     }
 
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->Clear");
@@ -5240,8 +5255,8 @@ DWORD WINAPI XTL::EMUPATCH(D3DDevice_Swap)
 		}
 
 		// Is there an overlay to be presented too?
-		if (g_OverlayProxy.Surface.Common) {
-			X_D3DFORMAT X_Format = GetXboxPixelContainerFormat(&g_OverlayProxy.Surface);
+		if (g_Xbox_UpdateOverlay_Proxy.Surface.Common) {
+			X_D3DFORMAT X_Format = GetXboxPixelContainerFormat(&g_Xbox_UpdateOverlay_Proxy.Surface);
 			if (X_Format != X_D3DFMT_YUY2) {
 				LOG_TEST_CASE("Xbox overlay surface isn't using X_D3DFMT_YUY2");
 			}
@@ -5268,26 +5283,26 @@ DWORD WINAPI XTL::EMUPATCH(D3DDevice_Swap)
 			}
 
 			// Blit Xbox overlay to host backbuffer
-			uint8_t *pOverlayData = (uint8_t*)GetDataFromXboxResource(&g_OverlayProxy.Surface);
+			uint8_t *pOverlayData = (uint8_t*)GetDataFromXboxResource(&g_Xbox_UpdateOverlay_Proxy.Surface);
 			UINT OverlayWidth, OverlayHeight, OverlayDepth, OverlayRowPitch, OverlaySlicePitch;
 			CxbxGetPixelContainerMeasures(
-				&g_OverlayProxy.Surface,
+				&g_Xbox_UpdateOverlay_Proxy.Surface,
 				0, // dwMipMapLevel
 				&OverlayWidth, &OverlayHeight, &OverlayDepth, &OverlayRowPitch, &OverlaySlicePitch);
 
             RECT EmuSourRect = { 0 };
             RECT EmuDestRect = { 0 };
 
-			if (g_OverlayProxy.SrcRect.right > 0) {
-				EmuSourRect = g_OverlayProxy.SrcRect;
+			if (g_Xbox_UpdateOverlay_Proxy.SrcRect.right > 0) {
+				EmuSourRect = g_Xbox_UpdateOverlay_Proxy.SrcRect;
 			}
 			else {
 				SetRect(&EmuSourRect, 0, 0, OverlayWidth, OverlayHeight);
 			}
 
-			if (g_OverlayProxy.DstRect.right > 0) {
+			if (g_Xbox_UpdateOverlay_Proxy.DstRect.right > 0) {
 				// If there's a destination rectangle given, copy that into our local variable :
-				EmuDestRect = g_OverlayProxy.DstRect;
+				EmuDestRect = g_Xbox_UpdateOverlay_Proxy.DstRect;
 
                 // Make sure to scale the values based on the difference between the Xbox and Host backbuffer
                 // We can't use the scale factor here because we are blitting directly to the host backbuffer
@@ -5355,7 +5370,7 @@ DWORD WINAPI XTL::EMUPATCH(D3DDevice_Swap)
                     /* pSrcPalette = */ nullptr,
                     /* pSrcRect = */ &doNotScaleRect, // This parameter cannot be NULL
                     /* Filter = */ LoadOverlayFilter,
-                    /* ColorKey = */ g_OverlayProxy.EnableColorKey ? g_OverlayProxy.ColorKey : 0);
+                    /* ColorKey = */ g_Xbox_UpdateOverlay_Proxy.EnableColorKey ? g_Xbox_UpdateOverlay_Proxy.ColorKey : 0);
 
                 DEBUG_D3DRESULT(hRet, "D3DXLoadSurfaceFromMemory - UpdateOverlay could not convert buffer!\n");
                 if (hRet != D3D_OK) {
@@ -6301,7 +6316,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_EnableOverlay)
 	// NV2A overlay state, it doesn't actually enable or disable anything.
 	// Thus, we should just reset our overlay state here too. A title will
 	// show new overlay data via D3DDevice_UpdateOverlay (see below).
-	g_OverlayProxy = {};
+	g_Xbox_UpdateOverlay_Proxy = {};
 }
 
 // ******************************************************************
@@ -6326,25 +6341,26 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_UpdateOverlay)
 
 	// Reset and remember the overlay arguments, so our D3DDevice_Swap patch
 	// can correctly show this overlay surface data.
-	g_OverlayProxy = {};
+	g_Xbox_UpdateOverlay_Proxy = {};
 	if (pSurface) {
-		g_OverlayProxy.Surface = *pSurface;
+		g_Xbox_UpdateOverlay_Proxy.Surface = *pSurface;
 		if (SrcRect)
-			g_OverlayProxy.SrcRect = *SrcRect;
+			g_Xbox_UpdateOverlay_Proxy.SrcRect = *SrcRect;
 
 		if (DstRect)
-			g_OverlayProxy.DstRect = *DstRect;
+			g_Xbox_UpdateOverlay_Proxy.DstRect = *DstRect;
 
-		g_OverlayProxy.EnableColorKey = EnableColorKey;
-		g_OverlayProxy.ColorKey = ColorKey;
+		g_Xbox_UpdateOverlay_Proxy.EnableColorKey = EnableColorKey;
+		g_Xbox_UpdateOverlay_Proxy.ColorKey = ColorKey;
 		// Update overlay if present was not called since the last call to
 		// EmuD3DDevice_UpdateOverlay.
-		if (g_OverlaySwap != g_Xbox_SwapData.Swap - 1) {
+		if (g_UpdateOverlay_LastVBlank != g_Xbox_VBlankData.VBlank - 1) {
 			EMUPATCH(D3DDevice_Swap)(CXBX_SWAP_PRESENT_FORWARD);
 		}
-
-		g_OverlaySwap = g_Xbox_SwapData.Swap;
 	}
+
+	// Update the last overlay VBlank (regardless if pSurface is given or not) :
+	g_UpdateOverlay_LastVBlank = g_Xbox_VBlankData.VBlank;
 }
 
 // ******************************************************************
@@ -6356,8 +6372,7 @@ BOOL WINAPI XTL::EMUPATCH(D3DDevice_GetOverlayUpdateStatus)()
 
 	LOG_UNIMPLEMENTED();
 
-    // TODO: Actually check for update status
-    return TRUE;
+    return (g_UpdateOverlay_LastVBlank != g_Xbox_VBlankData.VBlank);
 }
 
 // ******************************************************************

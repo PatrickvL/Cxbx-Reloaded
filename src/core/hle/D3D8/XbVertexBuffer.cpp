@@ -31,7 +31,7 @@
 #include "core\kernel\memory-manager\VMManager.h"
 #include "common\util\hasher.h"
 #include "core\kernel\support\Emu.h"
-#include "core\hle\D3D8\Direct3D9\Direct3D9.h" // For g_pD3DDevice
+#include "core\hle\D3D8\Direct3D9\Direct3D9.h" // For g_pD3DDevice, g_pXbox_Texture, g_pXbox_RenderTarget, g_pXbox_BackBufferSurface, g_Xbox_VertexShader_Handle
 #include "core\hle\D3D8\Direct3D9\WalkIndexBuffer.h" // for WalkIndexBuffer
 #include "core\hle\D3D8\ResourceTracker.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // for DxbxFVF_GetNumberOfTextureCoordinates
@@ -58,9 +58,6 @@ extern DWORD				g_dwPrimPerFrame = 0;
 
 // Copy of active Xbox D3D Vertex Streams (and strides), set by [D3DDevice|CxbxImpl]_SetStreamSource*
 XTL::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS] = { 0 }; // Note : .Offset member is never set (so always 0)
-
-extern XTL::X_D3DSurface* g_pXbox_RenderTarget;
-extern XTL::X_D3DSurface* g_pXbox_BackBufferSurface;
 
 // Resource related functions, declared in Direct3D9.cpp :
 extern void *GetDataFromXboxResource(XTL::X_D3DResource *pXboxResource);
