@@ -754,7 +754,7 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 
 	CxbxUpdateNativeD3DResources();
 
-	CxbxUpdateActiveVertexShader(pDrawContext->VerticesInBuffer); // Note : Not called from CxbxUpdateNativeD3DResources (lacks access to pDrawContext)
+	CxbxUpdateActiveVertexShader(pDrawContext->VerticesInBuffer);
 
     m_pVertexShaderInfo = nullptr;
     if (VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {

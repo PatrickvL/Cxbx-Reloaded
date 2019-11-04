@@ -7619,11 +7619,11 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 		/*PrimitiveType=*/EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
 		/*MinVertexIndex=*/DrawContext.LowIndex,
 		/*NumVertexIndices=*/(DrawContext.HighIndex - DrawContext.LowIndex) + 1,
-		/*PrimitiveCount=*/PrimitiveCount,
-		/*pIndexData=*/pHostIndexData,
+			PrimitiveCount,
+			pHostIndexData,
 		/*IndexDataFormat=*/D3DFMT_INDEX16,
-		/*pVertexStreamZeroData=*/DrawContext.pHostVertexStreamZeroData,
-		/*VertexStreamZeroStride=*/DrawContext.uiHostVertexStreamZeroStride
+			DrawContext.pHostVertexStreamZeroData,
+			DrawContext.uiHostVertexStreamZeroStride
 	);
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitiveUP");
 
