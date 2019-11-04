@@ -46,6 +46,12 @@ extern VOID CxbxSetPixelContainerHeader
 	UINT				Pitch
 );
 
+extern XTL::X_D3DFORMAT GetXboxPixelContainerFormat(const XTL::X_D3DPixelContainer* pXboxPixelContainer);
+
+extern XTL::X_D3DRESOURCETYPE GetXboxD3DResourceType(const XTL::X_D3DResource* pXboxResource);
+
+extern bool IsSupportedFormat(XTL::X_D3DFORMAT X_Format, XTL::X_D3DRESOURCETYPE XboxResourceType, DWORD D3DUsage);
+
 extern uint8_t *ConvertD3DTextureToARGB(
 	XTL::X_D3DPixelContainer *pXboxPixelContainer,
 	uint8_t *pSrc,

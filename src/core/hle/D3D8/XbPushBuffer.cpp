@@ -47,24 +47,24 @@ const char *NV2AMethodToString(DWORD dwMethod); // forward
 static void DbgDumpMesh(WORD *pIndexData, DWORD dwCount);
 
 // Determine the size (in number of floating point texture coordinates) of the texture format (indexed 0 .. 3).
-// This is the reverse of the D3DFVF_TEXCOORDSIZE[0..3] macros.
-int DxbxFVF_GetNumberOfTextureCoordinates(DWORD dwFVF, int aTextureIndex)
+// This is the reverse of the X_D3DFVF_TEXCOORDSIZE[0..3] macros.
+int XboxFVF_GetNumberOfTextureCoordinates(DWORD XboxFVF, int aTextureIndex)
 {
-	// See D3DFVF_TEXCOORDSIZE1()
-	switch ((dwFVF >> ((aTextureIndex * 2) + 16)) & 3) {
-	case D3DFVF_TEXTUREFORMAT1: return 1; // One floating point value
-	case D3DFVF_TEXTUREFORMAT2: return 2; // Two floating point values
-	case D3DFVF_TEXTUREFORMAT3: return 3; // Three floating point values
-	case D3DFVF_TEXTUREFORMAT4: return 4; // Four floating point values
+	// See X_D3DFVF_TEXCOORDSIZE1()
+	switch ((XboxFVF >> ((aTextureIndex * 2) + 16)) & 3) {
+	case X_D3DFVF_TEXTUREFORMAT1: return 1; // One floating point value
+	case X_D3DFVF_TEXTUREFORMAT2: return 2; // Two floating point values
+	case X_D3DFVF_TEXTUREFORMAT3: return 3; // Three floating point values
+	case X_D3DFVF_TEXTUREFORMAT4: return 4; // Four floating point values
 	default:
-		//assert(false || "DxbxFVF_GetNumberOfTextureCoordinates : Unhandled case");
+		//assert(false || "XboxFVF_GetNumberOfTextureCoordinates : Unhandled case");
 		return 0;
 	}
 }
 
 // Dxbx Note: This code appeared in EmuExecutePushBufferRaw and occured
 // in EmuFlushIVB too, so it's generalize in this single implementation.
-UINT DxbxFVFToVertexSizeInBytes(DWORD dwFVF, BOOL bIncludeTextures)
+UINT XboxFVFToVertexSizeInBytes(DWORD XboxFVF, BOOL bIncludeTextures)
 {
 /*
 	X_D3DFVF_POSITION_MASK    = $00E; // Dec  /2  #fl
@@ -77,9 +77,9 @@ UINT DxbxFVFToVertexSizeInBytes(DWORD dwFVF, BOOL bIncludeTextures)
 	X_D3DFVF_XYZB4            = $00c; // 12 > 6 > 7
 */
 	// Divide the D3DFVF by two, this gives almost the number of floats needed for the format :
-	UINT Result = (dwFVF & D3DFVF_POSITION_MASK) >> 1;
-	if (Result >= (D3DFVF_XYZB1 >> 1)) {
-		// Any format from D3DFVF_XYZB1 and above need 1 extra float :
+	UINT Result = (XboxFVF & X_D3DFVF_POSITION_MASK) >> 1;
+	if (Result >= (X_D3DFVF_XYZB1 >> 1)) {
+		// Any format from X_D3DFVF_XYZB1 and above need 1 extra float :
 		Result++;
 	}
 	else {
@@ -90,26 +90,26 @@ UINT DxbxFVFToVertexSizeInBytes(DWORD dwFVF, BOOL bIncludeTextures)
 	// Express the size in bytes, instead of floats :
 	Result *= sizeof(FLOAT);
 
-	// D3DFVF_NORMAL cannot be combined with D3DFVF_XYZRHW :
-	if ((dwFVF & D3DFVF_POSITION_MASK) != D3DFVF_XYZRHW) {
-		if (dwFVF & D3DFVF_NORMAL) {
+	// X_D3DFVF_NORMAL cannot be combined with X_D3DFVF_XYZRHW :
+	if ((XboxFVF & X_D3DFVF_POSITION_MASK) != X_D3DFVF_XYZRHW) {
+		if (XboxFVF & X_D3DFVF_NORMAL) {
 			Result += sizeof(FLOAT) * 3;
 		}
 	}
 
-	if (dwFVF & D3DFVF_DIFFUSE) {
+	if (XboxFVF & X_D3DFVF_DIFFUSE) {
 		Result += sizeof(D3DCOLOR);
 	}
 
-	if (dwFVF & D3DFVF_SPECULAR) {
+	if (XboxFVF & X_D3DFVF_SPECULAR) {
 		Result += sizeof(D3DCOLOR);
 	}
 
 	if (bIncludeTextures) {
-		int NrTextures = ((dwFVF & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT);
+		int NrTextures = ((XboxFVF & X_D3DFVF_TEXCOUNT_MASK) >> X_D3DFVF_TEXCOUNT_SHIFT);
 		while (NrTextures > 0) {
 			NrTextures--;
-			Result += DxbxFVF_GetNumberOfTextureCoordinates(dwFVF, NrTextures) * sizeof(FLOAT);
+			Result += XboxFVF_GetNumberOfTextureCoordinates(XboxFVF, NrTextures) * sizeof(FLOAT);
 		}
 	}
 
@@ -191,7 +191,7 @@ DWORD CxbxGetStrideFromVertexShaderHandle(DWORD dwVertexShader)
 	}
 	else {
 		if (VshHandleIsFVF(dwVertexShader)) {
-			Stride = DxbxFVFToVertexSizeInBytes(dwVertexShader, /*bIncludeTextures=*/true);
+			Stride = XboxFVFToVertexSizeInBytes(dwVertexShader, /*bIncludeTextures=*/true);
 		}
 		else {
 			LOG_TEST_CASE("Invalid Vertex Shader not supported for PushBuffer emulation!");

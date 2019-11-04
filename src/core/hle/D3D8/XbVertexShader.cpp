@@ -1494,20 +1494,6 @@ extern void FreeVertexDynamicPatch(CxbxVertexShader *pVertexShader)
     pVertexShader->VertexShaderInfo.NumberOfVertexStreams = 0;
 }
 
-CxbxVertexShaderInfo *GetCxbxVertexShaderInfo(DWORD XboxVertexShaderHandle)
-{
-    CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(XboxVertexShaderHandle);
-
-    for (uint32_t i = 0; i < pCxbxVertexShader->VertexShaderInfo.NumberOfVertexStreams; i++)
-    {
-        if (pCxbxVertexShader->VertexShaderInfo.VertexStreams[i].NeedPatch)
-        {
-            return &pCxbxVertexShader->VertexShaderInfo;
-        }
-    }
-    return nullptr;
-}
-
 std::unordered_map<DWORD, CxbxVertexShader*> g_CxbxVertexShaders;
 
 CxbxVertexShader* GetCxbxVertexShader(DWORD XboxVertexShaderHandle)
@@ -1911,7 +1897,7 @@ void CxbxImpl_SetVertexShaderInput
 
 		// Note : Xbox DOES store Handle internally, but we don't have to, since Xbox only ever returns it through (unpatched) D3DDevice_GetVertexShaderInput
 
-		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This > 0 indicates g_Xbox_SetVertexShaderInput_Data has to be used (see GetXboxVertexAttributes)
+		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This > 0 indicates g_Xbox_SetVertexShaderInput_Data has to be used (see GetXboxVertexAttributes and GetXboxVertexStreamData)
 		if (StreamCount > 0) {
 			assert(StreamCount <= X_VSH_MAX_STREAMS);
 			assert(pStreamInputs != xbnullptr);

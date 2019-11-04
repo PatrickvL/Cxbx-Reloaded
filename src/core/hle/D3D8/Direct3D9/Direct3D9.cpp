@@ -4103,7 +4103,7 @@ HRESULT WINAPI XTL::EMUPATCH(D3DDevice_CreateVertexShader)
 	// If pDeclaration is not null, it's parsed, resulting in a number of constants
 	// Parse results are pushed to the push buffer
 	// Sets other fields
-	// pHandle recieves the addres of the new shader, or-ed with 1 (D3DFVF_RESERVED0)
+	// pHandle recieves the addres of the new shader, or-ed with 1 (X_D3DFVF_RESERVED0)
 	XB_trampoline(HRESULT, WINAPI, D3DDevice_CreateVertexShader, (CONST DWORD*, CONST DWORD*, DWORD*, DWORD));
 
     HRESULT hRet = D3D_OK;
@@ -4120,7 +4120,7 @@ HRESULT WINAPI XTL::EMUPATCH(D3DDevice_CreateVertexShader)
         // We don't do the full steps listed above intentionally so: If this situation is reached, the game
         // does not have a CreateVertexShader function, so those actions should not happen anyway!
         LOG_TEST_CASE("CreateVertexShader with no trampoline");
-        *pHandle = ((DWORD)malloc(sizeof(X_D3DVertexShader)) & D3DFVF_RESERVED0);
+        *pHandle = ((DWORD)malloc(sizeof(X_D3DVertexShader)) & X_D3DFVF_RESERVED0); // TODO : and-ing is a bug, it should be or-ed (but the entire implementation needs a rewrite)
     }
 
 	if (g_pD3DDevice == nullptr) {
@@ -4714,7 +4714,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 	}
 
 	int o = g_InlineVertexBuffer_TableOffset;
-	unsigned int FVFPosType = g_InlineVertexBuffer_FVF & D3DFVF_POSITION_MASK;
+	unsigned int FVFPosType = g_InlineVertexBuffer_FVF & X_D3DFVF_POSITION_MASK;
 
 	switch(Register)
 	{
@@ -4727,27 +4727,27 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 			g_InlineVertexBuffer_Table[o].Position.z = c;
 			g_InlineVertexBuffer_Table[o].Rhw = d; // Was : 1.0f; // Dxbx note : Why set Rhw to 1.0? And why ignore d?
 
-			switch (g_InlineVertexBuffer_FVF & D3DFVF_POSITION_MASK) {
+			switch (g_InlineVertexBuffer_FVF & X_D3DFVF_POSITION_MASK) {
 			case 0:
 				// No position mask given yet, set it now :
-				if (g_InlineVertexBuffer_FVF & D3DFVF_NORMAL) {
-					// See https://msdn.microsoft.com/ru-ru/library/windows/desktop/bb172559(v=vs.85).aspx and DxbxFVFToVertexSizeInBytes 
-					// D3DFVF_NORMAL cannot be combined with D3DFVF_XYZRHW :
-					g_InlineVertexBuffer_FVF |= D3DFVF_XYZ;
+				if (g_InlineVertexBuffer_FVF & X_D3DFVF_NORMAL) {
+					// See https://msdn.microsoft.com/ru-ru/library/windows/desktop/bb172559(v=vs.85).aspx and XboxFVFToVertexSizeInBytes 
+					// X_D3DFVF_NORMAL cannot be combined with X_D3DFVF_XYZRHW :
+					g_InlineVertexBuffer_FVF |= X_D3DFVF_XYZ;
 					g_InlineVertexBuffer_Table[o].Rhw = 1.0f; // This, just to stay close to prior behaviour
 				}
 				else {
-					// Without D3DFVF_NORMAL, assume D3DFVF_XYZRHW
-					g_InlineVertexBuffer_FVF |= D3DFVF_XYZRHW;
+					// Without X_D3DFVF_NORMAL, assume X_D3DFVF_XYZRHW
+					g_InlineVertexBuffer_FVF |= X_D3DFVF_XYZRHW;
 				}
 				break;
-			case D3DFVF_XYZ:
-			case D3DFVF_XYZRHW:
-			case D3DFVF_XYZB1:
+			case X_D3DFVF_XYZ:
+			case X_D3DFVF_XYZRHW:
+			case X_D3DFVF_XYZB1:
 				// These are alright
 				break;
 			default:
-				EmuLog(LOG_LEVEL::WARNING, "D3DDevice_SetVertexData4f unexpected FVF when selecting D3DFVF_XYZ(RHW) : %x", g_InlineVertexBuffer_FVF);
+				EmuLog(LOG_LEVEL::WARNING, "D3DDevice_SetVertexData4f unexpected FVF when selecting X_D3DFVF_XYZ(RHW) : %x", g_InlineVertexBuffer_FVF);
 				// TODO : How to resolve this?
 			}
 
@@ -4768,20 +4768,20 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 			// TODO: Test the above. 
 			// Xbox supports up to 4 blendweights
 
-			switch (g_InlineVertexBuffer_FVF & D3DFVF_POSITION_MASK) {
+			switch (g_InlineVertexBuffer_FVF & X_D3DFVF_POSITION_MASK) {
 			case 0:
 				// No position mask given yet, set it now :
-				g_InlineVertexBuffer_FVF |= D3DFVF_XYZB1;
-				// TODO: How to select blendweight D3DFVF_XYZB2 or up?
+				g_InlineVertexBuffer_FVF |= X_D3DFVF_XYZB1;
+				// TODO: How to select blendweight X_D3DFVF_XYZB2 or up?
 				break;
-			case D3DFVF_XYZB1:
+			case X_D3DFVF_XYZB1:
 				// These are alright
 				break;
 			default:
 				EmuLog(LOG_LEVEL::WARNING, "D3DDevice_SetVertexData4f unexpected FVF when processing X_D3DVSDE_BLENDWEIGHT : %x", g_InlineVertexBuffer_FVF);
-				g_InlineVertexBuffer_FVF &= ~D3DFVF_POSITION_MASK; // for now, remove prior position mask, leading to blending below
-				g_InlineVertexBuffer_FVF |= D3DFVF_XYZB1;
-				// TODO: How to select blendweight D3DFVF_XYZB2 or up?
+				g_InlineVertexBuffer_FVF &= ~X_D3DFVF_POSITION_MASK; // for now, remove prior position mask, leading to blending below
+				g_InlineVertexBuffer_FVF |= X_D3DFVF_XYZB1;
+				// TODO: How to select blendweight X_D3DFVF_XYZB2 or up?
 				// TODO : How to resolve this?
 			}
 
@@ -4793,14 +4793,14 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 			g_InlineVertexBuffer_Table[o].Normal.x = a;
 			g_InlineVertexBuffer_Table[o].Normal.y = b;
 			g_InlineVertexBuffer_Table[o].Normal.z = c;
-			g_InlineVertexBuffer_FVF |= D3DFVF_NORMAL;
+			g_InlineVertexBuffer_FVF |= X_D3DFVF_NORMAL;
 			break;
 		}
 
 		case X_D3DVSDE_DIFFUSE:
 		{
 			g_InlineVertexBuffer_Table[o].Diffuse = D3DCOLOR_COLORVALUE(a, b, c, d);
-			g_InlineVertexBuffer_FVF |= D3DFVF_DIFFUSE;
+			g_InlineVertexBuffer_FVF |= X_D3DFVF_DIFFUSE;
             HLE_write_NV2A_vertex_attribute_slot(X_D3DVSDE_DIFFUSE, g_InlineVertexBuffer_Table[o].Diffuse);
 			break;
 		}
@@ -4808,7 +4808,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 		case X_D3DVSDE_SPECULAR:
 		{
 			g_InlineVertexBuffer_Table[o].Specular = D3DCOLOR_COLORVALUE(a, b, c, d);
-			g_InlineVertexBuffer_FVF |= D3DFVF_SPECULAR;
+			g_InlineVertexBuffer_FVF |= X_D3DFVF_SPECULAR;
             HLE_write_NV2A_vertex_attribute_slot(X_D3DVSDE_SPECULAR, g_InlineVertexBuffer_Table[o].Specular);
 			break;
 		}
@@ -4844,11 +4844,11 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 			g_InlineVertexBuffer_Table[o].TexCoord[0].y = b;
 			g_InlineVertexBuffer_Table[o].TexCoord[0].z = c;
 			g_InlineVertexBuffer_Table[o].TexCoord[0].w = d;
-			if ((g_InlineVertexBuffer_FVF & D3DFVF_TEXCOUNT_MASK) < D3DFVF_TEX1) {
+			if ((g_InlineVertexBuffer_FVF & X_D3DFVF_TEXCOUNT_MASK) < X_D3DFVF_TEX1) {
 				// Dxbx fix : Use mask, else the format might get expanded incorrectly :
-				g_InlineVertexBuffer_FVF &= ~D3DFVF_TEXCOUNT_MASK;
-				g_InlineVertexBuffer_FVF |= D3DFVF_TEX1;
-				// Dxbx note : Correct usage of D3DFVF_TEX1 (and the other cases below)
+				g_InlineVertexBuffer_FVF &= ~X_D3DFVF_TEXCOUNT_MASK;
+				g_InlineVertexBuffer_FVF |= X_D3DFVF_TEX1;
+				// Dxbx note : Correct usage of X_D3DFVF_TEX1 (and the other cases below)
 				// can be tested with "Daphne Xbox" (the Laserdisc Arcade Game Emulator).
 			}
 
@@ -4861,9 +4861,9 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 			g_InlineVertexBuffer_Table[o].TexCoord[1].y = b;
 			g_InlineVertexBuffer_Table[o].TexCoord[1].z = c;
 			g_InlineVertexBuffer_Table[o].TexCoord[1].w = d;
-			if ((g_InlineVertexBuffer_FVF & D3DFVF_TEXCOUNT_MASK) < D3DFVF_TEX2) {
-				g_InlineVertexBuffer_FVF &= ~D3DFVF_TEXCOUNT_MASK;
-				g_InlineVertexBuffer_FVF |= D3DFVF_TEX2;
+			if ((g_InlineVertexBuffer_FVF & X_D3DFVF_TEXCOUNT_MASK) < X_D3DFVF_TEX2) {
+				g_InlineVertexBuffer_FVF &= ~X_D3DFVF_TEXCOUNT_MASK;
+				g_InlineVertexBuffer_FVF |= X_D3DFVF_TEX2;
 			}
 
 			break;
@@ -4875,9 +4875,9 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 			g_InlineVertexBuffer_Table[o].TexCoord[2].y = b;
 			g_InlineVertexBuffer_Table[o].TexCoord[2].z = c;
 			g_InlineVertexBuffer_Table[o].TexCoord[2].w = d;
-			if ((g_InlineVertexBuffer_FVF & D3DFVF_TEXCOUNT_MASK) < D3DFVF_TEX3) {
-				g_InlineVertexBuffer_FVF &= ~D3DFVF_TEXCOUNT_MASK;
-				g_InlineVertexBuffer_FVF |= D3DFVF_TEX3;
+			if ((g_InlineVertexBuffer_FVF & X_D3DFVF_TEXCOUNT_MASK) < X_D3DFVF_TEX3) {
+				g_InlineVertexBuffer_FVF &= ~X_D3DFVF_TEXCOUNT_MASK;
+				g_InlineVertexBuffer_FVF |= X_D3DFVF_TEX3;
 			}
 
 			break;
@@ -4889,9 +4889,9 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_SetVertexData4f)
 			g_InlineVertexBuffer_Table[o].TexCoord[3].y = b;
 			g_InlineVertexBuffer_Table[o].TexCoord[3].z = c;
 			g_InlineVertexBuffer_Table[o].TexCoord[3].w = d;
-			if ((g_InlineVertexBuffer_FVF & D3DFVF_TEXCOUNT_MASK) < D3DFVF_TEX4) {
-				g_InlineVertexBuffer_FVF &= ~D3DFVF_TEXCOUNT_MASK;
-				g_InlineVertexBuffer_FVF |= D3DFVF_TEX4;
+			if ((g_InlineVertexBuffer_FVF & X_D3DFVF_TEXCOUNT_MASK) < X_D3DFVF_TEX4) {
+				g_InlineVertexBuffer_FVF &= ~X_D3DFVF_TEXCOUNT_MASK;
+				g_InlineVertexBuffer_FVF |= X_D3DFVF_TEX4;
 			}
 
 			break;
@@ -6869,26 +6869,26 @@ void CxbxDrawIndexedClosingLineUP(INDEX16 LowIndex, INDEX16 HighIndex, void *pHo
 		/*PrimitiveCount=*/1,
 		/*pIndexData=*/CxbxClosingLineIndices,
 		/*IndexDataFormat=*/D3DFMT_INDEX16,
-		pHostVertexStreamZeroData,
-		uiHostVertexStreamZeroStride
+		/*pVertexStreamZeroData=*/pHostVertexStreamZeroData,
+		/*VertexStreamZeroStride=*/uiHostVertexStreamZeroStride
 	);
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitiveUP(CxbxDrawIndexedClosingLineUP)");
 #else // TODO : If NumVertices is high, performance might suffer - drawing a copy of the two vertices could be faster
 	// Since we can use pHostVertexStreamZeroData here, we can close the line simpler than
 	// via CxbxDrawIndexedClosingLine, by drawing two vertices via DrawPrimitiveUP.
 	// (This is simpler because we just copy the vertices, and don't need a separate index buffer.)
-	uint8_t VertexData[512]; assert(512 >= 2 * uiHostVertexStreamZeroStride);
+	uint8_t HostVertexStreamZeroData[512]; assert(512 >= 2 * uiHostVertexStreamZeroStride);
 	uint8_t *FirstVertex = (uint8_t *)pHostVertexStreamZeroData + (LowIndex * uiHostVertexStreamZeroStride);
 	uint8_t *SecondVertex = (uint8_t *)pHostVertexStreamZeroData + (HighIndex * uiHostVertexStreamZeroStride);
 
-	memcpy(VertexData, FirstVertex, uiHostVertexStreamZeroStride);
-	memcpy(VertexData + uiHostVertexStreamZeroStride, SecondVertex, uiHostVertexStreamZeroStride);
+	memcpy(HostVertexStreamZeroData, FirstVertex, uiHostVertexStreamZeroStride);
+	memcpy(HostVertexStreamZeroData + uiHostVertexStreamZeroStride, SecondVertex, uiHostVertexStreamZeroStride);
 
 	HRESULT hRet = g_pD3DDevice->DrawPrimitiveUP(
 		/*PrimitiveType=*/D3DPT_LINELIST,
 		/*PrimitiveCount=*/1,
-		/*pVertexStreamZeroData=*/VertexData,
-		uiHostVertexStreamZeroStride
+		/*pVertexStreamZeroData=*/HostVertexStreamZeroData,
+		/*VertexStreamZeroStride=*/uiHostVertexStreamZeroStride
 	);
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawPrimitiveUP(CxbxDrawIndexedClosingLineUP)");
 #endif
@@ -6979,6 +6979,7 @@ void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 	assert(DrawContext.dwBaseVertexIndex == 0); // No IndexBase under Draw*UP
 
 	VertexBufferConverter.Apply(&DrawContext);
+
 	if (DrawContext.XboxPrimitiveType == XTL::X_D3DPT_QUADLIST) {
 		// LOG_TEST_CASE("X_D3DPT_QUADLIST"); // test-case : X-Marbles and XDK Sample PlayField
 		// Draw quadlists using a single 'quad-to-triangle mapping' index buffer :
@@ -6996,11 +6997,11 @@ void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 			/*PrimitiveType=*/D3DPT_TRIANGLELIST,
 			/*MinVertexIndex=*/LowIndex,
 			/*NumVertexIndices=*/(HighIndex - LowIndex) + 1,
-			PrimitiveCount,
-			pIndexData,
+			/*PrimitiveCount=*/PrimitiveCount,
+			/*pIndexData=*/pIndexData,
 			/*IndexDataFormat=*/D3DFMT_INDEX16,
-			DrawContext.pHostVertexStreamZeroData,
-			DrawContext.uiHostVertexStreamZeroStride
+			/*pVertexStreamZeroData=*/DrawContext.pHostVertexStreamZeroData,
+			/*VertexStreamZeroStride=*/DrawContext.uiHostVertexStreamZeroStride
 		);
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitieUP(X_D3DPT_QUADLIST)");
 
@@ -7009,10 +7010,10 @@ void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 	else {
 		// Primitives other than X_D3DPT_QUADLIST can be drawn using one DrawPrimitiveUP call :
 		HRESULT hRet = g_pD3DDevice->DrawPrimitiveUP(
-			EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
-			DrawContext.dwHostPrimitiveCount,
-			DrawContext.pHostVertexStreamZeroData,
-			DrawContext.uiHostVertexStreamZeroStride
+			/*PrimitiveType=*/EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
+			/*PrimitiveCount=*/DrawContext.dwHostPrimitiveCount,
+			/*pVertexStreamZeroData=*/DrawContext.pHostVertexStreamZeroData,
+			/*VertexStreamZeroStride=*/DrawContext.uiHostVertexStreamZeroStride
 		);
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawPrimitiveUP");
 
@@ -7382,7 +7383,6 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawVertices)
 
 	// TODO : Call unpatched D3DDevice_SetStateVB(0);
 
-	CxbxUpdateNativeD3DResources();
 	CxbxDrawContext DrawContext = {};
 
 	DrawContext.XboxPrimitiveType = PrimitiveType;
@@ -7390,6 +7390,7 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawVertices)
 	DrawContext.dwStartVertex = StartVertex;
 
 	VertexBufferConverter.Apply(&DrawContext);
+
 	if (DrawContext.XboxPrimitiveType == X_D3DPT_QUADLIST) {
 		if (StartVertex == 0) {
 			//LOG_TEST_CASE("X_D3DPT_QUADLIST (StartVertex == 0)"); // disabled, hit too often
@@ -7501,10 +7502,6 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawVerticesUP)
 		return;
 	}
 
-	// TODO : Call unpatched D3DDevice_SetStateUP();
-
-	CxbxUpdateNativeD3DResources();
-
 	CxbxDrawContext DrawContext = {};
 
 	DrawContext.XboxPrimitiveType = PrimitiveType;
@@ -7541,10 +7538,6 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawIndexedVertices)
 		LOG_TEST_CASE("Invalid VertexCount");
 		return;
 	}
-
-	// TODO : Call unpatched D3DDevice_SetStateVB(g_Xbox_BaseVertexIndex);
-
-	CxbxUpdateNativeD3DResources();
 
 	CxbxDrawContext DrawContext = {};
 
@@ -7585,10 +7578,6 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 		return;
 	}
 
-	// TODO : Call unpatched D3DDevice_SetStateUP();
-
-	CxbxUpdateNativeD3DResources();
-
 	CxbxDrawContext DrawContext = {};
 	INDEX16* pXboxIndexData = (INDEX16*)pIndexData;
 
@@ -7626,11 +7615,11 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 		/*PrimitiveType=*/EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
 		/*MinVertexIndex=*/DrawContext.LowIndex,
 		/*NumVertexIndices=*/(DrawContext.HighIndex - DrawContext.LowIndex) + 1,
-		PrimitiveCount,
-		pHostIndexData,
+		/*PrimitiveCount=*/PrimitiveCount,
+		/*pIndexData=*/pHostIndexData,
 		/*IndexDataFormat=*/D3DFMT_INDEX16,
-		DrawContext.pHostVertexStreamZeroData,
-		DrawContext.uiHostVertexStreamZeroStride
+		/*pVertexStreamZeroData=*/DrawContext.pHostVertexStreamZeroData,
+		/*VertexStreamZeroStride=*/DrawContext.uiHostVertexStreamZeroStride
 	);
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitiveUP");
 

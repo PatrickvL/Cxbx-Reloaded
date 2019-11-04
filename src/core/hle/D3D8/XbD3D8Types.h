@@ -1079,19 +1079,19 @@ struct X_D3DVertexShader
 // vertex shader input registers for fixed function vertex shader
 
 //          Name                   Register number      D3DFVF
-const int X_D3DVSDE_POSITION     = 0; // Corresponds to D3DFVF_XYZ
-const int X_D3DVSDE_BLENDWEIGHT  = 1; // Corresponds to D3DFVF_XYZRHW
-const int X_D3DVSDE_NORMAL       = 2; // Corresponds to D3DFVF_NORMAL
-const int X_D3DVSDE_DIFFUSE      = 3; // Corresponds to D3DFVF_DIFFUSE
-const int X_D3DVSDE_SPECULAR     = 4; // Corresponds to D3DFVF_SPECULAR
+const int X_D3DVSDE_POSITION     = 0; // Corresponds to X_D3DFVF_XYZ
+const int X_D3DVSDE_BLENDWEIGHT  = 1; // Corresponds to X_D3DFVF_XYZRHW
+const int X_D3DVSDE_NORMAL       = 2; // Corresponds to X_D3DFVF_NORMAL
+const int X_D3DVSDE_DIFFUSE      = 3; // Corresponds to X_D3DFVF_DIFFUSE
+const int X_D3DVSDE_SPECULAR     = 4; // Corresponds to X_D3DFVF_SPECULAR
 const int X_D3DVSDE_FOG          = 5; // Xbox extension
 const int X_D3DVSDE_POINTSIZE    = 6; // Dxbx addition
 const int X_D3DVSDE_BACKDIFFUSE  = 7; // Xbox extension
 const int X_D3DVSDE_BACKSPECULAR = 8; // Xbox extension
-const int X_D3DVSDE_TEXCOORD0    = 9; // Corresponds to D3DFVF_TEX1 (not D3DFVF_TEX0, which means no textures are present)
-const int X_D3DVSDE_TEXCOORD1    = 10; // Corresponds to D3DFVF_TEX2
-const int X_D3DVSDE_TEXCOORD2    = 11; // Corresponds to D3DFVF_TEX3
-const int X_D3DVSDE_TEXCOORD3    = 12; // Corresponds to D3DFVF_TEX4
+const int X_D3DVSDE_TEXCOORD0    = 9; // Corresponds to X_D3DFVF_TEX1 (not X_D3DFVF_TEX0, which means no textures are present)
+const int X_D3DVSDE_TEXCOORD1    = 10; // Corresponds to X_D3DFVF_TEX2
+const int X_D3DVSDE_TEXCOORD2    = 11; // Corresponds to X_D3DFVF_TEX3
+const int X_D3DVSDE_TEXCOORD3    = 12; // Corresponds to X_D3DFVF_TEX4
 const int X_D3DVSDE_VERTEX       = 0xFFFFFFFF; // Xbox extension for Begin/End drawing (data is a D3DVSDT_FLOAT4)
 
 //typedef X_D3DVSDE = X_D3DVSDE_POSITION..High(DWORD)-2; // Unique declaration to make overloads possible;

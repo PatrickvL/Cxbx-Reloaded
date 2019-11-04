@@ -2924,13 +2924,8 @@ bool PSH_XBOX_SHADER::InsertTextureModeInstruction(XTL::X_D3DPIXELSHADERDEF *pPS
 			auto biasModifier = (1 << ARGMOD_SCALE_BX2);
 			auto pXboxTexture = g_pXbox_SetTexture[inputStage];
 			if (pXboxTexture != nullptr) {
-				extern XTL::X_D3DFORMAT GetXboxPixelContainerFormat(const XTL::X_D3DPixelContainer *pXboxPixelContainer); // TODO : Move to XTL-independent header file
-
 				switch (GetXboxPixelContainerFormat(pXboxTexture)) {
 					case XTL::X_D3DFMT_L6V5U5: {
-						extern XTL::X_D3DRESOURCETYPE GetXboxD3DResourceType(const XTL::X_D3DResource *pXboxResource); // TODO : Move to XTL-independent header file
-						extern bool IsSupportedFormat(XTL::X_D3DFORMAT X_Format, XTL::X_D3DRESOURCETYPE XboxResourceType, DWORD D3DUsage); // TODO : Move to XTL-independent header file
-
 						// L6V5U5 format is converted incorrectly if not supported by the device
 						XTL::X_D3DRESOURCETYPE XboxResourceType = GetXboxD3DResourceType(pXboxTexture);
 						DWORD D3DUsage = 0; // TODO : Since it's not yet know how to determine D3DUsage in this case, 'hack' it by using no specific D3DUSAGE_* flags.
