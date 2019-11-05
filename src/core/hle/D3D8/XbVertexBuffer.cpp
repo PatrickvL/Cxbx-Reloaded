@@ -109,24 +109,26 @@ void CxbxPatchedStream::Activate(CxbxDrawContext *pDrawContext, UINT uiStream) c
 {
 	//LOG_INIT // Allows use of DEBUG_D3DRESULT
 
-	// Instead of calling SetStreamSource on host, use the cached stream values on host
-	if (m_bCachedUseHostVertexStreamZero) {
-		// Set the UserPointer variables in the drawing context (only for stream zero!)
-		if (uiStream == 0) {
-			pDrawContext->pHostVertexStreamZeroData = m_pCachedHostVertexStreamZeroData;
-			pDrawContext->uiHostVertexStreamZeroStride = m_uiCachedHostVertexStride;
-		}
-	} else {
-		HRESULT hRet = g_pD3DDevice->SetStreamSource(
-			/*StreamNumber=*/uiStream,
-			/*pStreamData=*/m_pCachedHostVertexBuffer,
-			/*OffsetInBytes=*/0,
-			/*Stride=*/m_uiCachedHostVertexStride);
-		//DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetStreamSource");
-		if (FAILED(hRet)) {
-			CxbxKrnlCleanup("Failed to set the type patched buffer as the new stream source!\n");
-			// TODO : test-case : XDK Cartoon hits the above case when the vertex cache size is 0.
-		}
+	assert(m_pCachedHostVertexStreamZeroData == nullptr);
+
+	// TODO : Use g_pDummyBuffer when m_pCachedHostVertexBuffer == nullptr?
+	// Luke contemplated g_pDummyBuffer might have been intended for cases where Xbox
+	// has null streams in between assigned streams, which host might not support.
+	// (If not, perhaps we should remove g_pDummyBuffer entirely.)
+
+	// TODO : IF we use g_pDummyBuffer, should we call SetStreamSourceFreq() too,
+	// so that it won't run out of it's buffer (although that won't help with
+	// indexed draws...)?
+
+	HRESULT hRet = g_pD3DDevice->SetStreamSource(
+		/*StreamNumber=*/uiStream,
+		/*pStreamData=*/m_pCachedHostVertexBuffer,
+		/*OffsetInBytes=*/0,
+		/*Stride=*/m_uiCachedHostVertexStride);
+	//DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetStreamSource");
+	if (FAILED(hRet)) {
+		CxbxKrnlCleanup("Failed to set the type patched buffer as the new stream source!\n");
+		// TODO : test-case : XDK Cartoon hits the above case when the vertex cache size is 0.
 	}
 }
 
@@ -137,6 +139,11 @@ CxbxPatchedStream::CxbxPatchedStream()
 
 CxbxPatchedStream::~CxbxPatchedStream()
 {
+	Clear();
+}
+
+void CxbxPatchedStream::Clear()
+{
     if (m_bCachedHostVertexStreamZeroDataIsAllocated) {
         free(m_pCachedHostVertexStreamZeroData);
         m_bCachedHostVertexStreamZeroDataIsAllocated = false;
@@ -145,6 +152,7 @@ CxbxPatchedStream::~CxbxPatchedStream()
     m_pCachedHostVertexStreamZeroData = nullptr;
 
     if (m_pCachedHostVertexBuffer != nullptr) {
+        // TODO : We could re-use this buffer, if it's large enough...
         m_pCachedHostVertexBuffer->Release();
         m_pCachedHostVertexBuffer = nullptr;
     }
@@ -273,18 +281,15 @@ CxbxPatchedStream& CxbxVertexBufferConverter::ConvertStream
 	// Does this draw supply vertex data through a User Pointer?
     if (pDrawContext->pXboxVertexStreamZeroData != xbnullptr) {
 		// Only use the supplied user pointer for stream zero
-		if (uiStream == 0) {
-			pXboxVertexData = (uint8_t*)pDrawContext->pXboxVertexStreamZeroData;
-		}
-		// Note : All streams other than stream zero have no pXboxVertexData and will early-exit below
+		assert(uiStream == 0);
+		pXboxVertexData = (uint8_t*)pDrawContext->pXboxVertexStreamZeroData;
 	} else {
         pXboxVertexData = GetXboxVertexStreamData(uiStream);
 	}
 
 	// Deactivate this stream on host when there's no Xbox vertex data :
 	if (pXboxVertexData == xbnullptr) {
-		m_TempPatchedStream.m_bCachedUseHostVertexStreamZero = false; // Doesn't apply, CxbxPatchedStream::Activate() would skip SetStreamSource
-		m_TempPatchedStream.m_pCachedHostVertexBuffer = nullptr; // Passed to SetStreamSource TODO : Use g_pDummyBuffer?
+		m_TempPatchedStream.m_pCachedHostVertexBuffer = nullptr; // Passed to SetStreamSource
 		m_TempPatchedStream.m_uiCachedHostVertexStride = 0; // Passed to SetStreamSource
 		return m_TempPatchedStream;
 	}
@@ -305,14 +310,11 @@ CxbxPatchedStream& CxbxVertexBufferConverter::ConvertStream
 
     // FAST PATH: If this draw is a user-pointer based draw, and does not require patching, we can use it directly
     if (pDrawContext->pXboxVertexStreamZeroData != xbnullptr) {
-		assert(uiStream == 0); // any other than stream zero must already have early-exited above
-
 		if (bNeedVertexPatching || bNeedTextureNormalization || m_bMustReset_FVF_XYZRHW) {
 			// Some form of conversion is needed, arrange a buffer where we can convert into
 			bAllocateHostVertexStreamZero = true;
 		} else {
 			// No conversion is needed, we just arrange here that the Xbox stream data will be used on host
-			m_TempPatchedStream.m_bCachedUseHostVertexStreamZero = true; // Instruct CxbxPatchedStream::Activate() to skip SetStreamSource
 			m_TempPatchedStream.m_pCachedHostVertexStreamZeroData = pDrawContext->pXboxVertexStreamZeroData; // Pass Xbox stream data to DrawContext, which in turn gets
 			m_TempPatchedStream.m_uiCachedHostVertexStride = pDrawContext->uiXboxVertexStreamZeroStride; // ... passed to host DrawPrimitiveUP()/DrawIndexedPrimitiveUP().
 			// No need to hash or patch at all in this case!
@@ -354,19 +356,7 @@ CxbxPatchedStream& CxbxVertexBufferConverter::ConvertStream
 	    }
 
 	    // If execution reaches here, the cached vertex buffer was not valid and we must reconvert the data
-        uint8_t *pTmpVertexData = (uint8_t*)patchedStream.m_pCachedHostVertexStreamZeroData;
-		IDirect3DVertexBuffer *pTmpVertexBuffer = patchedStream.m_pCachedHostVertexBuffer;
-
-        // Free the existing buffers
-        if (pTmpVertexData != nullptr) {
-            free(pTmpVertexData);
-            pTmpVertexData = nullptr;
-        }
-		if (pTmpVertexBuffer != nullptr) {
-			// TODO : We could re-use this buffer, is large enough...
-            pTmpVertexBuffer->Release();
-            pTmpVertexBuffer = nullptr;
-        }
+		patchedStream.Clear();
     }
 
     m_TotalCacheMisses++;
@@ -723,10 +713,9 @@ CxbxPatchedStream& CxbxVertexBufferConverter::ConvertStream
     patchedStream.m_uiCachedXboxVertexDataHash = XboxVertexDataHash;
     patchedStream.m_uiCachedXboxVertexStride = uiXboxVertexStride;
     patchedStream.m_uiCachedHostVertexStride = uiHostVertexStride;
-	patchedStream.m_bCachedUseHostVertexStreamZero = bAllocateHostVertexStreamZero;
+	patchedStream.m_bCachedHostVertexStreamZeroDataIsAllocated = bAllocateHostVertexStreamZero;
     if (bAllocateHostVertexStreamZero) {
         patchedStream.m_pCachedHostVertexStreamZeroData = pHostVertexData;
-		patchedStream.m_bCachedHostVertexStreamZeroDataIsAllocated = true;
     } else {
         // assert(pHostVertexBuffer != nullptr);
         pHostVertexBuffer->Unlock();
@@ -774,11 +763,21 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 
 	PrepareStreamConversion();
 
-    // Convert and activate all 16 Xbox streams
-    for(UINT uiStream = 0; uiStream < X_VSH_MAX_STREAMS; uiStream++) {
-		CxbxPatchedStream &PatchedStream = ConvertStream(pDrawContext, uiStream);
-		PatchedStream.Activate(pDrawContext, uiStream);
-    }
+	// Is this a user memory pointer based draws?
+	if (pDrawContext->pXboxVertexStreamZeroData != xbnullptr) {
+		// For these type of draws, only stream zero needs to be processed
+		CxbxPatchedStream& PatchedStream = ConvertStream(pDrawContext, 0);
+		// Instead of calling SetStreamSource on host, we pass the patched stream and stride
+		// directly to host's DrawPrimitiveUP/DrawIndexedPrimitiveUP via the drawing context :
+		pDrawContext->pHostVertexStreamZeroData = PatchedStream.m_pCachedHostVertexStreamZeroData;
+		pDrawContext->uiHostVertexStreamZeroStride = PatchedStream.m_uiCachedHostVertexStride;
+	} else {
+		// Convert and activate all 16 Xbox streams
+		for(UINT uiStream = 0; uiStream < X_VSH_MAX_STREAMS; uiStream++) {
+			CxbxPatchedStream &PatchedStream = ConvertStream(pDrawContext, uiStream);
+			PatchedStream.Activate(pDrawContext, uiStream);
+		}
+	}
 
 	if (pDrawContext->XboxPrimitiveType == XTL::X_D3DPT_QUADSTRIP) {
 		// Quad strip is just like a triangle strip, but requires two vertices per primitive.

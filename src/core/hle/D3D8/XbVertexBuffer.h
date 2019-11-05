@@ -55,6 +55,7 @@ class CxbxPatchedStream
 public:
     CxbxPatchedStream();
     ~CxbxPatchedStream();
+	void Clear();
     void Activate(CxbxDrawContext *pDrawContext, UINT uiStream) const;
     bool                    m_bIsCached = false; // When true, indicates this object's values have been written, false means it's not cached
     uint64_t                m_uiCachedVertexStreamInformationHash = 0;
@@ -65,10 +66,9 @@ public:
     UINT                    m_uiCachedXboxVertexStride = 0;
 
     UINT                    m_uiCachedHostVertexStride = 0;
-    bool                    m_bCachedUseHostVertexStreamZero = false;
-    void                   *m_pCachedHostVertexStreamZeroData = nullptr;
+    void                   *m_pCachedHostVertexStreamZeroData = nullptr; // When assigned, SetStreamSource is skipped
     bool                    m_bCachedHostVertexStreamZeroDataIsAllocated = false;
-    IDirect3DVertexBuffer  *m_pCachedHostVertexBuffer = nullptr;
+    IDirect3DVertexBuffer  *m_pCachedHostVertexBuffer = nullptr; // Passed to SetStreamSource
 };
 
 class CxbxVertexBufferConverter
