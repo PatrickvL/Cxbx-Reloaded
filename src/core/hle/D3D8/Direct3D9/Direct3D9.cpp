@@ -6975,7 +6975,7 @@ void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 
 	assert(DrawContext.dwStartVertex == 0);
 	assert(DrawContext.pXboxVertexStreamZeroData != xbnullptr);
-	assert(DrawContext.uiXboxDrawVertexStreamZeroStride > 0);
+	assert(DrawContext.uiXboxVertexStreamZeroStride > 0);
 	assert(DrawContext.dwBaseVertexIndex == 0); // No IndexBase under Draw*UP
 
 	VertexBufferConverter.Apply(&DrawContext);
