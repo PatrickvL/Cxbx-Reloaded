@@ -147,8 +147,21 @@ static bool                         g_bHack_DisableHostGPUQueries = false; // TO
 static IDirect3DQuery              *g_pHostQueryWaitForIdle = nullptr;
 static IDirect3DQuery              *g_pHostQueryCallbackEvent = nullptr;
 
+// Static Function(s)
+static	BOOL WINAPI						EmuEnumDisplayDevices(GUID FAR *lpGUID, LPSTR lpDriverDescription, LPSTR lpDriverName, LPVOID lpContext, HMONITOR hm);
+static	DWORD WINAPI					EmuRenderWindow(LPVOID);
+static	DWORD WINAPI					EmuCreateDeviceProxy(LPVOID);
+static	LRESULT WINAPI					EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static	DWORD WINAPI					EmuUpdateTickCount(LPVOID);
+static	inline void						EmuVerifyResourceIsRegistered(XTL::X_D3DResource *pResource, DWORD D3DUsage, int iTextureStage, DWORD dwSize);
+static	void							UpdateCurrentMSpFAndFPS(); // Used for benchmarking/fps count
+
 // Vertex shader symbols, declared in XbVertexShader.cpp :
-extern void CxbxImpl_SelectVertexShaderDirect(XTL::X_VERTEXATTRIBUTEFORMAT* pVAF, DWORD Address);
+extern bool CxbxLocateVertexShader();
+extern void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address);
+extern void CxbxImpl_LoadVertexShaderProgram(DWORD* pFunction, DWORD Address);
+extern void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address);
+extern void CxbxImpl_SetVertexShader(DWORD Handle);
 extern void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, XTL::X_STREAMINPUT* pStreamInputs);
 
 // Vertex buffer symbols, declared in XbVertexBuffer.cpp
@@ -203,7 +216,7 @@ static XTL::X_D3DBaseTexture        CxbxActiveTextureCopies[XTL::X_D3DTS_STAGECO
 /* Unused :
 static XTL::DWORD                  *g_Xbox_D3DDevice; // TODO: This should be a D3DDevice structure
 
-static DWORD						g_dwVertexShaderUsage = 0; // Unused. If needed, move to XbVertexShader.cpp
+static	DWORD						g_dwVertexShaderUsage = 0; // Unused. If needed, move to XbVertexShader.cpp
 */
 
 
