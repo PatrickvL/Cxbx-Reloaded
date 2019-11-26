@@ -178,40 +178,50 @@ inline FLOAT ByteToFloat(const BYTE value)
 	return ((FLOAT)value) / 255.0f;
 }
 
-CxbxPatchedStream& CxbxVertexBufferConverter::GetPatchedStream(uint64_t key)
+/* CxbxCache */
+
+CxbxCache::K CxbxCache::GetEntryKey(const CxbxCache::T& value)
 {
-    // First, attempt to fetch an existing patched stream
-    auto it = m_PatchedStreams.find(key);
-    if (it != m_PatchedStreams.end()) {
-        m_PatchedStreamUsageList.splice(m_PatchedStreamUsageList.begin(), m_PatchedStreamUsageList, it->second);
+	return value.uiVertexDataHash;
+}
+
+CxbxCache::T& CxbxCache::GetEntry(CxbxCache::K key)
+{
+    // First, attempt to fetch an existing entry
+    auto it = m_EntriesMap.find(key);
+    if (it != m_EntriesMap.end()) {
+		// If an existing entry is found, move it to front
+		m_EntriesUsageList.splice(m_EntriesUsageList.begin(), m_EntriesUsageList, it->second);
         return *it->second;
     }
 
-    // We didn't find an existing patched stream, so we must insert one and get a reference to it
-    m_PatchedStreamUsageList.push_front({});
-    CxbxPatchedStream& stream = m_PatchedStreamUsageList.front();
+    // We didn't find an existing entry, so we must insert one and get a reference to it
+	m_EntriesUsageList.push_front({});
+	CxbxCache::T& entry = m_EntriesUsageList.front();
 
     // Insert a reference iterator into the fast lookup map
-    m_PatchedStreams[key] = m_PatchedStreamUsageList.begin();
+	m_EntriesMap[key] = m_EntriesUsageList.begin();
 
     // If the cache has exceeded it's upper bound, discard the oldest entries in the cache
-    if (m_PatchedStreams.size() > (m_MaxCacheSize + m_CacheElasticity)) {
-        while (m_PatchedStreams.size() > m_MaxCacheSize) {
-            m_PatchedStreams.erase(m_PatchedStreamUsageList.back().uiVertexDataHash);
-            m_PatchedStreamUsageList.pop_back();
+    if (m_EntriesMap.size() > (m_MaxCacheSize + m_CacheElasticity)) {
+        while (m_EntriesMap.size() > m_MaxCacheSize) {
+			m_EntriesMap.erase(GetEntryKey(m_EntriesUsageList.back()));
+			m_EntriesUsageList.pop_back();
         }
     }
     
-    return stream;
+    return entry;
 }
 
-void CxbxVertexBufferConverter::PrintStats()
+void CxbxCache::PrintStats()
 {
-    printf("Vertex Buffer Cache Status: \n");
-    printf("- Cache Size: %d\n", m_PatchedStreams.size());
-    printf("- Hits: %d\n", m_TotalCacheHits);
-    printf("- Misses: %d\n", m_TotalCacheMisses);
+	printf("Vertex Buffer Cache Status: \n");
+	printf("- Cache Size: %d\n", m_EntriesMap.size());
+	printf("- Hits: %d\n", m_TotalCacheHits);
+	printf("- Misses: %d\n", m_TotalCacheMisses);
 }
+
+/* CxbxVertexBufferConverter */
 
 void CxbxVertexBufferConverter::ConvertStream
 (
@@ -341,7 +351,7 @@ void CxbxVertexBufferConverter::ConvertStream
 
     // Now we have enough information to hash the existing resource and find it in our cache!
     DWORD xboxVertexDataSize = uiVertexCount * uiXboxVertexStride;
-    uint64_t vertexDataHash = ComputeHash(pXboxVertexData, xboxVertexDataSize);
+    CxbxCache::K vertexDataHash = ComputeHash(pXboxVertexData, xboxVertexDataSize);
     uint64_t pVertexShaderSteamInfoHash = 0;
 
     if (pVertexShaderStreamInfo != nullptr) {
@@ -349,7 +359,7 @@ void CxbxVertexBufferConverter::ConvertStream
     }
 
     // Lookup implicity inserts a new entry if not exists, so this always works
-    CxbxPatchedStream& patchedStream = GetPatchedStream(vertexDataHash);
+    CxbxPatchedStream& patchedStream = GetEntry(vertexDataHash);
 
     // We check a few fields of the patched stream to protect against hash collisions (rare)
     // but also to protect against games using the exact same vertex data for different vertex formats (Test Case: Burnout)
@@ -358,12 +368,12 @@ void CxbxVertexBufferConverter::ConvertStream
         patchedStream.uiCachedHostVertexStride == patchedStream.uiCachedHostVertexStride && // Make sure the host stride didn't change
         patchedStream.uiCachedXboxVertexStride == uiXboxVertexStride && // Make sure the Xbox Stride didn't change
         patchedStream.uiCachedXboxVertexDataSize == xboxVertexDataSize ) { // Make sure the Xbox Data Size also didn't change
-        m_TotalCacheHits++;
+        m_TotalCacheHits++; // TODO : Move into CxbxCache::GetEntry (once an equality operator is available)
         patchedStream.Activate(pDrawContext, uiStream);
         return;
     }
 
-    m_TotalCacheMisses++;
+    m_TotalCacheMisses++; // TODO : Move into CxbxCache::GetEntry (once an equality operator is available)
 
     // If execution reaches here, the cached vertex buffer was not valid and we must reconvert the data
     if (patchedStream.isValid) {

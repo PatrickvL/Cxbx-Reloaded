@@ -70,24 +70,41 @@ public:
     IDirect3DVertexBuffer  *pCachedHostVertexBuffer = nullptr;
 };
 
-class CxbxVertexBufferConverter
+//template<typename K, typename T> // TODO : Turn CxbxCache into a template type, so it can be used for other key+value associations as well
+class CxbxCache
 {
     public:
-        CxbxVertexBufferConverter();
-        void Apply(CxbxDrawContext *pPatchDesc);
-        void PrintStats();
-    private:
-        UINT m_uiNbrStreams;
+		// Temporary 'template-like' type aliasses, used as glue for now:
+		typedef uint64_t K; // the key type
+		typedef CxbxPatchedStream T; // the entry type
 
+		void PrintStats();
+
+		T& GetEntry(K);                                             // Fetches (or inserts) an entry associated with the given key
+        K GetEntryKey(const T& value);                              // Returns the key used to identify an entry TODO : may need refactoring into a hash function
+
+    protected:
         // Stack tracking
         ULONG m_TotalCacheHits = 0;
         ULONG m_TotalCacheMisses = 0;
 
-        UINT m_MaxCacheSize = 2000;                                        // Maximum number of entries in the cache
-        UINT m_CacheElasticity = 200;                                      // Cache is allowed to grow this much more than maximum before being purged to maximum
-        std::unordered_map<uint64_t, std::list<CxbxPatchedStream>::iterator> m_PatchedStreams;  // Stores references to patched streams for fast lookup
-        std::list<CxbxPatchedStream> m_PatchedStreamUsageList;             // Linked list of vertex streams, least recently used is last in the list
-        CxbxPatchedStream& GetPatchedStream(uint64_t);                     // Fetches (or inserts) a patched stream associated with the given key
+	private:
+		// TODO : Make these configurable:
+        UINT m_MaxCacheSize = 2000;                                 // Maximum number of entries in the cache
+        UINT m_CacheElasticity = 200;                               // Cache is allowed to grow this much more than maximum before being purged to maximum
+
+        std::unordered_map<K, std::list<T>::iterator> m_EntriesMap; // Stores references to entries for fast lookup
+        std::list<T> m_EntriesUsageList;                            // Linked list of entries, least recently used is last in the list
+};
+
+// TODO : Use or inline template: class CxbxVertexBufferConverter : public CxbxCache<uint64_t, CxbxPatchedStream>
+class CxbxVertexBufferConverter : public CxbxCache
+{
+    public:
+        CxbxVertexBufferConverter();
+        void Apply(CxbxDrawContext *pPatchDesc);
+    private:
+        UINT m_uiNbrStreams;
 
         CxbxVertexShaderInfo *m_pVertexShaderInfo;
 
