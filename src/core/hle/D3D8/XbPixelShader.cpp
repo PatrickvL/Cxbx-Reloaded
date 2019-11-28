@@ -3482,7 +3482,7 @@ bool PSH_XBOX_SHADER::ConvertConstantsToNative(XTL::X_D3DPIXELSHADERDEF *pPSDef,
 
   // Note : Recompiled.ConstMapping and Recompiled.ConstInUse[i] are still empty here.
   for (i = 0; i < MaxConstantFloatRegisters; i++)
-    NativeConstInUse[i] = false;
+    NativeConstInUse[i] = false; // TODO : Reserve texture-scaling constants here
 
     Result = true;
 
@@ -5996,6 +5996,15 @@ VOID DxbxUpdateActivePixelShader() // NOPATCH
 
   pPSDef = g_pXbox_PixelShader != nullptr ? (XTL::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
  
+  // Note : When g_pXbox_PixelShader is set to a xbnullptr (through D3DDevice_SetPixelShader), the Xbox legacy fixed-function pixel 'shader' pipeline is used;
+  // Currently, we 'emulate' this using the Host Direct3D 9 fixed function pipeline as well.
+  // However, since we must scale texture coordinates in some cases, we must either
+  // figure out a way to make the host fixed function pixel pipeline do that for us,
+  // or we must implement the Xbox fixed-function pixel pipeline in HLSL, and extend that with texture-scaling constants!
+  // TODO's :
+  // * Detect which texture stages need a scaling factor other than 1.0, and set their corresponding texture-scaling constants
+  // * Extend converted pixel shaders with texture-scaling code, using the factor set in each stage's texture-scaling constant
+
   if (pPSDef != nullptr)
   {
 	RecompiledPixelShader = nullptr;
