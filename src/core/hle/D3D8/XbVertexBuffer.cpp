@@ -223,40 +223,11 @@ void CxbxVertexBufferConverter::ConvertStream
 
 	bool bVshHandleIsFVF = VshHandleIsFVF(g_Xbox_VertexShader_Handle);
 	DWORD XboxFVF = bVshHandleIsFVF ? g_Xbox_VertexShader_Handle : 0;
-	// Texture normalization can only be set for FVF shaders
-	bool bNeedTextureNormalization = false;
-	struct { int NrTexCoords; bool bTexIsLinear; int Width; int Height; int Depth; } pActivePixelContainer[XTL::X_D3DTS_STAGECOUNT] = { 0 };
 
 	if (bVshHandleIsFVF) {
 		DWORD dwTexN = (XboxFVF & D3DFVF_TEXCOUNT_MASK) >> D3DFVF_TEXCOUNT_SHIFT;
 		if (dwTexN > XTL::X_D3DTS_STAGECOUNT) {
 			LOG_TEST_CASE("FVF,dwTexN > X_D3DTS_STAGECOUNT");
-		}
-
-		// Check for active linear textures.
-		//X_D3DBaseTexture *pLinearBaseTexture[XTL::X_D3DTS_STAGECOUNT];
-		for (unsigned int i = 0; i < XTL::X_D3DTS_STAGECOUNT; i++) {
-			// Only normalize coordinates used by the FVF shader :
-			if (i + 1 <= dwTexN) {
-				pActivePixelContainer[i].NrTexCoords = DxbxFVF_GetNumberOfTextureCoordinates(XboxFVF, i);
-				// TODO : Use GetXboxBaseTexture()
-				XTL::X_D3DBaseTexture *pXboxBaseTexture = g_pXbox_SetTexture[i];
-				if (pXboxBaseTexture != xbnullptr) {
-					extern XTL::X_D3DFORMAT GetXboxPixelContainerFormat(const XTL::X_D3DPixelContainer *pXboxPixelContainer); // TODO : Move to XTL-independent header file
-
-					XTL::X_D3DFORMAT XboxFormat = GetXboxPixelContainerFormat(pXboxBaseTexture);
-					if (EmuXBFormatIsLinear(XboxFormat)) {
-						// This is often hit by the help screen in XDK samples.
-						bNeedTextureNormalization = true;
-						// Remember linearity, width and height :
-						pActivePixelContainer[i].bTexIsLinear = true;
-						// TODO : Use DecodeD3DSize or GetPixelContainerWidth + GetPixelContainerHeight
-						pActivePixelContainer[i].Width = (pXboxBaseTexture->Size & X_D3DSIZE_WIDTH_MASK) + 1;
-						pActivePixelContainer[i].Height = ((pXboxBaseTexture->Size & X_D3DSIZE_HEIGHT_MASK) >> X_D3DSIZE_HEIGHT_SHIFT) + 1;
-						// TODO : Support 3D textures
-					}
-				}
-			}
 		}
 	}
 
@@ -272,7 +243,7 @@ void CxbxVertexBufferConverter::ConvertStream
 
 	bool bNeedVertexPatching = (pVertexShaderStreamInfo != nullptr && pVertexShaderStreamInfo->NeedPatch);
 	bool bNeedRHWReset = bVshHandleIsFVF && ((XboxFVF & D3DFVF_POSITION_MASK) == D3DFVF_XYZRHW);
-	bool bNeedStreamCopy = bNeedTextureNormalization || bNeedVertexPatching || bNeedRHWReset;
+	bool bNeedStreamCopy = bNeedVertexPatching || bNeedRHWReset;
 
 	uint8_t *pXboxVertexData = xbnullptr;
 	UINT uiXboxVertexStride = 0;
@@ -638,20 +609,8 @@ void CxbxVertexBufferConverter::ConvertStream
 
 	// Xbox FVF shaders are identical to host Direct3D 8.1, however
 	// texture coordinates may need normalization if used with linear textures.
-	if (bNeedTextureNormalization || bNeedRHWReset) {
+	if (bNeedRHWReset) {
 		// assert(bVshHandleIsFVF);
-
-		UINT uiTextureCoordinatesByteOffsetInVertex = 0;
-
-		// Locate texture coordinate offset in vertex structure.
-		if (bNeedTextureNormalization) {
-			uiTextureCoordinatesByteOffsetInVertex = DxbxFVFToVertexSizeInBytes(XboxFVF, /*bIncludeTextures=*/false);
-			if (bNeedVertexPatching) {
-				LOG_TEST_CASE("Potential xbox vs host texture-offset difference! (bNeedVertexPatching within bNeedTextureNormalization)");
-			}
-			// As long as vertices aren't resized / patched up until the texture coordinates,
-			// the uiTextureCoordinatesByteOffsetInVertex on host will match Xbox 
-		}
 
         // If for some reason the Xbox Render Target is not set, fallback to the backbuffer
         if (g_pXbox_RenderTarget == xbnullptr) {
@@ -673,63 +632,27 @@ void CxbxVertexBufferConverter::ConvertStream
 			FLOAT *pVertexDataAsFloat = (FLOAT*)(&pHostVertexData[uiVertex * uiHostVertexStride]);
 
 			// Handle pre-transformed vertices (which bypass the vertex shader pipeline)
-			if (bNeedRHWReset) {
-                // We need to transform these vertices only if the host render target was upscaled from the Xbox render target
-                // Transforming always breaks render to non-upscaled textures: Only surfaces are upscaled, intentionally so
-				if (bNeedRHWTransform) {
-					pVertexDataAsFloat[0] *= g_RenderScaleFactor;
-					pVertexDataAsFloat[1] *= g_RenderScaleFactor;
-				}
+            // We need to transform these vertices only if the host render target was upscaled from the Xbox render target
+            // Transforming always breaks render to non-upscaled textures: Only surfaces are upscaled, intentionally so
+			if (bNeedRHWTransform) {
+				pVertexDataAsFloat[0] *= g_RenderScaleFactor;
+				pVertexDataAsFloat[1] *= g_RenderScaleFactor;
+			}
 
 #if 0
-				// Check Z. TODO : Why reset Z from 0.0 to 1.0 ? (Maybe fog-related?)
-				if (pVertexDataAsFloat[2] == 0.0f) {
-					// LOG_TEST_CASE("D3DFVF_XYZRHW (Z)"); // Test-case : Many XDK Samples (AlphaFog, PointSprites)
-					pVertexDataAsFloat[2] = 1.0f;
-				}
+			// Check Z. TODO : Why reset Z from 0.0 to 1.0 ? (Maybe fog-related?)
+			if (pVertexDataAsFloat[2] == 0.0f) {
+				// LOG_TEST_CASE("D3DFVF_XYZRHW (Z)"); // Test-case : Many XDK Samples (AlphaFog, PointSprites)
+				pVertexDataAsFloat[2] = 1.0f;
+			}
 #endif
 #if 1
-				// Check RHW. TODO : Why reset from 0.0 to 1.0 ? (Maybe 1.0 indicates that the vertices are not to be transformed)
-				if (pVertexDataAsFloat[3] == 0.0f) {
-					// LOG_TEST_CASE("D3DFVF_XYZRHW (RHW)"); // Test-case : Many XDK Samples (AlphaFog, PointSprites)
-					pVertexDataAsFloat[3] = 1.0f;
-				}
+			// Check RHW. TODO : Why reset from 0.0 to 1.0 ? (Maybe 1.0 indicates that the vertices are not to be transformed)
+			if (pVertexDataAsFloat[3] == 0.0f) {
+				// LOG_TEST_CASE("D3DFVF_XYZRHW (RHW)"); // Test-case : Many XDK Samples (AlphaFog, PointSprites)
+				pVertexDataAsFloat[3] = 1.0f;
+			}
 #endif
-			}
-
-			// Normalize texture coordinates in FVF stream if needed
-			if (uiTextureCoordinatesByteOffsetInVertex > 0) { // implies bNeedTextureNormalization (using one is more efficient than both)
-				FLOAT *pVertexUVData = (FLOAT*)((uintptr_t)pVertexDataAsFloat + uiTextureCoordinatesByteOffsetInVertex);
-				for (unsigned int i = 0; i < XTL::X_D3DTS_STAGECOUNT; i++) {
-					if (pActivePixelContainer[i].bTexIsLinear) {
-						switch (pActivePixelContainer[i].NrTexCoords) {
-						case 0:
-							LOG_TEST_CASE("Normalize 0D?");
-							break;
-						case 1:
-							LOG_TEST_CASE("Normalize 1D");
-							pVertexUVData[0] /= pActivePixelContainer[i].Width;
-							break;
-						case 2:
-							pVertexUVData[0] /= pActivePixelContainer[i].Width;
-							pVertexUVData[1] /= pActivePixelContainer[i].Height;
-							break;
-						case 3:
-							LOG_TEST_CASE("Normalize 3D");
-							// Test case : HeatShimmer
-							pVertexUVData[0] /= pActivePixelContainer[i].Width;
-							pVertexUVData[1] /= pActivePixelContainer[i].Height;
-							pVertexUVData[2] /= pActivePixelContainer[i].Depth;
-							break;
-						default:
-							LOG_TEST_CASE("Normalize ?D");
-							break;
-						}
-					}
-
-					pVertexUVData += pActivePixelContainer[i].NrTexCoords;
-				}
-			}
 		}
 	}
 
