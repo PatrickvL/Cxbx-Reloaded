@@ -7873,8 +7873,6 @@ VOID WINAPI XTL::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
 		LOG_FUNC_ARG(Address)
 		LOG_FUNC_END;
 
-	// D3DDevice_LoadVertexShaderProgram splits the given function buffer into batch-wise pushes to the NV2A
-
 	CxbxImpl_LoadVertexShaderProgram((DWORD*)pFunction, Address);
 
 	XB_trampoline(VOID, WINAPI, D3DDevice_LoadVertexShaderProgram, (CONST DWORD *, DWORD));

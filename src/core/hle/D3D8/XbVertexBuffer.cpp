@@ -70,19 +70,7 @@ extern uint32_t GetPixelContainerHeight(XTL::X_D3DPixelContainer* pPixelContaine
 
 // implemented in XbVertexShader.cpp
 extern void CxbxUpdateActiveVertexShader(unsigned VerticesInBuffer);
-
-// Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream number.
-// (These values are set through SetStreamSource and can be overridden by SetVertexShaderInput.)
-XTL::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber)
-{
-/* TODO : Enable this once we support SetVertexShaderInput completely (that is, when we convert both vertex buffers AND vertex shaders at drawing time)
-	// If SetVertexShaderInput is active, it's arguments overrule those of SetStreamSource
-	if (g_Xbox_SetVertexShaderInput_Count > 0) {
-		return g_Xbox_SetVertexShaderInput_Data[StreamNumber];
-	}
-*/
-	return g_Xbox_SetStreamSource[StreamNumber];
-}
+extern XTL::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber);
 
 // Returns the Xbox vertex stride from the stream input values that are active on the given stream number.
 unsigned GetXboxVertexStreamStride(unsigned StreamNumber)
@@ -337,7 +325,7 @@ void CxbxVertexBufferConverter::ConvertStream
 		uiHostVertexStride = (bNeedVertexPatching) ? pVertexShaderStreamInfo->HostVertexStride : uiXboxVertexStride;
 		dwHostVertexDataSize = uiVertexCount * uiHostVertexStride;
 	} else {
-		XTL::X_D3DVertexBuffer *pXboxVertexBuffer = g_Xbox_SetStreamSource[uiStream].VertexBuffer;
+		XTL::X_D3DVertexBuffer *pXboxVertexBuffer = GetXboxVertexStreamVertexBuffer(uiStream);
         pXboxVertexData = (uint8_t*)GetDataFromXboxResource(pXboxVertexBuffer);
 		if (pXboxVertexData == xbnullptr) {
 			HRESULT hRet = g_pD3DDevice->SetStreamSource(
@@ -353,7 +341,7 @@ void CxbxVertexBufferConverter::ConvertStream
 			return;
 		}
 
-		uiXboxVertexStride = g_Xbox_SetStreamSource[uiStream].Stride;
+		uiXboxVertexStride = GetXboxVertexStreamStride(uiStream);
         // Set a new (exact) vertex count
 		uiVertexCount = pDrawContext->VerticesInBuffer;
 		// Dxbx note : Don't overwrite pDrawContext.dwVertexCount with uiVertexCount, because an indexed draw
