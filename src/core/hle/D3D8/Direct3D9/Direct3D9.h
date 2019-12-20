@@ -46,6 +46,12 @@ extern VOID CxbxSetPixelContainerHeader
 	UINT				Pitch
 );
 
+extern XTL::X_D3DFORMAT GetXboxPixelContainerFormat(const XTL::X_D3DPixelContainer* pXboxPixelContainer);
+
+extern XTL::X_D3DRESOURCETYPE GetXboxD3DResourceType(const XTL::X_D3DResource* pXboxResource);
+
+extern bool IsSupportedFormat(XTL::X_D3DFORMAT X_Format, XTL::X_D3DRESOURCETYPE XboxResourceType, DWORD D3DUsage);
+
 extern uint8_t *ConvertD3DTextureToARGB(
 	XTL::X_D3DPixelContainer *pXboxPixelContainer,
 	uint8_t *pSrc,
@@ -63,11 +69,11 @@ extern VOID EmuD3DCleanup();
 
 extern IDirect3DDevice *g_pD3DDevice;
 
-extern DWORD g_Xbox_VertexShader_Handle;
-
-extern XTL::X_PixelShader *g_pXbox_PixelShader;
-
+extern XTL::X_D3DSurface     *g_pXbox_RenderTarget;
+extern XTL::X_D3DSurface     *g_pXbox_BackBufferSurface;
 extern XTL::X_D3DBaseTexture *g_pXbox_SetTexture[XTL::X_D3DTS_STAGECOUNT];
+extern XTL::X_PixelShader    *g_pXbox_PixelShader;
+extern XTL::DWORD             g_Xbox_VertexShader_Handle;
 
 namespace XTL {
 
@@ -1592,27 +1598,7 @@ VOID WINAPI EMUPATCH(D3DDevice_GetVertexShaderConstant)
 );
 
 // ******************************************************************
-// * patch: D3DDevice_SetVertexShaderInputDirect
-// ******************************************************************
-VOID WINAPI EMUPATCH(D3DDevice_SetVertexShaderInputDirect)
-(
-    X_VERTEXATTRIBUTEFORMAT *pVAF,
-    UINT                     StreamCount,
-    X_STREAMINPUT           *pStreamInputs
-);
-
-// ******************************************************************
-// * patch: D3DDevice_GetVertexShaderInput
-// ******************************************************************
-HRESULT WINAPI EMUPATCH(D3DDevice_GetVertexShaderInput)
-(
-    DWORD              *pHandle,
-    UINT               *pStreamCount,
-    X_STREAMINPUT      *pStreamInputs
-);
-
-// ******************************************************************
-// * patch: D3DDevice_GetVertexShaderInput
+// * patch: D3DDevice_SetVertexShaderInput
 // ******************************************************************
 VOID WINAPI EMUPATCH(D3DDevice_SetVertexShaderInput)
 (

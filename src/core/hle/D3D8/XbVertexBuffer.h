@@ -41,7 +41,7 @@ typedef struct _CxbxDrawContext
 	IN	   INDEX16				 LowIndex, HighIndex; // Set when pXboxIndexData is set
 	IN	   size_t				 VerticesInBuffer; // Set by CxbxVertexBufferConverter::Apply
     // Data if Draw...UP call
-    IN PVOID                     pXboxVertexStreamZeroData;
+    IN PVOID                     pXboxVertexStreamZeroData; // Set by D3DDevice_DrawVerticesUP, D3DDevice_DrawIndexedVerticesUP, HLE_draw_inline_array and EmuFlushIVB
     IN UINT                      uiXboxVertexStreamZeroStride;
 	// Values to be used on host
 	OUT PVOID                    pHostVertexStreamZeroData;
@@ -56,7 +56,7 @@ public:
     CxbxPatchedStream();
     ~CxbxPatchedStream();
     void Activate(CxbxDrawContext *pDrawContext, UINT uiStream) const;
-    bool                    isValid = false;
+    bool                    isValid = false; // When true, indicates this object's values have been written
     XTL::X_D3DPRIMITIVETYPE XboxPrimitiveType = XTL::X_D3DPT_NONE;
     PVOID                   pCachedXboxVertexData = xbnullptr;
     UINT                    uiCachedXboxVertexDataSize = 0;
@@ -65,9 +65,9 @@ public:
     UINT                    uiCachedXboxVertexStride = 0;
     UINT                    uiCachedHostVertexStride = 0;
     bool                    bCacheIsStreamZeroDrawUP = false;
-    void                   *pCachedHostVertexStreamZeroData = nullptr;
+    void                   *pCachedHostVertexStreamZeroData = nullptr; // When assigned, SetStreamSource is skipped
     bool                    bCachedHostVertexStreamZeroDataIsAllocated = false;
-    IDirect3DVertexBuffer  *pCachedHostVertexBuffer = nullptr;
+    IDirect3DVertexBuffer  *pCachedHostVertexBuffer = nullptr; // Passed to SetStreamSource
 };
 
 class CxbxVertexBufferConverter
@@ -104,20 +104,20 @@ extern DWORD                   g_InlineVertexBuffer_FVF;
 
 extern struct _D3DIVB
 {
-    D3DXVECTOR3 Position;     // X_D3DVSDE_POSITION (*) > D3DFVF_XYZ / D3DFVF_XYZRHW
-    FLOAT            Rhw;          // X_D3DVSDE_VERTEX (*)   > D3DFVF_XYZ / D3DFVF_XYZRHW
-	FLOAT			 Blend[4];	   // X_D3DVSDE_BLENDWEIGHT  > D3DFVF_XYZB1 (and 3 more up to D3DFVF_XYZB4)
-    D3DXVECTOR3 Normal;       // X_D3DVSDE_NORMAL       > D3DFVF_NORMAL
-	D3DCOLOR         Diffuse;      // X_D3DVSDE_DIFFUSE      > D3DFVF_DIFFUSE
-	D3DCOLOR         Specular;     // X_D3DVSDE_SPECULAR     > D3DFVF_SPECULAR
-	FLOAT            Fog;          // X_D3DVSDE_FOG          > D3DFVF_FOG unavailable; TODO : How to handle?
-	D3DCOLOR         BackDiffuse;  // X_D3DVSDE_BACKDIFFUSE  > D3DFVF_BACKDIFFUSE unavailable; TODO : How to handle?
-	D3DCOLOR         BackSpecular; // X_D3DVSDE_BACKSPECULAR > D3DFVF_BACKSPECULAR unavailable; TODO : How to handle?
-    D3DXVECTOR4 TexCoord[4];  // X_D3DVSDE_TEXCOORD0    > D3DFVF_TEX1 (and 4 more up to D3DFVF_TEX4)
+    D3DXVECTOR3 Position;     // X_D3DVSDE_POSITION (*) > X_D3DFVF_XYZ or X_D3DFVF_XYZRHW
+    FLOAT       Rhw;          // X_D3DVSDE_VERTEX (*)   > X_D3DFVF_XYZ or X_D3DFVF_XYZRHW
+	FLOAT		Blend[4];	  // X_D3DVSDE_BLENDWEIGHT  > X_D3DFVF_XYZB1 (and 3 more up to X_D3DFVF_XYZB4)
+    D3DXVECTOR3 Normal;       // X_D3DVSDE_NORMAL       > X_D3DFVF_NORMAL
+	D3DCOLOR    Diffuse;      // X_D3DVSDE_DIFFUSE      > X_D3DFVF_DIFFUSE
+	D3DCOLOR    Specular;     // X_D3DVSDE_SPECULAR     > X_D3DFVF_SPECULAR
+	FLOAT       Fog;          // X_D3DVSDE_FOG          > X_D3DFVF_FOG unavailable; TODO : How to handle?
+	D3DCOLOR    BackDiffuse;  // X_D3DVSDE_BACKDIFFUSE  > X_D3DFVF_BACKDIFFUSE unavailable; TODO : How to handle?
+	D3DCOLOR    BackSpecular; // X_D3DVSDE_BACKSPECULAR > X_D3DFVF_BACKSPECULAR unavailable; TODO : How to handle?
+    D3DXVECTOR4 TexCoord[4];  // X_D3DVSDE_TEXCOORD0    > X_D3DFVF_TEX1 (and 4 more up to X_D3DFVF_TEX4)
 
 	// (*) X_D3DVSDE_POSITION and X_D3DVSDE_VERTEX both set Position, but Rhw seems optional,
-	// hence, selection for D3DFVF_XYZ or D3DFVF_XYZRHW is rather fuzzy. We DO know that once
-	// D3DFVF_NORMAL is given, D3DFVF_XYZRHW is forbidden (see D3DDevice_SetVertexData4f)
+	// hence, selection for X_D3DFVF_XYZ or X_D3DFVF_XYZRHW is rather fuzzy. We DO know that once
+	// X_D3DFVF_NORMAL is given, X_D3DFVF_XYZRHW is forbidden (see D3DDevice_SetVertexData4f)
 }
 *g_InlineVertexBuffer_Table;
 
