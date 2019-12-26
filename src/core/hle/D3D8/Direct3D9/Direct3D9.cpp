@@ -166,8 +166,6 @@ static	inline void						EmuVerifyResourceIsRegistered(XTL::X_D3DResource *pResou
 static	void							UpdateCurrentMSpFAndFPS(); // Used for benchmarking/fps count
 
 // Vertex shader symbols, declared in XbVertexShader.cpp :
-extern bool CxbxLocateVertexShader();
-
 extern void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address);
 extern void CxbxImpl_LoadVertexShaderProgram(DWORD* pFunction, DWORD Address);
 extern void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address);
@@ -2892,6 +2890,10 @@ void Direct3D_CreateDevice_Start
         CxbxKrnlCleanup("Failed to init XboxTextureStates");
     }
 
+	if (!XboxVertexShaders.Init()) {
+		CxbxKrnlCleanup("Failed to init XboxVertexShaders");
+	}
+
     // Disable multisampling for now, this fixes an issue where GTA3 only renders to half-screen
     // TODO: Find a better way of fixing this, we cannot just create larger backbuffers as it breaks
     // many games, despite working in the dashboard
@@ -2919,13 +2921,6 @@ void Direct3D_CreateDevice_Start
 
 void Direct3D_CreateDevice_End()
 {
-#if 0 // Unused :
-    // Set g_Xbox_D3DDevice to point to the Xbox D3D Device
-    auto it = g_SymbolAddresses.find("D3DDEVICE");
-    if (it != g_SymbolAddresses.end()) {
-        g_Xbox_D3DDevice = (DWORD*)it->second;
-    }
-#endif
     // If the Xbox version of CreateDevice didn't call SetRenderTarget, we must derive the default backbuffer ourselves
     // This works because CreateDevice always sets the current render target to the Xbox Backbuffer
     // In later XDKs, it does this inline rather than by calling D3DDevice_SetRenderTarget
@@ -2981,8 +2976,6 @@ void Direct3D_CreateDevice_End()
             XTL::EMUPATCH(D3DDevice_SetRenderTarget)(xbnullptr, g_pXbox_DefaultDepthStencilSurface);
         }
     }
-
-	CxbxLocateVertexShader();
 }
 
 // LTCG specific Direct3D_CreateDevice function...

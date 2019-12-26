@@ -96,6 +96,16 @@ typedef struct _CxbxVertexShader
 }
 CxbxVertexShader;
 
+class XboxVertexShaderConverter {
+public:
+	XTL::DWORD* g_Xbox_D3DDevice = xbnullptr; // TODO : Rename
+	XTL::DWORD* g_XboxAddr_pVertexShader = xbnullptr; // TODO : Rename
+
+	bool Init();
+};
+
+extern XboxVertexShaderConverter XboxVertexShaders;
+
 // recompile xbox vertex shader declaration
 extern D3DVERTEXELEMENT *EmuRecompileVshDeclaration
 (

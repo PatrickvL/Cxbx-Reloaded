@@ -54,6 +54,8 @@ extern XTL::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS]; // Declared
 extern XTL::X_VERTEXSHADERCONSTANTMODE g_Xbox_VertexShaderConstantMode; // Declared in Direct3D9.cpp
 void* GetDataFromXboxResource(XTL::X_D3DResource* pXboxResource); // Implemented in Direct3D9.cpp
 
+XboxVertexShaderConverter XboxVertexShaders;
+
 // Variables set by [D3DDevice|CxbxImpl]_SetVertexShaderInput() :
                     unsigned g_Xbox_SetVertexShaderInput_Count = 0; // Read by GetXboxVertexAttributes
           XTL::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
@@ -66,10 +68,35 @@ XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // 
 // Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
 				  XTL::DWORD g_Xbox_VertexShader_FunctionSlots[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE] = { 1 }; // Each slot takes either 4 DWORDS (for instructions) or 4 floats (for constants)
 
-// Variable set by CxbxLocateVertexShader() :
-				 XTL::DWORD *g_XboxAddr_pVertexShader = xbnullptr; // TODO : Get this symbol from g_SymbolAddresses["D3DDevice.m_pVertexShader"]; or whats its name
-
 typedef uint16_t binary16_t; // Quick and dirty way to indicate IEEE754-2008 'half-precision floats'
+
+bool XboxVertexShaderConverter::Init()
+{
+	// Symbol IDs MUST correspond to how they're registered in XbSymbolDatabase!
+	static const std::string D3DDeviceStr = "D3DDEVICE";
+	static const std::string VertexShaderStr = "D3DDevice__m_VertexShader_OFFSET";
+
+	// Set g_Xbox_D3DDevice to point to the Xbox D3D Device
+	auto it = g_SymbolAddresses.find(D3DDeviceStr);
+	if (it != g_SymbolAddresses.end()) {
+		g_Xbox_D3DDevice = (DWORD*)it->second;
+	} else {
+		LOG_TEST_CASE("Couldn't locate D3DDEVICE!");
+		return false;
+	}
+
+	// Set g_Xbox_D3DDevice to point to the Xbox D3D Device
+	it = g_SymbolAddresses.find(VertexShaderStr);
+	if (it != g_SymbolAddresses.end()) {
+		xbaddr XREF_OFFSET_D3DDEVICE_M_VERTEXSHADER = it->second;
+		g_XboxAddr_pVertexShader = (DWORD*)((intptr_t)g_Xbox_D3DDevice + XREF_OFFSET_D3DDEVICE_M_VERTEXSHADER);
+	} else {
+		LOG_TEST_CASE("Couldn't locate VertexShader!");
+		return false;
+	}
+
+	return true;
+}
 
 // Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream number.
 // (These values are set through SetStreamSource and can be overridden by SetVertexShaderInput.)
@@ -1623,10 +1650,10 @@ XTL::X_D3DVertexShader* GetXboxVertexShader()
 	X_D3DVertexShader* pXboxVertexShader = xbnullptr;
 
 	// Only when we're sure of the location of the Xbox Device.m_pVertexShader variable
-	if (g_XboxAddr_pVertexShader) {
+	if (XboxVertexShaders.g_XboxAddr_pVertexShader) {
 		// read that (so that we get access to internal vertex shaders, like those generated
 		// to contain the attribute-information for FVF shaders) :
-		pXboxVertexShader = (X_D3DVertexShader*)(*g_XboxAddr_pVertexShader);
+		pXboxVertexShader = (X_D3DVertexShader*)(*XboxVertexShaders.g_XboxAddr_pVertexShader);
 	}
 	else
 	{
@@ -2660,9 +2687,9 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		// Then we're more interested in what the D3DDevice_SetVertexShader trampoline
 		// stored in the Xbox D3Device.m_pVertexShader field :
 		// Note : This requires CxbxImpl_SetVertexShader to be called _AFTER_ the trampoline in D3DDevice_SetVertexShader!!
-		// Note : g_XboxAddr_pVertexShader might now be located yet (since we locate after CreateDevice, which calls D3DDevice_SetVertexShader already)
-		if (g_XboxAddr_pVertexShader)
-			g_Xbox_VertexShader_Handle = *g_XboxAddr_pVertexShader;
+		// Note : XboxVertexShaders.g_XboxAddr_pVertexShader is located at the start of CreateDevice (which calls D3DDevice_SetVertexShader)
+		if (XboxVertexShaders.g_XboxAddr_pVertexShader)
+			g_Xbox_VertexShader_Handle = *XboxVertexShaders.g_XboxAddr_pVertexShader;
 		else
 			g_Xbox_VertexShader_Handle = Handle;
 	}
@@ -2706,74 +2733,6 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, XTL::X_STREAM
 
 		g_Xbox_SetVertexShaderInput_Attributes = pXboxVertexShader->VertexAttribute; // Copy this vertex shaders's attribute slots
 	}
-}
-
-// TODO : Replace this with an XREF in XbSymbolDatabase, since this is re-inventing the wheel:
-void CxbxLocateVertexShaderSetter(DWORD Handle, DWORD Address)
-{
-	using namespace XTL;
-
-	XB_trampoline(VOID, WINAPI, D3DDevice_SelectVertexShader, (DWORD, DWORD));
-	XB_trampoline(VOID, __stdcall, D3DDevice_SelectVertexShader_0, ());
-	XB_trampoline(VOID, __stdcall, D3DDevice_SelectVertexShader_4, (DWORD));
-	XB_trampoline(VOID, WINAPI, D3DDevice_SetVertexShader, (DWORD));
-
-	if (XB_D3DDevice_SelectVertexShader)
-		XB_D3DDevice_SelectVertexShader(Handle, Address);
-	else if (XB_D3DDevice_SelectVertexShader_0)
-		__asm {
-		mov eax, Address // TODO : Is this really needed?
-		mov ebx, Handle // TODO : Is this really needed?
-		call XB_D3DDevice_SelectVertexShader_0
-	}
-	else if (XB_D3DDevice_SelectVertexShader_4)
-		__asm {
-		mov eax, Handle // TODO : Is this really needed?
-		mov ebx, Address
-		call XB_D3DDevice_SelectVertexShader_4
-	}
-	else if (XB_D3DDevice_SetVertexShader)
-		// Pass through to the Xbox implementation of this function
-		XB_D3DDevice_SetVertexShader(Handle);
-	else
-		assert(false);
-}
-
-// TODO : Replace this with an XREF in XbSymbolDatabase, since this is re-inventing the wheel:
-// Scan the XBE memory for the location of the m_pVertexShader variable, by setting it indirectly
-bool CxbxLocateVertexShader()
-{
-	DWORD Handle1 = 0x5EAC0000;
-	DWORD Handle2 = 0xF14DEE80;
-	DWORD Address = 0;// 135;
-	DWORD HandleToRestore = g_Xbox_VertexShader_Handle;
-	DWORD AddressToRestore = g_Xbox_VertexShader_FunctionSlots_StartAddress;
-
-	// First, set an obscure value :
-	CxbxLocateVertexShaderSetter(Handle1 | X_D3DFVF_RESERVED0, Address);
-	// Scan over the entire XBE
-	for (DWORD* SymbolLocation = (DWORD*)XBE_IMAGE_BASE; ; SymbolLocation++)
-	{
-		// If we see the obscure value (minus the X_D3DFVF_RESERVED0 flag)
-		if (*SymbolLocation == Handle1) {
-			// Set another value :
-			CxbxLocateVertexShaderSetter(Handle2 | X_D3DFVF_RESERVED0, Address);
-			// If the memory contents changed to the other value
-			if (*SymbolLocation == Handle2) {
-				// We got a hit!
-				g_XboxAddr_pVertexShader = SymbolLocation;
-				// Cleanup :
-				CxbxLocateVertexShaderSetter(HandleToRestore, AddressToRestore);
-				return true;
-			}
-
-			// We had a false positive, so now we need to scan for the other value we set :
-			std::swap(Handle1, Handle2);
-		}
-	}
-
-	CxbxLocateVertexShaderSetter(HandleToRestore, AddressToRestore);
-	return false;
 }
 
 #if 0
