@@ -792,7 +792,10 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 
     m_pVertexShaderInfo = nullptr;
     if (VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
-        m_pVertexShaderInfo = &(GetCxbxVertexShader(g_Xbox_VertexShader_Handle)->VertexShaderInfo); // Not GetCxbxVertexShaderInfo, which returns NULL when no stream NeedPatch
+		CxbxVertexShader* vsh = GetCxbxVertexShader(g_Xbox_VertexShader_Handle); // Not GetCxbxVertexShaderInfo, which returns NULL when no stream NeedPatch
+		if (vsh != nullptr) {
+			m_pVertexShaderInfo = &(vsh->VertexShaderInfo);
+		}
     }
 
 	// If we are drawing from an offset, we know that the vertex count must have

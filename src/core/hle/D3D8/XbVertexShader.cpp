@@ -66,12 +66,15 @@ XTL::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // 
                   XTL::DWORD g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
 // Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
-				  XTL::DWORD g_Xbox_VertexShader_FunctionSlots[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE] = { 1 }; // Each slot takes either 4 DWORDS (for instructions) or 4 floats (for constants)
+				  XTL::DWORD g_Xbox_VertexShader_FunctionSlots[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE]; // Each slot takes either 4 DWORDS (for instructions) or 4 floats (for constants)
 
 typedef uint16_t binary16_t; // Quick and dirty way to indicate IEEE754-2008 'half-precision floats'
 
 bool XboxVertexShaderConverter::Init()
 {
+	for (int i = 0; i < X_VSH_MAX_INSTRUCTION_COUNT; i++)
+		g_Xbox_VertexShader_FunctionSlots[(i * X_VSH_INSTRUCTION_SIZE) + 3] = 1; // Set FLD_FINAL bit on all slots
+
 	// Symbol IDs MUST correspond to how they're registered in XbSymbolDatabase!
 	static const std::string D3DDeviceStr = "D3DDEVICE";
 	static const std::string VertexShaderStr = "D3DDevice__m_VertexShader_OFFSET";
@@ -1605,7 +1608,7 @@ extern boolean IsValidCurrentShader(void)
 CxbxVertexShaderInfo *GetCxbxVertexShaderInfo(DWORD XboxVertexShaderHandle)
 {
     CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(XboxVertexShaderHandle);
-
+if (pCxbxVertexShader) // TMP : Avoid access violation
     for (uint32_t i = 0; i < pCxbxVertexShader->VertexShaderInfo.NumberOfVertexStreams; i++)
     {
         if (pCxbxVertexShader->VertexShaderInfo.VertexStreams[i].NeedPatch)
@@ -2350,7 +2353,7 @@ void CxbxRecompileVertexProgram()
 	pToken += X_VSH_INSTRUCTION_SIZE;
 
 	unsigned XboxFunctionSizeInBytes = (intptr_t)pToken - (intptr_t)pXboxFunction;
-	unsigned XboxFunctionSize = XboxFunctionSizeInBytes / X_VSH_INSTRUCTION_SIZE;
+	unsigned XboxFunctionSize = XboxFunctionSizeInBytes / X_VSH_INSTRUCTION_SIZE / sizeof(DWORD);
 
 	if (XboxFunctionSize > X_VSH_MAX_INSTRUCTION_COUNT) {
 		LOG_TEST_CASE("Parsing didn't result in a shader program?");
