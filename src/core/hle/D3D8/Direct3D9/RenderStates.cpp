@@ -34,8 +34,9 @@
 
 bool XboxRenderStateConverter::Init()
 {
-    if (g_SymbolAddresses.find("D3DDeferredRenderState") != g_SymbolAddresses.end()) {
-        D3D__RenderState = (uint32_t*)g_SymbolAddresses["D3DDeferredRenderState"];
+	auto it = g_SymbolAddresses.find("D3DDeferredRenderState");
+    if (it != g_SymbolAddresses.end()) {
+        D3D__RenderState = (uint32_t*)it->second;
     } else {
         return false;
     }

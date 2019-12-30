@@ -89,7 +89,7 @@ bool XboxVertexShaderConverter::Init()
 	it = g_SymbolAddresses.find(VertexShaderStr);
 	if (it != g_SymbolAddresses.end()) {
 		xbaddr XREF_OFFSET_D3DDEVICE_M_VERTEXSHADER = it->second;
-		g_XboxAddr_pVertexShader = (DWORD*)((intptr_t)g_Xbox_D3DDevice + XREF_OFFSET_D3DDEVICE_M_VERTEXSHADER);
+		g_XboxAddr_pVertexShader = (DWORD*)((intptr_t)*g_Xbox_D3DDevice + XREF_OFFSET_D3DDEVICE_M_VERTEXSHADER);
 	} else {
 		LOG_TEST_CASE("Couldn't locate VertexShader!");
 		return false;
@@ -2689,7 +2689,7 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		// Note : This requires CxbxImpl_SetVertexShader to be called _AFTER_ the trampoline in D3DDevice_SetVertexShader!!
 		// Note : XboxVertexShaders.g_XboxAddr_pVertexShader is located at the start of CreateDevice (which calls D3DDevice_SetVertexShader)
 		if (XboxVertexShaders.g_XboxAddr_pVertexShader)
-			g_Xbox_VertexShader_Handle = *XboxVertexShaders.g_XboxAddr_pVertexShader;
+			g_Xbox_VertexShader_Handle = *XboxVertexShaders.g_XboxAddr_pVertexShader | X_D3DFVF_RESERVED0; // Note : Mark Xbox vertex-shader as non-FVF (we should put the pointer in another variable and deprecate this handle)
 		else
 			g_Xbox_VertexShader_Handle = Handle;
 	}
