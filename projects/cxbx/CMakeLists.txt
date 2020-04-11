@@ -203,3 +203,13 @@ set_source_files_properties(
   HEADER_FILE_ONLY TRUE
   VS_TOOL_OVERRIDE "None"
 )
+
+
+# TMP pixel shader compilation
+set_source_files_properties(
+  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/RegisterCombinerInterpreter.hlsl" PROPERTIES 
+  VS_SHADER_TYPE Pixel
+  VS_SHADER_MODEL 3.0
+  VS_SHADER_ENTRYPOINT g_ps30_main
+  VS_SHADER_OUTPUT_HEADER_FILE "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/RegisterCombinerInterpreter.h"
+)
