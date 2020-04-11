@@ -7091,18 +7091,7 @@ void CxbxUpdateNativeD3DResources()
 
     EmuUpdateActiveTextureStages();
 
-	switch (g_PixelShaderMode) {
-		case psmDisabled:
-			break;
-		case psmLegacy:
-			XTL::CxbxUpdateActivePixelShader(/*TargetHLSL=*/false);
-			break;
-		case psmHLSL:
-			XTL::CxbxUpdateActivePixelShader(/*TargetHLSL=*/true);
-			break;
-		default:
-			assert(false);
-	}
+	// TODO : Could we process Pixel Shaders here already, or keep them a few lines down?
 
 	// Some titles set Vertex Shader constants directly via pushbuffers rather than through D3D
 	// We handle that case by updating any constants that have the dirty flag set on the nv2a.
@@ -7126,9 +7115,18 @@ void CxbxUpdateNativeD3DResources()
     XboxTextureStates.Apply();
 
     // If Pixel Shaders are not disabled, process them
-    if (!g_DisablePixelShaders) {
-        DxbxUpdateActivePixelShader();
-    }
+	switch (g_PixelShaderMode) {
+		case psmDisabled:
+			break;
+		case psmLegacy:
+			CxbxUpdateActivePixelShader(/*TargetHLSL=*/false);
+			break;
+		case psmHLSL:
+			CxbxUpdateActivePixelShader(/*TargetHLSL=*/true);
+			break;
+		default:
+			assert(false);
+	}
 
 /* TODO : Port these :
 	DxbxUpdateActiveVertexShader();

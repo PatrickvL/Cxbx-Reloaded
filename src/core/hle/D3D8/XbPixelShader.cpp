@@ -6024,11 +6024,11 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 	// Transfer all current render state values to the HLSL pixel shader through host pixel shader constants
 	for (int rs = X_D3DRS_PS_FIRST; rs <= X_D3DRS_PS_LAST; rs++) {
 		// Read from D3D__RenderState each value, put together this forms the entire Xbox register combiner configuration :
-		DWORD dwRenderStateValue = TemporaryPixelShaderRenderStates[rs];
+		DWORD dwRenderStateValue = XboxRenderStates.GetXboxRenderState(rs);
 
 		// Replace the reserved slot with the value from X_D3DRS_PSTEXTUREMODES (which is at offset 136, which lies outside the pixel shader range) :
 		if (rs == X_D3DRS_PS_RESERVED)
-			dwRenderStateValue = TemporaryPixelShaderRenderStates[X_D3DRS_PSTEXTUREMODES];
+			dwRenderStateValue = XboxRenderStates.GetXboxRenderState(X_D3DRS_PSTEXTUREMODES);
 
 		// Convert each DWORD into four separate bytes :
 		uint8_t ByteValues[4];
@@ -6079,8 +6079,8 @@ VOID DxbxUpdateActivePixelShader_Legacy(XTL::X_D3DPIXELSHADERDEF* pPSDef) // NOP
   DWORD CurrentPixelShader;
   int i;
   DWORD Register_;
-  XTL::D3DCOLOR dwColor;
-  XTL::D3DXCOLOR fColor;
+  D3DCOLOR dwColor;
+  D3DXCOLOR fColor;
 
   HRESULT Result = D3D_OK;
 
@@ -6218,7 +6218,7 @@ VOID DxbxUpdateActivePixelShader_Legacy(XTL::X_D3DPIXELSHADERDEF* pPSDef) // NOP
 
 }
 
-VOID XTL::CxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
+VOID CxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
 {
 	XTL::X_D3DPIXELSHADERDEF* pPSDef;
 
@@ -6228,12 +6228,12 @@ VOID XTL::CxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
 	//DWORD *XTL_D3D__RenderState = XTL::EmuMappedD3DRenderState[0];
 	//pPSDef = (XTL::X_D3DPIXELSHADERDEF*)(XTL_D3D__RenderState);
 
-	// Use the pixel shader stored in TemporaryPixelShaderRenderStates rather than the set handle
+	// Use the pixel shader stored in XboxRenderStates rather than the set handle
 	// This allows changes made via SetRenderState to actually take effect!
-	// TODO: Remove this and read directly from XTL_D3D__RenderState when all RenderState and Pixel Shader functions are unpatched
+
 	// NOTE: PSTextureModes is in a different location in the X_D3DPIXELSHADERFEF than in Render State mappings
-	// All other fields are the same. We cast TemporaryPixelShaderRenderStates to a pPSDef for these fields, but
-	// manually read from TemporaryPixelShaderRenderStates[X_D3DRS_PSTEXTUREMODES) for that one field.
+	// All other fields are the same. We cast GetPixelShaderRenderStatePointer to a pPSDef for all other fields,
+	// but manually read XboxRenderStates.GetXboxRenderState(XTL::X_D3DRS_PSTEXTUREMODES) for that one field.
 	pPSDef = g_pXbox_PixelShader != nullptr ? (XTL::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
 
 	if (pPSDef == nullptr)

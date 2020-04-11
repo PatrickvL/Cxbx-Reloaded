@@ -673,7 +673,7 @@ BEGIN
             END
             POPUP "Pixel Shaders"
             BEGIN
-                MENUITEM "Recompile",                   ID_HACKS_PIXELSHADERS_RECOMPILE,MFT_STRING,MFS_ENABLED, CHECKED
+                MENUITEM "Recompile",                   ID_HACKS_PIXELSHADERS_RECOMPILE,MFT_STRING,MFS_CHECKED
                 MENUITEM "Interpret",                   ID_HACKS_PIXELSHADERS_INTERPRET,MFT_STRING,MFS_ENABLED
                 MENUITEM "Disable",                     ID_HACKS_PIXELSHADERS_DISABLE,MFT_STRING,MFS_ENABLED
             END
