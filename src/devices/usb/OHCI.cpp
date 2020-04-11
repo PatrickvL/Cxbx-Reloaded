@@ -61,6 +61,7 @@ namespace xboxkrnl
 #include "core\kernel\exports\EmuKrnl.h"  // For HalSystemInterrupt
 #include "common\util\CxbxUtil.h"
 #include "Logging.h"
+#include "Timer.h"
 
 static const char* OHCI_RegNames[] = {
 	"HcRevision",
