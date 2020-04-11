@@ -198,3 +198,13 @@ set(CXBXR_GLEW_DLL "${CXBXR_ROOT_DIR}/import/glew-2.0.0/bin/Release/Win32/glew32
 add_custom_command(TARGET cxbx POST_BUILD
  COMMAND ${CMAKE_COMMAND} -E copy ${CXBXR_GLEW_DLL} $<TARGET_FILE_DIR:cxbx>
 )
+
+
+# TMP pixel shader compilation
+set_source_files_properties(
+  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/RegisterCombinerInterpreter.hlsl" PROPERTIES 
+  VS_SHADER_TYPE Pixel
+  VS_SHADER_MODEL 3.0
+  VS_SHADER_ENTRYPOINT g_ps30_main
+  VS_SHADER_OUTPUT_HEADER_FILE "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/RegisterCombinerInterpreter.h"
+)
