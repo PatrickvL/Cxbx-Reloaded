@@ -7965,18 +7965,20 @@ void CxbxUpdateNativeD3DResources()
     XboxRenderStates.Apply();
     XboxTextureStates.Apply();
 
+    // If Pixel Shaders are not disabled, process them
 	switch (g_PixelShaderMode) {
 		case psmDisabled:
 			break;
 		case psmLegacy:
-			XTL::CxbxUpdateActivePixelShader(/*TargetHLSL=*/false);
+			CxbxUpdateActivePixelShader(/*TargetHLSL=*/false);
 			break;
 		case psmHLSL:
-			XTL::CxbxUpdateActivePixelShader(/*TargetHLSL=*/true);
+			CxbxUpdateActivePixelShader(/*TargetHLSL=*/true);
 			break;
 		default:
 			assert(false);
 	}
+
 
 
 /* TODO : Port these :

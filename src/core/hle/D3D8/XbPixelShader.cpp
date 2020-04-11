@@ -1073,7 +1073,7 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 #if 0 // TODO : Merge with below after rebase is done
 		// Transfer all current render state values to the HLSL pixel shader through host pixel shader constants
 		for (int rs = XTL::X_D3DRS_PSALPHAINPUTS0; i <= XTL::X_D3DRS_PSCOMBINERCOUNT; i++) {
-			DWORD dwRenderState = TemporaryPixelShaderRenderStates[i];
+			DWORD dwRenderState = XboxRenderStates.GetXboxRenderState(i);
 
 			float ConstantData[4];
 /*
@@ -1274,8 +1274,8 @@ VOID DxbxUpdateActivePixelShader_Legacy(XTL::X_D3DPIXELSHADERDEF* pPSDef) // NOP
   DWORD CurrentPixelShader;
   int i;
   DWORD Register_;
-  XTL::D3DCOLOR dwColor;
-  XTL::D3DXCOLOR fColor;
+  D3DCOLOR dwColor;
+  D3DXCOLOR fColor;
 
   HRESULT Result = D3D_OK;
 
@@ -1358,11 +1358,11 @@ VOID DxbxUpdateActivePixelShader_Legacy(XTL::X_D3DPIXELSHADERDEF* pPSDef) // NOP
 			break;
 		  case PSH_XBOX_CONSTANT_FC0:
             //dwColor = *XTL::EmuMappedD3DRenderState[XTL::X_D3DRS_PSFINALCOMBINERCONSTANT0];
-              fColor = dwColor = TemporaryPixelShaderRenderStates[XTL::X_D3DRS_PSFINALCOMBINERCONSTANT0];
+              fColor = dwColor = XboxRenderStates.GetXboxRenderState(XTL::X_D3DRS_PSFINALCOMBINERCONSTANT0);
 			break;
 		  case PSH_XBOX_CONSTANT_FC1:
             //dwColor = *XTL::EmuMappedD3DRenderState[XTL::X_D3DRS_PSFINALCOMBINERCONSTANT1];
-              fColor = dwColor = TemporaryPixelShaderRenderStates[XTL::X_D3DRS_PSFINALCOMBINERCONSTANT1];
+              fColor = dwColor = XboxRenderStates.GetXboxRenderState(XTL::X_D3DRS_PSFINALCOMBINERCONSTANT1);
 			break;
           case PSH_XBOX_CONSTANT_MUL0:
           case PSH_XBOX_CONSTANT_MUL1:
@@ -1397,7 +1397,7 @@ VOID DxbxUpdateActivePixelShader_Legacy(XTL::X_D3DPIXELSHADERDEF* pPSDef) // NOP
           }
           default:
             //dwColor = *XTL::EmuMappedD3DRenderState[XTL::X_D3DRS_PSCONSTANT0_0 + i];
-              fColor = dwColor = TemporaryPixelShaderRenderStates[XTL::X_D3DRS_PSCONSTANT0_0 + i];
+              fColor = dwColor = XboxRenderStates.GetXboxRenderState(XTL::X_D3DRS_PSCONSTANT0_0 + i);
 			break;
         }
 
@@ -1417,30 +1417,23 @@ VOID DxbxUpdateActivePixelShader_Legacy(XTL::X_D3DPIXELSHADERDEF* pPSDef) // NOP
     }
 }
 
-VOID XTL::CxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
+VOID CxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
 {
-	XTL::X_D3DPIXELSHADERDEF* pPSDef;
+	xbox::X_D3DPIXELSHADERDEF* pPSDef;
 
 	// TODO: Is this even right? The first RenderState is PSAlpha,
 	// The pixel shader is stored in pDevice->m_pPixelShader
 	// For now, we still patch SetPixelShader and read from there...
 
-	// Use the pixel shader stored in D3D__RenderState rather than the set handle
+	// Use the pixel shader stored in XboxRenderStates rather than the set handle
 	// This allows changes made via SetRenderState to actually take effect!
-	// NOTE: PSTextureModes is in a different location in the X_D3DPIXELSHADERDEF than in Render State mappings
-	// All other fields are the same.
-	// We cast D3D__RenderState to a pPSDef for these fields, but
-	// manually read from D3D__RenderState[X_D3DRS_PSTEXTUREMODES] for that one field.
+
+	// NOTE: PSTextureModes is in a different location in the X_D3DPIXELSHADERFEF than in Render State mappings
+	// All other fields are the same. We cast GetPixelShaderRenderStatePointer to a pPSDef for all other fields,
+	// but manually read XboxRenderStates.GetXboxRenderState(XTL::X_D3DRS_PSTEXTUREMODES) for that one field.
 	// See D3DDevice_SetPixelShaderCommon which implements this
 
-#if 0 // TODO : Review and refactor after rebase	
-	//DWORD *XTL_D3D__RenderState = XTL::EmuMappedD3DRenderState[0];
-	//pPSDef = (XTL::X_D3DPIXELSHADERDEF*)(XTL_D3D__RenderState);
-
-	pPSDef = g_D3DActivePixelShader != nullptr ? (XTL::X_D3DPIXELSHADERDEF*)(&TemporaryPixelShaderRenderStates[0]) : nullptr;
-#else
-	const xbox::X_D3DPIXELSHADERDEF *pPSDef = g_pXbox_PixelShader != nullptr ? (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
-#endif // TODO
+	pPSDef = g_pXbox_PixelShader != nullptr ? (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
 	if (pPSDef == nullptr) {
 		IDirect3DPixelShader9* pShader = nullptr;
 #if 0 // TODO : Review and refactor after rebase	
@@ -1458,4 +1451,3 @@ VOID XTL::CxbxUpdateActivePixelShader(const bool bTargetHLSL) // NOPATCH
 	else
 		DxbxUpdateActivePixelShader_Legacy(pPSDef);
 }
-
