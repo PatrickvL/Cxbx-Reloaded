@@ -1029,17 +1029,7 @@ void CxbxImpl_SetVertexShaderInput
 	LOG_UNIMPLEMENTED();
 }
 
-void CxbxImpl_SelectVertexShaderDirect
-(
-	xbox::X_VERTEXATTRIBUTEFORMAT* pVAF,
-	DWORD Address
-)
-{
-	LOG_INIT;
-
-	// When pVAF is non-null, this vertex attribute format takes precedence over the the one	
-	LOG_UNIMPLEMENTED();
-}
+// Note : SelectVertexShaderDirect needs no EMUPATCH CxbxImpl_..., since it just calls SelectVertexShader
 
 IDirect3DVertexDeclaration* CxbxGetVertexDeclaration(DWORD Handle)
 {
