@@ -4306,24 +4306,22 @@ VOID __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
 		LOG_FUNC_ARG(Format)
 		LOG_FUNC_END;
 
-    DWORD StageLookup[xbox::X_D3DTS_STAGECOUNT] = { 0x00081b00, 0x00081b40, 0x00081b80, 0x00081bc0 };
-	// This array contains D3DPUSH_ENCODE(NV2A_TX_OFFSET(v), 2) = 2 DWORD's, shifted left PUSH_COUNT_SHIFT (18) left
     DWORD Stage = -1;
 
-    for (int v = 0; v < xbox::X_D3DTS_STAGECOUNT; v++) {
-        if (StageLookup[v] == Method) {
-            Stage = v;
-			break;
-        }
-    }
-
-    if (Stage == -1) {
+	switch (Method) { // Detect which of the 4 (X_D3DTS_STAGECOUNT) texture stages is given by the (NV2A) Method argument
+	// This code contains D3DPUSH_ENCODE(NV2A_TX_OFFSET(v), 2) = 2 DWORD's, shifted left PUSH_COUNT_SHIFT (18) left
+	case 0x00081b00: Stage = 0; break;
+	case 0x00081b40: Stage = 1; break;
+	case 0x00081b80: Stage = 2; break;
+	case 0x00081bc0: Stage = 3; break;
+	default:
 		LOG_TEST_CASE("D3DDevice_SwitchTexture Unknown Method");
         EmuLog(LOG_LEVEL::WARNING, "Unknown Method (0x%.08X)", Method);
-    }
-    else {
+	}
+
+    if (Stage >= 0) {
 		// Switch Texture updates the data pointer of an active texture using pushbuffer commands
-		if (g_pXbox_SetTexture[Stage] == xbox::zeroptr) {
+		if (g_pXbox_SetTexture[Stage] == xbnullptr) {
 			LOG_TEST_CASE("D3DDevice_SwitchTexture without an active texture");
 		}
 		else {
