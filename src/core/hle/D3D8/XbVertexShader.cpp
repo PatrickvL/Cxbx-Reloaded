@@ -53,6 +53,71 @@ extern xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS]; // Declare
           xbox::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
 xbox::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Read by GetXboxVertexAttributes when g_Xbox_SetVertexShaderInput_Count > 0
 
+
+// TODO : Start using this function everywhere g_Xbox_VertexShader_Handle is accessed currently!
+XTL::X_D3DVertexShader* GetXboxVertexShader()
+{
+	LOG_INIT
+
+	using namespace XTL;
+
+	X_D3DVertexShader* pXboxVertexShader = xbnullptr;
+#if 0 // TODO : Retrieve vertex shader from actual Xbox D3D state
+	// Only when we're sure of the location of the Xbox Device.m_pVertexShader variable
+	if (XboxVertexShaders.g_XboxAddr_pVertexShader) {
+		// read that (so that we get access to internal vertex shaders, like those generated
+		// to contain the attribute-information for FVF shaders) :
+		pXboxVertexShader = (X_D3DVertexShader*)(*XboxVertexShaders.g_XboxAddr_pVertexShader);
+	}
+	else
+	{
+		LOG_TEST_CASE("Unknown pVertexShader symbol location!");
+#endif
+		// Otherwise, we have no choice but to use what we've last stored in the
+		// g_Xbox_VertexShader_Handle variable via our D3DDevice_SetVertexShader
+		// and D3DDevice_SelectVertexShader* patches.
+
+		// Note, that once we have a fail-safe way to determine the location of the
+		// Xbox Device.m_pVertexShader symbol, the FVF and the accompanying Address,
+		// we no longer need this statement block, nor patches on D3DDevice_SetVertexShader
+		// nor D3DDevice_SelectVertexShader* !
+
+		// Now, to convert, we do need to have a valid vertex shader :
+		if (g_Xbox_VertexShader_Handle == 0) {
+			LOG_TEST_CASE("Unassigned Xbox vertex shader!");
+			return nullptr;
+		}
+
+		if (!VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
+			LOG_TEST_CASE("Xbox vertex shader lacks X_D3DFVF_RESERVED0 bit!");
+			return nullptr;
+		}
+
+		pXboxVertexShader = VshHandleToXboxVertexShader(g_Xbox_VertexShader_Handle);
+//	}
+
+	return pXboxVertexShader;
+}
+
+XTL::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributes()
+{
+	XTL::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
+	if (pXboxVertexShader == xbnullptr)
+	{
+		// Despite possibly not being used, the pXboxVertexShader argument must always be assigned
+		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
+		return &g_Xbox_SetVertexShaderInput_Attributes; // WRONG result, but it's already strange this happens
+	}
+
+	// If SetVertexShaderInput is active, it's arguments overrule those of the active vertex shader
+	if (g_Xbox_SetVertexShaderInput_Count > 0) {
+		// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
+		return &g_Xbox_SetVertexShaderInput_Attributes;
+	}
+
+	return &pXboxVertexShader->VertexAttribute;
+}
+
 // Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream number.
 // (These values are set through SetStreamSource and can be overridden by SetVertexShaderInput.)
 // TODO : Start using this function everywhere g_Xbox_SetStreamSource is accessed currently!
