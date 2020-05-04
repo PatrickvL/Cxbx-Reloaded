@@ -1410,11 +1410,14 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 	// If Handle is assigned, it becomes the new current Xbox VertexShader,
 	// which resets a bit of state (nv2a execution mode, viewport, ?)
 	// Either way, the given address slot is selected as the start of the current vertex shader program
-	g_Xbox_VertexShader_Handle = Handle;
 	g_CxbxVertexShaderSlotAddress = Address;
 
-	if (VshHandleIsVertexShader(Handle))
-	{
+	if (Handle) {
+		if (!VshHandleIsVertexShader(Handle))
+			LOG_TEST_CASE("Non-zero handle must be a VertexShader!");
+
+		g_Xbox_VertexShader_Handle = Handle;
+
 		auto pCxbxVertexShader = GetCxbxVertexShader(Handle);
 		if (pCxbxVertexShader == nullptr) {
 			LOG_TEST_CASE("Shader handle has not been created");
