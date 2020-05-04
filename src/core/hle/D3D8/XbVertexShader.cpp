@@ -1324,22 +1324,24 @@ void SetCxbxVertexDeclaration(CxbxVertexDeclaration& pCxbxVertexDeclaration) {
 
 // TODO Call this when state is dirty in UpdateNativeD3DResources
 // Rather than every time state changes
-void SetVertexShaderFromSlots() {
-	LOG_INIT
+void SetVertexShaderFromSlots()
+{
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
 	auto pTokens = GetCxbxVertexShaderSlotPtr(g_CxbxVertexShaderSlotAddress);
 	if (pTokens) {
 		// Create a vertex shader from the tokens
 		DWORD shaderSize;
 		auto shaderKey = g_VertexShaderSource.CreateShader(pTokens, &shaderSize);
-		HRESULT hRet = g_pD3DDevice->SetVertexShader(g_VertexShaderSource.GetShader(shaderKey));
+		IDirect3DVertexShader* pHostVertexShader = g_VertexShaderSource.GetShader(shaderKey);
+		HRESULT hRet = g_pD3DDevice->SetVertexShader(pHostVertexShader);
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShader");
 	}
 }
 
 void SetCxbxVertexShaderHandle(CxbxVertexShader* pCxbxVertexShader)
 {
-	LOG_INIT
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
 	HRESULT hRet;
 
@@ -1353,6 +1355,22 @@ void SetCxbxVertexShaderHandle(CxbxVertexShader* pCxbxVertexShader)
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShader");
 
 	SetCxbxVertexDeclaration(pCxbxVertexShader->Declaration);
+}
+
+void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstructions)
+{
+	int upToSlot = Address + NrInstructions;
+	if (upToSlot > X_VSH_MAX_INSTRUCTION_COUNT) {
+		LOG_TEST_CASE("Shader does not fit in vertex shader slots");
+		return;
+	}
+
+	auto CxbxVertexShaderSlotPtr = GetCxbxVertexShaderSlotPtr(Address);
+	if (CxbxVertexShaderSlotPtr == nullptr) {
+		return;
+	}
+
+	memcpy(CxbxVertexShaderSlotPtr, pTokens, NrInstructions * X_VSH_INSTRUCTION_SIZE_BYTES);
 }
 
 void CxbxImpl_SetVertexShaderInput
@@ -1413,15 +1431,12 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 void CxbxImpl_LoadVertexShaderProgram(CONST DWORD* pFunction, DWORD Address)
 {
 	// D3DDevice_LoadVertexShaderProgram splits the given function buffer into batch-wise pushes to the NV2A
+	// TODO : FIXME : So the following is wrong, and needs to be altered to parse the actual pushbuffer commands :
 
 	// Copy shader instructions to shader slots
-	auto CxbxVertexShaderSlotPtr = GetCxbxVertexShaderSlotPtr(Address);
-	if (CxbxVertexShaderSlotPtr == nullptr)
-		return;
-
 	auto shaderHeader = *((xbox::X_VSH_SHADER_HEADER*) pFunction);
-	auto tokens = &pFunction[1];
-	memcpy(CxbxVertexShaderSlotPtr, tokens, shaderHeader.NumInst * X_VSH_INSTRUCTION_SIZE_BYTES);
+	auto tokens = (DWORD*)&pFunction[1];
+	CxbxSetVertexShaderSlots(tokens, Address, shaderHeader.NumInst);
 
 	SetVertexShaderFromSlots();
 }
@@ -1431,30 +1446,21 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 	// Handle is always address of an X_D3DVertexShader struct, thus always or-ed with 1 (X_D3DFVF_RESERVED0)
 	// Address is the slot (offset) from which the program must be written onwards (as whole DWORDS)
 	// D3DDevice_LoadVertexShader pushes the program contained in the Xbox VertexShader struct to the NV2A
-	auto CxbxVertexShaderSlotPtr = GetCxbxVertexShaderSlotPtr(Address);
-	if (CxbxVertexShaderSlotPtr) {
-		CxbxVertexShader* pCxbxVertexShader = GetCxbxVertexShader(Handle);
-		if (pCxbxVertexShader) {
-			// Make sure there is a shader function to load
-			// from the shader handle
-			if (pCxbxVertexShader->pXboxFunctionCopy == nullptr) {
-				LOG_TEST_CASE("LoadVertexShader with FVF shader handle");
-				return;
-			}
-
-			int upToSlot = Address + pCxbxVertexShader->XboxNrAddressSlots;
-			if (upToSlot > X_VSH_MAX_INSTRUCTION_COUNT) {
-				LOG_TEST_CASE("Shader does not fit in vertex shader slots");
-				return;
-			}
-
-			// Skip the header DWORD at the beginning
-			auto pTokens = &pCxbxVertexShader->pXboxFunctionCopy[1];
-			memcpy(CxbxVertexShaderSlotPtr, pTokens, pCxbxVertexShader->XboxNrAddressSlots * X_VSH_INSTRUCTION_SIZE_BYTES);
+	CxbxVertexShader* pCxbxVertexShader = GetCxbxVertexShader(Handle);
+	if (pCxbxVertexShader) {
+		// Make sure there is a shader function to load
+		// from the shader handle
+		if (pCxbxVertexShader->pXboxFunctionCopy == nullptr) {
+			LOG_TEST_CASE("LoadVertexShader with FVF shader handle");
+			return;
 		}
-		else {
-			LOG_TEST_CASE("LoadVertexShader called with unrecognized handle"); // FIXME  : extend with value (once supported by LOG_TEST_CASE)
-		}
+
+		// Skip the header DWORD at the beginning
+		auto pTokens = &pCxbxVertexShader->pXboxFunctionCopy[1];
+		CxbxSetVertexShaderSlots(pTokens, Address, pCxbxVertexShader->XboxNrAddressSlots);
+	}
+	else {
+		LOG_TEST_CASE("LoadVertexShader called with unrecognized handle"); // FIXME  : extend with value (once supported by LOG_TEST_CASE)
 	}
 }
 
@@ -1484,12 +1490,9 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 			// copy it to the shader slots
 			if (pCxbxVertexShader->pXboxFunctionCopy != nullptr) {
 				g_CxbxVertexShaderSlotAddress = 0;
-				auto CxbxVertexShaderSlotPtr = GetCxbxVertexShaderSlotPtr(g_CxbxVertexShaderSlotAddress);
-				if (CxbxVertexShaderSlotPtr) {
-					// Skip the header DWORD at the beginning
-					auto pTokens = &pCxbxVertexShader->pXboxFunctionCopy[1];
-					memcpy(CxbxVertexShaderSlotPtr, pTokens, pCxbxVertexShader->XboxNrAddressSlots * X_VSH_INSTRUCTION_SIZE_BYTES);
-				}
+				// Skip the header DWORD at the beginning
+				auto pTokens = &pCxbxVertexShader->pXboxFunctionCopy[1];
+				CxbxSetVertexShaderSlots(pTokens, /*g_CxbxVertexShaderSlotAddress=*/0, pCxbxVertexShader->XboxNrAddressSlots);
 			}
 		}
 		else {
