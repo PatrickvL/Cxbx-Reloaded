@@ -35,6 +35,8 @@
 #include "core\hle\D3D8\Direct3D9\VertexShaderSource.h" // For g_VertexShaderSource
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
+#include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST, NV2A_VP_UPLOAD_CONST_ID, NV2A_VP_UPLOAD_CONST
+#include "devices\video\nv2a.h" // For D3DPUSH_DECODE
 #include "common\Logging.h" // For LOG_INIT
 
 #include "XbD3D8Types.h" // For X_D3DVSDE_*
@@ -1433,11 +1435,15 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 
 void CxbxImpl_LoadVertexShaderProgram(CONST DWORD* pFunction, DWORD Address)
 {
+	// pFunction is a X_VSH_SHADER_HEADER pointer
 	// D3DDevice_LoadVertexShaderProgram splits the given function buffer into batch-wise pushes to the NV2A
-	// TODO : FIXME : So the following is wrong, and needs to be altered to parse the actual pushbuffer commands :
+	// However, we can suffice by copying the program into our slots (and make sure these slots get converted into a vertex shader)
 
 	// Copy shader instructions to shader slots
 	auto shaderHeader = *((xbox::X_VSH_SHADER_HEADER*) pFunction);
+	if (shaderHeader.Version != VERSION_XVS)
+		LOG_TEST_CASE("Non-regular (state or read/write) shader detected!");
+
 	auto tokens = (DWORD*)&pFunction[1];
 	CxbxSetVertexShaderSlots(tokens, Address, shaderHeader.NumInst);
 
@@ -1449,22 +1455,62 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 	// Handle is always address of an X_D3DVertexShader struct, thus always or-ed with 1 (X_D3DFVF_RESERVED0)
 	// Address is the slot (offset) from which the program must be written onwards (as whole DWORDS)
 	// D3DDevice_LoadVertexShader pushes the program contained in the Xbox VertexShader struct to the NV2A
-	CxbxVertexShader* pCxbxVertexShader = GetCxbxVertexShader(Handle);
-	if (pCxbxVertexShader) {
-		// Make sure there is a shader function to load
-		// from the shader handle
-		if (pCxbxVertexShader->pXboxFunctionCopy == nullptr) {
-			LOG_TEST_CASE("LoadVertexShader with FVF shader handle");
-			return;
+
+	xbox::X_D3DVertexShader* pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
+
+	// Note : FunctionData[0] might be a X_VSH_SHADER_HEADER, but is often equal to zero?
+	if (pXboxVertexShader->FunctionData[0] != 0) {
+		// If set, check if it resembles a regular shader header or not (not really needed, but why not, eh?!) :
+		auto shaderHeader = *((xbox::X_VSH_SHADER_HEADER*) & pXboxVertexShader->FunctionData[0]);
+		if (shaderHeader.Version != VERSION_XVS)
+			LOG_TEST_CASE("Non-regular (state or read/write) shader detected!");
+		if (shaderHeader.NumInst > 2000)
+			LOG_TEST_CASE("Extremely long shader detected!");
+	}
+
+	auto pNV2ATokens = &pXboxVertexShader->FunctionData[1];
+	DWORD NrTokens = pXboxVertexShader->TotalSize;
+
+#if 1 // TODO : Remove dirty hack (?once CreateVertexShader trampolines to Xbox code that sets TotalSize correctly?) :
+	if (NrTokens == 0)
+		NrTokens = 10000;
+#endif
+
+	unsigned ConstantAddress = 0;
+	DWORD* pEnd = pNV2ATokens + NrTokens;
+	while (pNV2ATokens < pEnd) {
+		DWORD dwMethod, dwSubChannel, nrDWORDS;
+		D3DPUSH_DECODE(*pNV2ATokens++, dwMethod, dwSubChannel, nrDWORDS);
+		if (nrDWORDS == 0) { LOG_TEST_CASE("Zero-length NV2A method detected!"); break; }
+		switch (dwMethod) {
+		case NV2A_VP_UPLOAD_INST(0): { // = 0x00000B00
+			if ((nrDWORDS & 3) != 0) LOG_TEST_CASE("NV2A_VP_UPLOAD_INST arguments should be a multiple of 4!");
+			unsigned nrSlots = nrDWORDS / X_VSH_INSTRUCTION_SIZE;
+			CxbxSetVertexShaderSlots(pNV2ATokens, Address, nrSlots);
+			Address += nrSlots;
+			break;
+		}
+		case NV2A_VP_UPLOAD_CONST_ID: // = 0x00001EA4
+			if (nrDWORDS != 1) LOG_TEST_CASE("NV2A_VP_UPLOAD_CONST_ID should have one argument!");
+			ConstantAddress = *pNV2ATokens;
+			break;
+		case NV2A_VP_UPLOAD_CONST(0): { // = 0x00000B80
+			if ((nrDWORDS & 3) != 0) LOG_TEST_CASE("NV2A_VP_UPLOAD_CONST arguments should be a multiple of 4!");
+			unsigned nrConstants = nrDWORDS / X_VSH_INSTRUCTION_SIZE;
+			// TODO : FIXME : Implement and call SetVertexShaderConstants(pNV2ATokens, ConstantAddress, nrConstants);
+			ConstantAddress += nrConstants;
+			break;
+		}
+		default:
+			// TODO : Remove this break-out hack once NrTokens is reliable and instead have: DEFAULT_UNREACHABLE;
+			pEnd = pNV2ATokens;
+			break;
 		}
 
-		// Skip the header DWORD at the beginning
-		auto pTokens = &pCxbxVertexShader->pXboxFunctionCopy[1];
-		CxbxSetVertexShaderSlots(pTokens, Address, pCxbxVertexShader->XboxNrAddressSlots);
+		pNV2ATokens += nrDWORDS;
 	}
-	else {
-		LOG_TEST_CASE("LoadVertexShader called with unrecognized handle"); // FIXME  : extend with value (once supported by LOG_TEST_CASE)
-	}
+
+	SetVertexShaderFromSlots();
 }
 
 void CxbxImpl_SetVertexShader(DWORD Handle)
