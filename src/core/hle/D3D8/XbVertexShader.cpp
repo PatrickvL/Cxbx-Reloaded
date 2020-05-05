@@ -1305,6 +1305,98 @@ void RegisterCxbxVertexShader(DWORD XboxVertexShaderHandle, CxbxVertexShader* sh
 	g_CxbxVertexShaders[XboxVertexShaderHandle] = shader;
 }
 
+// Converts an Xbox FVF shader handle to X_VERTEXATTRIBUTEFORMAT
+// Note : Temporary, until we reliably locate the Xbox internal state for this
+XTL::X_VERTEXATTRIBUTEFORMAT CxbxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
+{
+	using namespace XTL;
+
+	X_VERTEXATTRIBUTEFORMAT declaration = { 0 }; // FVFs don't tesselate, all slots read from stream zero
+
+	static DWORD X_D3DVSDT_FLOAT[] = { 0, X_D3DVSDT_FLOAT1, X_D3DVSDT_FLOAT2, X_D3DVSDT_FLOAT3, X_D3DVSDT_FLOAT4 };
+
+	// Position & Blendweights
+	int nrPositionFloats = 3;
+	int nrBlendWeights = 0;
+	unsigned offset = 0;
+	DWORD position = (xboxFvf & X_D3DFVF_POSITION_MASK);
+	switch (position) {
+		case 0: nrPositionFloats = 0; LOG_TEST_CASE("FVF without position"); break; // Note : Remove logging if this occurs often
+		case X_D3DFVF_XYZ: /*nrPositionFloats is set to 3 by default*/ break;
+		case X_D3DFVF_XYZRHW: nrPositionFloats = 4; break;
+		case X_D3DFVF_XYZB1: nrBlendWeights = 1; break;
+		case X_D3DFVF_XYZB2: nrBlendWeights = 2; break;
+		case X_D3DFVF_XYZB3: nrBlendWeights = 3; break;
+		case X_D3DFVF_XYZB4: nrBlendWeights = 4; break;
+		case X_D3DFVF_POSITION_MASK: /*Keep nrPositionFloats set to 3*/ LOG_TEST_CASE("FVF invalid (5th blendweight?)"); break;
+		DEFAULT_UNREACHABLE;
+	}
+
+	// Assign vertex element (attribute) slots
+	X_VERTEXSHADERINPUT* pSlot;
+
+	if (nrPositionFloats > 0) {
+		// Write Position
+		pSlot = &declaration.Slots[X_D3DVSDE_POSITION];
+		pSlot->Format = X_D3DVSDT_FLOAT[nrPositionFloats];
+		pSlot->Offset = offset;
+		offset += sizeof(float) * nrPositionFloats;
+	}
+
+	if (nrBlendWeights > 0) {
+		// Write Blend Weights
+		pSlot = &declaration.Slots[X_D3DVSDE_BLENDWEIGHT];
+		pSlot->Format = X_D3DVSDT_FLOAT[nrBlendWeights];
+		pSlot->Offset = offset;
+		offset += sizeof(float) * nrBlendWeights;
+	}
+
+	// Write Normal, Diffuse, and Specular
+	if (xboxFvf & X_D3DFVF_NORMAL) {
+		if (position == X_D3DFVF_XYZRHW) {
+			LOG_TEST_CASE("X_D3DFVF_NORMAL shouldn't use X_D3DFVF_XYZRHW");
+		}
+
+		pSlot = &declaration.Slots[X_D3DVSDE_NORMAL];
+		pSlot->Format = X_D3DVSDT_FLOAT[3];
+		pSlot->Offset = offset;
+		offset += sizeof(float) * 3;
+	}
+	if (xboxFvf & X_D3DFVF_DIFFUSE) {
+		pSlot = &declaration.Slots[X_D3DVSDE_DIFFUSE];
+		pSlot->Format = X_D3DVSDT_D3DCOLOR;
+		pSlot->Offset = offset;
+		offset += sizeof(DWORD) * 1;
+	}
+	if (xboxFvf & X_D3DFVF_SPECULAR) {
+		pSlot = &declaration.Slots[X_D3DVSDE_SPECULAR];
+		pSlot->Format = X_D3DVSDT_D3DCOLOR;
+		pSlot->Offset = offset;
+		offset += sizeof(DWORD) * 1;
+	}
+
+	// Write Texture Coordinates
+	int textureCount = (xboxFvf & X_D3DFVF_TEXCOUNT_MASK) >> X_D3DFVF_TEXCOUNT_SHIFT;
+	assert(textureCount <= 4); // Safeguard, since the X_D3DFVF_TEXCOUNT bitfield could contain invalid values (5 up to 15)
+	for (int i = 0; i < textureCount; i++) {
+		int numberOfCoordinates = 0;
+		auto FVFTextureFormat = (xboxFvf >> X_D3DFVF_TEXCOORDSIZE_SHIFT(i)) & 0x003;
+		switch (FVFTextureFormat) {
+		case X_D3DFVF_TEXTUREFORMAT1: numberOfCoordinates = 1; break;
+		case X_D3DFVF_TEXTUREFORMAT2: numberOfCoordinates = 2; break;
+		case X_D3DFVF_TEXTUREFORMAT3: numberOfCoordinates = 3; break;
+		case X_D3DFVF_TEXTUREFORMAT4: numberOfCoordinates = 4; break;
+			DEFAULT_UNREACHABLE;
+		}
+
+		assert(numberOfCoordinates > 0);
+		pSlot = &declaration.Slots[X_D3DVSDE_TEXCOORD0 + i];
+		pSlot->Format = X_D3DVSDT_FLOAT[numberOfCoordinates];
+		pSlot->Offset = offset;
+		offset += sizeof(float) * numberOfCoordinates;
+	}
+}
+
 void SetCxbxVertexDeclaration(CxbxVertexDeclaration& pCxbxVertexDeclaration) {
 	LOG_INIT
 
