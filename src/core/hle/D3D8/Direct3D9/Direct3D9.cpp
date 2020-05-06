@@ -4066,6 +4066,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetShaderConstantMode)
     g_Xbox_VertexShaderConstantMode = Mode;
 }
 
+#if 0
 // ******************************************************************
 // * patch: D3DDevice_CreateVertexShader
 // ******************************************************************
@@ -4114,6 +4115,7 @@ HRESULT WINAPI xbox::EMUPATCH(D3DDevice_CreateVertexShader)
 
     return CxbxImpl_CreateVertexShader(pDeclaration, pFunction, pHandle, Usage);
 }
+#endif
 
 // LTCG specific D3DDevice_SetVertexShaderConstant function...
 // This uses a custom calling convention where parameter is passed in EDX

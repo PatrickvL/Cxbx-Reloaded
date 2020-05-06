@@ -72,9 +72,7 @@ typedef struct _CxbxVertexDeclaration
 {
 	CxbxVertexShaderStreamInfo VertexStreams[X_VSH_MAX_STREAMS];
 	IDirect3DVertexDeclaration* pHostVertexDeclaration;
-	DWORD* pXboxDeclarationCopy;
-	DWORD  XboxDeclarationCount; // Xbox's number of DWORD-sized X_D3DVSD* tokens
-	UINT                       NumberOfVertexStreams; // The number of streams the vertex shader uses
+	UINT NumberOfVertexStreams; // The number of streams the vertex shader uses
 	bool vRegisterInDeclaration[X_VSH_MAX_ATTRIBUTES];
 }
 CxbxVertexDeclaration;
@@ -82,14 +80,6 @@ CxbxVertexDeclaration;
 
 typedef struct _CxbxVertexShader
 {
-	// These are the parameters given by the XBE,
-	// we save them to be able to return them when necessary.
-	DWORD                 XboxFunctionSize;
-	DWORD* pXboxFunctionCopy;
-	UINT                  XboxNrAddressSlots;
-	DWORD                 XboxVertexShaderType;
-	// DWORD              XboxStatus; // Used by VshHandleIsValidShader()
-
 	// The resulting host variables
 	uint64_t VertexShaderKey;
 
@@ -97,15 +87,6 @@ typedef struct _CxbxVertexShader
 	CxbxVertexDeclaration  Declaration;
 }
 CxbxVertexShader;
-
-// recompile xbox vertex shader declaration
-extern D3DVERTEXELEMENT *EmuRecompileVshDeclaration
-(
-    DWORD                *pXboxDeclaration,
-    bool                  bIsFixedFunction,
-    DWORD                *pXboxDeclarationCount,
-    CxbxVertexDeclaration *pCxbxVertexDeclaration
-);
 
 // Intermediate vertex shader structures
 
