@@ -352,65 +352,25 @@ protected:
 private:
 	#define D3DDECLUSAGE_UNSUPPORTED ((D3DDECLUSAGE)-1)
 
-	static D3DDECLUSAGE Xb2PCRegisterType
-	(
-		DWORD VertexRegister,
-		BYTE& PCUsageIndex
-	)
+	D3DDECLUSAGE Xb2PCRegisterType(DWORD VertexRegister, BYTE &UsageIndex)
 	{
-		D3DDECLUSAGE PCRegisterType;
-		PCUsageIndex = 0;
-
-		switch (VertexRegister)
-		{
-		case (DWORD)xbox::X_D3DVSDE_VERTEX: // -1
-			PCRegisterType = D3DDECLUSAGE_UNSUPPORTED;
-			break;
-		case xbox::X_D3DVSDE_POSITION: // 0
-			PCRegisterType = D3DDECLUSAGE_POSITION;
-			break;
-		case xbox::X_D3DVSDE_BLENDWEIGHT: // 1
-			PCRegisterType = D3DDECLUSAGE_BLENDWEIGHT;
-			break;
-		case xbox::X_D3DVSDE_NORMAL: // 2
-			PCRegisterType = D3DDECLUSAGE_NORMAL;
-			break;
-		case xbox::X_D3DVSDE_DIFFUSE: // 3
-			PCRegisterType = D3DDECLUSAGE_COLOR; PCUsageIndex = 0;
-			break;
-		case xbox::X_D3DVSDE_SPECULAR: // 4
-			PCRegisterType = D3DDECLUSAGE_COLOR; PCUsageIndex = 1;
-			break;
-		case xbox::X_D3DVSDE_FOG: // 5
-			PCRegisterType = D3DDECLUSAGE_FOG;
-			break;
-		case xbox::X_D3DVSDE_POINTSIZE: // 6
-			PCRegisterType = D3DDECLUSAGE_PSIZE;
-			break;
-		case xbox::X_D3DVSDE_BACKDIFFUSE: // 7
-			PCRegisterType = D3DDECLUSAGE_COLOR; PCUsageIndex = 2;
-			break;
-		case xbox::X_D3DVSDE_BACKSPECULAR: // 8
-			PCRegisterType = D3DDECLUSAGE_COLOR; PCUsageIndex = 3;
-			break;
-		case xbox::X_D3DVSDE_TEXCOORD0: // 9
-			PCRegisterType = D3DDECLUSAGE_TEXCOORD; PCUsageIndex = 0;
-			break;
-		case xbox::X_D3DVSDE_TEXCOORD1: // 10
-			PCRegisterType = D3DDECLUSAGE_TEXCOORD; PCUsageIndex = 1;
-			break;
-		case xbox::X_D3DVSDE_TEXCOORD2: // 11
-			PCRegisterType = D3DDECLUSAGE_TEXCOORD; PCUsageIndex = 2;
-			break;
-		case xbox::X_D3DVSDE_TEXCOORD3: // 12
-			PCRegisterType = D3DDECLUSAGE_TEXCOORD; PCUsageIndex = 3;
-			break;
-		default:
-			PCRegisterType = D3DDECLUSAGE_UNSUPPORTED;
-			break;
+		UsageIndex = 0;
+		switch (VertexRegister) {
+			case xbox::X_D3DVSDE_POSITION    /*= 0*/: return (pRecompiled->Type == D3DDECLTYPE_FLOAT4) ? D3DDECLUSAGE_POSITIONT : D3DDECLUSAGE_POSITION;
+			case xbox::X_D3DVSDE_BLENDWEIGHT /*= 1*/: return D3DDECLUSAGE_BLENDWEIGHT;
+			case xbox::X_D3DVSDE_NORMAL      /*= 2*/: return D3DDECLUSAGE_NORMAL;
+			case xbox::X_D3DVSDE_DIFFUSE     /*= 3*/: return D3DDECLUSAGE_COLOR;
+			case xbox::X_D3DVSDE_SPECULAR    /*= 4*/: UsageIndex = 1; return D3DDECLUSAGE_COLOR;
+			case xbox::X_D3DVSDE_FOG         /*= 5*/: return D3DDECLUSAGE_FOG;
+			case xbox::X_D3DVSDE_POINTSIZE   /*= 6*/: return D3DDECLUSAGE_PSIZE;
+			case xbox::X_D3DVSDE_BACKDIFFUSE /*= 7*/: UsageIndex = 2; return D3DDECLUSAGE_COLOR;
+			case xbox::X_D3DVSDE_BACKSPECULAR/*= 8*/: UsageIndex = 3; return D3DDECLUSAGE_COLOR;
+			case xbox::X_D3DVSDE_TEXCOORD0   /*= 9*/: return D3DDECLUSAGE_TEXCOORD;
+			case xbox::X_D3DVSDE_TEXCOORD1   /*=10*/: UsageIndex = 1; return D3DDECLUSAGE_TEXCOORD;
+			case xbox::X_D3DVSDE_TEXCOORD2   /*=11*/: UsageIndex = 2; return D3DDECLUSAGE_TEXCOORD;
+			case xbox::X_D3DVSDE_TEXCOORD3   /*=12*/: UsageIndex = 3; return D3DDECLUSAGE_TEXCOORD;
+			default /*13-15*/ : return D3DDECLUSAGE_UNSUPPORTED;
 		}
-
-		return PCRegisterType;
 	}
 
 	// VERTEX SHADER
@@ -484,26 +444,12 @@ private:
 
 	void VshConvertToken_STREAMDATA_REG(DWORD VertexRegister, xbox::X_VERTEXSHADERINPUT &slot)
 	{
-		DWORD XboxVertexElementDataType = slot.Format;
 		BOOL NeedPatching = FALSE;
-		BYTE Index;
-		BYTE HostVertexRegisterType;
-
-		if (IsFixedFunction) {
-			HostVertexRegisterType = Xb2PCRegisterType(VertexRegister, Index);
-		} else {
-			// D3DDECLUSAGE_TEXCOORD can be useds for any user-defined data
-			// We need this because there is no reliable way to detect the real usage
-			// Xbox has no concept of 'usage types', it only requires a list of attribute register numbers.
-			// So we treat them all as 'user-defined' with an Index of the Vertex Register Index
-			// this prevents information loss in shaders due to non-matching dcl types!
-			HostVertexRegisterType = D3DDECLUSAGE_TEXCOORD;
-			Index = (BYTE)VertexRegister;
-		}
 
 		// Add this register to the list of declared registers
 		RegVIsPresentInDeclaration[VertexRegister] = true;
 
+		DWORD XboxVertexElementDataType = slot.Format;
 		WORD XboxVertexElementByteSize = 0;
 		BYTE HostVertexElementDataType = 0;
 		WORD HostVertexElementByteSize = 0;
@@ -714,8 +660,18 @@ private:
 		pRecompiled->Offset = pCurrentVertexShaderStreamInfo->HostVertexStride;
 		pRecompiled->Type = HostVertexElementDataType;
 		pRecompiled->Method = D3DDECLMETHOD_DEFAULT;
-		pRecompiled->Usage = HostVertexRegisterType;
-		pRecompiled->UsageIndex = Index;
+		if (IsFixedFunction) {
+			pRecompiled->Usage = Xb2PCRegisterType(VertexRegister, /*&*/pRecompiled->UsageIndex);
+		}
+		else {
+			// D3DDECLUSAGE_TEXCOORD can be useds for any user-defined data
+			// We need this because there is no reliable way to detect the real usage
+			// Xbox has no concept of 'usage types', it only requires a list of attribute register numbers.
+			// So we treat them all as 'user-defined' with an Index of the Vertex Register Index
+			// this prevents information loss in shaders due to non-matching dcl types!
+			pRecompiled->Usage = D3DDECLUSAGE_TEXCOORD;
+			pRecompiled->UsageIndex = (BYTE)VertexRegister;
+		}
 
 		pRecompiled++;
 
@@ -884,6 +840,7 @@ IDirect3DVertexDeclaration* CxbxCreateVertexDeclaration(D3DVERTEXELEMENT *pDecla
 // Converts an Xbox FVF shader handle to X_VERTEXATTRIBUTEFORMAT
 // Note : Temporary, until we reliably locate the Xbox internal state for this
 // See D3DXDeclaratorFromFVF docs https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dxdeclaratorfromfvf
+// and https://github.com/reactos/wine/blob/2e8dfbb1ad71f24c41e8485a39df01bb9304127f/dlls/d3dx9_36/mesh.c#L2041
 xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
 {
 	using namespace xbox;
@@ -891,6 +848,14 @@ xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
 	X_VERTEXATTRIBUTEFORMAT declaration = { 0 }; // FVFs don't tesselate, all slots read from stream zero
 
 	static DWORD X_D3DVSDT_FLOAT[] = { 0, X_D3DVSDT_FLOAT1, X_D3DVSDT_FLOAT2, X_D3DVSDT_FLOAT3, X_D3DVSDT_FLOAT4 };
+
+	static const DWORD InvalidXboxFVFBits = X_D3DFVF_RESERVED0 | X_D3DFVF_RESERVED1 /* probably D3DFVF_PSIZE if detected */
+		| 0x0000F000 // Bits between texture count and the texture formats
+		| 0xFF000000; // All bits above the four alllowed texture formats
+
+	if (xboxFvf & InvalidXboxFVFBits) {
+		LOG_TEST_CASE("Invalid Xbox FVF bits detected!");
+	}
 
 	// Position & Blendweights
 	int nrPositionFloats = 3;
@@ -912,20 +877,19 @@ xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
 	// Assign vertex element (attribute) slots
 	X_VERTEXSHADERINPUT* pSlot;
 
+	// Write Position
 	if (nrPositionFloats > 0) {
-		// Write Position
 		pSlot = &declaration.Slots[X_D3DVSDE_POSITION];
 		pSlot->Format = X_D3DVSDT_FLOAT[nrPositionFloats];
 		pSlot->Offset = offset;
 		offset += sizeof(float) * nrPositionFloats;
-	}
-
-	if (nrBlendWeights > 0) {
 		// Write Blend Weights
-		pSlot = &declaration.Slots[X_D3DVSDE_BLENDWEIGHT];
-		pSlot->Format = X_D3DVSDT_FLOAT[nrBlendWeights];
-		pSlot->Offset = offset;
-		offset += sizeof(float) * nrBlendWeights;
+		if (nrBlendWeights > 0) {
+			pSlot = &declaration.Slots[X_D3DVSDE_BLENDWEIGHT];
+			pSlot->Format = X_D3DVSDT_FLOAT[nrBlendWeights];
+			pSlot->Offset = offset;
+			offset += sizeof(float) * nrBlendWeights;
+		}
 	}
 
 	// Write Normal, Diffuse, and Specular
@@ -939,12 +903,14 @@ xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
 		pSlot->Offset = offset;
 		offset += sizeof(float) * 3;
 	}
+
 	if (xboxFvf & X_D3DFVF_DIFFUSE) {
 		pSlot = &declaration.Slots[X_D3DVSDE_DIFFUSE];
 		pSlot->Format = X_D3DVSDT_D3DCOLOR;
 		pSlot->Offset = offset;
 		offset += sizeof(DWORD) * 1;
 	}
+
 	if (xboxFvf & X_D3DFVF_SPECULAR) {
 		pSlot = &declaration.Slots[X_D3DVSDE_SPECULAR];
 		pSlot->Format = X_D3DVSDT_D3DCOLOR;
@@ -959,10 +925,10 @@ xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
 		int numberOfCoordinates = 0;
 		auto FVFTextureFormat = (xboxFvf >> X_D3DFVF_TEXCOORDSIZE_SHIFT(i)) & 0x003;
 		switch (FVFTextureFormat) {
-		case X_D3DFVF_TEXTUREFORMAT1: numberOfCoordinates = 1; break;
-		case X_D3DFVF_TEXTUREFORMAT2: numberOfCoordinates = 2; break;
-		case X_D3DFVF_TEXTUREFORMAT3: numberOfCoordinates = 3; break;
-		case X_D3DFVF_TEXTUREFORMAT4: numberOfCoordinates = 4; break;
+			case X_D3DFVF_TEXTUREFORMAT1: numberOfCoordinates = 1; break;
+			case X_D3DFVF_TEXTUREFORMAT2: numberOfCoordinates = 2; break;
+			case X_D3DFVF_TEXTUREFORMAT3: numberOfCoordinates = 3; break;
+			case X_D3DFVF_TEXTUREFORMAT4: numberOfCoordinates = 4; break;
 			DEFAULT_UNREACHABLE;
 		}
 
