@@ -262,8 +262,8 @@ g_EmuCDPD = {0};
 
 // Declare trampolines
 #define XB_TRAMPOLINES(XB_MACRO)                                                                                                                                       \
-    XB_MACRO(HRESULT,            WINAPI,     D3DDevice_CreateVertexShader,      (CONST DWORD*, CONST DWORD*, DWORD*, DWORD)                                        );  \
-    XB_MACRO(VOID,               WINAPI,     D3DDevice_DeleteVertexShader,      (DWORD)                                                                            );  \
+    XB_MACRO(HRESULT,            WINAPI,     D3DDevice_CreateVertexShader,      (CONST DWORD*, CONST DWORD*, DWORD*, DWORD)                                         );  \
+    XB_MACRO(VOID,               WINAPI,     D3DDevice_DeleteVertexShader,      (DWORD)                                                                             );  \
     XB_MACRO(VOID,               WINAPI,     D3DDevice_GetBackBuffer,           (INT, D3DBACKBUFFER_TYPE, xbox::X_D3DSurface**)                                     );  \
     XB_MACRO(xbox::X_D3DSurface*, WINAPI,     D3DDevice_GetBackBuffer2,          (INT)                                                                              );  \
     XB_MACRO(HRESULT,            WINAPI,     D3DDevice_GetDepthStencilSurface,  (xbox::X_D3DSurface**)                                                              );  \
@@ -271,34 +271,34 @@ g_EmuCDPD = {0};
     XB_MACRO(VOID,               WINAPI,     D3DDevice_GetDisplayMode,          (xbox::X_D3DDISPLAYMODE*)                                                           );  \
     XB_MACRO(HRESULT,            WINAPI,     D3DDevice_GetRenderTarget,         (xbox::X_D3DSurface**)                                                              );  \
     XB_MACRO(xbox::X_D3DSurface*, WINAPI,     D3DDevice_GetRenderTarget2,        (VOID)                                                                             );  \
-    XB_MACRO(HRESULT,            WINAPI,     D3DDevice_LightEnable,             (DWORD, BOOL)                                                                      );  \
-  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_LoadVertexShader,        (DWORD, DWORD)                                                                     );*/\
-  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_LoadVertexShaderProgram, (CONST DWORD*, DWORD)                                                              );*/\
-  /*XB_MACRO(VOID,               __stdcall,  D3DDevice_LoadVertexShader_0,      ()                                                                                 );*/\
-  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_LoadVertexShader_4,      (DWORD)                                                                            );*/\
-    XB_MACRO(HRESULT,            WINAPI,     D3DDevice_PersistDisplay,          (VOID)                                                    );  \
+    XB_MACRO(HRESULT,            WINAPI,     D3DDevice_LightEnable,             (DWORD, BOOL)                                                                       );  \
+  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_LoadVertexShader,        (DWORD, DWORD)                                                                      );*/\
+  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_LoadVertexShaderProgram, (CONST DWORD*, DWORD)                                                               );*/\
+  /*XB_MACRO(VOID,               __stdcall,  D3DDevice_LoadVertexShader_0,      ()                                                                                  );*/\
+  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_LoadVertexShader_4,      (DWORD)                                                                             );*/\
+    XB_MACRO(HRESULT,            WINAPI,     D3DDevice_PersistDisplay,          (VOID)                                                                              );  \
     XB_MACRO(HRESULT,            WINAPI,     D3DDevice_Reset,                   (xbox::X_D3DPRESENT_PARAMETERS*)                                                    );  \
-  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_SelectVertexShader,      (DWORD, DWORD)                                                                     );*/\
-  /*XB_MACRO(VOID,               __stdcall,  D3DDevice_SelectVertexShader_0,    ()                                                                                 );*/\
-  /*XB_MACRO(VOID,               __stdcall,  D3DDevice_SelectVertexShader_4,    (DWORD)                                                                            );*/\
-  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_SetGammaRamp,            (DWORD, CONST X_D3DGAMMARAMP*)                                                     );*/\
+  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_SelectVertexShader,      (DWORD, DWORD)                                                                      );*/\
+  /*XB_MACRO(VOID,               __stdcall,  D3DDevice_SelectVertexShader_0,    ()                                                                                  );*/\
+  /*XB_MACRO(VOID,               __stdcall,  D3DDevice_SelectVertexShader_4,    (DWORD)                                                                             );*/\
+  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_SetGammaRamp,            (DWORD, CONST X_D3DGAMMARAMP*)                                                      );*/\
     XB_MACRO(VOID,               WINAPI,     D3DDevice_SetIndices,              (xbox::X_D3DIndexBuffer*, UINT)                                                     );  \
-    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetIndices_4,            (UINT)                                                                             );  \
+    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetIndices_4,            (UINT)                                                                              );  \
     XB_MACRO(HRESULT,            WINAPI,     D3DDevice_SetLight,                (DWORD, CONST xbox::X_D3DLIGHT8*)                                                   );  \
-    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetPixelShader,          (DWORD)                                                                            );  \
-    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetPixelShader_0,        ()                                                                                 );  \
-    XB_MACRO(VOID,               __fastcall, D3DDevice_SetRenderState_Simple,   (DWORD, DWORD)                                                                     );  \
-    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetRenderTarget,         (xbox::X_D3DSurface*, xbox::X_D3DSurface*)                                           );  \
+    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetPixelShader,          (DWORD)                                                                             );  \
+    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetPixelShader_0,        ()                                                                                  );  \
+    XB_MACRO(VOID,               __fastcall, D3DDevice_SetRenderState_Simple,   (DWORD, DWORD)                                                                      );  \
+    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetRenderTarget,         (xbox::X_D3DSurface*, xbox::X_D3DSurface*)                                          );  \
     XB_MACRO(VOID,               WINAPI,     D3DDevice_SetStreamSource,         (UINT, xbox::X_D3DVertexBuffer*, UINT)                                              );  \
     XB_MACRO(VOID,               WINAPI,     D3DDevice_SetStreamSource_4,       (UINT, xbox::X_D3DVertexBuffer*, UINT)                                              );  \
     XB_MACRO(VOID,               WINAPI,     D3DDevice_SetStreamSource_8,       (xbox::X_D3DVertexBuffer*, UINT)                                                    );  \
     XB_MACRO(VOID,               WINAPI,     D3DDevice_SetTexture,              (DWORD, xbox::X_D3DBaseTexture*)                                                    );  \
     XB_MACRO(VOID,               WINAPI,     D3DDevice_SetTexture_4,            (xbox::X_D3DBaseTexture*)                                                           );  \
-  /*XB_MACRO(VOID,               WINAPI,     D3DDevice_SetVertexShader,         (DWORD)                                                                            );*/\
+    XB_MACRO(VOID,               WINAPI,     D3DDevice_SetVertexShader,         (DWORD)                                                                             );  \
   /*XB_MACRO(VOID,               WINAPI,     D3DDevice_SetVertexShaderInput,    (DWORD, UINT, xbox::X_STREAMINPUT*)                                                 );*/\
     XB_MACRO(VOID,               WINAPI,     D3DDevice_SetViewport,             (CONST xbox::X_D3DVIEWPORT8*)                                                       );  \
     XB_MACRO(VOID,               WINAPI,     D3D_DestroyResource,               (xbox::X_D3DResource*)                                                              );  \
-    XB_MACRO(VOID,               WINAPI,     D3D_DestroyResource__LTCG,         (VOID)                                                                             );  \
+    XB_MACRO(VOID,               WINAPI,     D3D_DestroyResource__LTCG,         (VOID)                                                                              );  \
     XB_MACRO(HRESULT,            WINAPI,     Direct3D_CreateDevice,             (UINT, D3DDEVTYPE, HWND, DWORD, xbox::X_D3DPRESENT_PARAMETERS*, IDirect3DDevice**)  );  \
     XB_MACRO(HRESULT,            WINAPI,     Direct3D_CreateDevice_16,          (UINT, D3DDEVTYPE, HWND, xbox::X_D3DPRESENT_PARAMETERS*)                            );  \
     XB_MACRO(HRESULT,            WINAPI,     Direct3D_CreateDevice_4,           (xbox::X_D3DPRESENT_PARAMETERS*)                                                    );  \
@@ -6574,6 +6574,9 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShader)
 )
 {
 	LOG_FUNC_ONE_ARG(Handle);
+
+	if (XB_TRMP(D3DDevice_SetVertexShader))
+		XB_TRMP(D3DDevice_SetVertexShader)(Handle);
 
 	CxbxImpl_SetVertexShader(Handle);
 

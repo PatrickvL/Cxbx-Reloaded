@@ -1139,17 +1139,7 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 
 	xbox::X_D3DVertexShader* pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
 
-	// Note : FunctionData[0] might be a X_VSH_SHADER_HEADER, but is often equal to zero?
-	if (pXboxVertexShader->FunctionData[0] != 0) {
-		// If set, check if it resembles a regular shader header or not (not really needed, but why not, eh?!) :
-		auto shaderHeader = *((xbox::X_VSH_SHADER_HEADER*) & pXboxVertexShader->FunctionData[0]);
-		if (shaderHeader.Version != VERSION_XVS)
-			LOG_TEST_CASE("Non-regular (state or read/write) shader detected!");
-		if (shaderHeader.NumInst > 2000)
-			LOG_TEST_CASE("Extremely long shader detected!");
-	}
-
-	auto pNV2ATokens = &pXboxVertexShader->FunctionData[1];
+	auto pNV2ATokens = &pXboxVertexShader->FunctionData[0];
 	DWORD NrTokens = pXboxVertexShader->TotalSize;
 
 #if 1 // TODO : Remove dirty hack (?once CreateVertexShader trampolines to Xbox code that sets TotalSize correctly?) :
@@ -1211,9 +1201,23 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 
 	g_Xbox_VertexShader_Handle = Handle;
 
+	xbox::X_D3DVertexShader* pXboxVertexShader;
 	if (VshHandleIsVertexShader(Handle)) {
-		CxbxImpl_LoadVertexShader(Handle, 0);
-		CxbxImpl_SelectVertexShader(Handle, 0);
+		pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
+		if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PROGRAM) {
+#if 0 // Since the D3DDevice_SetVertexShader patch already called it's trampoline, these calls have already been executed :
+			CxbxImpl_LoadVertexShader(Handle, 0);
+			CxbxImpl_SelectVertexShader(Handle, 0);
+#endif
+		}
+		else {
+			if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PASSTHROUGH) {
+				LOG_TEST_CASE("TODO : Select Pass-through program HLSL Shader");
+			}
+			else {
+				LOG_TEST_CASE("TODO : Select Fixed Function HLSL Shader");
+			}
+		}
 	}
 	else {
 		hRet = g_pD3DDevice->SetVertexShader(nullptr);
@@ -1243,6 +1247,7 @@ void CxbxImpl_DeleteVertexShader(DWORD Handle)
 		if (pCxbxVertexShader->Declaration.pHostVertexDeclaration) {
 			HRESULT hRet = pCxbxVertexShader->Declaration.pHostVertexDeclaration->Release();
 			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DeleteVertexShader(pHostVertexDeclaration)");
+			pCxbxVertexShader->Declaration.pHostVertexDeclaration = nullptr;
 		}
 
 		// Release the host vertex shader
@@ -1290,6 +1295,7 @@ void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD C
 		hRet = D3D_OK;
 	}
 }
+
 // parse xbox vertex shader function into an intermediate format
 extern void EmuParseVshFunction
 (

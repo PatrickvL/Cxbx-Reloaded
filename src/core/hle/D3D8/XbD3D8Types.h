@@ -1066,6 +1066,8 @@ typedef struct _X_VERTEXSHADERINPUT
     DWORD Format;
     BYTE  TesselationType;
     BYTE  TesselationSource;
+	BYTE Padding0;
+	BYTE Padding1;
 }
 X_VERTEXSHADERINPUT;
 
