@@ -70,23 +70,13 @@ CxbxVertexShaderStreamInfo;
 
 typedef struct _CxbxVertexDeclaration
 {
+	uint64_t VertexShaderKey;
 	CxbxVertexShaderStreamInfo VertexStreams[X_VSH_MAX_STREAMS];
 	IDirect3DVertexDeclaration* pHostVertexDeclaration;
 	UINT NumberOfVertexStreams; // The number of streams the vertex shader uses
 	bool vRegisterInDeclaration[X_VSH_MAX_ATTRIBUTES];
 }
 CxbxVertexDeclaration;
-
-
-typedef struct _CxbxVertexShader
-{
-	// The resulting host variables
-	uint64_t VertexShaderKey;
-
-	// Needed for dynamic stream patching
-	CxbxVertexDeclaration  Declaration;
-}
-CxbxVertexShader;
 
 // Intermediate vertex shader structures
 
@@ -205,7 +195,7 @@ extern void EmuParseVshFunction
 	IntermediateVertexShader* pShader
 );
 
-extern void FreeVertexDynamicPatch(CxbxVertexShader *pVertexShader);
+extern void FreeVertexDynamicPatch(CxbxVertexDeclaration *pVertexShader);
 
 // Checks for failed vertex shaders, and shaders that would need patching
 extern boolean IsValidCurrentShader(void);
@@ -214,7 +204,7 @@ inline boolean VshHandleIsVertexShader(DWORD Handle) { return (Handle & X_D3DFVF
 inline boolean VshHandleIsFVF(DWORD Handle) { return !VshHandleIsVertexShader(Handle); }
 inline xbox::X_D3DVertexShader *VshHandleToXboxVertexShader(DWORD Handle) { return (xbox::X_D3DVertexShader *)(Handle & ~X_D3DFVF_RESERVED0);}
 
-extern CxbxVertexShader* GetCxbxVertexShader(DWORD XboxVertexShaderHandle);
+extern CxbxVertexDeclaration* FetchCachedCxbxVertexDeclaration(DWORD XboxVertexShaderHandle);
 
 extern void CxbxImpl_LoadVertexShaderProgram(CONST DWORD* pFunction, DWORD Address);
 extern void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address);

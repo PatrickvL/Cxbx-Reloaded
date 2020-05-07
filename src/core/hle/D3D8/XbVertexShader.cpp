@@ -944,9 +944,9 @@ D3DVERTEXELEMENT *EmuRecompileVshDeclaration
     return pHostVertexElements;
 }
 
-extern void FreeVertexDynamicPatch(CxbxVertexShader *pVertexShader)
+extern void FreeVertexDynamicPatch(CxbxVertexDeclaration *pVertexDeclaration)
 {
-    pVertexShader->Declaration.NumberOfVertexStreams = 0;
+    pVertexDeclaration->NumberOfVertexStreams = 0;
 }
 
 // Checks for failed vertex shaders, and shaders that would need patching
@@ -955,19 +955,19 @@ boolean VshHandleIsValidShader(DWORD XboxVertexShaderHandle)
 #if 0
 	//printf( "VS = 0x%.08X\n", XboxVertexShaderHandle );
 
-    CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(XboxVertexShaderHandle);
-    if (pCxbxVertexShader) {
-        if (pCxbxVertexShader->XboxStatus != 0)
+    CxbxVertexDeclaration *pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(XboxVertexShaderHandle);
+    if (pCxbxVertexDeclaration) {
+        if (pCxbxVertexDeclaration->XboxStatus != 0)
         {
             return FALSE;
         }
         /*
-        for (uint32 i = 0; i < pCxbxVertexShader->VertexShaderInfo.NumberOfVertexStreams; i++)
+        for (uint32 i = 0; i < pCxbxVertexDeclaration->VertexShaderInfo.NumberOfVertexStreams; i++)
         {
-            if (pCxbxVertexShader->VertexShaderInfo.VertexStreams[i].NeedPatch)
+            if (pCxbxVertexDeclaration->VertexShaderInfo.VertexStreams[i].NeedPatch)
             {
                 // Just for caching purposes
-                pCxbxVertexShader->XboxStatus = 0x80000001;
+                pCxbxVertexDeclaration->XboxStatus = 0x80000001;
                 return FALSE;
             }
         }
@@ -998,27 +998,27 @@ DWORD* GetCxbxVertexShaderSlotPtr(const DWORD SlotIndexAddress)
 	}
 }
 
-CxbxVertexDeclaration *GetCxbxVertexDeclaration(DWORD XboxVertexShaderHandle)
+CxbxVertexDeclaration *CxbxGetToPatchVertexDeclaration(DWORD XboxVertexShaderHandle)
 {
-    CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(XboxVertexShaderHandle);
+    CxbxVertexDeclaration *pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(XboxVertexShaderHandle);
 
-    for (uint32_t i = 0; i < pCxbxVertexShader->Declaration.NumberOfVertexStreams; i++)
+    for (uint32_t i = 0; i < pCxbxVertexDeclaration->NumberOfVertexStreams; i++)
     {
-        if (pCxbxVertexShader->Declaration.VertexStreams[i].NeedPatch)
+        if (pCxbxVertexDeclaration->VertexStreams[i].NeedPatch)
         {
-            return &pCxbxVertexShader->Declaration;
+            return pCxbxVertexDeclaration;
         }
     }
     return nullptr;
 }
 
-std::unordered_map<DWORD, CxbxVertexShader*> g_CxbxVertexShaders;
+std::unordered_map<DWORD, CxbxVertexDeclaration*> g_CxbxVertexDeclarations;
 
-CxbxVertexShader* GetCxbxVertexShader(DWORD XboxVertexShaderHandle)
+CxbxVertexDeclaration* FetchCachedCxbxVertexDeclaration(DWORD XboxVertexShaderHandle)
 {
 	if (VshHandleIsVertexShader(XboxVertexShaderHandle)) {
-		auto it = g_CxbxVertexShaders.find(XboxVertexShaderHandle);
-		if (it != g_CxbxVertexShaders.end()) {
+		auto it = g_CxbxVertexDeclarations.find(XboxVertexShaderHandle);
+		if (it != g_CxbxVertexDeclarations.end()) {
 			return it->second;
 		}
 	}
@@ -1026,17 +1026,17 @@ CxbxVertexShader* GetCxbxVertexShader(DWORD XboxVertexShaderHandle)
 	return nullptr;
 }
 
-void RegisterCxbxVertexShader(DWORD XboxVertexShaderHandle, CxbxVertexShader* shader)
+void RegisterCxbxVertexDeclaration(DWORD XboxVertexShaderHandle, CxbxVertexDeclaration* declaration)
 {
-	auto it = g_CxbxVertexShaders.find(XboxVertexShaderHandle);
-	if (it != g_CxbxVertexShaders.end() && it->second != nullptr && shader != nullptr) {
-		LOG_TEST_CASE("Overwriting existing Vertex Shader");
+	auto it = g_CxbxVertexDeclarations.find(XboxVertexShaderHandle);
+	if (it != g_CxbxVertexDeclarations.end() && it->second != nullptr && declaration != nullptr) {
+		LOG_TEST_CASE("Overwriting existing Vertex Declaration");
 	}
 
-	g_CxbxVertexShaders[XboxVertexShaderHandle] = shader;
+	g_CxbxVertexDeclarations[XboxVertexShaderHandle] = declaration;
 }
 
-IDirect3DVertexDeclaration* CxbxCreateVertexDeclaration(D3DVERTEXELEMENT *pDeclaration)
+IDirect3DVertexDeclaration* CxbxCreateHostVertexDeclaration(D3DVERTEXELEMENT *pDeclaration)
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
@@ -1056,8 +1056,8 @@ void SetVertexShaderFromSlots()
 	if (pTokens) {
 		// Create a vertex shader from the tokens
 		DWORD shaderSize;
-		auto shaderKey = g_VertexShaderSource.CreateShader(pTokens, &shaderSize);
-		IDirect3DVertexShader* pHostVertexShader = g_VertexShaderSource.GetShader(shaderKey);
+		auto VertexShaderKey = g_VertexShaderSource.CreateShader(pTokens, &shaderSize);
+		IDirect3DVertexShader* pHostVertexShader = g_VertexShaderSource.GetShader(VertexShaderKey);
 		HRESULT hRet = g_pD3DDevice->SetVertexShader(pHostVertexShader);
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShader");
 	}
@@ -1085,22 +1085,31 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 
 	xbox::X_VERTEXATTRIBUTEFORMAT XboxVertexAttributeFormat = GetXboxVertexAttributes();
 
-	bool bIsFixedFunction = XboxVertexAttributeFormat.Slots[0].Padding1 > 0; // See HACK note in XboxFVFToXboxVertexAttributeFormat
+	CxbxVertexDeclaration* pCxbxVertexDeclaration = nullptr;
 
 	// TODO : Cache resulting declarations from given inputs
+	// auto VertexAttributesKey = GetVertexAttributesKey(XboxVertexAttributeFormat);
+	// pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(VertexAttributesKey);
 
-	CxbxVertexDeclaration* pCxbxVertexDeclaration = (CxbxVertexDeclaration*)calloc(1, sizeof(CxbxVertexShader));
+	if (pCxbxVertexDeclaration == nullptr) {
+		pCxbxVertexDeclaration = (CxbxVertexDeclaration*)calloc(1, sizeof(CxbxVertexDeclaration));
 
-	D3DVERTEXELEMENT* pRecompiledDeclaration = nullptr;
-	pRecompiledDeclaration = EmuRecompileVshDeclaration(
-		&XboxVertexAttributeFormat,
-		bIsFixedFunction,
-		pCxbxVertexDeclaration);
+		bool bIsFixedFunction = XboxVertexAttributeFormat.Slots[0].Padding1 > 0; // See HACK note in XboxFVFToXboxVertexAttributeFormat
 
-	// Create the vertex declaration
-	pCxbxVertexDeclaration->pHostVertexDeclaration = CxbxCreateVertexDeclaration(pRecompiledDeclaration);
+		D3DVERTEXELEMENT* pRecompiledVertexElements = EmuRecompileVshDeclaration(
+			&XboxVertexAttributeFormat,
+			bIsFixedFunction,
+			pCxbxVertexDeclaration);
 
-	free(pRecompiledDeclaration);
+		// Create the vertex declaration
+		pCxbxVertexDeclaration->pHostVertexDeclaration = CxbxCreateHostVertexDeclaration(pRecompiledVertexElements);
+
+		free(pRecompiledVertexElements);
+
+		// TODO : Put in cache
+		// pCxbxVertexDeclaration->Key = VertexAttributesKey;
+		// RegisterCxbxVertexDeclaration(pCxbxVertexDeclaration->Key, pCxbxVertexDeclaration);
+	}
 
 	return pCxbxVertexDeclaration;
 }
@@ -1161,8 +1170,6 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 			LOG_TEST_CASE("Non-zero handle must be a VertexShader!");
 
 		g_Xbox_VertexShader_Handle = Handle;
-
-		// Set the shader handle declaration
 	}
 
 	CxbxVertexDeclaration* pCxbxVertexDeclaration = CxbxGetVertexDeclaration();
@@ -1173,13 +1180,13 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 	{
 		// Parse and compile the shader
 		DWORD xboxFunctionSize = 0;
-		pCxbxVertexShader->VertexShaderKey = g_VertexShaderSource.CreateShader(pFunction, &xboxFunctionSize);
+		pCxbxVertexDeclaration->VertexShaderKey = g_VertexShaderSource.CreateShader(pFunction, &xboxFunctionSize);
 	}
 
 	// Save the status, to remove things later
-	// pCxbxVertexShader->XboxStatus = hRet; // Not even used by VshHandleIsValidShader()
+	// pCxbxVertexDeclaration->XboxStatus = hRet; // Not even used by VshHandleIsValidShader()
 
-	RegisterCxbxVertexShader(*pHandle, pCxbxVertexShader);
+	RegisterCxbxVertexDeclaration(Handle, pCxbxVertexDeclaration);
 #endif
 
 	// Titles can specify default values for registers via calls like SetVertexData4f
@@ -1317,25 +1324,25 @@ void CxbxImpl_DeleteVertexShader(DWORD Handle)
 
 	if (VshHandleIsVertexShader(Handle))
 	{
-		CxbxVertexShader* pCxbxVertexShader = GetCxbxVertexShader(Handle); // Fetch from cache
-		if (pCxbxVertexShader == nullptr) {
+		CxbxVertexDeclaration* pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(Handle);
+		if (pCxbxVertexDeclaration == nullptr) {
 			return; // Avoid crash if no shader was cached yet
 		}
 
-		RegisterCxbxVertexShader(Handle, nullptr); // Remove from cache
+		RegisterCxbxVertexDeclaration(Handle, nullptr); // Remove from cache
 
-		if (pCxbxVertexShader->Declaration.pHostVertexDeclaration) {
-			HRESULT hRet = pCxbxVertexShader->Declaration.pHostVertexDeclaration->Release();
+		if (pCxbxVertexDeclaration->pHostVertexDeclaration) {
+			HRESULT hRet = pCxbxVertexDeclaration->pHostVertexDeclaration->Release();
 			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DeleteVertexShader(pHostVertexDeclaration)");
-			pCxbxVertexShader->Declaration.pHostVertexDeclaration = nullptr;
+			pCxbxVertexDeclaration->pHostVertexDeclaration = nullptr;
 		}
 
 		// Release the host vertex shader
-		g_VertexShaderSource.ReleaseShader(pCxbxVertexShader->VertexShaderKey);
+		g_VertexShaderSource.ReleaseShader(pCxbxVertexDeclaration->VertexShaderKey);
 
-		FreeVertexDynamicPatch(pCxbxVertexShader);
+		FreeVertexDynamicPatch(pCxbxVertexDeclaration);
 
-		free(pCxbxVertexShader);
+		free(pCxbxVertexDeclaration);
 	}
 }
 

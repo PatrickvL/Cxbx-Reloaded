@@ -131,7 +131,7 @@ int CountActiveD3DStreams()
 	return lastStreamIndex;
 }
 
-CxbxVertexDeclaration *GetCxbxVertexDeclaration(DWORD XboxVertexShaderHandle); // forward
+CxbxVertexDeclaration *CxbxGetToPatchVertexDeclaration(DWORD XboxVertexShaderHandle); // forward
 
 UINT CxbxVertexBufferConverter::GetNbrStreams(CxbxDrawContext *pDrawContext)
 {
@@ -141,7 +141,7 @@ UINT CxbxVertexBufferConverter::GetNbrStreams(CxbxDrawContext *pDrawContext)
 	}
 
     if(VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
-        CxbxVertexDeclaration *pDecl = GetCxbxVertexDeclaration(g_Xbox_VertexShader_Handle);
+        CxbxVertexDeclaration *pDecl = CxbxGetToPatchVertexDeclaration(g_Xbox_VertexShader_Handle);
 		if (pDecl) {
 			if (pDecl->NumberOfVertexStreams <= X_VSH_MAX_STREAMS) {
 				return pDecl->NumberOfVertexStreams;
@@ -774,7 +774,7 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 
     m_pCxbxVertexDeclaration = nullptr;
     if (VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
-        m_pCxbxVertexDeclaration = &(GetCxbxVertexShader(g_Xbox_VertexShader_Handle)->Declaration);
+        m_pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(g_Xbox_VertexShader_Handle);
     }
 
 	// If we are drawing from an offset, we know that the vertex count must have

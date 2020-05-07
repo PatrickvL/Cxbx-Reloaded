@@ -178,11 +178,11 @@ DWORD CxbxGetStrideFromVertexShaderHandle(DWORD dwVertexShader)
 		// Test-case : SpyHunter 2 [4D57001B]
 		//LOG_TEST_CASE("Non-FVF Vertex Shaders not yet (completely) supported for PushBuffer emulation!");
 
-		CxbxVertexShader *pCxbxVertexShader = GetCxbxVertexShader(dwVertexShader);
-		if (pCxbxVertexShader) {
-			if (pCxbxVertexShader->Declaration.NumberOfVertexStreams == 1) {
+		CxbxVertexDeclaration *pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(dwVertexShader);
+		if (pCxbxVertexDeclaration) {
+			if (pCxbxVertexDeclaration->NumberOfVertexStreams == 1) {
 				// Note : This assumes that the only stream in use will be stream zero :
-				Stride = pCxbxVertexShader->Declaration.VertexStreams[0].HostVertexStride;
+				Stride = pCxbxVertexDeclaration->VertexStreams[0].HostVertexStride;
 			}
 			else {
 				LOG_TEST_CASE("Non-FVF Vertex Shaders with multiple streams not supported for PushBuffer emulation!");
