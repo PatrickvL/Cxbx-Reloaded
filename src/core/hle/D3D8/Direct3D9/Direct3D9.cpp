@@ -6881,7 +6881,7 @@ void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 
 IDirect3DBaseTexture* CxbxConvertXboxSurfaceToHostTexture(xbox::X_D3DBaseTexture* pBaseTexture)
 {
-	LOG_INIT;
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
 	IDirect3DTexture* pNewHostTexture = nullptr;
 #if 0 // TODO : Complete, debug and activate (and then cleanup GetHostBaseTexture)
@@ -6916,7 +6916,7 @@ IDirect3DBaseTexture* CxbxConvertXboxSurfaceToHostTexture(xbox::X_D3DBaseTexture
 
 void EmuUpdateActiveTextureStages()
 {
-	LOG_INIT;
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
 	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++)
 	{

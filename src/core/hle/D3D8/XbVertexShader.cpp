@@ -54,12 +54,128 @@ extern xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS]; // Declare
 xbox::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Read by GetXboxVertexAttributes when g_Xbox_SetVertexShaderInput_Count > 0
 
 
-// TODO : Start using this function everywhere g_Xbox_VertexShader_Handle is accessed currently!
-XTL::X_D3DVertexShader* GetXboxVertexShader()
+// Converts an Xbox FVF shader handle to X_VERTEXATTRIBUTEFORMAT
+// Note : Temporary, until we reliably locate the Xbox internal state for this
+// See D3DXDeclaratorFromFVF docs https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dxdeclaratorfromfvf
+// and https://github.com/reactos/wine/blob/2e8dfbb1ad71f24c41e8485a39df01bb9304127f/dlls/d3dx9_36/mesh.c#L2041
+xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
 {
-	LOG_INIT
+	using namespace xbox;
 
-	using namespace XTL;
+	X_VERTEXATTRIBUTEFORMAT declaration = { 0 }; // FVFs don't tesselate, all slots read from stream zero
+
+	static DWORD X_D3DVSDT_FLOAT[] = { 0, X_D3DVSDT_FLOAT1, X_D3DVSDT_FLOAT2, X_D3DVSDT_FLOAT3, X_D3DVSDT_FLOAT4 };
+
+	static const DWORD InvalidXboxFVFBits = X_D3DFVF_RESERVED0 | X_D3DFVF_RESERVED1 /* probably D3DFVF_PSIZE if detected */
+		| 0x0000F000 // Bits between texture count and the texture formats
+		| 0xFF000000; // All bits above the four alllowed texture formats
+
+	if (xboxFvf & InvalidXboxFVFBits) {
+		LOG_TEST_CASE("Invalid Xbox FVF bits detected!");
+	}
+
+	// Position & Blendweights
+	int nrPositionFloats = 3;
+	int nrBlendWeights = 0;
+	unsigned offset = 0;
+	DWORD position = (xboxFvf & X_D3DFVF_POSITION_MASK);
+	switch (position) {
+	case 0: nrPositionFloats = 0; LOG_TEST_CASE("FVF without position"); break; // Note : Remove logging if this occurs often
+	case X_D3DFVF_XYZ: /*nrPositionFloats is set to 3 by default*/ break;
+	case X_D3DFVF_XYZRHW: nrPositionFloats = 4; break;
+	case X_D3DFVF_XYZB1: nrBlendWeights = 1; break;
+	case X_D3DFVF_XYZB2: nrBlendWeights = 2; break;
+	case X_D3DFVF_XYZB3: nrBlendWeights = 3; break;
+	case X_D3DFVF_XYZB4: nrBlendWeights = 4; break;
+	case X_D3DFVF_POSITION_MASK: /*Keep nrPositionFloats set to 3*/ LOG_TEST_CASE("FVF invalid (5th blendweight?)"); break;
+		DEFAULT_UNREACHABLE;
+	}
+
+	// Assign vertex element (attribute) slots
+	X_VERTEXSHADERINPUT* pSlot;
+
+	// Write Position
+	if (nrPositionFloats > 0) {
+		pSlot = &declaration.Slots[X_D3DVSDE_POSITION];
+		pSlot->Format = X_D3DVSDT_FLOAT[nrPositionFloats];
+		pSlot->Offset = offset;
+		offset += sizeof(float) * nrPositionFloats;
+		// Write Blend Weights
+		if (nrBlendWeights > 0) {
+			pSlot = &declaration.Slots[X_D3DVSDE_BLENDWEIGHT];
+			pSlot->Format = X_D3DVSDT_FLOAT[nrBlendWeights];
+			pSlot->Offset = offset;
+			offset += sizeof(float) * nrBlendWeights;
+		}
+	}
+
+	// Write Normal, Diffuse, and Specular
+	if (xboxFvf & X_D3DFVF_NORMAL) {
+		if (position == X_D3DFVF_XYZRHW) {
+			LOG_TEST_CASE("X_D3DFVF_NORMAL shouldn't use X_D3DFVF_XYZRHW");
+		}
+
+		pSlot = &declaration.Slots[X_D3DVSDE_NORMAL];
+		pSlot->Format = X_D3DVSDT_FLOAT[3];
+		pSlot->Offset = offset;
+		offset += sizeof(float) * 3;
+	}
+
+	if (xboxFvf & X_D3DFVF_DIFFUSE) {
+		pSlot = &declaration.Slots[X_D3DVSDE_DIFFUSE];
+		pSlot->Format = X_D3DVSDT_D3DCOLOR;
+		pSlot->Offset = offset;
+		offset += sizeof(DWORD) * 1;
+	}
+
+	if (xboxFvf & X_D3DFVF_SPECULAR) {
+		pSlot = &declaration.Slots[X_D3DVSDE_SPECULAR];
+		pSlot->Format = X_D3DVSDT_D3DCOLOR;
+		pSlot->Offset = offset;
+		offset += sizeof(DWORD) * 1;
+	}
+
+	// Write Texture Coordinates
+	int textureCount = (xboxFvf & X_D3DFVF_TEXCOUNT_MASK) >> X_D3DFVF_TEXCOUNT_SHIFT;
+	assert(textureCount <= 4); // Safeguard, since the X_D3DFVF_TEXCOUNT bitfield could contain invalid values (5 up to 15)
+	for (int i = 0; i < textureCount; i++) {
+		int numberOfCoordinates = 0;
+		auto FVFTextureFormat = (xboxFvf >> X_D3DFVF_TEXCOORDSIZE_SHIFT(i)) & 0x003;
+		switch (FVFTextureFormat) {
+		case X_D3DFVF_TEXTUREFORMAT1: numberOfCoordinates = 1; break;
+		case X_D3DFVF_TEXTUREFORMAT2: numberOfCoordinates = 2; break;
+		case X_D3DFVF_TEXTUREFORMAT3: numberOfCoordinates = 3; break;
+		case X_D3DFVF_TEXTUREFORMAT4: numberOfCoordinates = 4; break;
+			DEFAULT_UNREACHABLE;
+		}
+
+		assert(numberOfCoordinates > 0);
+		pSlot = &declaration.Slots[X_D3DVSDE_TEXCOORD0 + i];
+		pSlot->Format = X_D3DVSDT_FLOAT[numberOfCoordinates];
+		pSlot->Offset = offset;
+		offset += sizeof(float) * numberOfCoordinates;
+	}
+
+	// Make sure all unused slots have a X_D3DVSDT_NONE format
+	for (unsigned i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
+		pSlot = &declaration.Slots[i];
+		if (pSlot->Format == 0) {
+			pSlot->Format = X_D3DVSDT_NONE;
+		}
+	}
+
+	// HACK : Mark this so we can later detect this as a FVF based declaration :
+	declaration.Slots[0].Padding1 = 1;
+
+	return declaration;
+}
+
+// TODO : Start using this function everywhere g_Xbox_VertexShader_Handle is accessed currently!
+xbox::X_D3DVertexShader* GetXboxVertexShader()
+{
+	// LOG_INIT; // Allows use of DEBUG_D3DRESULT
+
+	using namespace xbox;
 
 	X_D3DVertexShader* pXboxVertexShader = xbnullptr;
 #if 0 // TODO : Retrieve vertex shader from actual Xbox D3D state
@@ -99,23 +215,30 @@ XTL::X_D3DVertexShader* GetXboxVertexShader()
 	return pXboxVertexShader;
 }
 
-XTL::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributes()
+xbox::X_VERTEXATTRIBUTEFORMAT GetXboxVertexAttributes()
 {
-	XTL::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
-	if (pXboxVertexShader == xbnullptr)
-	{
-		// Despite possibly not being used, the pXboxVertexShader argument must always be assigned
-		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
-		return &g_Xbox_SetVertexShaderInput_Attributes; // WRONG result, but it's already strange this happens
-	}
-
 	// If SetVertexShaderInput is active, it's arguments overrule those of the active vertex shader
 	if (g_Xbox_SetVertexShaderInput_Count > 0) {
 		// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
-		return &g_Xbox_SetVertexShaderInput_Attributes;
+		LOG_TEST_CASE("SetVertexShaderInput_Attributes override in effect!");
+		return g_Xbox_SetVertexShaderInput_Attributes;
 	}
 
-	return &pXboxVertexShader->VertexAttribute;
+	xbox::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
+	if (pXboxVertexShader == xbnullptr)
+	{
+		bool bIsFixedFunction = VshHandleIsFVF(g_Xbox_VertexShader_Handle);
+		if (bIsFixedFunction) {
+			LOG_TEST_CASE("Cxbx-generated FVF attribute format in effect!");
+			return XboxFVFToXboxVertexAttributeFormat(g_Xbox_VertexShader_Handle);
+		}
+
+		// Despite possibly not being used, the pXboxVertexShader argument must always be assigned
+		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
+		return g_Xbox_SetVertexShaderInput_Attributes; // WRONG result, but it's already strange this happens
+	}
+
+	return pXboxVertexShader->VertexAttribute;
 }
 
 // Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream number.
@@ -923,130 +1046,6 @@ IDirect3DVertexDeclaration* CxbxCreateVertexDeclaration(D3DVERTEXELEMENT *pDecla
 	return pHostVertexDeclaration;
 }
 
-// Converts an Xbox FVF shader handle to X_VERTEXATTRIBUTEFORMAT
-// Note : Temporary, until we reliably locate the Xbox internal state for this
-// See D3DXDeclaratorFromFVF docs https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dxdeclaratorfromfvf
-// and https://github.com/reactos/wine/blob/2e8dfbb1ad71f24c41e8485a39df01bb9304127f/dlls/d3dx9_36/mesh.c#L2041
-xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
-{
-	using namespace xbox;
-
-	X_VERTEXATTRIBUTEFORMAT declaration = { 0 }; // FVFs don't tesselate, all slots read from stream zero
-
-	static DWORD X_D3DVSDT_FLOAT[] = { 0, X_D3DVSDT_FLOAT1, X_D3DVSDT_FLOAT2, X_D3DVSDT_FLOAT3, X_D3DVSDT_FLOAT4 };
-
-	static const DWORD InvalidXboxFVFBits = X_D3DFVF_RESERVED0 | X_D3DFVF_RESERVED1 /* probably D3DFVF_PSIZE if detected */
-		| 0x0000F000 // Bits between texture count and the texture formats
-		| 0xFF000000; // All bits above the four alllowed texture formats
-
-	if (xboxFvf & InvalidXboxFVFBits) {
-		LOG_TEST_CASE("Invalid Xbox FVF bits detected!");
-	}
-
-	// Position & Blendweights
-	int nrPositionFloats = 3;
-	int nrBlendWeights = 0;
-	unsigned offset = 0;
-	DWORD position = (xboxFvf & X_D3DFVF_POSITION_MASK);
-	switch (position) {
-		case 0: nrPositionFloats = 0; LOG_TEST_CASE("FVF without position"); break; // Note : Remove logging if this occurs often
-		case X_D3DFVF_XYZ: /*nrPositionFloats is set to 3 by default*/ break;
-		case X_D3DFVF_XYZRHW: nrPositionFloats = 4; break;
-		case X_D3DFVF_XYZB1: nrBlendWeights = 1; break;
-		case X_D3DFVF_XYZB2: nrBlendWeights = 2; break;
-		case X_D3DFVF_XYZB3: nrBlendWeights = 3; break;
-		case X_D3DFVF_XYZB4: nrBlendWeights = 4; break;
-		case X_D3DFVF_POSITION_MASK: /*Keep nrPositionFloats set to 3*/ LOG_TEST_CASE("FVF invalid (5th blendweight?)"); break;
-		DEFAULT_UNREACHABLE;
-	}
-
-	// Assign vertex element (attribute) slots
-	X_VERTEXSHADERINPUT* pSlot;
-
-	// Write Position
-	if (nrPositionFloats > 0) {
-		pSlot = &declaration.Slots[X_D3DVSDE_POSITION];
-		pSlot->Format = X_D3DVSDT_FLOAT[nrPositionFloats];
-		pSlot->Offset = offset;
-		offset += sizeof(float) * nrPositionFloats;
-		// Write Blend Weights
-		if (nrBlendWeights > 0) {
-			pSlot = &declaration.Slots[X_D3DVSDE_BLENDWEIGHT];
-			pSlot->Format = X_D3DVSDT_FLOAT[nrBlendWeights];
-			pSlot->Offset = offset;
-			offset += sizeof(float) * nrBlendWeights;
-		}
-	}
-
-	// Write Normal, Diffuse, and Specular
-	if (xboxFvf & X_D3DFVF_NORMAL) {
-		if (position == X_D3DFVF_XYZRHW) {
-			LOG_TEST_CASE("X_D3DFVF_NORMAL shouldn't use X_D3DFVF_XYZRHW");
-		}
-
-		pSlot = &declaration.Slots[X_D3DVSDE_NORMAL];
-		pSlot->Format = X_D3DVSDT_FLOAT[3];
-		pSlot->Offset = offset;
-		offset += sizeof(float) * 3;
-	}
-
-	if (xboxFvf & X_D3DFVF_DIFFUSE) {
-		pSlot = &declaration.Slots[X_D3DVSDE_DIFFUSE];
-		pSlot->Format = X_D3DVSDT_D3DCOLOR;
-		pSlot->Offset = offset;
-		offset += sizeof(DWORD) * 1;
-	}
-
-	if (xboxFvf & X_D3DFVF_SPECULAR) {
-		pSlot = &declaration.Slots[X_D3DVSDE_SPECULAR];
-		pSlot->Format = X_D3DVSDT_D3DCOLOR;
-		pSlot->Offset = offset;
-		offset += sizeof(DWORD) * 1;
-	}
-
-	// Write Texture Coordinates
-	int textureCount = (xboxFvf & X_D3DFVF_TEXCOUNT_MASK) >> X_D3DFVF_TEXCOUNT_SHIFT;
-	assert(textureCount <= 4); // Safeguard, since the X_D3DFVF_TEXCOUNT bitfield could contain invalid values (5 up to 15)
-	for (int i = 0; i < textureCount; i++) {
-		int numberOfCoordinates = 0;
-		auto FVFTextureFormat = (xboxFvf >> X_D3DFVF_TEXCOORDSIZE_SHIFT(i)) & 0x003;
-		switch (FVFTextureFormat) {
-			case X_D3DFVF_TEXTUREFORMAT1: numberOfCoordinates = 1; break;
-			case X_D3DFVF_TEXTUREFORMAT2: numberOfCoordinates = 2; break;
-			case X_D3DFVF_TEXTUREFORMAT3: numberOfCoordinates = 3; break;
-			case X_D3DFVF_TEXTUREFORMAT4: numberOfCoordinates = 4; break;
-			DEFAULT_UNREACHABLE;
-		}
-
-		assert(numberOfCoordinates > 0);
-		pSlot = &declaration.Slots[X_D3DVSDE_TEXCOORD0 + i];
-		pSlot->Format = X_D3DVSDT_FLOAT[numberOfCoordinates];
-		pSlot->Offset = offset;
-		offset += sizeof(float) * numberOfCoordinates;
-	}
-
-	return declaration;
-}
-
-void SetCxbxVertexDeclaration(CxbxVertexDeclaration& pCxbxVertexDeclaration) {
-	LOG_INIT
-
-	HRESULT hRet;
-
-	// Set vertex declaration
-	hRet = g_pD3DDevice->SetVertexDeclaration(pCxbxVertexDeclaration.pHostVertexDeclaration);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexDeclaration");
-
-	// Titles can specify default values for registers via calls like SetVertexData4f
-	// HLSL shaders need to know whether to use vertex data or default vertex shader values
-	// Any register not in the vertex declaration should be set to the default value
-	float vertexDefaultFlags[X_VSH_MAX_ATTRIBUTES];
-	for (int i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
-		vertexDefaultFlags[i] = pCxbxVertexDeclaration.vRegisterInDeclaration[i] ? 0.0f : 1.0f;
-	}
-	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, 4);
-}
-
 // TODO Call this when state is dirty in UpdateNativeD3DResources
 // Rather than every time state changes
 void SetVertexShaderFromSlots()
@@ -1064,24 +1063,6 @@ void SetVertexShaderFromSlots()
 	}
 }
 
-void SetCxbxVertexShaderHandle(CxbxVertexShader* pCxbxVertexShader)
-{
-	LOG_INIT; // Allows use of DEBUG_D3DRESULT
-
-	HRESULT hRet;
-
-	// Get vertex shader if we have a key
-	auto pHostShader = pCxbxVertexShader->VertexShaderKey
-		? g_VertexShaderSource.GetShader(pCxbxVertexShader->VertexShaderKey)
-		: nullptr;
-
-	// Set vertex shader
-	hRet = g_pD3DDevice->SetVertexShader(pHostShader);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShader");
-
-	SetCxbxVertexDeclaration(pCxbxVertexShader->Declaration);
-}
-
 void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstructions)
 {
 	int upToSlot = Address + NrInstructions;
@@ -1096,6 +1077,32 @@ void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstruction
 	}
 
 	memcpy(CxbxVertexShaderSlotPtr, pTokens, NrInstructions * X_VSH_INSTRUCTION_SIZE_BYTES);
+}
+
+CxbxVertexDeclaration* CxbxGetVertexDeclaration()
+{
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
+
+	xbox::X_VERTEXATTRIBUTEFORMAT XboxVertexAttributeFormat = GetXboxVertexAttributes();
+
+	bool bIsFixedFunction = XboxVertexAttributeFormat.Slots[0].Padding1 > 0; // See HACK note in XboxFVFToXboxVertexAttributeFormat
+
+	// TODO : Cache resulting declarations from given inputs
+
+	CxbxVertexDeclaration* pCxbxVertexDeclaration = (CxbxVertexDeclaration*)calloc(1, sizeof(CxbxVertexShader));
+
+	D3DVERTEXELEMENT* pRecompiledDeclaration = nullptr;
+	pRecompiledDeclaration = EmuRecompileVshDeclaration(
+		&XboxVertexAttributeFormat,
+		bIsFixedFunction,
+		pCxbxVertexDeclaration);
+
+	// Create the vertex declaration
+	pCxbxVertexDeclaration->pHostVertexDeclaration = CxbxCreateVertexDeclaration(pRecompiledDeclaration);
+
+	free(pRecompiledDeclaration);
+
+	return pCxbxVertexDeclaration;
 }
 
 // Note : SetVertexShaderInputDirect needs no EMUPATCH CxbxImpl_..., since it just calls SetVertexShaderInput
@@ -1137,42 +1144,10 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREA
 
 // Note : SelectVertexShaderDirect needs no EMUPATCH CxbxImpl_..., since it just calls SelectVertexShader
 
-IDirect3DVertexDeclaration* CxbxGetVertexDeclaration(DWORD Handle)
-{
-	LOG_INIT;
-
-	xbox::X_VERTEXATTRIBUTEFORMAT XboxVertexAttributeFormat;
-
-	// TODO : Cache resulting declarations from given inputs
-
-	bool bIsFixedFunction = VshHandleIsFVF(Handle);
-	if (bIsFixedFunction) {
-		XboxVertexAttributeFormat = XboxFVFToXboxVertexAttributeFormat(Handle);
-	}
-	else {
-		xbox::X_D3DVertexShader* pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
-		XboxVertexAttributeFormat = pXboxVertexShader->VertexAttribute;
-	}
-
-	CxbxVertexShader* pCxbxVertexShader = (CxbxVertexShader*)calloc(1, sizeof(CxbxVertexShader));
-
-	D3DVERTEXELEMENT* pRecompiledDeclaration = nullptr;
-	pRecompiledDeclaration = EmuRecompileVshDeclaration(
-		&XboxVertexAttributeFormat,
-		bIsFixedFunction,
-		&pCxbxVertexShader->Declaration);
-
-	// Create the vertex declaration
-	pCxbxVertexShader->Declaration.pHostVertexDeclaration = CxbxCreateVertexDeclaration(pRecompiledDeclaration);
-
-	free(pRecompiledDeclaration);
-
-	return pCxbxVertexShader->Declaration.pHostVertexDeclaration;
-}
-
 void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 {
-	LOG_INIT; // 
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
+
 	// Address always indicates a previously loaded vertex shader slot (from where the program is used).
 	// Handle can be null if the current Xbox VertexShader is assigned
 	// Handle can be an address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
@@ -1190,8 +1165,8 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 		// Set the shader handle declaration
 	}
 
-	IDirect3DVertexDeclaration * pHostVertexDeclaration = CxbxGetVertexDeclaration(Handle);
-	HRESULT hRet = g_pD3DDevice->SetVertexDeclaration(pHostVertexDeclaration);
+	CxbxVertexDeclaration* pCxbxVertexDeclaration = CxbxGetVertexDeclaration();
+	HRESULT hRet = g_pD3DDevice->SetVertexDeclaration(pCxbxVertexDeclaration->pHostVertexDeclaration);
 
 #if 0
 	if (pFunction != xbnullptr)
@@ -1206,6 +1181,15 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 
 	RegisterCxbxVertexShader(*pHandle, pCxbxVertexShader);
 #endif
+
+	// Titles can specify default values for registers via calls like SetVertexData4f
+	// HLSL shaders need to know whether to use vertex data or default vertex shader values
+	// Any register not in the vertex declaration should be set to the default value
+	float vertexDefaultFlags[X_VSH_MAX_ATTRIBUTES];
+	for (int i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
+		vertexDefaultFlags[i] = pCxbxVertexDeclaration->vRegisterInDeclaration[i] ? 0.0f : 1.0f;
+	}
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, 4);
 
 	SetVertexShaderFromSlots();
 }
@@ -1282,7 +1266,7 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 
 void CxbxImpl_SetVertexShader(DWORD Handle)
 {
-	LOG_INIT // Allows use of DEBUG_D3DRESULT
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
 	// Checks if the Handle has bit 0 set - if not, it's a FVF
 	// which is converted to a global Xbox Vertex Shader struct
@@ -1326,7 +1310,7 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 
 void CxbxImpl_DeleteVertexShader(DWORD Handle)
 {
-	LOG_INIT // Allows use of DEBUG_D3DRESULT
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
 	// Handle is always address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
 	// It's reference count is lowered. If it reaches zero (0), the struct is freed.
@@ -1357,7 +1341,7 @@ void CxbxImpl_DeleteVertexShader(DWORD Handle)
 
 void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD ConstantCount)
 {
-	LOG_INIT // Allows use of DEBUG_D3DRESULT
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
 /*#ifdef _DEBUG_TRACK_VS_CONST
 	for (uint32_t i = 0; i < ConstantCount; i++)
