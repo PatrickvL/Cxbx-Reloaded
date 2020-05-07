@@ -53,6 +53,13 @@ extern xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS]; // Declare
           xbox::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
 xbox::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Read by GetXboxVertexAttributes when g_Xbox_SetVertexShaderInput_Count > 0
 
+// Variables set by [D3DDevice|CxbxImpl]_SetVertexShader() and [D3DDevice|CxbxImpl]_SelectVertexShader() :
+                  xbox::DWORD g_Xbox_VertexShader_Handle = 0;
+                  xbox::DWORD g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
+
+// Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
+                  xbox::DWORD g_Xbox_VertexShader_FunctionSlots[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE] = { 0 };
+
 
 // Converts an Xbox FVF shader handle to X_VERTEXATTRIBUTEFORMAT
 // Note : Temporary, until we reliably locate the Xbox internal state for this
@@ -217,13 +224,6 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 
 xbox::X_VERTEXATTRIBUTEFORMAT GetXboxVertexAttributes()
 {
-	// If SetVertexShaderInput is active, it's arguments overrule those of the active vertex shader
-	if (g_Xbox_SetVertexShaderInput_Count > 0) {
-		// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
-		LOG_TEST_CASE("SetVertexShaderInput_Attributes override in effect!");
-		return g_Xbox_SetVertexShaderInput_Attributes;
-	}
-
 	xbox::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
 	if (pXboxVertexShader == xbnullptr)
 	{
@@ -236,6 +236,13 @@ xbox::X_VERTEXATTRIBUTEFORMAT GetXboxVertexAttributes()
 		// Despite possibly not being used, the pXboxVertexShader argument must always be assigned
 		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
 		return g_Xbox_SetVertexShaderInput_Attributes; // WRONG result, but it's already strange this happens
+	}
+
+	// If SetVertexShaderInput is active, it's arguments overrule those of the active vertex shader
+	if (g_Xbox_SetVertexShaderInput_Count > 0) {
+		// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
+		LOG_TEST_CASE("SetVertexShaderInput_Attributes override in effect!");
+		return g_Xbox_SetVertexShaderInput_Attributes;
 	}
 
 	return pXboxVertexShader->VertexAttribute;
@@ -596,6 +603,7 @@ private:
 
 			NewVertexRegister = Xb2PCRegisterType(VertexRegister, Index);
 			// TODO : Expand on the setting of this TESSUV register element :
+			pRecompiled->Method = D3DDECLMETHOD_UV; // TODO : Is this correct?
 			pRecompiled->Usage = D3DDECLUSAGE(NewVertexRegister);
 			pRecompiled->UsageIndex = Index;
 		}
@@ -609,12 +617,14 @@ private:
 
 			NewVertexRegisterIn = Xb2PCRegisterType(VertexRegisterIn, Index);
 			// TODO : Expand on the setting of this TESSNORMAL input register element :
+			pRecompiled->Method = 0; // TODO ?
 			pRecompiled->Usage = D3DDECLUSAGE(NewVertexRegisterIn);
 			pRecompiled->UsageIndex = Index;
 
 			NewVertexRegisterOut = Xb2PCRegisterType(VertexRegisterOut, Index);
 			// TODO : Expand on the setting of this TESSNORMAL output register element :
 			pRecompiled++;
+			pRecompiled->Method = D3DDECLMETHOD_CROSSUV; // TODO : Is this correct?
 			pRecompiled->Usage = D3DDECLUSAGE(NewVertexRegisterOut);
 			pRecompiled->UsageIndex = Index;
 		}
@@ -651,14 +661,39 @@ private:
 		pCurrentVertexShaderStreamInfo->NeedPatch |= NeedPatching;
 	}
 
-	void VshConvertToken_STREAMDATA_REG(DWORD VertexRegister, xbox::X_VERTEXSHADERINPUT &slot)
+	bool VshConvertToken_STREAMDATA_REG(DWORD VertexRegister, xbox::X_VERTEXSHADERINPUT &slot)
 	{
+		DWORD XboxVertexElementDataType = slot.Format;
+
+		// Does this attribute use no storage present the vertex (check this as early as possible to avoid needless processing) ?
+		if (XboxVertexElementDataType == xbox::X_D3DVSDT_NONE)
+		{
+			// Handle tesselating attributes
+			switch (slot.TesselationType) {
+			case 0: return false; // AUTONONE
+			case 1: // AUTONORMAL
+				// Note : .Stream, .Offset and .Type are copied from pAttributeSlot->TesselationSource in a post-processing step below,
+				// because these could all go through an Xbox to host conversion step, so must be copied over afterwards.
+				pRecompiled->Method = D3DDECLMETHOD_CROSSUV; // for D3DVSD_TESSNORMAL
+				pRecompiled->Usage = D3DDECLUSAGE_NORMAL; // TODO : Is this correct?
+				pRecompiled->UsageIndex = 1; // TODO : Is this correct?
+				return true;
+			case 2: // AUTOTEXCOORD
+				// pRecompiled->Stream = 0; // The input stream is unused (but must be set to 0), which is the current default value
+				// pRecompiled->Offset = 0; // The input offset is unused (but must be set to 0), which is the current default value
+				pRecompiled->Type = D3DDECLTYPE_UNUSED; // The input type for D3DDECLMETHOD_UV must be D3DDECLTYPE_UNUSED (the output type implied by D3DDECLMETHOD_UV is D3DDECLTYPE_FLOAT2)
+				pRecompiled->Method = D3DDECLMETHOD_UV; // For X_D3DVSD_MASK_TESSUV
+				pRecompiled->Usage = D3DDECLUSAGE_NORMAL; // Note : In Fixed Function Vertex Pipeline, D3DDECLMETHOD_UV must specify usage D3DDECLUSAGE_TEXCOORD or D3DDECLUSAGE_BLENDWEIGHT. TODO : So, what to do?
+				pRecompiled->UsageIndex = 1; // TODO ; Is this correct?
+				return true;
+			default:
+				LOG_TEST_CASE("invalid TesselationType");
+				return false;
+			}
+		}
+
 		BOOL NeedPatching = FALSE;
 
-		// Add this register to the list of declared registers
-		RegVIsPresentInDeclaration[VertexRegister] = true;
-
-		DWORD XboxVertexElementDataType = slot.Format;
 		WORD XboxVertexElementByteSize = 0;
 		BYTE HostVertexElementDataType = 0;
 		WORD HostVertexElementByteSize = 0;
@@ -833,13 +868,6 @@ private:
 			break;
 		}
 
-		// On X_D3DVSDT_NONE skip this token
-		if (XboxVertexElementDataType == xbox::X_D3DVSDT_NONE)
-		{
-			// Xbox elements with X_D3DVSDT_NONE have size zero, so there's no need to register those.
-			return;
-		}
-
 		// Select new stream, if needed
 		if ((pCurrentVertexShaderStreamInfo == nullptr)
 		 || (pCurrentVertexShaderStreamInfo->CurrentStreamNumber != slot.IndexOfStream)) {
@@ -852,18 +880,6 @@ private:
 			NeedPatching ? XboxVertexElementByteSize : HostVertexElementByteSize,
 			HostVertexElementByteSize,
 			NeedPatching);
-
-/*
-	typedef struct _D3DVERTEXELEMENT9
-	{
-		WORD    Stream;     // Stream index
-		WORD    Offset;     // Offset in the stream in bytes
-		BYTE    Type;       // Data type
-		BYTE    Method;     // Processing method
-		BYTE    Usage;      // Semantics
-		BYTE    UsageIndex; // Semantic index
-	} D3DVERTEXELEMENT9, * LPD3DVERTEXELEMENT9;
-*/
 
 		pRecompiled->Stream = pCurrentVertexShaderStreamInfo->CurrentStreamNumber;
 		pRecompiled->Offset = pCurrentVertexShaderStreamInfo->HostVertexStride;
@@ -882,9 +898,9 @@ private:
 			pRecompiled->UsageIndex = (BYTE)VertexRegister;
 		}
 
-		pRecompiled++;
-
 		pCurrentVertexShaderStreamInfo->HostVertexStride += HostVertexElementByteSize;
+
+		return true;
 	}
 
 public:
@@ -900,25 +916,50 @@ public:
 		// For Direct3D9, we need to reserve at least twice the number of elements, as one token can generate two registers (in and out) :
 		unsigned HostDeclarationSize = X_VSH_MAX_ATTRIBUTES * sizeof(D3DVERTEXELEMENT) * 2;
 
-		D3DVERTEXELEMENT* Result = (D3DVERTEXELEMENT*)calloc(1, HostDeclarationSize);
-		pRecompiled = Result;
+		D3DVERTEXELEMENT* HostVertexElements = (D3DVERTEXELEMENT*)calloc(1, HostDeclarationSize);
+		pRecompiled = HostVertexElements;
 		uint8_t* pRecompiledBufferOverflow = ((uint8_t*)pRecompiled) + HostDeclarationSize;
 
 
-		for (size_t i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
-			auto &slot = pXboxDeclaration->Slots[i];
+		for (size_t VertexRegister = 0; VertexRegister < X_VSH_MAX_ATTRIBUTES; VertexRegister++) {
+			auto &slot = pXboxDeclaration->Slots[VertexRegister];
 			if (slot.Format > 0) {
 				// Set Direct3D9 vertex element (declaration) members :
-				VshConvertToken_STREAMDATA_REG(i, slot);
+				if (VshConvertToken_STREAMDATA_REG(VertexRegister, slot)) {
+					// Add this register to the list of declared registers
+					RegVIsPresentInDeclaration[VertexRegister] = true;
+					pRecompiled++;
+				}
 			}
 		}
 
 		*pRecompiled = D3DDECL_END();
 
+#if 0 // TODO : Fix the following code so that mismatching indices won't cause trouble :
+		// Post-process host vertex elements that have a D3DDECLMETHOD_CROSSUV method :
+		for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
+			if (HostVertexElements[AttributeIndex].Method == D3DDECLMETHOD_CROSSUV)
+			{
+				int TesselationSource = pXboxDeclaration->Slots[AttributeIndex].TesselationSource;
+				// Copy over the Stream, Offset and Type of the host vertex element that serves as 'TesselationSource' :
+				HostVertexElements[AttributeIndex].Stream = HostVertexElements[TesselationSource].Stream;
+				HostVertexElements[AttributeIndex].Offset = HostVertexElements[TesselationSource].Offset;
+				HostVertexElements[AttributeIndex].Type = HostVertexElements[TesselationSource].Type;
+				// Note, the input type for D3DDECLMETHOD_CROSSUV can be D3DDECLTYPE_FLOAT[43], D3DDECLTYPE_D3DCOLOR, D3DDECLTYPE_UBYTE4, or D3DDECLTYPE_SHORT4
+				// (the output type implied by D3DDECLMETHOD_CROSSUV is D3DDECLTYPE_FLOAT3).
+				// TODO : Should we assert this?
+			}
+		}
+
+		// Note, that host doesn't allow D3DDECLTYPE_UNUSED (apart from D3DDECLMETHOD_UV),
+		// so we might need to condense the declarations here afterwards (and hope that the elements'
+		// Usage+UsageIndex are correctly connected to the corresponding vertex shader registers) !?!
+#endif
+
 		// Ensure valid ordering of the vertex declaration (http://doc.51windows.net/Directx9_SDK/graphics/programmingguide/gettingstarted/vertexdeclaration/vertexdeclaration.htm)
 		// In particular "All vertex elements for a stream must be consecutive and sorted by offset"
 		// Test case: King Kong (due to register redefinition)
-		std::sort(Result, pRecompiled, [] (const auto& x, const auto& y)
+		std::sort(HostVertexElements, pRecompiled, [] (const auto& x, const auto& y)
 			{ return std::tie(x.Stream, x.Method, x.Offset) < std::tie(y.Stream, y.Method, y.Offset); });
 
 		// Record which registers are in the vertex declaration
@@ -926,7 +967,7 @@ public:
 			pCxbxVertexDeclaration->vRegisterInDeclaration[i] = RegVIsPresentInDeclaration[i];
 		}
 
-		return Result;
+		return HostVertexElements;
 	}
 };
 
@@ -984,14 +1025,10 @@ extern boolean IsValidCurrentShader(void)
 	return VshHandleIsValidShader(g_Xbox_VertexShader_Handle);
 }
 
-// Vertex shader state
-static DWORD g_CxbxVertexShaderSlotAddress = 0;
-static DWORD g_CxbxVertexShaderSlots[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE] = { 0 };
-
 DWORD* GetCxbxVertexShaderSlotPtr(const DWORD SlotIndexAddress)
 {
 	if (SlotIndexAddress < X_VSH_MAX_INSTRUCTION_COUNT) {
-		return &g_CxbxVertexShaderSlots[SlotIndexAddress * X_VSH_INSTRUCTION_SIZE];
+		return &g_Xbox_VertexShader_FunctionSlots[SlotIndexAddress * X_VSH_INSTRUCTION_SIZE];
 	} else {
 		LOG_TEST_CASE("SlotIndexAddress out of range"); // FIXME : extend with value (once supported by LOG_TEST_CASE)
 		return nullptr;
@@ -1052,7 +1089,7 @@ void SetVertexShaderFromSlots()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
-	auto pTokens = GetCxbxVertexShaderSlotPtr(g_CxbxVertexShaderSlotAddress);
+	auto pTokens = GetCxbxVertexShaderSlotPtr(g_Xbox_VertexShader_FunctionSlots_StartAddress);
 	if (pTokens) {
 		// Create a vertex shader from the tokens
 		DWORD shaderSize;
@@ -1163,7 +1200,7 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 	// If Handle is assigned, it becomes the new current Xbox VertexShader,
 	// which resets a bit of state (nv2a execution mode, viewport, ?)
 	// Either way, the given address slot is selected as the start of the current vertex shader program
-	g_CxbxVertexShaderSlotAddress = Address;
+	g_Xbox_VertexShader_FunctionSlots_StartAddress = Address;
 
 	if (Handle) {
 		if (!VshHandleIsVertexShader(Handle))
