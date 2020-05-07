@@ -45,6 +45,27 @@
 #include <array>
 #include <bitset>
 
+// External symbols :
+extern xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS]; // Declared in XbVertexBuffer.cpp
+
+// Variables set by [D3DDevice|CxbxImpl]_SetVertexShaderInput() :
+                    unsigned g_Xbox_SetVertexShaderInput_Count = 0; // Read by GetXboxVertexAttributes
+          xbox::X_STREAMINPUT g_Xbox_SetVertexShaderInput_Data[X_VSH_MAX_STREAMS] = { 0 }; // Active when g_Xbox_SetVertexShaderInput_Count > 0
+xbox::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Read by GetXboxVertexAttributes when g_Xbox_SetVertexShaderInput_Count > 0
+
+// Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream number.
+// (These values are set through SetStreamSource and can be overridden by SetVertexShaderInput.)
+// TODO : Start using this function everywhere g_Xbox_SetStreamSource is accessed currently!
+xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber)
+{
+	// If SetVertexShaderInput is active, it's arguments overrule those of SetStreamSource
+	if (g_Xbox_SetVertexShaderInput_Count > 0) {
+		return g_Xbox_SetVertexShaderInput_Data[StreamNumber];
+	}
+
+	return g_Xbox_SetStreamSource[StreamNumber];
+}
+
 #define DbgVshPrintf \
 	LOG_CHECK_ENABLED(LOG_LEVEL::DEBUG) \
 		if(g_bPrintfOn) printf
@@ -1014,21 +1035,39 @@ void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstruction
 
 // Note : SetVertexShaderInputDirect needs no EMUPATCH CxbxImpl_..., since it just calls SetVertexShaderInput
 
-void CxbxImpl_SetVertexShaderInput
-(
-	DWORD              Handle,
-	UINT               StreamCount,
-	xbox::X_STREAMINPUT* pStreamInputs
-)
+void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREAMINPUT* pStreamInputs)
 {
-	LOG_INIT
+	using namespace xbox;
 
 	// If Handle is NULL, all VertexShader input state is cleared.
 	// Otherwise, Handle is the address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
 	// (Thus, a FVF handle is an invalid argument.)
-	//
 
-	LOG_UNIMPLEMENTED();
+	if (Handle == NULL)
+	{
+		// Xbox doesn't remember a null-handle - this may be an XDK bug!
+		// (Although, if that's skipped intentionally, we'd need to be very carefull about that!)
+		// StreamCount and pStreamInputs arguments are ignored
+		g_Xbox_SetVertexShaderInput_Count = 0;
+	}
+	else
+	{
+		assert(VshHandleIsVertexShader(Handle));
+
+		X_D3DVertexShader* pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
+		assert(pXboxVertexShader);
+
+		// Xbox DOES store the Handle, but since it merely returns this through (unpatched) D3DDevice_GetVertexShaderInput, we don't have to.
+
+		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This > 0 indicates g_Xbox_SetVertexShaderInput_Data has to be used
+		if (StreamCount > 0) {
+			assert(StreamCount <= X_VSH_MAX_STREAMS);
+			assert(pStreamInputs != xbnullptr);
+			memcpy(g_Xbox_SetVertexShaderInput_Data, pStreamInputs, StreamCount * sizeof(xbox::X_STREAMINPUT)); // Make a copy of the supplied StreamInputs array
+		}
+
+		g_Xbox_SetVertexShaderInput_Attributes = pXboxVertexShader->VertexAttribute; // Copy this vertex shaders's attribute slots
+	}
 }
 
 // Note : SelectVertexShaderDirect needs no EMUPATCH CxbxImpl_..., since it just calls SelectVertexShader
