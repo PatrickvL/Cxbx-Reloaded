@@ -591,45 +591,6 @@ private:
 
 	// VERTEX SHADER
 
-#if 0 // TODO : Support tesselation for X_VERTEXSHADERINPUT's
-	void VshConvertToken_TESSELATOR(DWORD *pXboxToken)
-	{
-		BYTE Index;
-
-		if(*pXboxToken & X_D3DVSD_MASK_TESSUV)
-		{
-			DWORD VertexRegister    = VshGetVertexRegister(*pXboxToken);
-			DWORD NewVertexRegister = VertexRegister;
-
-			NewVertexRegister = Xb2PCRegisterType(VertexRegister, Index);
-			// TODO : Expand on the setting of this TESSUV register element :
-			pRecompiled->Method = D3DDECLMETHOD_UV; // TODO : Is this correct?
-			pRecompiled->Usage = D3DDECLUSAGE(NewVertexRegister);
-			pRecompiled->UsageIndex = Index;
-		}
-		else // D3DVSD_TESSNORMAL
-		{
-			DWORD VertexRegisterIn  = VshGetVertexRegisterIn(*pXboxToken);
-			DWORD VertexRegisterOut = VshGetVertexRegister(*pXboxToken);
-
-			DWORD NewVertexRegisterIn  = VertexRegisterIn;
-			DWORD NewVertexRegisterOut = VertexRegisterOut;
-
-			NewVertexRegisterIn = Xb2PCRegisterType(VertexRegisterIn, Index);
-			// TODO : Expand on the setting of this TESSNORMAL input register element :
-			pRecompiled->Method = 0; // TODO ?
-			pRecompiled->Usage = D3DDECLUSAGE(NewVertexRegisterIn);
-			pRecompiled->UsageIndex = Index;
-
-			NewVertexRegisterOut = Xb2PCRegisterType(VertexRegisterOut, Index);
-			// TODO : Expand on the setting of this TESSNORMAL output register element :
-			pRecompiled++;
-			pRecompiled->Method = D3DDECLMETHOD_CROSSUV; // TODO : Is this correct?
-			pRecompiled->Usage = D3DDECLUSAGE(NewVertexRegisterOut);
-			pRecompiled->UsageIndex = Index;
-		}
-	}
-#endif
 	void VshConvertToken_STREAM(DWORD StreamNumber)
 	{
 		// new stream
@@ -913,13 +874,14 @@ public:
 
 		RegVIsPresentInDeclaration.fill(false);
 
+		// Mapping between Xbox register and the resulting host vertex element
+		D3DVERTEXELEMENT* HostVertexElementPerRegister[X_VSH_MAX_ATTRIBUTES] = { 0 };
+
 		// For Direct3D9, we need to reserve at least twice the number of elements, as one token can generate two registers (in and out) :
-		unsigned HostDeclarationSize = X_VSH_MAX_ATTRIBUTES * sizeof(D3DVERTEXELEMENT) * 2;
+		unsigned HostDeclarationSize = ((X_VSH_MAX_ATTRIBUTES * 2) + 1 ) * sizeof(D3DVERTEXELEMENT);
 
 		D3DVERTEXELEMENT* HostVertexElements = (D3DVERTEXELEMENT*)calloc(1, HostDeclarationSize);
 		pRecompiled = HostVertexElements;
-		uint8_t* pRecompiledBufferOverflow = ((uint8_t*)pRecompiled) + HostDeclarationSize;
-
 
 		for (size_t VertexRegister = 0; VertexRegister < X_VSH_MAX_ATTRIBUTES; VertexRegister++) {
 			auto &slot = pXboxDeclaration->Slots[VertexRegister];
@@ -928,6 +890,8 @@ public:
 				if (VshConvertToken_STREAMDATA_REG(VertexRegister, slot)) {
 					// Add this register to the list of declared registers
 					RegVIsPresentInDeclaration[VertexRegister] = true;
+					// Remember a pointer to this register
+					HostVertexElementPerRegister[VertexRegister] = pRecompiled;
 					pRecompiled++;
 				}
 			}
@@ -935,31 +899,27 @@ public:
 
 		*pRecompiled = D3DDECL_END();
 
-#if 0 // TODO : Fix the following code so that mismatching indices won't cause trouble :
 		// Post-process host vertex elements that have a D3DDECLMETHOD_CROSSUV method :
 		for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
-			if (HostVertexElements[AttributeIndex].Method == D3DDECLMETHOD_CROSSUV)
-			{
+			auto pHostElement = HostVertexElementPerRegister[AttributeIndex];
+			if (pHostElement == nullptr) continue;
+			if (pHostElement->Method == D3DDECLMETHOD_CROSSUV) {
 				int TesselationSource = pXboxDeclaration->Slots[AttributeIndex].TesselationSource;
+				auto pSourceElement = HostVertexElementPerRegister[TesselationSource];
 				// Copy over the Stream, Offset and Type of the host vertex element that serves as 'TesselationSource' :
-				HostVertexElements[AttributeIndex].Stream = HostVertexElements[TesselationSource].Stream;
-				HostVertexElements[AttributeIndex].Offset = HostVertexElements[TesselationSource].Offset;
-				HostVertexElements[AttributeIndex].Type = HostVertexElements[TesselationSource].Type;
+				pHostElement->Stream = pSourceElement->Stream;
+				pHostElement->Offset = pSourceElement->Offset;
+				pHostElement->Type = pSourceElement->Type;
 				// Note, the input type for D3DDECLMETHOD_CROSSUV can be D3DDECLTYPE_FLOAT[43], D3DDECLTYPE_D3DCOLOR, D3DDECLTYPE_UBYTE4, or D3DDECLTYPE_SHORT4
 				// (the output type implied by D3DDECLMETHOD_CROSSUV is D3DDECLTYPE_FLOAT3).
 				// TODO : Should we assert this?
 			}
 		}
 
-		// Note, that host doesn't allow D3DDECLTYPE_UNUSED (apart from D3DDECLMETHOD_UV),
-		// so we might need to condense the declarations here afterwards (and hope that the elements'
-		// Usage+UsageIndex are correctly connected to the corresponding vertex shader registers) !?!
-#endif
-
 		// Ensure valid ordering of the vertex declaration (http://doc.51windows.net/Directx9_SDK/graphics/programmingguide/gettingstarted/vertexdeclaration/vertexdeclaration.htm)
 		// In particular "All vertex elements for a stream must be consecutive and sorted by offset"
 		// Test case: King Kong (due to register redefinition)
-		std::sort(HostVertexElements, pRecompiled, [] (const auto& x, const auto& y)
+		std::sort(/*First=*/HostVertexElements, /*Last=*/pRecompiled, /*Pred=*/[] (const auto& x, const auto& y)
 			{ return std::tie(x.Stream, x.Method, x.Offset) < std::tie(y.Stream, y.Method, y.Offset); });
 
 		// Record which registers are in the vertex declaration
