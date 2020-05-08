@@ -131,8 +131,6 @@ int CountActiveD3DStreams()
 	return lastStreamIndex;
 }
 
-CxbxVertexDeclaration *CxbxGetToPatchVertexDeclaration(DWORD XboxVertexShaderHandle); // forward
-
 UINT CxbxVertexBufferConverter::GetNbrStreams(CxbxDrawContext *pDrawContext)
 {
 	// Draw..Up always have one stream
@@ -140,17 +138,14 @@ UINT CxbxVertexBufferConverter::GetNbrStreams(CxbxDrawContext *pDrawContext)
 		return 1;
 	}
 
-    if(VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
-        CxbxVertexDeclaration *pDecl = CxbxGetToPatchVertexDeclaration(g_Xbox_VertexShader_Handle);
-		if (pDecl) {
-			if (pDecl->NumberOfVertexStreams <= X_VSH_MAX_STREAMS) {
-				return pDecl->NumberOfVertexStreams;
-			}
-
-			// If we reached here, pDecl was set,but with invalid data
-			LOG_TEST_CASE("NumberOfVertexStreams > 16");
+	CxbxVertexDeclaration *pDecl = CxbxGetVertexDeclaration();
+	if (CxbxVertexDeclarationNeedsPatching(pDecl)) {
+		if (pDecl->NumberOfVertexStreams <= X_VSH_MAX_STREAMS) {
+			return pDecl->NumberOfVertexStreams;
 		}
 
+		// If we reached here, pDecl was set,but with invalid data
+		LOG_TEST_CASE("NumberOfVertexStreams > 16");
 		return CountActiveD3DStreams();
     } 
 	
@@ -772,10 +767,7 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 	if ((pDrawContext->XboxPrimitiveType < xbox::X_D3DPT_POINTLIST) || (pDrawContext->XboxPrimitiveType > xbox::X_D3DPT_POLYGON))
 		CxbxKrnlCleanup("Unknown primitive type: 0x%.02X\n", pDrawContext->XboxPrimitiveType);
 
-    m_pCxbxVertexDeclaration = nullptr;
-    if (VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
-        m_pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(g_Xbox_VertexShader_Handle);
-    }
+	m_pCxbxVertexDeclaration = CxbxGetVertexDeclaration();
 
 	// If we are drawing from an offset, we know that the vertex count must have
 	// 'offset' vertices before the first drawn vertices

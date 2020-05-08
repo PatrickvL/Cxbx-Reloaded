@@ -1558,17 +1558,6 @@ VOID WINAPI EMUPATCH(D3DDevice_DeleteVertexShader)
 
 VOID __stdcall EMUPATCH(D3DDevice_DeleteVertexShader_0)();
 
-#if 0 // unused
-// ******************************************************************
-// * patch: D3DDevice_SelectVertexShaderDirect
-// ******************************************************************
-VOID WINAPI EMUPATCH(D3DDevice_SelectVertexShaderDirect)
-(
-    X_VERTEXATTRIBUTEFORMAT *pVAF,
-    DWORD                    Address
-);
-#endif
-
 // ******************************************************************
 // * patch: D3DDevice_GetShaderConstantMode
 // ******************************************************************
@@ -1594,18 +1583,6 @@ VOID WINAPI EMUPATCH(D3DDevice_GetVertexShaderConstant)
     void  *pConstantData,
     DWORD ConstantCount
 );
-
-#if 0 // unused
-// ******************************************************************
-// * patch: D3DDevice_SetVertexShaderInputDirect
-// ******************************************************************
-VOID WINAPI EMUPATCH(D3DDevice_SetVertexShaderInputDirect)
-(
-    X_VERTEXATTRIBUTEFORMAT *pVAF,
-    UINT                     StreamCount,
-    X_STREAMINPUT           *pStreamInputs
-);
-#endif
 
 // ******************************************************************
 // * patch: D3DDevice_GetVertexShaderInput

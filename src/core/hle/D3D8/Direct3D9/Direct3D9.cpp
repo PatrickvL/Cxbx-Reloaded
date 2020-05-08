@@ -31,7 +31,7 @@
 #else
 	#define INCLUDE_DBG_CONSOLE
 #endif
-#include "common\util\hasher.h"
+#include "common\util\hasher.h" // For ComputeHash
 #include <condition_variable>
 #include <stack>
 
@@ -6751,7 +6751,6 @@ void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 	assert(DrawContext.dwStartVertex == 0);
 	assert(DrawContext.pXboxIndexData != nullptr);
 	assert(DrawContext.dwVertexCount > 0); // TODO : If this fails, make responsible callers do an early-exit
-	assert(IsValidCurrentShader());
 
 	bool bConvertQuadListToTriangleList = (DrawContext.XboxPrimitiveType == xbox::X_D3DPT_QUADLIST);
 	ConvertedIndexBuffer& CacheEntry = CxbxUpdateActiveIndexBuffer(DrawContext.pXboxIndexData, DrawContext.dwVertexCount, bConvertQuadListToTriangleList);
@@ -7228,7 +7227,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_DrawVertices)
 	// TODO : Call unpatched D3DDevice_SetStateVB(0);
 
 	CxbxUpdateNativeD3DResources();
-    if (IsValidCurrentShader()) {
+
 		CxbxDrawContext DrawContext = {};
 
 		DrawContext.XboxPrimitiveType = PrimitiveType;
@@ -7320,7 +7319,6 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_DrawVertices)
 				// NOTE : We don't restore the previously active index buffer
 			}
 		}
-    }
 
 	CxbxHandleXboxCallbacks();
 }
@@ -7352,16 +7350,14 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_DrawVerticesUP)
 
 	CxbxUpdateNativeD3DResources();
 
-    if (IsValidCurrentShader()) {
-		CxbxDrawContext DrawContext = {};
+	CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = PrimitiveType;
-		DrawContext.dwVertexCount = VertexCount;
-		DrawContext.pXboxVertexStreamZeroData = pVertexStreamZeroData;
-		DrawContext.uiXboxVertexStreamZeroStride = VertexStreamZeroStride;
+	DrawContext.XboxPrimitiveType = PrimitiveType;
+	DrawContext.dwVertexCount = VertexCount;
+	DrawContext.pXboxVertexStreamZeroData = pVertexStreamZeroData;
+	DrawContext.uiXboxVertexStreamZeroStride = VertexStreamZeroStride;
 
-		CxbxDrawPrimitiveUP(DrawContext);
-    }
+	CxbxDrawPrimitiveUP(DrawContext);
 
 	CxbxHandleXboxCallbacks();
 }
@@ -7395,18 +7391,16 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_DrawIndexedVertices)
 
 	CxbxUpdateNativeD3DResources();
 
-	if (IsValidCurrentShader()) {
-		CxbxDrawContext DrawContext = {};
+	CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = PrimitiveType;
-		DrawContext.dwVertexCount = VertexCount;
-		DrawContext.dwBaseVertexIndex = g_Xbox_BaseVertexIndex; // Multiplied by vertex stride and added to the vertex buffer start
-		DrawContext.pXboxIndexData = pIndexData; // Used to derive VerticesInBuffer
+	DrawContext.XboxPrimitiveType = PrimitiveType;
+	DrawContext.dwVertexCount = VertexCount;
+	DrawContext.dwBaseVertexIndex = g_Xbox_BaseVertexIndex; // Multiplied by vertex stride and added to the vertex buffer start
+	DrawContext.pXboxIndexData = pIndexData; // Used to derive VerticesInBuffer
 
-		// Test case JSRF draws all geometry through this function (only sparks are drawn via another method)
-		// using X_D3DPT_TRIANGLELIST and X_D3DPT_TRIANGLESTRIP PrimitiveType
-		CxbxDrawIndexed(DrawContext);
-	}
+	// Test case JSRF draws all geometry through this function (only sparks are drawn via another method)
+	// using X_D3DPT_TRIANGLELIST and X_D3DPT_TRIANGLESTRIP PrimitiveType
+	CxbxDrawIndexed(DrawContext);
 
 	CxbxHandleXboxCallbacks();
 }
@@ -7440,7 +7434,6 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 
 	CxbxUpdateNativeD3DResources();
 
-	if (IsValidCurrentShader()) {
 		CxbxDrawContext DrawContext = {};
 		INDEX16* pXboxIndexData = (INDEX16*)pIndexData;
 
@@ -7510,7 +7503,6 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 				DrawContext.uiHostVertexStreamZeroStride
 			);
 		}
-    }
 
 	CxbxHandleXboxCallbacks();
 }
@@ -7772,9 +7764,11 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_DeleteVertexShader)
 {
 	LOG_FUNC_ONE_ARG(Handle);
 
-	XB_TRMP(D3DDevice_DeleteVertexShader)(Handle);
-
 	CxbxImpl_DeleteVertexShader(Handle);
+
+	// When deleting, call trampoline *after* our implementation,
+	// so that we can still access it's fields before it gets deleted!
+	XB_TRMP(D3DDevice_DeleteVertexShader)(Handle);
 }
 
 

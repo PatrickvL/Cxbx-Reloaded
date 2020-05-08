@@ -162,11 +162,11 @@ void EmuExecutePushBuffer
     return;
 }
 
-DWORD CxbxGetStrideFromVertexShaderHandle(DWORD dwVertexShader)
+DWORD CxbxGetStrideFromVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration)
 {
 	DWORD Stride = 0;
 
-	if (VshHandleIsVertexShader(dwVertexShader)) {
+	if (pCxbxVertexDeclaration) {
 		// Test-case : Crash 'n' Burn [45530014]
 		// Test-case : CrimsonSea [4B4F0002]
 		// Test-case : Freedom Fighters
@@ -178,20 +178,17 @@ DWORD CxbxGetStrideFromVertexShaderHandle(DWORD dwVertexShader)
 		// Test-case : SpyHunter 2 [4D57001B]
 		//LOG_TEST_CASE("Non-FVF Vertex Shaders not yet (completely) supported for PushBuffer emulation!");
 
-		CxbxVertexDeclaration *pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(dwVertexShader);
-		if (pCxbxVertexDeclaration) {
-			if (pCxbxVertexDeclaration->NumberOfVertexStreams == 1) {
-				// Note : This assumes that the only stream in use will be stream zero :
-				Stride = pCxbxVertexDeclaration->VertexStreams[0].HostVertexStride;
-			}
-			else {
-				LOG_TEST_CASE("Non-FVF Vertex Shaders with multiple streams not supported for PushBuffer emulation!");
-			}
+		if (pCxbxVertexDeclaration->NumberOfVertexStreams == 1) {
+			// Note : This assumes that the only stream in use will be stream zero :
+			Stride = pCxbxVertexDeclaration->VertexStreams[0].HostVertexStride;
+		}
+		else {
+			LOG_TEST_CASE("Non-FVF Vertex Shaders with multiple streams not supported for PushBuffer emulation!");
 		}
 	}
 	else {
-		if (VshHandleIsFVF(dwVertexShader)) {
-			Stride = DxbxFVFToVertexSizeInBytes(dwVertexShader, /*bIncludeTextures=*/true);
+		if (VshHandleIsFVF(g_Xbox_VertexShader_Handle)) {
+			Stride = DxbxFVFToVertexSizeInBytes(g_Xbox_VertexShader_Handle, /*bIncludeTextures=*/true);
 		}
 		else {
 			LOG_TEST_CASE("Invalid Vertex Shader not supported for PushBuffer emulation!");
@@ -233,7 +230,7 @@ void HLE_draw_inline_array(NV2AState *d)
 	}
 	// render vertices
 	else {
-		DWORD dwVertexStride = CxbxGetStrideFromVertexShaderHandle(g_Xbox_VertexShader_Handle);
+		DWORD dwVertexStride = CxbxGetStrideFromVertexDeclaration(CxbxGetVertexDeclaration());
 		if (dwVertexStride > 0) {
 			UINT VertexCount = (pg->inline_array_length * sizeof(DWORD)) / dwVertexStride;
 			CxbxDrawContext DrawContext = {};
@@ -252,16 +249,14 @@ void HLE_draw_inline_elements(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
-	if (IsValidCurrentShader()) {
-		unsigned int uiIndexCount = pg->inline_elements_length;
-		CxbxDrawContext DrawContext = {};
+	unsigned int uiIndexCount = pg->inline_elements_length;
+	CxbxDrawContext DrawContext = {};
 
 		DrawContext.XboxPrimitiveType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
-		DrawContext.dwVertexCount = uiIndexCount;
-		DrawContext.pXboxIndexData = d->pgraph.inline_elements;
+	DrawContext.dwVertexCount = uiIndexCount;
+	DrawContext.pXboxIndexData = d->pgraph.inline_elements;
 
-		CxbxDrawIndexed(DrawContext);
-	}
+	CxbxDrawIndexed(DrawContext);
 }
 
 DWORD ABGR_to_ARGB(const uint32_t color)
