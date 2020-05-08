@@ -203,6 +203,7 @@ inline xbox::X_D3DVertexShader *VshHandleToXboxVertexShader(DWORD Handle) { retu
 
 extern bool CxbxVertexDeclarationNeedsPatching(CxbxVertexDeclaration* pCxbxVertexDeclaration);
 extern CxbxVertexDeclaration* CxbxGetVertexDeclaration();
+extern XTL::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber);
 
 extern void CxbxImpl_LoadVertexShaderProgram(CONST DWORD* pFunction, DWORD Address);
 extern void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address);

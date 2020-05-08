@@ -266,7 +266,6 @@ xbox::X_VERTEXATTRIBUTEFORMAT *GetXboxVertexAttributeFormat()
 
 // Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream number.
 // (These values are set through SetStreamSource and can be overridden by SetVertexShaderInput.)
-// TODO : Start using this function everywhere g_Xbox_SetStreamSource is accessed currently!
 xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber)
 {
 	// If SetVertexShaderInput is active, it's arguments overrule those of SetStreamSource
