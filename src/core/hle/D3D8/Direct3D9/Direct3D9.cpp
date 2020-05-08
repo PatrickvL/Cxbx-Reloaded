@@ -4064,57 +4064,6 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetShaderConstantMode)
     g_Xbox_VertexShaderConstantMode = Mode;
 }
 
-#if 0
-// ******************************************************************
-// * patch: D3DDevice_CreateVertexShader
-// ******************************************************************
-HRESULT WINAPI xbox::EMUPATCH(D3DDevice_CreateVertexShader)
-(
-    CONST DWORD    *pDeclaration,
-    CONST DWORD    *pFunction,
-    DWORD          *pHandle,
-    DWORD           Usage
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pDeclaration)
-		LOG_FUNC_ARG(pFunction)
-		LOG_FUNC_ARG(pHandle)
-		LOG_FUNC_ARG_TYPE(X_D3DUSAGE, Usage)
-		LOG_FUNC_END;
-
-	// First, we must call the Xbox CreateVertexShader function and check for success
-	// This does the following:
-	// Allocates an Xbox VertexShader struct
-	// Sets reference count to 1
-	// Puts Usage in VertexShader->Flags
-	// If pFunction is not null, it points to DWORDS shader type, length and a binary compiled xbox vertex shader
-	// If pDeclaration is not null, it's parsed, resulting in a number of constants
-	// Parse results are pushed to the push buffer
-	// Sets other fields
-	// pHandle recieves the addres of the new shader, or-ed with 1 (D3DFVF_RESERVED0)
-
-    HRESULT hRet = D3D_OK;
-
-    if (XB_TRMP(D3DDevice_CreateVertexShader)) {
-        HRESULT hRet = XB_TRMP(D3DDevice_CreateVertexShader)(pDeclaration, pFunction, pHandle, Usage);
-        if (FAILED(hRet)) {
-            LOG_TEST_CASE("D3DDevice_CreateVertexShader trampoline call returned failure");
-            RETURN(hRet);
-        }
-    } else {
-        // Due to how our LoadVertexShader patch is implemented, it may call this function without the Xbox version existing
-        // As a result, we have to build our own vertex shader handle if the trampoline was not found
-        // We don't do the full steps listed above intentionally so: If this situation is reached, the game
-        // does not have a CreateVertexShader function, so those actions should not happen anyway!
-        LOG_TEST_CASE("CreateVertexShader with no trampoline");
-        *pHandle = ((DWORD)malloc(sizeof(X_D3DVertexShader)) & D3DFVF_RESERVED0);
-    }
-
-    return CxbxImpl_CreateVertexShader(pDeclaration, pFunction, pHandle, Usage);
-}
-#endif
-
 // LTCG specific D3DDevice_SetVertexShaderConstant function...
 // This uses a custom calling convention where parameter is passed in EDX
 // Test-case: Murakumo

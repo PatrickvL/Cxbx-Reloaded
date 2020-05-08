@@ -210,7 +210,6 @@ extern void CxbxImpl_SetVertexShader(DWORD Handle);
 extern void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address);
 extern void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREAMINPUT* pStreamInputs);
 extern void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD ConstantCount);
-extern HRESULT CxbxImpl_CreateVertexShader(CONST DWORD *pDeclaration, CONST DWORD *pFunction, DWORD *pHandle, DWORD Usage);
 extern void CxbxImpl_DeleteVertexShader(DWORD Handle);
 
 #endif
