@@ -1063,8 +1063,8 @@ typedef struct _X_VERTEXSHADERINPUT
     DWORD IndexOfStream;
     DWORD Offset;
     DWORD Format;
-    BYTE  TesselationType;
-    BYTE  TesselationSource;
+    BYTE TessellationType;
+    BYTE TessellationSource;
 	BYTE Padding0;
 	BYTE Padding1;
 }
@@ -1116,7 +1116,7 @@ struct X_D3DVertexShader
 
 //          Name                   Register number      D3DFVF
 const int X_D3DVSDE_POSITION     = 0; // Corresponds to X_D3DFVF_XYZ
-const int X_D3DVSDE_BLENDWEIGHT  = 1; // Corresponds to X_D3DFVF_XYZRHW
+const int X_D3DVSDE_BLENDWEIGHT  = 1; // Corresponds to X_D3DFVF_XYZB1? (was X_D3DFVF_XYZRHW?)
 const int X_D3DVSDE_NORMAL       = 2; // Corresponds to X_D3DFVF_NORMAL
 const int X_D3DVSDE_DIFFUSE      = 3; // Corresponds to X_D3DFVF_DIFFUSE
 const int X_D3DVSDE_SPECULAR     = 4; // Corresponds to X_D3DFVF_SPECULAR

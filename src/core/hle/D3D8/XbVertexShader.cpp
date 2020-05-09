@@ -146,7 +146,10 @@ xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
 
 	// Write Texture Coordinates
 	int textureCount = (xboxFvf & X_D3DFVF_TEXCOUNT_MASK) >> X_D3DFVF_TEXCOUNT_SHIFT;
-	assert(textureCount <= 4); // Safeguard, since the X_D3DFVF_TEXCOUNT bitfield could contain invalid values (5 up to 15)
+	if (textureCount > 4) {
+		LOG_TEST_CASE("Limiting FVF to 4 textures");
+		textureCount = 4; // Safeguard, since the X_D3DFVF_TEXCOUNT bitfield could contain invalid values (5 up to 15)
+	}
 	for (int i = 0; i < textureCount; i++) {
 		int numberOfCoordinates = 0;
 		auto FVFTextureFormat = (xboxFvf >> X_D3DFVF_TEXCOORDSIZE_SHIFT(i)) & 0x003;
@@ -180,7 +183,7 @@ xbox::X_VERTEXATTRIBUTEFORMAT XboxFVFToXboxVertexAttributeFormat(DWORD xboxFvf)
 	return declaration;
 }
 
-static inline bool XboxVertexAttributeFormatIsFixedFunction(xbox::X_VERTEXATTRIBUTEFORMAT *pXboxVertexAttributeFormat)
+static inline bool XboxVertexAttributeFormatIsFVFBased(xbox::X_VERTEXATTRIBUTEFORMAT *pXboxVertexAttributeFormat)
 {
 	return pXboxVertexAttributeFormat->Slots[0].Padding1 > 0; // See HACK note in XboxFVFToXboxVertexAttributeFormat
 }
@@ -241,8 +244,8 @@ xbox::X_VERTEXATTRIBUTEFORMAT *GetXboxVertexAttributeFormat()
 	xbox::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
 	if (pXboxVertexShader == xbnullptr)
 	{
-		bool bIsFixedFunction = VshHandleIsFVF(g_Xbox_VertexShader_Handle);
-		if (bIsFixedFunction) {
+		bool bIsVertexShaderHandleFVF = VshHandleIsFVF(g_Xbox_VertexShader_Handle);
+		if (bIsVertexShaderHandleFVF) {
 			// Don't (too often) : LOG_TEST_CASE("Cxbx-generated FVF attribute format in effect!");
 			g_Xbox_FVF_VertexAttributeFormat = XboxFVFToXboxVertexAttributeFormat(g_Xbox_VertexShader_Handle);
 			return &g_Xbox_FVF_VertexAttributeFormat;
@@ -253,7 +256,7 @@ xbox::X_VERTEXATTRIBUTEFORMAT *GetXboxVertexAttributeFormat()
 		return &g_Xbox_SetVertexShaderInput_Attributes; // WRONG result, but it's already strange this happens
 	}
 
-	// If SetVertexShaderInput is active, it's arguments overrule those of the active vertex shader
+	// If SetVertexShaderInput is active, its arguments overrule those of the active vertex shader
 	if (g_Xbox_SetVertexShaderInput_Count > 0) {
 		// Take overrides (on declarations and streaminputs, as optionally set by SetVertexShaderInput) into account :
 		// Test-case : Crazy taxi 3
@@ -268,7 +271,7 @@ xbox::X_VERTEXATTRIBUTEFORMAT *GetXboxVertexAttributeFormat()
 // (These values are set through SetStreamSource and can be overridden by SetVertexShaderInput.)
 xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber)
 {
-	// If SetVertexShaderInput is active, it's arguments overrule those of SetStreamSource
+	// If SetVertexShaderInput is active, its arguments overrule those of SetStreamSource
 	if (g_Xbox_SetVertexShaderInput_Count > 0) {
 		return g_Xbox_SetVertexShaderInput_Data[StreamNumber];
 	}
@@ -645,10 +648,10 @@ private:
 		if (XboxVertexElementDataType == xbox::X_D3DVSDT_NONE)
 		{
 			// Handle tesselating attributes
-			switch (slot.TesselationType) {
+			switch (slot.TessellationType) {
 			case 0: return false; // AUTONONE
 			case 1: // AUTONORMAL
-				// Note : .Stream, .Offset and .Type are copied from pAttributeSlot->TesselationSource in a post-processing step below,
+				// Note : .Stream, .Offset and .Type are copied from pAttributeSlot->TessellationSource in a post-processing step below,
 				// because these could all go through an Xbox to host conversion step, so must be copied over afterwards.
 				pRecompiled->Method = D3DDECLMETHOD_CROSSUV; // for D3DVSD_TESSNORMAL
 				pRecompiled->Usage = D3DDECLUSAGE_NORMAL; // TODO : Is this correct?
@@ -663,7 +666,7 @@ private:
 				pRecompiled->UsageIndex = 1; // TODO ; Is this correct?
 				return true;
 			default:
-				LOG_TEST_CASE("invalid TesselationType");
+				LOG_TEST_CASE("invalid TessellationType");
 				return false;
 			}
 		}
@@ -892,8 +895,8 @@ public:
 		// Mapping between Xbox register and the resulting host vertex element
 		D3DVERTEXELEMENT* HostVertexElementPerRegister[X_VSH_MAX_ATTRIBUTES] = { 0 };
 
-		// For Direct3D9, we need to reserve at least twice the number of elements, as one token can generate two registers (in and out) :
-		unsigned HostDeclarationSize = ((X_VSH_MAX_ATTRIBUTES * 2) + 1 ) * sizeof(D3DVERTEXELEMENT);
+		// For Direct3D9, we need to reserve the maximum number of elements, plus one token for D3DDECL_END :
+		unsigned HostDeclarationSize = (X_VSH_MAX_ATTRIBUTES + 1) * sizeof(D3DVERTEXELEMENT);
 
 		D3DVERTEXELEMENT* HostVertexElements = (D3DVERTEXELEMENT*)calloc(1, HostDeclarationSize);
 		pRecompiled = HostVertexElements;
@@ -919,9 +922,9 @@ public:
 			auto pHostElement = HostVertexElementPerRegister[AttributeIndex];
 			if (pHostElement == nullptr) continue;
 			if (pHostElement->Method == D3DDECLMETHOD_CROSSUV) {
-				int TesselationSource = pXboxDeclaration->Slots[AttributeIndex].TesselationSource;
-				auto pSourceElement = HostVertexElementPerRegister[TesselationSource];
-				// Copy over the Stream, Offset and Type of the host vertex element that serves as 'TesselationSource' :
+				int TessellationSource = pXboxDeclaration->Slots[AttributeIndex].TessellationSource;
+				auto pSourceElement = HostVertexElementPerRegister[TessellationSource];
+				// Copy over the Stream, Offset and Type of the host vertex element that serves as 'TessellationSource' :
 				pHostElement->Stream = pSourceElement->Stream;
 				pHostElement->Offset = pSourceElement->Offset;
 				pHostElement->Type = pSourceElement->Type;
@@ -934,6 +937,7 @@ public:
 		// Ensure valid ordering of the vertex declaration (http://doc.51windows.net/Directx9_SDK/graphics/programmingguide/gettingstarted/vertexdeclaration/vertexdeclaration.htm)
 		// In particular "All vertex elements for a stream must be consecutive and sorted by offset"
 		// Test case: King Kong (due to register redefinition)
+		// Note : Xbox slots might use non-ordered stream indices, so we can't rely on the output ordering of our converted elements!
 		std::sort(/*First=*/HostVertexElements, /*Last=*/pRecompiled, /*Pred=*/[] (const auto& x, const auto& y)
 			{ return std::tie(x.Stream, x.Method, x.Offset) < std::tie(y.Stream, y.Method, y.Offset); });
 
@@ -1084,8 +1088,15 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 	if (pCxbxVertexDeclaration == nullptr) {
 		pCxbxVertexDeclaration = (CxbxVertexDeclaration*)calloc(1, sizeof(CxbxVertexDeclaration));
 
-		bool bIsFixedFunction = XboxVertexAttributeFormatIsFixedFunction(pXboxVertexAttributeFormat);
+		bool bIsFVFBased = XboxVertexAttributeFormatIsFVFBased(pXboxVertexAttributeFormat);
+		// TODO : Fixed function shouldn't rely on FVF based declarations,
+		// but instead on the absence of a shader program.
 
+		// Note, that as long as we still use host fixed function,
+		// we requre semantics-based vertex declarations, hence this assignment :
+		bool bIsFixedFunction = bIsFVFBased;
+
+		// Convert Xbox vertex attributes towards host Direct3D 9 vertex element
 		D3DVERTEXELEMENT* pRecompiledVertexElements = EmuRecompileVshDeclaration(
 			pXboxVertexAttributeFormat,
 			bIsFixedFunction,

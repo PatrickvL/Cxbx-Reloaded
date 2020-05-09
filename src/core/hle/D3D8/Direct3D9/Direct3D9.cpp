@@ -7810,8 +7810,18 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShaderInput)
 	// each vertex attribute (as defined in the given VertexShader.VertexAttribute.Slots[]) to read
 	// the attribute data from the pStreamInputs[slot].VertexBuffer + pStreamInputs[slot].Offset + VertexShader.VertexAttribute.Slots[slot].Offset
 
-	LOG_TEST_CASE("SetVertexShaderInput");
-	// Test-case : PushBuffer XDK sample
+	/* LOG_TEST_CASE("SetVertexShaderInput");
+	/* Test-cases :
+		PushBuffer XDK sample
+		Halo 2-3ebe4439.ini:D3DDevice_SetVertexShaderInput = 0x3f7440
+		Kung Fu Chaos-d9ab292c.ini:D3DDevice_SetVertexShaderInput = 0x2bc0e0
+		NBA LIVE 2005-71d4eeb1.ini:D3DDevice_SetVertexShaderInput = 0x5cf810
+		NBA LIVE 2005-71d4eeb1.ini:D3DDevice_SetVertexShaderInputDirect = 0x5ceba0
+		Prince of Persia WW-4ccf7369.ini:D3DDevice_SetVertexShaderInput = 0x494830
+		Prince of Persia WW-4ccf7369.ini:D3DDevice_SetVertexShaderInputDirect = 0x494280
+		Spyro A Hero's Tail-b18e00e5.ini:D3DDevice_SetVertexShaderInput = 0x286cf0
+		Spyro A Hero's Tail-b18e00e5.ini:D3DDevice_SetVertexShaderInputDirect = 0x286760
+	*/
 
 	CxbxImpl_SetVertexShaderInput(Handle, StreamCount, pStreamInputs);
 
