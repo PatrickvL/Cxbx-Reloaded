@@ -354,8 +354,12 @@ uint32_t HLE_read_NV2A_pgraph_register(const int reg)
 
 void HLE_write_NV2A_vertex_attribute_slot(unsigned slot, uint32_t parameter)
 {
+	// Avoid assert(false) on NV_PGRAPH_CTX_CONTROL in pgraph_handle_method()
+	auto d = g_NV2A->GetDeviceState();
+	d->pgraph.regs[NV_PGRAPH_CTX_CONTROL] |= NV_PGRAPH_CTX_CONTROL_CHID;
+
 	// Write value to LLE NV2A device
-	pgraph_handle_method(g_NV2A->GetDeviceState(),
+	pgraph_handle_method(d,
 		/*subchannel=*/0,
 		/*method=*/NV097_SET_VERTEX_DATA4UB + (4 * slot),
 		parameter);
@@ -434,8 +438,6 @@ extern void EmuExecutePushBufferRaw
 	uint32_t uSizeInBytes
 )
 {
-	HLE_init_pgraph_plugins(); // TODO : Move to more approriate spot
-
 	// Test-case : Azurik (see https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/issues/360)
 	// Test-case : Crash 'n' Burn [45530014]
 	// Test-case : CrimsonSea [4B4F0002]

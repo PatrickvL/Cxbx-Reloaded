@@ -1575,9 +1575,13 @@ uint8_t *ConvertD3DTextureToARGB(
 	return pDst;
 }
 
+extern void HLE_init_pgraph_plugins(); // implemented in XbPushBuffer.cpp
+
 // Direct3D initialization (called before emulation begins)
 VOID EmuD3DInit()
 {
+	HLE_init_pgraph_plugins(); // TODO : Hook more nv_dma_map() result uses in EmuNV2A_PGRAPH.cpp
+
 	// create the create device proxy thread
 	{
 		DWORD dwThreadId;
@@ -4422,7 +4426,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetVertexData4f)
 	if (VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
 		LOG_TEST_CASE("D3DDevice_SetVertexData4f with active VertexShader");
 		X_D3DVertexShader *pXboxVertexShader = VshHandleToXboxVertexShader(g_Xbox_VertexShader_Handle);
-		if (!(pXboxVertexShader->Flags & 0x10/*=X_VERTEXSHADER_PROGRAM*/)) {
+		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PROGRAM)) {
 			ActiveVertexAttributeFlags = pXboxVertexShader->Flags;
 		}
 
