@@ -39,6 +39,7 @@
 #include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST, NV2A_VP_UPLOAD_CONST_ID, NV2A_VP_UPLOAD_CONST
 #include "devices\video\nv2a.h" // For D3DPUSH_DECODE
 #include "common\Logging.h" // For LOG_INIT
+#include "common\Settings.hpp" // for g_LibVersion_D3D8
 
 #include "XbD3D8Types.h" // For X_D3DVSDE_*
 #include <sstream>
@@ -237,6 +238,21 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 	return pXboxVertexShader;
 }
 
+bool UseOldShader(const xbox::X_D3DVertexShader* pXboxVertexShader)
+{
+	return g_LibVersion_D3D8 <= 3948;
+}
+
+xbox::X_VERTEXATTRIBUTEFORMAT* CxbxGetVertexShaderAttributes(xbox::X_D3DVertexShader* pXboxVertexShader)
+{
+	if (UseOldShader(pXboxVertexShader)) {
+		auto pXboxVertexShaderOld = (xbox::X_D3DVertexShaderOld*)pXboxVertexShader;
+		return &(pXboxVertexShaderOld->VertexAttribute);
+	}
+
+	return &(pXboxVertexShader->VertexAttribute);
+}
+
 static xbox::X_VERTEXATTRIBUTEFORMAT g_Xbox_FVF_VertexAttributeFormat = { 0 };
 
 xbox::X_VERTEXATTRIBUTEFORMAT *GetXboxVertexAttributeFormat()
@@ -264,7 +280,7 @@ xbox::X_VERTEXATTRIBUTEFORMAT *GetXboxVertexAttributeFormat()
 		return &g_Xbox_SetVertexShaderInput_Attributes;
 	}
 
-	return &(pXboxVertexShader->VertexAttribute);
+	return CxbxGetVertexShaderAttributes(pXboxVertexShader);
 }
 
 // Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream number.
@@ -1148,7 +1164,7 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREA
 			memcpy(g_Xbox_SetVertexShaderInput_Data, pStreamInputs, StreamCount * sizeof(xbox::X_STREAMINPUT)); // Make a copy of the supplied StreamInputs array
 		}
 
-		g_Xbox_SetVertexShaderInput_Attributes = pXboxVertexShader->VertexAttribute; // Copy this vertex shaders's attribute slots
+		g_Xbox_SetVertexShaderInput_Attributes = *CxbxGetVertexShaderAttributes(pXboxVertexShader); // Copy this vertex shaders's attribute slots
 	}
 }
 
@@ -1213,15 +1229,24 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 
 	xbox::X_D3DVertexShader* pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
 
-	auto pNV2ATokens = &pXboxVertexShader->FunctionData[0];
-	DWORD NrTokens = pXboxVertexShader->TotalSize;
+	DWORD* pNV2ATokens;
+	DWORD NrTokens;
 
-#if 1 // TODO : Remove dirty hack (?once CreateVertexShader trampolines to Xbox code that sets TotalSize correctly?) :
+	if (UseOldShader(pXboxVertexShader)) {
+		auto pOldXboxVertexShader = (xbox::X_D3DVertexShaderOld*)pXboxVertexShader;
+		pNV2ATokens = &pOldXboxVertexShader->ProgramAndConstants[0];
+		NrTokens = pOldXboxVertexShader->ProgramAndConstantsDwords;
+	} else {
+		pNV2ATokens = &pXboxVertexShader->ProgramAndConstants[0];
+		NrTokens = pXboxVertexShader->ProgramAndConstantsDwords;
+	}
+
+#if 1 // TODO : Remove dirty hack (?once CreateVertexShader trampolines to Xbox code that sets ProgramAndConstantsDwords correctly?) :
 	if (NrTokens == 0)
 		NrTokens = 10000;
 #endif
 
-	unsigned ConstantAddress = 0;
+	static unsigned ConstantAddress = 0;
 	DWORD* pEnd = pNV2ATokens + NrTokens;
 	while (pNV2ATokens < pEnd) {
 		DWORD dwMethod, dwSubChannel, nrDWORDS;
@@ -1248,6 +1273,7 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 		}
 		default:
 			// TODO : Remove this break-out hack once NrTokens is reliable and instead have: DEFAULT_UNREACHABLE;
+			LOG_TEST_CASE("Stopping at unexpected NV2A method");
 			pEnd = pNV2ATokens;
 			break;
 		}

@@ -1070,6 +1070,15 @@ typedef struct _X_VERTEXSHADERINPUT
 }
 X_VERTEXSHADERINPUT;
 
+typedef struct {
+	DWORD StreamIndex;
+	DWORD Offset;
+	DWORD SizeAndType;
+	BYTE Flags;
+	BYTE Source;
+}
+X_VertexShaderSlot;
+
 // ******************************************************************
 // * X_VERTEXATTRIBUTEFORMAT
 // ******************************************************************
@@ -1090,16 +1099,35 @@ typedef struct _X_STREAMINPUT
     UINT                Offset;
 } X_STREAMINPUT;
 
-struct X_D3DVertexShader
+struct X_D3DVertexShaderOld
 {
-	// Note : Debug XBE's have a 'Vshd' DWORD signature prefixing this!
+#if 0 
+	DWORD Signature; // Note : Debug XBE's have a 'Vshd' DWORD signature prefix
+#endif
 	DWORD RefCount; // Based on the observation this member is set to 1 in D3DDevice_CreateVertexShader and decreased in D3DDevice_DeleteVertexShader
 	DWORD Flags; // Seems to contain at solely the four X_D3DUSAGE_PERSISTENT* flags
-	DWORD FunctionSize; // ?Also known as ProgramSize?
-	DWORD TotalSize; // Sum of FunctionSize + constant count, expressed in instruction slots, taking 4 DWORD's per slot (see X_VSH_INSTRUCTION_SIZE)
-	DWORD NumberOfDimensionsPerTexture; // Guesswork, since all 4 bytes (for all 4 textures) are most often set to 0 (or 2 when a texture isn't used) and 1, 3 and 4 also occur (and nothing else)
+	DWORD MaxSlot;
+	DWORD TextureCount;
+	DWORD ProgramSize;
+	DWORD ProgramAndConstantsDwords; // Sum of ProgramSize + constant count, expressed in instruction slots, taking 4 DWORD's per slot (see X_VSH_INSTRUCTION_SIZE)
+	DWORD Dimensionality[4] ; // Guesswork, since all 4 bytes (for all 4 textures) are most often set to 0 (or 2 when a texture isn't used) and 1, 3 and 4 also occur (and nothing else)
 	X_VERTEXATTRIBUTEFORMAT VertexAttribute;
-	DWORD FunctionData[X_VSH_MAX_INSTRUCTION_COUNT]; // The binary function data and constants (contents continues futher outside this struct, up to TotalSize * 4 (=X_VSH_INSTRUCTION_SIZE) DWORD's)
+	X_VertexShaderSlot Slot[4]; // Four more (for a total of 20)
+	DWORD ProgramAndConstants[1 /*declare more for debugging purposes */+ X_VSH_MAX_INSTRUCTION_COUNT]; // The binary function data and constants (contents continues futher outside this struct, up to ProgramAndConstantsDwords * 4 (=X_VSH_INSTRUCTION_SIZE) DWORD's)
+};
+
+struct X_D3DVertexShader
+{
+#if 0 
+	DWORD Signature; // Note : Debug XBE's have a 'Vshd' DWORD signature prefix
+#endif
+	DWORD RefCount; // Based on the observation this member is set to 1 in D3DDevice_CreateVertexShader and decreased in D3DDevice_DeleteVertexShader
+	DWORD Flags; // Seems to contain at solely the four X_D3DUSAGE_PERSISTENT* flags
+	DWORD ProgramSize;
+	DWORD ProgramAndConstantsDwords; // Sum of ProgramSize + constant count, expressed in instruction slots, taking 4 DWORD's per slot (see X_VSH_INSTRUCTION_SIZE)
+	BYTE Dimensionality[4] ; // Guesswork, since all 4 bytes (for all 4 textures) are most often set to 0 (or 2 when a texture isn't used) and 1, 3 and 4 also occur (and nothing else)
+	X_VERTEXATTRIBUTEFORMAT VertexAttribute;
+	DWORD ProgramAndConstants[X_VSH_MAX_INSTRUCTION_COUNT]; // The binary function data and constants (contents continues futher outside this struct, up to ProgramAndConstantsDwords * 4 (=X_VSH_INSTRUCTION_SIZE) DWORD's)
 };
 
 // X_D3DVertexShader.Flags values :
