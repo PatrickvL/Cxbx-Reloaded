@@ -394,16 +394,14 @@ uint32_t HLE_read_NV2A_vertex_program_slot(unsigned program_load, unsigned slot)
 	return value;
 }
 
-uint32_t HLE_read_NV2A_vertex_constant_slot(unsigned const_load, unsigned slot)
+float *HLE_read_NV2A_vertex_constant_float4_ptr(unsigned const_index)
 {
 	NV2AState* dev = g_NV2A->GetDeviceState();
 	PGRAPHState* pg = &(dev->pgraph);
 
 	// See CASE_32(NV097_SET_TRANSFORM_CONSTANT, 4) in LLE pgraph_handle_method()
-	assert(const_load < NV2A_VERTEXSHADER_CONSTANTS);
-	uint32_t value = pg->vsh_constants[const_load][slot % 4];
-
-	return value;
+	assert(const_index < NV2A_VERTEXSHADER_CONSTANTS);
+	return (float*)&(pg->vsh_constants[const_index][0]);
 }
 
 // For now, skip the cache, but handle the pgraph method directly

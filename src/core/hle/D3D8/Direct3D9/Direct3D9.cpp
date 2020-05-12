@@ -6902,6 +6902,26 @@ void EmuUpdateActiveTextureStages()
 	}
 }
 
+extern float* HLE_read_NV2A_vertex_constant_float4_ptr(unsigned const_index);
+
+void CxbxTransferVertexShaderConstants()
+{
+	// Some titles set Vertex Shader constants directly via pushbuffers rather than through D3D
+	// We handle that case by updating any constants that have the dirty flag set on the nv2a.
+	auto nv2a = g_NV2A->GetDeviceState();
+	for (int i = 0; i < X_D3DVS_CONSTREG_COUNT; i++) {
+		// Skip vOffset and vScale constants, we don't want our values to be overwritten by accident
+		if (i == X_D3DSCM_RESERVED_CONSTANT_OFFSET_CORRECTED || i == X_D3DSCM_RESERVED_CONSTANT_SCALE_CORRECTED) {
+			continue;
+		}
+
+		if (nv2a->pgraph.vsh_constants_dirty[i]) {
+			g_pD3DDevice->SetVertexShaderConstantF(i, HLE_read_NV2A_vertex_constant_float4_ptr(i), 1);
+			nv2a->pgraph.vsh_constants_dirty[i] = false;
+		}
+	}
+}
+
 void CxbxUpdateNativeD3DResources()
 {
 	// Before we start, make sure our resource cache stays limited in size
@@ -6909,22 +6929,9 @@ void CxbxUpdateNativeD3DResources()
 
     EmuUpdateActiveTextureStages();
 
-	// Some titles set Vertex Shader constants directly via pushbuffers rather than through D3D
-	// We handle that case by updating any constants that have the dirty flag set on the nv2a.
-	auto nv2a = g_NV2A->GetDeviceState();
-	for(int i = 0; i < X_D3DVS_CONSTREG_COUNT; i++) {
-        // Skip vOffset and vScale constants, we don't want our values to be overwritten by accident
-        if (i == X_D3DSCM_RESERVED_CONSTANT_OFFSET_CORRECTED || i == X_D3DSCM_RESERVED_CONSTANT_SCALE_CORRECTED) {
-            continue;
-        }
+	CxbxTransferVertexShaderConstants();
 
-		if (nv2a->pgraph.vsh_constants_dirty[i]) {
-			g_pD3DDevice->SetVertexShaderConstantF(i, (float*)&nv2a->pgraph.vsh_constants[i][0], 1);
-			nv2a->pgraph.vsh_constants_dirty[i] = false;
-		}
-	}
-
-    // NOTE: Order is important here
+	// NOTE: Order is important here
     // Some Texture States depend on RenderState values (Point Sprites)
     // And some Pixel Shaders depend on Texture State values (BumpEnvMat, etc)
     XboxRenderStates.Apply();

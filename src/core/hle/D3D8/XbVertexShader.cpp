@@ -1353,6 +1353,8 @@ void CxbxImpl_DeleteVertexShader(DWORD Handle)
 #endif
 }
 
+// TODO : Remove SetVertexShaderConstant implementation and the patch once
+// CxbxTransferVertexShaderConstants is reliable (ie. : when we're able to flush the NV2A push buffer)
 void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD ConstantCount)
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
