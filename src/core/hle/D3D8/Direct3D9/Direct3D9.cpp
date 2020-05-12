@@ -4037,8 +4037,6 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
 
 	HRESULT hRet = g_pD3DDevice->SetViewport(&HostViewPort);
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetViewport");
-
-	UpdateViewPortOffsetAndScaleConstants();
 }
 
 // LTCG specific D3DDevice_SetShaderConstantMode function...
@@ -6528,8 +6526,6 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShader)
 		XB_TRMP(D3DDevice_SetVertexShader)(Handle);
 
 	CxbxImpl_SetVertexShader(Handle);
-
-	UpdateViewPortOffsetAndScaleConstants();
 }
 
 // TODO : Move to own file
@@ -6930,6 +6926,8 @@ void CxbxUpdateNativeD3DResources()
     EmuUpdateActiveTextureStages();
 
 	CxbxTransferVertexShaderConstants();
+
+	UpdateViewPortOffsetAndScaleConstants();
 
 	// NOTE: Order is important here
     // Some Texture States depend on RenderState values (Point Sprites)
@@ -7602,8 +7600,6 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget)
         DWORD XboxRenderTarget_Height = GetPixelContainerHeight(g_pXbox_RenderTarget);
         ValidateRenderTargetDimensions(HostRenderTarget_Width, HostRenderTarget_Height, XboxRenderTarget_Width, XboxRenderTarget_Height);
     }
-
-    UpdateViewPortOffsetAndScaleConstants();
 }
 
 // LTCG specific D3DDevice_SetPalette function...
