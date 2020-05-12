@@ -382,6 +382,30 @@ uint32_t HLE_read_NV2A_vertex_attribute_slot(unsigned slot)
 	return value;
 }
 
+uint32_t HLE_read_NV2A_vertex_program_slot(unsigned program_load, unsigned slot)
+{
+	NV2AState* dev = g_NV2A->GetDeviceState();
+	PGRAPHState* pg = &(dev->pgraph);
+
+	// See CASE_32(NV097_SET_TRANSFORM_PROGRAM, 4) in LLE pgraph_handle_method()
+	assert(program_load < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
+	uint32_t value = pg->program_data[program_load][slot % 4];
+
+	return value;
+}
+
+uint32_t HLE_read_NV2A_vertex_constant_slot(unsigned const_load, unsigned slot)
+{
+	NV2AState* dev = g_NV2A->GetDeviceState();
+	PGRAPHState* pg = &(dev->pgraph);
+
+	// See CASE_32(NV097_SET_TRANSFORM_CONSTANT, 4) in LLE pgraph_handle_method()
+	assert(const_load < NV2A_VERTEXSHADER_CONSTANTS);
+	uint32_t value = pg->vsh_constants[const_load][slot % 4];
+
+	return value;
+}
+
 // For now, skip the cache, but handle the pgraph method directly
 // Note : Here's where the method gets multiplied by four!
 // Note 2 : d is read from local scope, and ni is unused (same in LLE)
