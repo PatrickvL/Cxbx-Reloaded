@@ -56,7 +56,7 @@
  xbox::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Read by GetXboxVertexAttributes when g_Xbox_SetVertexShaderInput_Count > 0
 
 // Variables set by [D3DDevice|CxbxImpl]_SetVertexShader() and [D3DDevice|CxbxImpl]_SelectVertexShader() :
-                          bool g_Xbox_VertexShader_IsFixedFunction = true;
+                        bool g_Xbox_VertexShader_IsFixedFunction = true;
                    xbox::DWORD g_Xbox_VertexShader_Handle = 0;
 #if 0 // TODO : Store this as well?
       xbox::X_D3DVertexShader *g_pXbox_VertexShader = nullptr;
@@ -64,7 +64,7 @@
                    xbox::DWORD g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
 // Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
-                   xbox::DWORD g_Xbox_VertexShader_FunctionSlots[X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE] = { 0 };
+                   xbox::DWORD g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT + 1) * X_VSH_INSTRUCTION_SIZE] = { 0 }; // One extra for FLD_FINAL terminator
 
 
 static xbox::X_D3DVertexShader g_Xbox_VertexShader_ForFVF = {};
@@ -1123,6 +1123,10 @@ void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstruction
 	}
 
 	memcpy(CxbxVertexShaderSlotPtr, pTokens, NrInstructions * X_VSH_INSTRUCTION_SIZE_BYTES);
+
+	// Make sure slot parsing in EmuParseVshFunction (VshConvertToIntermediate) stops after the last slot;
+	// Just setting bit 0 in 3rd DWORD suffices (see XboxVertexShaderDecoder.VshGetField.FieldMapping[FLD_FINAL]) :
+	g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE) + 3] = 1;
 }
 
 CxbxVertexDeclaration* CxbxGetVertexDeclaration()
@@ -1454,6 +1458,8 @@ extern void EmuParseVshFunction
 		pShader->Header.NumInst = (uint16_t)pShader->Instructions.size();
 
 		// Decode until we hit a token marked final
+		// Note : CxbxSetVertexShaderSlots makes sure this always stops
+		// after X_VSH_MAX_INSTRUCTION_COUNT, by setting FLD_FINAL in there.
 		while (VshDecoder.VshConvertToIntermediate(pCurToken, pShader)) {
 			pCurToken += X_VSH_INSTRUCTION_SIZE;
 		}
