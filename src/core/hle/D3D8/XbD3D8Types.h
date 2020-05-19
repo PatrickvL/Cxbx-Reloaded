@@ -1133,6 +1133,7 @@ struct X_D3DVertexShader
 // X_D3DVertexShader.Flags values :
 #define X_VERTEXSHADER_FLAG_WRITE           (1 <<  0) // = 0x0001
 #define X_VERTEXSHADER_FLAG_PASSTHROUGH     (1 <<  1) // = 0x0002
+#define X_VERTEXSHADER_FLAG_UNKNOWN         (1 <<  2) // = 0x0004 // Test case: Amped
 #define X_VERTEXSHADER_FLAG_STATE           (1 <<  3) // = 0x0008
 #define X_VERTEXSHADER_FLAG_PROGRAM         (1 <<  4) // = 0x0010
 #define X_VERTEXSHADER_FLAG_HASDIFFUSE      (1 << 10) // = 0x0400 Corresponds to X_D3DUSAGE_PERSISTENTDIFFUSE

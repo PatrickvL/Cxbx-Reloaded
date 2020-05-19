@@ -58,7 +58,9 @@
 // Variables set by [D3DDevice|CxbxImpl]_SetVertexShader() and [D3DDevice|CxbxImpl]_SelectVertexShader() :
                           bool g_Xbox_VertexShader_IsFixedFunction = true;
                    xbox::DWORD g_Xbox_VertexShader_Handle = 0;
-                   // TODO : Remember xbox::DWORD g_Xbox_VertexShader = 0;
+#if 0 // TODO : Store this as well?
+      xbox::X_D3DVertexShader *g_pXbox_VertexShader = nullptr;
+#endif
                    xbox::DWORD g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
 // Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
@@ -192,16 +194,8 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 		}
 	}
 
-	// HACK : Mark this so we can later detect this as a FVF based declaration :
-	declaration.Slots[0].Padding1 = 1;
-
 	// Return the global g_Xbox_VertexShader_ForFVF variable 
 	return &g_Xbox_VertexShader_ForFVF;
-}
-
-static inline bool XboxVertexAttributeFormatIsFVFBased(xbox::X_VERTEXATTRIBUTEFORMAT *pXboxVertexAttributeFormat)
-{
-	return pXboxVertexAttributeFormat->Slots[0].Padding1 > 0; // See HACK note in XboxFVFToXboxVertexAttributeFormat
 }
 
 static xbox::X_D3DVertexShader* CxbxGetXboxVertexShaderForHandle(DWORD Handle)
@@ -1027,7 +1021,10 @@ DWORD* GetCxbxVertexShaderSlotPtr(const DWORD SlotIndexAddress)
 
 VertexDeclarationKey GetXboxVertexAttributesKey(xbox::X_VERTEXATTRIBUTEFORMAT* pXboxVertexAttributeFormat)
 {
-	return ComputeHash((void*)pXboxVertexAttributeFormat, sizeof(xbox::X_VERTEXATTRIBUTEFORMAT));
+	auto attributeHash = ComputeHash((void*)pXboxVertexAttributeFormat, sizeof(xbox::X_VERTEXATTRIBUTEFORMAT));
+	// For now, we use different declarations depending on if the fixed function pipeline
+	// is in use, even if the attributes are the same
+	return 	attributeHash ^ g_Xbox_VertexShader_IsFixedFunction;
 }
 
 std::unordered_map<VertexDeclarationKey, CxbxVertexDeclaration*> g_CxbxVertexDeclarations;
@@ -1136,18 +1133,10 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 	if (pCxbxVertexDeclaration == nullptr) {
 		pCxbxVertexDeclaration = (CxbxVertexDeclaration*)calloc(1, sizeof(CxbxVertexDeclaration));
 
-		bool bIsFVFBased = XboxVertexAttributeFormatIsFVFBased(pXboxVertexAttributeFormat);
-		// TODO : Fixed function shouldn't rely on FVF based declarations,
-		// but instead on the absence of a shader program.
-
-		// Note, that as long as we still use host fixed function,
-		// we requre semantics-based vertex declarations, hence this assignment :
-		bool bIsFixedFunction = bIsFVFBased;
-
 		// Convert Xbox vertex attributes towards host Direct3D 9 vertex element
 		D3DVERTEXELEMENT* pRecompiledVertexElements = EmuRecompileVshDeclaration(
 			pXboxVertexAttributeFormat,
-			bIsFixedFunction,
+			g_Xbox_VertexShader_IsFixedFunction,
 			pCxbxVertexDeclaration);
 
 		// Create the vertex declaration
@@ -1353,11 +1342,15 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 #endif
 	} else {
 		if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PASSTHROUGH) {
-			LOG_TEST_CASE("TODO : Select Pass-through program HLSL Shader");
+			LOG_TEST_CASE("X_VERTEXSHADER_FLAG_PASSTHROUGH");
 			g_Xbox_VertexShader_IsFixedFunction = false;
+		} else if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_UNKNOWN) {
+			// Test-case : Amped
+			LOG_TEST_CASE("unknown vertex shader flag (4)");
+			g_Xbox_VertexShader_IsFixedFunction = true;
 		} else {
 			// Test-case : Crazy taxi 3
-			LOG_TEST_CASE("TODO : Select Fixed Function HLSL Shader");
+			LOG_TEST_CASE("Other or no vertex shader flags");
 			g_Xbox_VertexShader_IsFixedFunction = true;
 		}
 	}
