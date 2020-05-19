@@ -105,7 +105,7 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 	case 0: nrPositionFloats = 0; LOG_TEST_CASE("FVF without position"); break; // Note : Remove logging if this occurs often
 	case X_D3DFVF_XYZ: /*nrPositionFloats is set to 3 by default*/ break;
 	case X_D3DFVF_XYZRHW:
-		g_Xbox_VertexShader_ForFVF.Flags |= X_VERTEXSHADER_FLAG_PASSTHROUGH; // TODO : 
+		g_Xbox_VertexShader_ForFVF.Flags |= X_VERTEXSHADER_FLAG_PASSTHROUGH;
 		nrPositionFloats = 4;
 		break;
 	case X_D3DFVF_XYZB1: nrBlendWeights = 1; break;
@@ -259,9 +259,11 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 	return pXboxVertexShader;
 }
 
-static bool UseOldShader(xbox::X_D3DVertexShader* pXboxVertexShader)
+static bool UseXboxD3DVertexShaderTypeForVersion3948(xbox::X_D3DVertexShader* pXboxVertexShader)
 {
-	// Don't check version for our internal FVF vertex shader
+	// Don't check XDK version for our internal FVF vertex shader
+	// because g_Xbox_VertexShader_ForFVF is an internal variable
+	// that's compiled in as a xbox::X_D3DVertexShader
 	if (pXboxVertexShader == &g_Xbox_VertexShader_ForFVF) {
 		return false;
 	}
@@ -271,12 +273,24 @@ static bool UseOldShader(xbox::X_D3DVertexShader* pXboxVertexShader)
 
 static xbox::X_VERTEXATTRIBUTEFORMAT* CxbxGetVertexShaderAttributes(xbox::X_D3DVertexShader* pXboxVertexShader)
 {
-	if (UseOldShader(pXboxVertexShader)) {
-		auto pXboxVertexShaderOld = (xbox::X_D3DVertexShaderOld*)pXboxVertexShader;
-		return &(pXboxVertexShaderOld->VertexAttribute);
+	if (UseXboxD3DVertexShaderTypeForVersion3948(pXboxVertexShader)) {
+		auto pXboxVertexShader3948 = (xbox::X_D3DVertexShader3948*)pXboxVertexShader;
+		return &(pXboxVertexShader3948->VertexAttribute);
 	}
 
 	return &(pXboxVertexShader->VertexAttribute);
+}
+
+static DWORD* CxbxGetVertexShaderTokens(xbox::X_D3DVertexShader* pXboxVertexShader, DWORD* pNrTokens)
+{
+	if (UseXboxD3DVertexShaderTypeForVersion3948(pXboxVertexShader)) {
+		auto pXboxVertexShader3948 = (xbox::X_D3DVertexShader3948*)pXboxVertexShader;
+		*pNrTokens = pXboxVertexShader3948->ProgramAndConstantsDwords;
+		return &pXboxVertexShader3948->ProgramAndConstants[0];
+	}
+
+	*pNrTokens = pXboxVertexShader->ProgramAndConstantsDwords;
+	return &pXboxVertexShader->ProgramAndConstants[0];
 }
 
 static xbox::X_VERTEXATTRIBUTEFORMAT *GetXboxVertexAttributeFormat()
@@ -1257,17 +1271,8 @@ void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address)
 
 	xbox::X_D3DVertexShader* pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
 
-	DWORD* pNV2ATokens;
 	DWORD NrTokens;
-
-	if (UseOldShader(pXboxVertexShader)) {
-		auto pOldXboxVertexShader = (xbox::X_D3DVertexShaderOld*)pXboxVertexShader;
-		pNV2ATokens = &pOldXboxVertexShader->ProgramAndConstants[0];
-		NrTokens = pOldXboxVertexShader->ProgramAndConstantsDwords;
-	} else {
-		pNV2ATokens = &pXboxVertexShader->ProgramAndConstants[0];
-		NrTokens = pXboxVertexShader->ProgramAndConstantsDwords;
-	}
+	DWORD* pNV2ATokens = CxbxGetVertexShaderTokens(pXboxVertexShader, &NrTokens);
 
 #if 1 // TODO : Remove dirty hack (?once CreateVertexShader trampolines to Xbox code that sets ProgramAndConstantsDwords correctly?) :
 	if (NrTokens == 0)

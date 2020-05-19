@@ -1099,7 +1099,7 @@ typedef struct _X_STREAMINPUT
     UINT                Offset;
 } X_STREAMINPUT;
 
-struct X_D3DVertexShaderOld
+struct X_D3DVertexShader3948
 {
 #if 0 
 	DWORD Signature; // Note : Debug XBE's have a 'Vshd' DWORD signature prefix
