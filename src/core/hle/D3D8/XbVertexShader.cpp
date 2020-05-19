@@ -1318,8 +1318,6 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 
 	HRESULT hRet = D3D_OK;
 
-	g_Xbox_VertexShader_Handle = Handle;
-
 	xbox::X_D3DVertexShader* pXboxVertexShader = CxbxGetXboxVertexShaderForHandle(Handle);
 
 	if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PROGRAM) {
@@ -1327,21 +1325,27 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		CxbxImpl_LoadVertexShader(Handle, 0);
 		CxbxImpl_SelectVertexShader(Handle, 0);
 #else // So let's check if that indeed happened :
+		if (g_Xbox_VertexShader_Handle != Handle) {
+			LOG_TEST_CASE("g_Xbox_VertexShader_Handle != Handle");
+			g_Xbox_VertexShader_Handle = Handle;
+		}
 		if (g_Xbox_VertexShader_FunctionSlots_StartAddress != 0) {
 			LOG_TEST_CASE("g_Xbox_VertexShader_FunctionSlots_StartAddress != 0");
 			g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 		}
-		if (g_Xbox_VertexShader_IsFixedFunction != true) {
-			LOG_TEST_CASE("g_Xbox_VertexShader_IsFixedFunction != true");
-			g_Xbox_VertexShader_IsFixedFunction = true;
+		if (g_Xbox_VertexShader_IsFixedFunction != false) {
+			LOG_TEST_CASE("g_Xbox_VertexShader_IsFixedFunction != false");
+			g_Xbox_VertexShader_IsFixedFunction = false;
 		}
-		// TODO : If above test-cases are hit, perhaps our patches on
-		// _LoadVertexShader and/or _SelectVertexShader aren't applied;
-		// We could 'solve' that by calling them here instead.
-		// Let's await some feedback first before try that.
+		// TODO : If above test-cases are hit, perhaps our patch on
+		// _SelectVertexShader isn't applied;
+		// We could 'solve' that by calling it here instead.
+		// Let's await some feedback first before trying that.
 #endif
 	} else {
+		g_Xbox_VertexShader_Handle = Handle;
 		if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PASSTHROUGH) {
+			// TODO : Select Pass-through program HLSL Shader
 			LOG_TEST_CASE("X_VERTEXSHADER_FLAG_PASSTHROUGH");
 			g_Xbox_VertexShader_IsFixedFunction = false;
 		} else if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_UNKNOWN) {
