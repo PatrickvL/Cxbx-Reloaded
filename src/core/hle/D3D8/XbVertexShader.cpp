@@ -104,7 +104,10 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 	switch (position) {
 	case 0: nrPositionFloats = 0; LOG_TEST_CASE("FVF without position"); break; // Note : Remove logging if this occurs often
 	case X_D3DFVF_XYZ: /*nrPositionFloats is set to 3 by default*/ break;
-	case X_D3DFVF_XYZRHW: nrPositionFloats = 4; break;
+	case X_D3DFVF_XYZRHW:
+		g_Xbox_VertexShader_ForFVF.Flags |= X_VERTEXSHADER_FLAG_PASSTHROUGH; // TODO : 
+		nrPositionFloats = 4;
+		break;
 	case X_D3DFVF_XYZB1: nrBlendWeights = 1; break;
 	case X_D3DFVF_XYZB2: nrBlendWeights = 2; break;
 	case X_D3DFVF_XYZB3: nrBlendWeights = 3; break;
@@ -144,6 +147,7 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 	}
 
 	if (xboxFvf & X_D3DFVF_DIFFUSE) {
+		g_Xbox_VertexShader_ForFVF.Flags |= X_VERTEXSHADER_FLAG_HASDIFFUSE; 
 		pSlot = &declaration.Slots[X_D3DVSDE_DIFFUSE];
 		pSlot->Format = X_D3DVSDT_D3DCOLOR;
 		pSlot->Offset = offset;
@@ -151,6 +155,7 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 	}
 
 	if (xboxFvf & X_D3DFVF_SPECULAR) {
+		g_Xbox_VertexShader_ForFVF.Flags |= X_VERTEXSHADER_FLAG_HASSPECULAR; 
 		pSlot = &declaration.Slots[X_D3DVSDE_SPECULAR];
 		pSlot->Format = X_D3DVSDT_D3DCOLOR;
 		pSlot->Offset = offset;
@@ -179,9 +184,7 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 		pSlot->Format = X_D3DVSDT_FLOAT[numberOfCoordinates];
 		pSlot->Offset = offset;
 		offset += sizeof(float) * numberOfCoordinates;
-		// Update the VertexShader texture Dimenasionalty field here as well
-		// Note, Dimenasionalty is the ONLY reason XboxVertexShaderFromFVF
-		// returns a X_D3DVertexShader instead of a X_VERTEXATTRIBUTEFORMAT!
+		// Update the VertexShader texture Dimensionality field here as well
 		g_Xbox_VertexShader_ForFVF.Dimensionality[i] = numberOfCoordinates;
 	}
 

@@ -1043,9 +1043,9 @@ typedef DWORD X_VERTEXSHADERCONSTANTMODE;
 #define X_VSH_INSTRUCTION_SIZE_BYTES  (X_VSH_INSTRUCTION_SIZE * sizeof(DWORD))
 
 // Xbox Vertex Shader versions
-#define VERSION_XVS                    0x2078 // 'x ' Xbox vertex shader
-#define VERSION_XVSS                   0x7378 // 'xs' Xbox vertex state shader
-#define VERSION_XVSW                   0x7778 // 'xw' Xbox vertex read/write shader
+#define VERSION_XVS                    0x2078 // 'x ' Xbox vertex shader. Corresponds to X_VST_NORMAL
+#define VERSION_XVSS                   0x7378 // 'xs' Xbox vertex state shader. Corresponds to X_VST_STATE
+#define VERSION_XVSW                   0x7778 // 'xw' Xbox vertex read/write shader. Corresponds to X_VST_READWRITE
 
 /// nv2a microcode header
 typedef struct
@@ -1122,7 +1122,7 @@ struct X_D3DVertexShader
 	DWORD Signature; // Note : Debug XBE's have a 'Vshd' DWORD signature prefix
 #endif
 	DWORD RefCount; // Based on the observation this member is set to 1 in D3DDevice_CreateVertexShader and decreased in D3DDevice_DeleteVertexShader
-	DWORD Flags; // Seems to contain at solely the four X_D3DUSAGE_PERSISTENT* flags
+	DWORD Flags; // Contains X_VERTEXSHADER_FLAG_* bits
 	DWORD ProgramSize;
 	DWORD ProgramAndConstantsDwords; // Sum of ProgramSize + constant count, expressed in instruction slots, taking 4 DWORD's per slot (see X_VSH_INSTRUCTION_SIZE)
 	BYTE Dimensionality[4] ; // Guesswork, since all 4 bytes (for all 4 textures) are most often set to 0 (or 2 when a texture isn't used) and 1, 3 and 4 also occur (and nothing else)
@@ -1131,11 +1131,11 @@ struct X_D3DVertexShader
 };
 
 // X_D3DVertexShader.Flags values :
-#define X_VERTEXSHADER_FLAG_WRITE           (1 <<  0) // = 0x0001
+#define X_VERTEXSHADER_FLAG_WRITE           (1 <<  0) // = 0x0001 // Set for Xbox ShaderType != X_VST_NORMAL 
 #define X_VERTEXSHADER_FLAG_PASSTHROUGH     (1 <<  1) // = 0x0002
 #define X_VERTEXSHADER_FLAG_UNKNOWN         (1 <<  2) // = 0x0004 // Test case: Amped
-#define X_VERTEXSHADER_FLAG_STATE           (1 <<  3) // = 0x0008
-#define X_VERTEXSHADER_FLAG_PROGRAM         (1 <<  4) // = 0x0010
+#define X_VERTEXSHADER_FLAG_STATE           (1 <<  3) // = 0x0008 // Set for Xbox ShaderType == X_VST_STATE
+#define X_VERTEXSHADER_FLAG_PROGRAM         (1 <<  4) // = 0x0010 // Set when X_D3DVertexShader was created with assigned function data
 #define X_VERTEXSHADER_FLAG_HASDIFFUSE      (1 << 10) // = 0x0400 Corresponds to X_D3DUSAGE_PERSISTENTDIFFUSE
 #define X_VERTEXSHADER_FLAG_HASSPECULAR     (1 << 11) // = 0x0800 Corresponds to X_D3DUSAGE_PERSISTENTSPECULAR
 #define X_VERTEXSHADER_FLAG_HASBACKDIFFUSE  (1 << 12) // = 0x1000 Corresponds to X_D3DUSAGE_PERSISTENTBACKDIFFUSE
