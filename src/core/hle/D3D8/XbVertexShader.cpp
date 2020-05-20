@@ -56,10 +56,10 @@
  xbox::X_VERTEXATTRIBUTEFORMAT g_Xbox_SetVertexShaderInput_Attributes = { 0 }; // Read by GetXboxVertexAttributes when g_Xbox_SetVertexShaderInput_Count > 0
 
 // Variables set by [D3DDevice|CxbxImpl]_SetVertexShader() and [D3DDevice|CxbxImpl]_SelectVertexShader() :
-                        bool g_Xbox_VertexShader_IsFixedFunction = true;
+                          bool g_Xbox_VertexShader_IsFixedFunction = true;
                    xbox::DWORD g_Xbox_VertexShader_Handle = 0;
-#if 0 // TODO : Store this as well?
-      xbox::X_D3DVertexShader *g_pXbox_VertexShader = nullptr;
+#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER // TODO : Would this be more accurate / simpler?
+      xbox::X_D3DVertexShader *g_Xbox_VertexShader_Ptr = nullptr;
 #endif
                    xbox::DWORD g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
@@ -251,7 +251,12 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 		}
 #endif
 
+#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
+		pXboxVertexShader = g_Xbox_VertexShader_Ptr;
+#else
 		pXboxVertexShader = CxbxGetXboxVertexShaderForHandle(g_Xbox_VertexShader_Handle);
+#endif
+
 #if 0 // TODO : Retrieve vertex shader from actual Xbox D3D state
 	}
 #endif
@@ -1234,6 +1239,9 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREA
 	else
 	{
 		assert(VshHandleIsVertexShader(Handle));
+		assert(StreamCount > 0);
+		assert(StreamCount <= X_VSH_MAX_STREAMS);
+		assert(pStreamInputs != xbnullptr);
 
 		X_D3DVertexShader* pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
 		assert(pXboxVertexShader);
@@ -1241,11 +1249,7 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREA
 		// Xbox DOES store the Handle, but since it merely returns this through (unpatched) D3DDevice_GetVertexShaderInput, we don't have to.
 
 		g_Xbox_SetVertexShaderInput_Count = StreamCount; // This > 0 indicates g_Xbox_SetVertexShaderInput_Data has to be used
-		if (StreamCount > 0) {
-			assert(StreamCount <= X_VSH_MAX_STREAMS);
-			assert(pStreamInputs != xbnullptr);
-			memcpy(g_Xbox_SetVertexShaderInput_Data, pStreamInputs, StreamCount * sizeof(xbox::X_STREAMINPUT)); // Make a copy of the supplied StreamInputs array
-		}
+		memcpy(g_Xbox_SetVertexShaderInput_Data, pStreamInputs, StreamCount * sizeof(xbox::X_STREAMINPUT)); // Make a copy of the supplied StreamInputs array
 
 		g_Xbox_SetVertexShaderInput_Attributes = *CxbxGetVertexShaderAttributes(pXboxVertexShader); // Copy this vertex shaders's attribute slots
 	}
@@ -1269,6 +1273,9 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 		if (!VshHandleIsVertexShader(Handle))
 			LOG_TEST_CASE("Non-zero handle must be a VertexShader!");
 
+#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
+		g_Xbox_VertexShader_Ptr = VshHandleToXboxVertexShader(Handle);
+#endif
 		g_Xbox_VertexShader_Handle = Handle;
 		g_Xbox_VertexShader_IsFixedFunction = false;
 	}
@@ -1363,25 +1370,36 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		CxbxImpl_LoadVertexShader(Handle, 0);
 		CxbxImpl_SelectVertexShader(Handle, 0);
 #else // So let's check if that indeed happened :
+		bool bHackCallSelectAgain = false;
 		if (g_Xbox_VertexShader_Handle != Handle) {
 			LOG_TEST_CASE("g_Xbox_VertexShader_Handle != Handle");
-			g_Xbox_VertexShader_Handle = Handle;
+			bHackCallSelectAgain = true;
 		}
 		if (g_Xbox_VertexShader_FunctionSlots_StartAddress != 0) {
 			LOG_TEST_CASE("g_Xbox_VertexShader_FunctionSlots_StartAddress != 0");
-			g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
+			bHackCallSelectAgain = true;
 		}
 		if (g_Xbox_VertexShader_IsFixedFunction != false) {
 			LOG_TEST_CASE("g_Xbox_VertexShader_IsFixedFunction != false");
+			bHackCallSelectAgain = true;
+		}
+
+		if (bHackCallSelectAgain) {
+			// If any of the above test-cases was hit, perhaps our patch on
+			// _SelectVertexShader isn't applied;
+			// 'solve' that by calling it here instead.
+			CxbxImpl_SelectVertexShader(Handle, 0);
 			g_Xbox_VertexShader_IsFixedFunction = false;
 		}
-		// TODO : If above test-cases are hit, perhaps our patch on
-		// _SelectVertexShader isn't applied;
-		// We could 'solve' that by calling it here instead.
-		// Let's await some feedback first before trying that.
 #endif
 	} else {
+		// A shader without a program won't call LoadVertexShader nor SelectVertexShader
+		// 
+#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
+		g_Xbox_VertexShader_Ptr = pXboxVertexShader;
+#endif
 		g_Xbox_VertexShader_Handle = Handle;
+		g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 		if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PASSTHROUGH) {
 			CxbxSetVertexShaderPassthroughProgram();
 			g_Xbox_VertexShader_IsFixedFunction = false;
