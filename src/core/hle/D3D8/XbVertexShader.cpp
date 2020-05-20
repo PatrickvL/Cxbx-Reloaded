@@ -1143,6 +1143,32 @@ void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstruction
 	g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE) + 3] = 1;
 }
 
+static void CxbxSetVertexShaderPassthroughProgram()
+{
+	static DWORD XboxShaderBinaryPassthrough[] = {
+		0, 0x0020001B, 0x0836106C, 0x2F100FF8,
+		0, 0x0420061B, 0x083613FC, 0x5011F818,
+		0, 0x002008FF, 0x0836106C, 0x2070F828,
+		0, 0x0240081B, 0x1436186C, 0x2F20F824,
+		0, 0x0060201B, 0x2436106C, 0x3070F800,
+		0, 0x00200200, 0x0836106C, 0x2070F830,
+		0, 0x00200E1B, 0x0836106C, 0x2070F838,
+		0, 0x0020101B, 0x0836106C, 0x2070F840,
+		0, 0x0020121B, 0x0836106C, 0x2070F848,
+		0, 0x0020141B, 0x0836106C, 0x2070F850,
+		0, 0x0020161B, 0x0836106C, 0x2070F858,
+		0, 0x0020181B, 0x0836106C, 0x2070F861 // FLD_FINAL is set here!
+	};
+
+	LOG_TEST_CASE("Setting Xbox passthrough shader");
+	// TODO : Xbox uses three variants;
+	// one for FOGTABLEMODE NONE
+	// one for FOGSOURCEZ
+	// one for WFOG
+
+	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES);
+}
+
 CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
@@ -1357,8 +1383,7 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 	} else {
 		g_Xbox_VertexShader_Handle = Handle;
 		if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PASSTHROUGH) {
-			// TODO : Select Pass-through program HLSL Shader
-			LOG_TEST_CASE("X_VERTEXSHADER_FLAG_PASSTHROUGH");
+			CxbxSetVertexShaderPassthroughProgram();
 			g_Xbox_VertexShader_IsFixedFunction = false;
 		} else if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_UNKNOWN) {
 			// Test-case : Amped
