@@ -1046,7 +1046,7 @@ VertexDeclarationKey GetXboxVertexAttributesKey(xbox::X_VERTEXATTRIBUTEFORMAT* p
 	auto attributeHash = ComputeHash((void*)pXboxVertexAttributeFormat, sizeof(xbox::X_VERTEXATTRIBUTEFORMAT));
 	// For now, we use different declarations depending on if the fixed function pipeline
 	// is in use, even if the attributes are the same
-	return 	attributeHash ^ g_Xbox_VertexShader_IsFixedFunction;
+	return 	attributeHash ^ (VertexDeclarationKey)g_Xbox_VertexShader_IsFixedFunction;
 }
 
 std::unordered_map<VertexDeclarationKey, CxbxVertexDeclaration*> g_CxbxVertexDeclarations;
