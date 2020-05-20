@@ -44,6 +44,13 @@ ID3DBlob* AsyncCreateVertexShader(IntermediateVertexShader intermediateShader, S
  // Create a new shader
  // If the shader was already created, just increase its reference count
 ShaderKey VertexShaderSource::CreateShader(const DWORD* pXboxFunction, DWORD *pXboxFunctionSize) {
+	IntermediateVertexShader intermediateShader;
+
+	// Parse into intermediate format
+	EmuParseVshFunction((DWORD*)pXboxFunction,
+		pXboxFunctionSize,
+		&intermediateShader);
+
 	// FIXME ignore shader header when creating key
 	ShaderKey key = ComputeHash((void*)pXboxFunction, *pXboxFunctionSize);
 
@@ -56,13 +63,6 @@ ShaderKey VertexShaderSource::CreateShader(const DWORD* pXboxFunction, DWORD *pX
 		EmuLog(LOG_LEVEL::DEBUG, "Incremented ref count for shader %llx (%d)", key, it->second.referenceCount);
 		return key;
 	}
-
-	IntermediateVertexShader intermediateShader;
-
-	// Parse into intermediate format
-	EmuParseVshFunction((DWORD*)pXboxFunction,
-		pXboxFunctionSize,
-		&intermediateShader);
 
 	// We're going to create a new shader
 	auto newShader = LazyVertexShader();
