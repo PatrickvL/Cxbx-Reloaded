@@ -1171,6 +1171,7 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	// one for FOGSOURCEZ
 	// one for WFOG
 
+	g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES);
 }
 
