@@ -149,17 +149,6 @@ float _dph(float4 src0, float4 src1)
 
 // Xbox ILU Functions
 
-// 2.14.1.10.6  RCP: Reciprocal
-#define x_rcp(dest, mask, src0) dest.mask = _ssss(_rcp(_scalar(src0))).mask
-float _rcp(float src)
-{
-#if 0 // TODO : Enable
-	if (src == 1) return 1;
-	if (src == 0) return 1.#INF;
-#endif
-	return 1/ src;
-}
-
 // 2.14.1.10.7  RSQ: Reciprocal Square Root
 #define x_rsq(dest, mask, src0) dest.mask = _ssss(_rsq(_scalar(src0))).mask
 float _rsq(float src)
@@ -249,6 +238,23 @@ float _rcc(float src)
 	return (r >= 0)
 		? clamp(r,  5.42101e-020f,  1.84467e+019f)  // the IEEE 32-bit binary values 0x1F800000 and 0x5F800000
 		: clamp(r, -1.84467e+019f, -5.42101e-020f); // the IEEE 32-bit binary values 0xDF800000 and 0x9F800000
+}
+
+// 2.14.1.10.6  RCP: Reciprocal
+#define x_rcp(dest, mask, src0) dest.mask = _ssss(_rcp(_scalar(src0))).mask
+float _rcp(float src)
+{
+	// OpenGL/NVidia extension definition
+#if 0 // TODO : Enable?
+	if (src == 1) return 1;
+	if (src == 0) return 1.#INF;
+	return 1 / src;
+#endif
+	// Forward to Xbox clamped reciprocal
+	// So we have defined behaviour with rcp(0)
+	// This prevents issues with XYZRHW modes
+	// where the w component may be 0
+	return _rcc(src);
 }
 
 float4 reverseScreenspaceTransform(float4 oPos)

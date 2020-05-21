@@ -679,33 +679,6 @@ void CxbxVertexBufferConverter::ConvertStream
 		for (uint32_t uiVertex = 0; uiVertex < uiVertexCount; uiVertex++) {
 			FLOAT *pVertexDataAsFloat = (FLOAT*)(&pHostVertexData[uiVertex * uiHostVertexStride]);
 
-			// Handle pre-transformed vertices (which bypass the vertex shader pipeline)
-			if (bNeedRHWReset) {
-                // We need to transform these vertices only if the host render target was upscaled from the Xbox render target
-                // Transforming always breaks render to non-upscaled textures: Only surfaces are upscaled, intentionally so
-				if (bNeedRHWTransform) {
-					pVertexDataAsFloat[0] *= g_RenderScaleFactor;
-					pVertexDataAsFloat[1] *= g_RenderScaleFactor;
-
-					ApplyXboxMultiSampleOffsetAndScale(pVertexDataAsFloat[0], pVertexDataAsFloat[1]);
-				}
-
-#if 0
-				// Check Z. TODO : Why reset Z from 0.0 to 1.0 ? (Maybe fog-related?)
-				if (pVertexDataAsFloat[2] == 0.0f) {
-					// LOG_TEST_CASE("D3DFVF_XYZRHW (Z)"); // Test-case : Many XDK Samples (AlphaFog, PointSprites)
-					pVertexDataAsFloat[2] = 1.0f;
-				}
-#endif
-#if 1
-				// Check RHW. TODO : Why reset from 0.0 to 1.0 ? (Maybe 1.0 indicates that the vertices are not to be transformed)
-				if (pVertexDataAsFloat[3] == 0.0f) {
-					// LOG_TEST_CASE("D3DFVF_XYZRHW (RHW)"); // Test-case : Many XDK Samples (AlphaFog, PointSprites)
-					pVertexDataAsFloat[3] = 1.0f;
-				}
-#endif
-			}
-
 			// Normalize texture coordinates in FVF stream if needed
 			if (uiTextureCoordinatesByteOffsetInVertex > 0) { // implies bNeedTextureNormalization (using one is more efficient than both)
 				FLOAT *pVertexUVData = (FLOAT*)((uintptr_t)pVertexDataAsFloat + uiTextureCoordinatesByteOffsetInVertex);
