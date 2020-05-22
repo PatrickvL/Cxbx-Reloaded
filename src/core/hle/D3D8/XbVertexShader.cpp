@@ -1423,7 +1423,6 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		} else if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_UNKNOWN) {
 			// Test-case : Amped
 			LOG_TEST_CASE("unknown vertex shader flag (4)");
-			g_Xbox_VertexShader_IsFixedFunction = true;
 		} else {
 			// Test-case : Crazy taxi 3
 			LOG_TEST_CASE("Other or no vertex shader flags");
