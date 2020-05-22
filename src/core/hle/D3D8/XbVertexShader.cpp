@@ -952,15 +952,31 @@ public:
 		D3DVERTEXELEMENT* HostVertexElements = (D3DVERTEXELEMENT*)calloc(1, HostDeclarationSize);
 		pRecompiled = HostVertexElements;
 
-		for (size_t VertexRegister = 0; VertexRegister < X_VSH_MAX_ATTRIBUTES; VertexRegister++) {
-			auto &slot = pXboxDeclaration->Slots[VertexRegister];
+		std::array<byte, X_VSH_MAX_ATTRIBUTES> orderedRegisterIndices;
+		for (byte i = 0; i < orderedRegisterIndices.size(); i++)
+			orderedRegisterIndices[i] = i;
+
+		// Make sure we convert registers in order of offset, per stream
+		// TODO fix elements with identical positions?
+		std::sort(orderedRegisterIndices.begin(), orderedRegisterIndices.end(),
+			[pXboxDeclaration](const auto& x, const auto& y)
+			{
+				auto regX = pXboxDeclaration->Slots[x];
+				auto regY = pXboxDeclaration->Slots[y];
+				return std::tie(regX.IndexOfStream, regX.Offset)
+					 < std::tie(regY.IndexOfStream, regY.Offset);
+			});
+
+		for (size_t i = 0; i < orderedRegisterIndices.size(); i++) {
+			auto regIndex = orderedRegisterIndices[i];
+			auto &slot = pXboxDeclaration->Slots[regIndex];
 			if (slot.Format >= xbox::X_D3DVSDT_NONE) {
 				// Set Direct3D9 vertex element (declaration) members :
-				if (VshConvertToken_STREAMDATA_REG(VertexRegister, slot)) {
+				if (VshConvertToken_STREAMDATA_REG(regIndex, slot)) {
 					// Add this register to the list of declared registers
-					RegVIsPresentInDeclaration[VertexRegister] = true;
+					RegVIsPresentInDeclaration[regIndex] = true;
 					// Remember a pointer to this register
-					HostVertexElementPerRegister[VertexRegister] = pRecompiled;
+					HostVertexElementPerRegister[regIndex] = pRecompiled;
 					pRecompiled++;
 				}
 			}
