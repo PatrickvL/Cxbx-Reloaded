@@ -1493,24 +1493,17 @@ void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD C
 	}
 #endif*/ // _DEBUG_TRACK_VS_CONST
 
-// Xbox vertex shader constants range from -96 to 95
-// The host does not support negative, so we adjust to 0..191
+	// Xbox vertex shader constants range from -96 to 95
+	// The host does not support negative, so we adjust to 0..191
 	Register += X_D3DSCM_CORRECTION;
 
 	if (Register < 0) LOG_TEST_CASE("Register < 0");
 	if (Register + ConstantCount > X_D3DVS_CONSTREG_COUNT) LOG_TEST_CASE("Register + ConstantCount > X_D3DVS_CONSTREG_COUNT");
-	HRESULT hRet;
-	hRet = g_pD3DDevice->SetVertexShaderConstantF(
-		Register,
-		(float*)pConstantData,
-		ConstantCount
-	);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShaderConstant");
 
-	if (FAILED(hRet))
-	{
-		EmuLog(LOG_LEVEL::WARNING, "We're lying about setting a vertex shader constant!");
-		hRet = D3D_OK;
+	HRESULT hRet = g_pD3DDevice->SetVertexShaderConstantF(Register, (float*)pConstantData, ConstantCount);
+	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShaderConstant");
+	if (FAILED(hRet)) {
+		LOG_TEST_CASE("We're lying about setting a vertex shader constant!");
 	}
 }
 

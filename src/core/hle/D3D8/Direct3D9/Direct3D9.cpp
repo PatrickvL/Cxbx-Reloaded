@@ -2364,6 +2364,7 @@ static DWORD WINAPI EmuCreateDeviceProxy(LPVOID)
                         CxbxKrnlCleanup("Could not initialize DirectDraw7");
 
 					hRet = g_pDD7->GetCaps(&g_DriverCaps, nullptr);
+					// TODO : Why does this call return DDERR_INVALIDPARAMS, even when passing in a second argument?
 					DEBUG_D3DRESULT(hRet, "g_pDD7->GetCaps");
 
                     hRet = g_pDD7->SetCooperativeLevel(0, DDSCL_NORMAL);
@@ -4102,6 +4103,12 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant)
 		LOG_FUNC_ARG(ConstantCount)
 		LOG_FUNC_END;
 
+	// TODO : Should we trampoline into Xbox code as well here,
+	// so that besides pushing NV2A commands, Xbox internal D3D
+	// state gets updated?
+	// Or better yet, remove all D3DDevice_SetVertexShaderConstant patches
+	// once CxbxTransferVertexShaderConstants is reliable (ie. : when we're
+	// able to flush the NV2A push buffer)
 	CxbxImpl_SetVertexShaderConstant(Register, pConstantData, ConstantCount);
 }
 
@@ -6641,6 +6648,8 @@ void EmuUpdateActiveTextureStages()
 
 extern float* HLE_read_NV2A_vertex_constant_float4_ptr(unsigned const_index);
 
+// TODO : Once CxbxTransferVertexShaderConstants is reliable (ie. : when we're able to flush the NV2A push buffer)
+// remove our patches on D3DDevice_SetVertexShaderConstant (and CxbxImpl_SetVertexShaderConstant)
 void CxbxTransferVertexShaderConstants()
 {
 	// Some titles set Vertex Shader constants directly via pushbuffers rather than through D3D
