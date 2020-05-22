@@ -299,8 +299,16 @@ static DWORD* CxbxGetVertexShaderTokens(xbox::X_D3DVertexShader* pXboxVertexShad
 	return &pXboxVertexShader->ProgramAndConstants[0];
 }
 
-static xbox::X_VERTEXATTRIBUTEFORMAT *GetXboxVertexAttributeFormat()
+extern bool g_InlineVertexBuffer_DeclarationOverride; // TMP glue
+extern xbox::X_VERTEXATTRIBUTEFORMAT g_InlineVertexBuffer_AttributeFormat; // TMP glue
+
+static xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat()
 {
+	// Special case for CxbxImpl_End() based drawing
+	if (g_InlineVertexBuffer_DeclarationOverride) {
+		return &g_InlineVertexBuffer_AttributeFormat;
+	}
+
 	xbox::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
 	if (pXboxVertexShader == xbnullptr) {
 		// Despite possibly not being used, the pXboxVertexShader argument must always be assigned
@@ -1424,16 +1432,16 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		// Note : We avoid calling CxbxImpl_SetVertexData4f here, as that would
 		// start populating g_InlineVertexBuffer_Table, which is not our intend here.
 		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_HASDIFFUSE)) {
-			CxbxSetVertexAttribute(XTL::X_D3DVSDE_DIFFUSE, 1, 1, 1, 1);
+			CxbxSetVertexAttribute(xbox::X_D3DVSDE_DIFFUSE, 1, 1, 1, 1);
 		}
 		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_HASSPECULAR)) {
-			CxbxSetVertexAttribute(XTL::X_D3DVSDE_SPECULAR, 0, 0, 0, 0);
+			CxbxSetVertexAttribute(xbox::X_D3DVSDE_SPECULAR, 0, 0, 0, 0);
 		}
 		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_HASBACKDIFFUSE)) {
-			CxbxSetVertexAttribute(XTL::X_D3DVSDE_BACKDIFFUSE, 1, 1, 1, 1);
+			CxbxSetVertexAttribute(xbox::X_D3DVSDE_BACKDIFFUSE, 1, 1, 1, 1);
 		}
 		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_HASBACKSPECULAR)) {
-			CxbxSetVertexAttribute(XTL::X_D3DVSDE_BACKSPECULAR, 0, 0, 0, 0);
+			CxbxSetVertexAttribute(xbox::X_D3DVSDE_BACKSPECULAR, 0, 0, 0, 0);
 		}
 
 		// Switch to passthrough program, if so required
