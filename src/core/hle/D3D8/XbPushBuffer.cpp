@@ -63,7 +63,7 @@ int DxbxFVF_GetNumberOfTextureCoordinates(DWORD dwFVF, int aTextureIndex)
 }
 
 // Dxbx Note: This code appeared in EmuExecutePushBufferRaw and occured
-// in EmuFlushIVB too, so it's generalize in this single implementation.
+// in CxbxImpl_End too, so it's generalize in this single implementation.
 UINT DxbxFVFToVertexSizeInBytes(DWORD dwFVF, BOOL bIncludeTextures)
 {
 /*
@@ -350,19 +350,6 @@ uint32_t HLE_read_NV2A_pgraph_register(const int reg)
 	NV2AState* dev = g_NV2A->GetDeviceState();
 	PGRAPHState *pg = &(dev->pgraph);
 	return pg->regs[reg];
-}
-
-void HLE_write_NV2A_vertex_attribute_slot(unsigned slot, uint32_t parameter)
-{
-	// Avoid assert(false) on NV_PGRAPH_CTX_CONTROL in pgraph_handle_method()
-	auto d = g_NV2A->GetDeviceState();
-	d->pgraph.regs[NV_PGRAPH_CTX_CONTROL] |= NV_PGRAPH_CTX_CONTROL_CHID;
-
-	// Write value to LLE NV2A device
-	pgraph_handle_method(d,
-		/*subchannel=*/0,
-		/*method=*/NV097_SET_VERTEX_DATA4UB + (4 * slot),
-		parameter);
 }
 
 float *HLE_get_NV2A_vertex_attribute_value_pointer(unsigned slot)

@@ -45,16 +45,29 @@
 #define MAX_STREAM_NOT_USED_TIME (2 * CLOCKS_PER_SEC) // TODO: Trim the not used time
 
 // Inline vertex buffer emulation
-extern xbox::X_D3DPRIMITIVETYPE g_InlineVertexBuffer_PrimitiveType = xbox::X_D3DPT_INVALID;
-extern DWORD                   g_InlineVertexBuffer_FVF = 0;
-extern struct _D3DIVB         *g_InlineVertexBuffer_Table = nullptr;
-extern UINT                    g_InlineVertexBuffer_TableLength = 0;
-extern UINT                    g_InlineVertexBuffer_TableOffset = 0;
+extern struct _D3DIVB
+{
+	D3DXVECTOR3 Position;     // X_D3DVSDE_POSITION (*) > D3DFVF_XYZ / D3DFVF_XYZRHW
+	FLOAT            Rhw;          // X_D3DVSDE_VERTEX (*)   > D3DFVF_XYZ / D3DFVF_XYZRHW
+	FLOAT			 Blend[4];	   // X_D3DVSDE_BLENDWEIGHT  > D3DFVF_XYZB1 (and 3 more up to D3DFVF_XYZB4)
+	D3DXVECTOR3 Normal;       // X_D3DVSDE_NORMAL       > D3DFVF_NORMAL
+	D3DCOLOR         Diffuse;      // X_D3DVSDE_DIFFUSE      > D3DFVF_DIFFUSE
+	D3DCOLOR         Specular;     // X_D3DVSDE_SPECULAR     > D3DFVF_SPECULAR
+	FLOAT            Fog;          // X_D3DVSDE_FOG          > D3DFVF_FOG unavailable; TODO : How to handle?
+	D3DCOLOR         BackDiffuse;  // X_D3DVSDE_BACKDIFFUSE  > D3DFVF_BACKDIFFUSE unavailable; TODO : How to handle?
+	D3DCOLOR         BackSpecular; // X_D3DVSDE_BACKSPECULAR > D3DFVF_BACKSPECULAR unavailable; TODO : How to handle?
+	D3DXVECTOR4 TexCoord[4];  // X_D3DVSDE_TEXCOORD0    > D3DFVF_TEX1 (and 4 more up to D3DFVF_TEX4)
 
-FLOAT *g_InlineVertexBuffer_pData = nullptr;
-UINT   g_InlineVertexBuffer_DataSize = 0;
-
-extern DWORD				g_dwPrimPerFrame = 0;
+	// (*) X_D3DVSDE_POSITION and X_D3DVSDE_VERTEX both set Position, but Rhw seems optional,
+	// hence, selection for D3DFVF_XYZ or D3DFVF_XYZRHW is rather fuzzy. We DO know that once
+	// D3DFVF_NORMAL is given, D3DFVF_XYZRHW is forbidden (see D3DDevice_SetVertexData4f)
+}                           *g_InlineVertexBuffer_Table = nullptr;
+xbox::X_D3DPRIMITIVETYPE     g_InlineVertexBuffer_PrimitiveType = xbox::X_D3DPT_INVALID;
+DWORD                        g_InlineVertexBuffer_FVF = 0; // TODO : Replace by X_VERTEXATTRIBUTEFORMAT
+UINT                         g_InlineVertexBuffer_TableLength = 0;
+UINT                         g_InlineVertexBuffer_TableOffset = 0;
+FLOAT                       *g_InlineVertexBuffer_pData = nullptr;
+UINT                         g_InlineVertexBuffer_DataSize = 0;
 
 // Copy of active Xbox D3D Vertex Streams (and strides), set by [D3DDevice|CxbxImpl]_SetStreamSource*
 xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS] = { 0 }; // Note : .Offset member is never set (so always 0)
@@ -63,7 +76,6 @@ extern xbox::X_D3DSurface* g_pXbox_RenderTarget;
 extern xbox::X_D3DSurface* g_pXbox_BackBufferSurface;
 extern xbox::X_D3DMULTISAMPLE_TYPE g_Xbox_MultiSampleType;
 
-extern void HLE_write_NV2A_vertex_attribute_slot(unsigned slot, uint32_t parameter); // Declared in PushBuffer.cpp
 extern float *HLE_get_NV2A_vertex_attribute_value_pointer(unsigned VertexSlot); // Declared in PushBuffer.cpp
 
 void *GetDataFromXboxResource(xbox::X_D3DResource *pXboxResource);
@@ -790,8 +802,48 @@ void CxbxVertexBufferConverter::Apply(CxbxDrawContext *pDrawContext)
 	}
 }
 
-VOID EmuFlushIVB()
+void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 {
+	// Write these values to the NV2A registers, so that we read them back when needed
+	float* attribute_floats = HLE_get_NV2A_vertex_attribute_value_pointer(Register);
+	attribute_floats[0] = a;
+	attribute_floats[1] = b;
+	attribute_floats[2] = c;
+	attribute_floats[3] = d;
+
+	// Also, write the given register value to a matching host vertex shader constant
+	// This allows us to implement Xbox functionality where SetVertexData4f can be used to specify attributes
+	// not present in the vertex declaration.
+	// We use range 193 and up to store these values, as Xbox shaders stop at c192!
+	if (Register < 0) LOG_TEST_CASE("Register < 0");
+	if (Register >= 16) LOG_TEST_CASE("Register >= 16");
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_BASE + Register, attribute_floats, 1);
+}
+
+DWORD Float4ToDWORD(float* floats)
+{
+	// Inverse of D3DDevice_SetVertexDataColor
+	uint8_t a = uint8_t(floats[0] * 255.0f);
+	uint8_t b = uint8_t(floats[1] * 255.0f);
+	uint8_t c = uint8_t(floats[2] * 255.0f);
+	uint8_t d = uint8_t(floats[3] * 255.0f);
+	uint32_t value = a + (b << 8) + (c << 16) + (d << 24);
+	return value;
+}
+
+void CxbxImpl_Begin(xbox::X_D3DPRIMITIVETYPE PrimitiveType)
+{
+	g_InlineVertexBuffer_PrimitiveType = PrimitiveType;
+	g_InlineVertexBuffer_TableOffset = 0;
+	g_InlineVertexBuffer_FVF = 0;
+}
+
+void CxbxImpl_End()
+{
+	if (g_InlineVertexBuffer_TableOffset <= 0) {
+		return;
+	}
+
 	CxbxUpdateNativeD3DResources();
 
     // Parse IVB table with current FVF shader if possible.
@@ -804,18 +856,18 @@ VOID EmuFlushIVB()
 	switch (dwCurFVF & D3DFVF_POSITION_MASK) {
 	case 0: // No position ?
 		if (bFVF) {
-			EmuLog(LOG_LEVEL::WARNING, "EmuFlushIVB(): g_Xbox_VertexShader_Handle isn't a valid FVF - using D3DFVF_XYZRHW instead!");
+			EmuLog(LOG_LEVEL::WARNING, "CxbxImpl_End(): g_Xbox_VertexShader_Handle isn't a valid FVF - using D3DFVF_XYZRHW instead!");
 			dwCurFVF |= D3DFVF_XYZRHW;
 		}
 		else {
-			EmuLog(LOG_LEVEL::WARNING, "EmuFlushIVB(): using g_InlineVertexBuffer_FVF instead of current FVF!");
+			EmuLog(LOG_LEVEL::WARNING, "CxbxImpl_End(): using g_InlineVertexBuffer_FVF instead of current FVF!");
 			dwCurFVF = g_InlineVertexBuffer_FVF;
 		}
 		break;
 	case D3DFVF_XYZRHW:
 		// D3DFVF_NORMAL isn't allowed in combination with D3DFVF_XYZRHW 
 		if (dwCurFVF & D3DFVF_NORMAL) {
-			EmuLog(LOG_LEVEL::WARNING, "EmuFlushIVB(): Normal encountered while D3DFVF_XYZRHW is given - switching back to D3DFVF_XYZ!");
+			EmuLog(LOG_LEVEL::WARNING, "CxbxImpl_End(): Normal encountered while D3DFVF_XYZRHW is given - switching back to D3DFVF_XYZ!");
 			dwCurFVF &= ~D3DFVF_POSITION_MASK;
 			dwCurFVF |= D3DFVF_XYZ;
 		}
@@ -934,7 +986,7 @@ VOID EmuFlushIVB()
 		if (v == 0) {
 			unsigned int VertexBufferUsage = (uintptr_t)pVertexBufferData - (uintptr_t)g_InlineVertexBuffer_pData;
 			if (VertexBufferUsage != uiStride) {
-				CxbxKrnlCleanup("EmuFlushIVB uses wrong stride!");
+				CxbxKrnlCleanup("CxbxImpl_End uses wrong stride!");
 			}
 		}
 	}
@@ -959,7 +1011,12 @@ VOID EmuFlushIVB()
 		hRet = g_pD3DDevice->SetFVF(g_Xbox_VertexShader_Handle);
 		//DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShader");
 	}
-    g_InlineVertexBuffer_TableOffset = 0; // Might not be needed (also cleared in D3DDevice_Begin)
+
+	g_InlineVertexBuffer_TableOffset = 0; // Might not be needed (also cleared in D3DDevice_Begin)
+
+	// TODO: Should technically clean this up at some point..but on XP doesnt matter much
+	//	g_VMManager.Deallocate((VAddr)g_InlineVertexBuffer_pData);
+	//	g_VMManager.Deallocate((VAddr)g_InlineVertexBuffer_Table);
 }
 
 void CxbxImpl_SetStreamSource(UINT StreamNumber, xbox::X_D3DVertexBuffer* pStreamData, UINT Stride)
@@ -972,35 +1029,6 @@ void CxbxImpl_SetStreamSource(UINT StreamNumber, xbox::X_D3DVertexBuffer* pStrea
 
 	g_Xbox_SetStreamSource[StreamNumber].VertexBuffer = pStreamData;
 	g_Xbox_SetStreamSource[StreamNumber].Stride = Stride;
-}
-
-void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
-{
-	// Write these values to the NV2A registers, so that we read them back when needed
-	float *attribute_floats = HLE_get_NV2A_vertex_attribute_value_pointer(Register);
-	attribute_floats[0] = a;
-	attribute_floats[1] = b;
-	attribute_floats[2] = c;
-	attribute_floats[3] = d;
-
-	// Also, write the given register value to a matching host vertex shader constant
-	// This allows us to implement Xbox functionality where SetVertexData4f can be used to specify attributes
-	// not present in the vertex declaration.
-	// We use range 193 and up to store these values, as Xbox shaders stop at c192!
-	if (Register < 0) LOG_TEST_CASE("Register < 0");
-	if (Register >= 16) LOG_TEST_CASE("Register >= 16");
-	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_BASE + Register, attribute_floats, 1);
-}
-
-DWORD Float4ToDWORD(float *floats)
-{
-	// Inverse of D3DDevice_SetVertexDataColor
-	uint8_t a = uint8_t(floats[0] * 255.0f);
-	uint8_t b = uint8_t(floats[1] * 255.0f);
-	uint8_t c = uint8_t(floats[2] * 255.0f);
-	uint8_t d = uint8_t(floats[3] * 255.0f);
-	uint32_t value = a + (b << 8) + (c << 16) + (d << 24);
-	return value;
 }
 
 void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
@@ -1060,7 +1088,7 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 		g_InlineVertexBuffer_Table[o].Position.x = a;
 		g_InlineVertexBuffer_Table[o].Position.y = b;
 		g_InlineVertexBuffer_Table[o].Position.z = c;
-		g_InlineVertexBuffer_Table[o].Rhw = d; // Was : 1.0f; // Dxbx note : Why set Rhw to 1.0? And why ignore d?
+		g_InlineVertexBuffer_Table[o].Rhw = d;
 
 		switch (g_InlineVertexBuffer_FVF & D3DFVF_POSITION_MASK) {
 		case 0:
@@ -1069,10 +1097,11 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 				// See https://msdn.microsoft.com/ru-ru/library/windows/desktop/bb172559(v=vs.85).aspx and DxbxFVFToVertexSizeInBytes 
 				// D3DFVF_NORMAL cannot be combined with D3DFVF_XYZRHW :
 				g_InlineVertexBuffer_FVF |= D3DFVF_XYZ;
-				g_InlineVertexBuffer_Table[o].Rhw = 1.0f; // This, just to stay close to prior behaviour
 			}
 			else {
-				// Without D3DFVF_NORMAL, assume D3DFVF_XYZRHW
+				LOG_TEST_CASE("Without D3DFVF_NORMAL, assuming D3DFVF_XYZRHW");
+				// TODO : Get this right. Perhaps Register distinction between
+				// X_D3DVSDE_VERTEX and X_D3DVSDE_POSITION determines RHW??
 				g_InlineVertexBuffer_FVF |= D3DFVF_XYZRHW;
 			}
 			break;
@@ -1088,7 +1117,7 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 
 		// Start a new vertex
 		g_InlineVertexBuffer_TableOffset++;
-		// Copy all attributes of the previous vertex (if any) to the new vertex
+		// Copy all attributes of the prior vertex to the new one, to simulate persistent attribute values
 		g_InlineVertexBuffer_Table[g_InlineVertexBuffer_TableOffset] = g_InlineVertexBuffer_Table[o];
 
 		break;
@@ -1136,7 +1165,6 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	{
 		g_InlineVertexBuffer_Table[o].Diffuse = D3DCOLOR_COLORVALUE(a, b, c, d);
 		g_InlineVertexBuffer_FVF |= D3DFVF_DIFFUSE;
-		HLE_write_NV2A_vertex_attribute_slot(X_D3DVSDE_DIFFUSE, g_InlineVertexBuffer_Table[o].Diffuse);
 		break;
 	}
 
@@ -1144,7 +1172,6 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	{
 		g_InlineVertexBuffer_Table[o].Specular = D3DCOLOR_COLORVALUE(a, b, c, d);
 		g_InlineVertexBuffer_FVF |= D3DFVF_SPECULAR;
-		HLE_write_NV2A_vertex_attribute_slot(X_D3DVSDE_SPECULAR, g_InlineVertexBuffer_Table[o].Specular);
 		break;
 	}
 
@@ -1161,7 +1188,6 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	{
 		g_InlineVertexBuffer_Table[o].BackDiffuse = D3DCOLOR_COLORVALUE(a, b, c, d);
 		//EmuLog(LOG_LEVEL::WARNING, "Host Direct3D8 doesn''t support FVF BACKDIFFUSE");
-		HLE_write_NV2A_vertex_attribute_slot(X_D3DVSDE_BACKDIFFUSE, g_InlineVertexBuffer_Table[o].BackDiffuse);
 		break;
 	}
 
@@ -1169,7 +1195,6 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	{
 		g_InlineVertexBuffer_Table[o].BackSpecular = D3DCOLOR_COLORVALUE(a, b, c, d);
 		//EmuLog(LOG_LEVEL::WARNING, "Host Direct3D8 doesn''t support FVF BACKSPECULAR");
-		HLE_write_NV2A_vertex_attribute_slot(X_D3DVSDE_BACKSPECULAR, g_InlineVertexBuffer_Table[o].BackSpecular);
 		break;
 	}
 

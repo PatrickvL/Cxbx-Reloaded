@@ -4326,9 +4326,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_Begin)
 {
 	LOG_FUNC_ONE_ARG(PrimitiveType);
 
-    g_InlineVertexBuffer_PrimitiveType = PrimitiveType;
-    g_InlineVertexBuffer_TableOffset = 0;
-    g_InlineVertexBuffer_FVF = 0;
+	CxbxImpl_Begin(PrimitiveType);
 }
 
 // ******************************************************************
@@ -4495,12 +4493,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_End)()
 {
 	LOG_FUNC();
 
-    if(g_InlineVertexBuffer_TableOffset > 0)
-        EmuFlushIVB();
-
-    // TODO: Should technically clean this up at some point..but on XP doesnt matter much
-//    g_VMManager.Deallocate((VAddr)g_InlineVertexBuffer_pData);
-//    g_VMManager.Deallocate((VAddr)g_InlineVertexBuffer_Table);
+	CxbxImpl_End();
 }
 
 // ******************************************************************
@@ -6282,7 +6275,7 @@ constexpr unsigned int InputQuadsPerPage = ((IndicesPerPage * VERTICES_PER_QUAD)
 
 // TODO : Move to own file
 // Called by CxbxDrawPrimitiveUP (indirectly by D3DDevice_DrawVerticesUP,
-// EmuExecutePushBufferRaw and EmuFlushIVB) when PrimitiveType == X_D3DPT_QUADLIST.
+// EmuExecutePushBufferRaw and CxbxImpl_End) when PrimitiveType == X_D3DPT_QUADLIST.
 // Emulated by calling g_pD3DDevice->DrawIndexedPrimitiveUP with index data that maps
 // quads to triangles. This function creates the index buffer that is needed for this;
 // For every quad that must be drawn, we generate indices for two triangles.
@@ -6511,7 +6504,7 @@ void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 
 // TODO : Move to own file
 // Drawing function specifically for rendering Xbox draw calls supplying a 'User Pointer'.
-// Called by D3DDevice_DrawVerticesUP, EmuExecutePushBufferRaw and EmuFlushIVB
+// Called by D3DDevice_DrawVerticesUP, EmuExecutePushBufferRaw and CxbxImpl_End
 void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 {
 	LOG_INIT // Allows use of DEBUG_D3DRESULT
