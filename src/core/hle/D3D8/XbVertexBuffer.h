@@ -130,5 +130,10 @@ extern VOID EmuFlushIVB();
 extern VOID EmuUpdateActiveTexture();
 
 extern DWORD g_dwPrimPerFrame;
- 
+
+extern void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d);
+
+extern void CxbxImpl_SetStreamSource(UINT StreamNumber, XTL::X_D3DVertexBuffer* pStreamData, UINT Stride);
+extern void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d);
+
 #endif

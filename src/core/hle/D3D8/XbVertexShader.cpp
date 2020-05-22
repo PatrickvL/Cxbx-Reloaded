@@ -34,6 +34,7 @@
 #include "core\kernel\support\Emu.h"
 #include "core\hle\D3D8\Direct3D9\Direct3D9.h" // For g_Xbox_VertexShader_Handle
 #include "core\hle\D3D8\Direct3D9\VertexShaderSource.h" // For g_VertexShaderSource
+#include "core\hle\D3D8\XbVertexBuffer.h" // For CxbxImpl_SetVertexData4f
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
 #include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST, NV2A_VP_UPLOAD_CONST_ID, NV2A_VP_UPLOAD_CONST
@@ -147,7 +148,7 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 	}
 
 	if (xboxFvf & X_D3DFVF_DIFFUSE) {
-		g_Xbox_VertexShader_ForFVF.Flags |= X_VERTEXSHADER_FLAG_HASDIFFUSE; 
+		g_Xbox_VertexShader_ForFVF.Flags |= X_VERTEXSHADER_FLAG_HASDIFFUSE;
 		pSlot = &declaration.Slots[X_D3DVSDE_DIFFUSE];
 		pSlot->Format = X_D3DVSDT_D3DCOLOR;
 		pSlot->Offset = offset;
@@ -1187,7 +1188,6 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	// one for FOGSOURCEZ
 	// one for WFOG
 
-	g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES);
 }
 
@@ -1417,6 +1417,24 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 #endif
 		g_Xbox_VertexShader_Handle = Handle;
 		g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
+
+		// Only when there's no program, set default values for attributes missing from vertex shader
+		// Note : We avoid calling CxbxImpl_SetVertexData4f here, as that would
+		// start populating g_InlineVertexBuffer_Table, which is not our intend here.
+		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_HASDIFFUSE)) {
+			CxbxSetVertexAttribute(XTL::X_D3DVSDE_DIFFUSE, 1, 1, 1, 1);
+		}
+		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_HASSPECULAR)) {
+			CxbxSetVertexAttribute(XTL::X_D3DVSDE_SPECULAR, 0, 0, 0, 0);
+		}
+		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_HASBACKDIFFUSE)) {
+			CxbxSetVertexAttribute(XTL::X_D3DVSDE_BACKDIFFUSE, 1, 1, 1, 1);
+		}
+		if (!(pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_HASBACKSPECULAR)) {
+			CxbxSetVertexAttribute(XTL::X_D3DVSDE_BACKSPECULAR, 0, 0, 0, 0);
+		}
+
+		// Switch to passthrough program, if so required
 		if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PASSTHROUGH) {
 			CxbxSetVertexShaderPassthroughProgram();
 			g_Xbox_VertexShader_IsFixedFunction = false;

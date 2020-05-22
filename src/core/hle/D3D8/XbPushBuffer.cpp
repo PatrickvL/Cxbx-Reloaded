@@ -365,21 +365,14 @@ void HLE_write_NV2A_vertex_attribute_slot(unsigned slot, uint32_t parameter)
 		parameter);
 }
 
-uint32_t HLE_read_NV2A_vertex_attribute_slot(unsigned slot)
+float *HLE_get_NV2A_vertex_attribute_value_pointer(unsigned slot)
 {
 	NV2AState* dev = g_NV2A->GetDeviceState();
 	PGRAPHState *pg = &(dev->pgraph);
 
 	// See CASE_16(NV097_SET_VERTEX_DATA4UB, 4) in LLE pgraph_handle_method()
 	VertexAttribute *vertex_attribute = &pg->vertex_attributes[slot];
-	// Inverse of D3DDevice_SetVertexDataColor
-	uint8_t a = uint8_t(vertex_attribute->inline_value[0] * 255.0f);
-	uint8_t b = uint8_t(vertex_attribute->inline_value[1] * 255.0f);
-	uint8_t c = uint8_t(vertex_attribute->inline_value[2] * 255.0f);
-	uint8_t d = uint8_t(vertex_attribute->inline_value[3] * 255.0f);
-	uint32_t value = a + (b << 8) + (c << 16) + (d << 24);
-
-	return value;
+	return vertex_attribute->inline_value;
 }
 
 uint32_t HLE_read_NV2A_vertex_program_slot(unsigned program_load, unsigned slot)
