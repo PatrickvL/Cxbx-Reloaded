@@ -1182,7 +1182,9 @@ static void CxbxSetVertexShaderPassthroughProgram()
 		0, 0x0020181B, 0x0836106C, 0x2070F861 // FLD_FINAL is set here!
 	};
 
-	LOG_TEST_CASE("Setting Xbox passthrough shader");
+	// LOG_TEST_CASE("Setting Xbox passthrough shader");
+	// Test cases : Many XDK samples & games
+
 	// TODO : Xbox uses three variants;
 	// one for FOGTABLEMODE NONE
 	// one for FOGSOURCEZ
@@ -1442,8 +1444,8 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 			// Test-case : Amped
 			LOG_TEST_CASE("unknown vertex shader flag (4)");
 		} else {
-			// Test-case : Crazy taxi 3
-			LOG_TEST_CASE("Other or no vertex shader flags");
+			// Test-case : Many XDK samples, Crazy taxi 3
+			//LOG_TEST_CASE("Other or no vertex shader flags");
 			g_Xbox_VertexShader_IsFixedFunction = true;
 		}
 	}

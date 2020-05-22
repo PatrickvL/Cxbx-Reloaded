@@ -987,10 +987,9 @@ void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	// This allows us to implement Xbox functionality where SetVertexData4f can be used to specify attributes
 	// not present in the vertex declaration.
 	// We use range 193 and up to store these values, as Xbox shaders stop at c192!
-	FLOAT values[] = { a,b,c,d };
 	if (Register < 0) LOG_TEST_CASE("Register < 0");
 	if (Register >= 16) LOG_TEST_CASE("Register >= 16");
-	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_BASE + Register, values, 1);
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_BASE + Register, attribute_floats, 1);
 }
 
 DWORD Float4ToDWORD(float *floats)
