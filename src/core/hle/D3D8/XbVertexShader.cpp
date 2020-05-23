@@ -302,7 +302,7 @@ static DWORD* CxbxGetVertexShaderTokens(xbox::X_D3DVertexShader* pXboxVertexShad
 extern bool g_InlineVertexBuffer_DeclarationOverride; // TMP glue
 extern xbox::X_VERTEXATTRIBUTEFORMAT g_InlineVertexBuffer_AttributeFormat; // TMP glue
 
-static xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat()
+xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat()
 {
 	// Special case for CxbxImpl_End() based drawing
 	if (g_InlineVertexBuffer_DeclarationOverride) {
