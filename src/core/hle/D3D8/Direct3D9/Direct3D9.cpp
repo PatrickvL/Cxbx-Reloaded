@@ -106,6 +106,7 @@ static DWORD						g_OverlaySwap = 0; // Set in D3DDevice_UpdateOverlay
 static int                          g_iWireframe = 0; // wireframe toggle
 static bool                         g_bHack_UnlockFramerate = false; // ignore the xbox presentation interval
 static bool                         g_bHasDepth = false;    // Does device have a Depth Buffer?
+       float                        g_ZScale = 1.0;
 static bool                         g_bHasStencil = false;  // Does device have a Stencil Buffer?
 static DWORD						g_dwPrimPerFrame = 0;	// Number of primitives within one frame
 static float                        g_AspectRatioScale = 1.0f;
@@ -3852,8 +3853,8 @@ void ValidateRenderTargetDimensions(DWORD HostRenderTarget_Width, DWORD HostRend
 float GetZScaleForSurface(xbox::X_D3DSurface* pSurface)
 {
     // If no surface was present, fallback to 1
-    if (pSurface == xbox::zeroptr) {
-        return 1;
+    if (pSurface == xbox:zeroptr) {
+        return 1.0f;
     }
 
     auto format = GetXboxPixelContainerFormat(pSurface);
@@ -3879,7 +3880,7 @@ float GetZScaleForSurface(xbox::X_D3DSurface* pSurface)
 
     // Default to 1 if unknown depth format
     LOG_TEST_CASE("GetZScaleForSurface: Unknown Xbox Depth Format");
-    return 1;
+    return 1.0f;
 }
 
 void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
@@ -3907,9 +3908,8 @@ void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
     float offsetHeight = scaleHeight;
 
     // Calculate Z scale & offset
-    float zScale = GetZScaleForSurface(g_pXbox_DepthStencil);
-    float scaleZ = zScale * (ViewPort.MaxZ - ViewPort.MinZ);
-    float offsetZ = zScale * ViewPort.MinZ;
+    float scaleZ = g_ZScale * (ViewPort.MaxZ - ViewPort.MinZ);
+    float offsetZ = g_ZScale * ViewPort.MinZ;
 
 	// TODO will we need to do something here to support upscaling?
 	// TODO remove the code above as required
@@ -3942,7 +3942,7 @@ void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
 	vScale[3] = 1.0f; // ?
 }
 
-void UpdateViewPortOffsetAndScaleConstants()
+void CxbxUpdateViewPortOffsetAndScaleConstants()
 {
     float vOffset[4], vScale[4];
     GetViewPortOffsetAndScale(vOffset, vScale);
@@ -3952,12 +3952,13 @@ void UpdateViewPortOffsetAndScaleConstants()
 
 	// Store viewport offset and scale in constant registers 58 (c-38) and
 	// 59 (c-37) used for screen space transformation.
-	// We only do this if X_D3DSCM_NORESERVEDCONSTANTS is not set, since enabling this flag frees up these registers for shader used
+	// We only do this if X_D3DSCM_NORESERVEDCONSTANTS is not set,
+	// since enabling this flag frees up these registers for shader use
 	// Treat this as a flag
 	// Test Case: GTA III, Soldier of Fortune II
 	if (!(g_Xbox_VertexShaderConstantMode & X_D3DSCM_NORESERVEDCONSTANTS)) {
-		g_pD3DDevice->SetVertexShaderConstantF(X_D3DSCM_RESERVED_CONSTANT_SCALE + X_D3DSCM_CORRECTION, vScale, 1);
-		g_pD3DDevice->SetVertexShaderConstantF(X_D3DSCM_RESERVED_CONSTANT_OFFSET + X_D3DSCM_CORRECTION, vOffset, 1);
+		CxbxImpl_SetVertexShaderConstant(X_D3DSCM_RESERVED_CONSTANT_SCALE, vScale, 1);
+		CxbxImpl_SetVertexShaderConstant(X_D3DSCM_RESERVED_CONSTANT_OFFSET, vOffset, 1);
 	}
 }
 
@@ -4107,7 +4108,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant)
 	// so that besides pushing NV2A commands, Xbox internal D3D
 	// state gets updated?
 	// Or better yet, remove all D3DDevice_SetVertexShaderConstant patches
-	// once CxbxTransferVertexShaderConstants is reliable (ie. : when we're
+	// once CxbxUpdateHostVertexShaderConstants is reliable (ie. : when we're
 	// able to flush the NV2A push buffer)
 	CxbxImpl_SetVertexShaderConstant(Register, pConstantData, ConstantCount);
 }
@@ -4274,7 +4275,7 @@ VOID __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
 
     if (Stage >= 0) {
 		// Switch Texture updates the data pointer of an active texture using pushbuffer commands
-		if (g_pXbox_SetTexture[Stage] == xbnullptr) {
+		if (g_pXbox_SetTexture[Stage] == xbox:zeroptr) {
 			LOG_TEST_CASE("D3DDevice_SwitchTexture without an active texture");
 		}
 		else {
@@ -6601,7 +6602,7 @@ IDirect3DBaseTexture* CxbxConvertXboxSurfaceToHostTexture(xbox::X_D3DBaseTexture
 	return (IDirect3DBaseTexture*)pNewHostTexture; // return it as a base texture
 }
 
-void EmuUpdateActiveTextureStages()
+void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
@@ -6639,24 +6640,28 @@ void EmuUpdateActiveTextureStages()
 	}
 }
 
-extern float* HLE_read_NV2A_vertex_constant_float4_ptr(unsigned const_index);
+extern float* HLE_get_NV2A_vertex_constant_float4_ptr(unsigned const_index); // TMP glue
 
-// TODO : Once CxbxTransferVertexShaderConstants is reliable (ie. : when we're able to flush the NV2A push buffer)
+// TODO : Once we're able to flush the NV2A push buffer
 // remove our patches on D3DDevice_SetVertexShaderConstant (and CxbxImpl_SetVertexShaderConstant)
-void CxbxTransferVertexShaderConstants()
+void CxbxUpdateHostVertexShaderConstants()
 {
-	// Some titles set Vertex Shader constants directly via pushbuffers rather than through D3D
-	// We handle that case by updating any constants that have the dirty flag set on the nv2a.
+	CxbxUpdateViewPortOffsetAndScaleConstants();
+
+	// Transfer all constants that have been flagged dirty to host
 	auto nv2a = g_NV2A->GetDeviceState();
 	for (int i = 0; i < X_D3DVS_CONSTREG_COUNT; i++) {
-		// Skip vOffset and vScale constants, we don't want our values to be overwritten by accident
-		if (i == X_D3DSCM_RESERVED_CONSTANT_OFFSET_CORRECTED || i == X_D3DSCM_RESERVED_CONSTANT_SCALE_CORRECTED) {
-			continue;
-		}
-
+		// Note : We don't skip X_D3DSCM_RESERVED_CONSTANT_OFFSET_CORRECTED and
+		// X_D3DSCM_RESERVED_CONSTANT_SCALE_CORRECTED constant indices, as these
+		// are already updated by CxbxUpdateViewPortOffsetAndScaleConstants and
+		// should just be transferred to host like any other
 		if (nv2a->pgraph.vsh_constants_dirty[i]) {
-			g_pD3DDevice->SetVertexShaderConstantF(i, HLE_read_NV2A_vertex_constant_float4_ptr(i), 1);
 			nv2a->pgraph.vsh_constants_dirty[i] = false;
+
+			float *constant_floats = HLE_get_NV2A_vertex_constant_float4_ptr(i);
+			// Note : If host SetVertexShaderConstantF has high overhead (unlikely),
+			// we could combine multiple adjacent constants into one call.
+			g_pD3DDevice->SetVertexShaderConstantF(i, constant_floats, 1);
 		}
 	}
 }
@@ -6673,11 +6678,9 @@ void CxbxUpdateNativeD3DResources()
 
 	CxbxUpdateHostVertexShader();
 
-    EmuUpdateActiveTextureStages();
+    CxbxUpdateHostTextures();
 
-	CxbxTransferVertexShaderConstants();
-
-	UpdateViewPortOffsetAndScaleConstants();
+	CxbxUpdateHostVertexShaderConstants();
 
 	// NOTE: Order is important here
     // Some Texture States depend on RenderState values (Point Sprites)
@@ -6692,8 +6695,6 @@ void CxbxUpdateNativeD3DResources()
 
 
 /* TODO : Port these :
-	DxbxUpdateActiveVertexShader();
-	DxbxUpdateActiveTextures();
 	DxbxUpdateDeferredStates(); // BeginPush sample shows us that this must come *after* texture update!
 	DxbxUpdateActiveVertexBufferStreams();
 	DxbxUpdateActiveRenderTarget();
@@ -7323,6 +7324,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget)
 
 	// The currenct depth stencil is always replaced by whats passed in here (even a null)
 	g_pXbox_DepthStencil = pNewZStencil;
+	g_ZScale = GetZScaleForSurface(g_pXbox_DepthStencil); // TODO : Discern between Xbox and host and do this in UpdateDepthStencilFlags?
     pHostDepthStencil = GetHostSurface(g_pXbox_DepthStencil, D3DUSAGE_DEPTHSTENCIL);
 
 	HRESULT hRet;
@@ -7396,7 +7398,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetPalette)
 	if (Stage >= xbox::X_D3DTS_STAGECOUNT) {
 		LOG_TEST_CASE("Stage out of bounds");
 	} else {
-		// Note : Actual update of paletized textures (X_D3DFMT_P8) happens in EmuUpdateActiveTextureStages!
+		// Note : Actual update of paletized textures (X_D3DFMT_P8) happens in CxbxUpdateHostTextures!
 		g_pXbox_Palette_Data[Stage] = GetDataFromXboxResource(pPalette);
 		g_Xbox_Palette_Size[Stage] = pPalette ? XboxD3DPaletteSizeToBytes(GetXboxPaletteSize(pPalette)) : 0;
 	}
@@ -7765,8 +7767,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetScreenSpaceOffset)
 		LOG_FUNC_ARG(y)
 		LOG_FUNC_END;
 
-    // No need to log this, it's safe to ignore.
-    //EmuLog(LOG_LEVEL::WARNING, "EmuD3DDevice_SetScreenSpaceOffset ignored");
+	CxbxImpl_SetScreenSpaceOffset(x, y);
 }
 
 // ******************************************************************

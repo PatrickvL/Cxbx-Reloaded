@@ -67,6 +67,10 @@
 // Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
                    xbox::DWORD g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT + 1) * X_VSH_INSTRUCTION_SIZE] = { 0 }; // One extra for FLD_FINAL terminator
 
+// Variables set by [D3DDevice|CxbxImpl]_SetScreenSpaceOffset:
+				  float g_Xbox_ScreenSpaceOffset_x = 0.0f;
+				  float g_Xbox_ScreenSpaceOffset_y = 0.0f;
+
 
 static xbox::X_D3DVertexShader g_Xbox_VertexShader_ForFVF = {};
 
@@ -1199,6 +1203,25 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	// one for WFOG
 
 	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES);
+
+	extern float g_ZScale; // TMP glue
+
+	// Passthrough programs require scale and offset to be set in constants zero and one
+	// (Note, these are different from GetMultiSampleOffsetAndScale)
+	float scale[4];
+	scale[0] = 1.0f;
+	scale[1] = 1.0f;
+	scale[2] = g_ZScale;
+	scale[3] = 1.0f;
+	CxbxImpl_SetVertexShaderConstant(0, scale, 1);
+
+	float MultiSampleBias = 0.0f; // TODO Set to 0.5f when MultiSample render state is enabled
+	float offset[4];
+	offset[0] = g_Xbox_ScreenSpaceOffset_x - MultiSampleBias;
+	offset[1] = g_Xbox_ScreenSpaceOffset_y - MultiSampleBias;
+	offset[2] = 0.0f;
+	offset[3] = 0.0f;
+	CxbxImpl_SetVertexShaderConstant(1, offset, 1);
 }
 
 CxbxVertexDeclaration* CxbxGetVertexDeclaration()
@@ -1244,6 +1267,15 @@ void CxbxUpdateHostVertexDeclaration()
 		vertexDefaultFlags[i] = pCxbxVertexDeclaration->vRegisterInDeclaration[i] ? 0.0f : 1.0f;
 	}
 	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, 4);
+}
+
+void CxbxImpl_SetScreenSpaceOffset(float x, float y)
+{
+	// See https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.3.1%20Pixel%20Coordinate%20System
+	static float PixelOffset = 0.53125f; // 0.5 for pixel center + 1/16?
+
+	g_Xbox_ScreenSpaceOffset_x = x + PixelOffset;
+	g_Xbox_ScreenSpaceOffset_y = y + PixelOffset;
 }
 
 // Note : SetVertexShaderInputDirect needs no EMUPATCH CxbxImpl_..., since it just calls SetVertexShaderInput
@@ -1484,22 +1516,10 @@ void CxbxImpl_DeleteVertexShader(DWORD Handle)
 }
 
 // TODO : Remove SetVertexShaderConstant implementation and the patch once
-// CxbxTransferVertexShaderConstants is reliable (ie. : when we're able to flush the NV2A push buffer)
+// CxbxUpdateHostVertexShaderConstants is reliable (ie. : when we're able to flush the NV2A push buffer)
 void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD ConstantCount)
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
-
-/*#ifdef _DEBUG_TRACK_VS_CONST
-	for (uint32_t i = 0; i < ConstantCount; i++)
-	{
-		printf("SetVertexShaderConstant, c%d  = { %f, %f, %f, %f }\n",
-			   Register + i,
-			   *((float*)pConstantData + 4 * i),
-			   *((float*)pConstantData + 4 * i + 1),
-			   *((float*)pConstantData + 4 * i + 2),
-			   *((float*)pConstantData + 4 * i + 3));
-	}
-#endif*/ // _DEBUG_TRACK_VS_CONST
 
 	// Xbox vertex shader constants range from -96 to 95
 	// The host does not support negative, so we adjust to 0..191
@@ -1508,10 +1528,16 @@ void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD C
 	if (Register < 0) LOG_TEST_CASE("Register < 0");
 	if (Register + ConstantCount > X_D3DVS_CONSTREG_COUNT) LOG_TEST_CASE("Register + ConstantCount > X_D3DVS_CONSTREG_COUNT");
 
-	HRESULT hRet = g_pD3DDevice->SetVertexShaderConstantF(Register, (float*)pConstantData, ConstantCount);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetVertexShaderConstant");
-	if (FAILED(hRet)) {
-		LOG_TEST_CASE("We're lying about setting a vertex shader constant!");
+	// Write Vertex Shader constants in nv2a
+	extern float* HLE_get_NV2A_vertex_constant_float4_ptr(unsigned const_index); // TMP glue
+	float* constant_floats = HLE_get_NV2A_vertex_constant_float4_ptr(Register);
+	memcpy(constant_floats, pConstantData, ConstantCount * sizeof(float) * 4);
+
+	// Mark the constant as dirty, so that CxbxUpdateHostVertexShaderConstants will pick it up
+	extern NV2ADevice* g_NV2A; // TMP glue
+	auto nv2a = g_NV2A->GetDeviceState();
+	for (int i = 0; i < ConstantCount; i++) {
+		nv2a->pgraph.vsh_constants_dirty[Register + i] = true;
 	}
 }
 

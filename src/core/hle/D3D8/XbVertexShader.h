@@ -204,6 +204,7 @@ extern bool CxbxVertexDeclarationNeedsPatching(CxbxVertexDeclaration* pCxbxVerte
 extern CxbxVertexDeclaration* CxbxGetVertexDeclaration();
 extern xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber);
 
+extern void CxbxImpl_SetScreenSpaceOffset(float x, float y);
 extern void CxbxImpl_LoadVertexShaderProgram(CONST DWORD* pFunction, DWORD Address);
 extern void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address);
 extern void CxbxImpl_SetVertexShader(DWORD Handle);

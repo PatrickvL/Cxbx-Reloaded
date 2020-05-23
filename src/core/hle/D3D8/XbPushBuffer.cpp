@@ -40,7 +40,7 @@
 #include "Logging.h"
 
 // TODO: Find somewhere to put this that doesn't conflict with xbox::
-extern void EmuUpdateActiveTextureStages();
+extern void CxbxUpdateHostTextures();
 
 const char *NV2AMethodToString(DWORD dwMethod); // forward
 
@@ -299,7 +299,7 @@ uint32_t HLE_read_NV2A_vertex_program_slot(unsigned program_load, unsigned slot)
 	return value;
 }
 
-float *HLE_read_NV2A_vertex_constant_float4_ptr(unsigned const_index)
+float *HLE_get_NV2A_vertex_constant_float4_ptr(unsigned const_index)
 {
 	NV2AState* dev = g_NV2A->GetDeviceState();
 	PGRAPHState* pg = &(dev->pgraph);
