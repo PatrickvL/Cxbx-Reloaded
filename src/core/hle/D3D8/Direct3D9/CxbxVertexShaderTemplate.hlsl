@@ -35,6 +35,8 @@ uniform float4 vRegisterDefaultFlagsPacked[4]  : register(c208);
 uniform float4 xboxViewportScale   : register(c212);
 uniform float4 xboxViewportOffset  : register(c213);
 
+uniform float4 xboxTextureScale[4] : register(c214);
+
 // Overloaded casts, assuring all inputs are treated as float4
 float4 _tof4(float  src) { return float4(src, src, src, src); }
 float4 _tof4(float2 src) { return src.xyyy; }
@@ -321,10 +323,11 @@ R"DELIMITER(
 	xOut.oPts = oPts.x;
 	xOut.oB0 = saturate(oB0);
 	xOut.oB1 = saturate(oB1);
-	xOut.oT0 = oT0;
-	xOut.oT1 = oT1;
-	xOut.oT2 = oT2;
-	xOut.oT3 = oT3;
+	// Scale textures (TODO : or should we apply this to the input register values?)
+	xOut.oT0 = oT0 / xboxTextureScale[0];
+	xOut.oT1 = oT1 / xboxTextureScale[1];
+	xOut.oT2 = oT2 / xboxTextureScale[2];
+	xOut.oT3 = oT3 / xboxTextureScale[3];
 
 	return xOut;
 }

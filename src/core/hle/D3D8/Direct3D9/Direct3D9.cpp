@@ -3947,8 +3947,8 @@ void CxbxUpdateViewPortOffsetAndScaleConstants()
     float vOffset[4], vScale[4];
     GetViewPortOffsetAndScale(vOffset, vScale);
 
-	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_SCALE_MIRROR, vScale, 1);
-    g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR, vOffset, 1);
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_SCALE_MIRROR_BASE, vScale, CXBX_D3DVS_VIEWPORT_SCALE_MIRROR_SIZE);
+    g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_BASE, vOffset, CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_SIZE);
 
 	// Store viewport offset and scale in constant registers 58 (c-38) and
 	// 59 (c-37) used for screen space transformation.
@@ -6606,29 +6606,52 @@ void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
+	extern xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat(); // TMP glue
+
+	// Texture normalization only applies to pre-transformed (X_D3DFVF_XYZRHW) vertex declarations
+	xbox::X_VERTEXATTRIBUTEFORMAT* pXboxVertexAttributeFormat = GetXboxVertexAttributeFormat();
+	bool bNeedTextureNormalization = pXboxVertexAttributeFormat->Slots[xbox::X_D3DVSDE_POSITION].Format == xbox::X_D3DVSDT_FLOAT4;
+	float all_textures_scale[xbox::X_D3DTS_STAGECOUNT * 4];
+	float *texture_scale = all_textures_scale;
 	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++)
 	{
-		xbox::X_D3DBaseTexture *pBaseTexture = g_pXbox_SetTexture[i];
+		xbox::X_D3DBaseTexture *pXboxBaseTexture = g_pXbox_SetTexture[i];
 		IDirect3DBaseTexture *pHostBaseTexture = nullptr;
 		bool bNeedRelease = false;
 
-		if (pBaseTexture != xbox::zeroptr) {
-			DWORD Type = GetXboxCommonResourceType(pBaseTexture);
+		texture_scale[0] = 1.0f;
+		texture_scale[1] = 1.0f;
+		texture_scale[2] = 1.0f;
+		texture_scale[3] = 1.0f;
+		if (pXboxBaseTexture != xbox::zeroptr) {
+			DWORD Type = GetXboxCommonResourceType(pXboxBaseTexture);
 			switch (Type) {
 			case X_D3DCOMMON_TYPE_TEXTURE:
-				pHostBaseTexture = GetHostBaseTexture(pBaseTexture, /*D3DUsage=*/0, i);
+				pHostBaseTexture = GetHostBaseTexture(pXboxBaseTexture, /*D3DUsage=*/0, i);
 				break;
 			case X_D3DCOMMON_TYPE_SURFACE:
 				// Surfaces can be set in the texture stages, instead of textures
 				LOG_TEST_CASE("ActiveTexture set to a surface (non-texture) resource"); // Test cases : Burnout, Outrun 2006
 				// We must wrap the surface before using it as a texture
-				pHostBaseTexture = CxbxConvertXboxSurfaceToHostTexture(pBaseTexture);
+				pHostBaseTexture = CxbxConvertXboxSurfaceToHostTexture(pXboxBaseTexture);
 				// Release this texture (after SetTexture) when we succeeded in creating it :
 				bNeedRelease = pHostBaseTexture != nullptr;
 				break;
 			default:
 				LOG_TEST_CASE("ActiveTexture set to an unhandled resource type!");
 				break;
+			}
+			// Check for active linear textures.
+			if (bNeedTextureNormalization) {
+				xbox::X_D3DFORMAT XboxFormat = GetXboxPixelContainerFormat(pXboxBaseTexture);
+				if (EmuXBFormatIsLinear(XboxFormat)) {
+					// Test-case : This is often hit by the help screen in XDK samples.
+					// Set scaling factor for this texture, which will be applied to
+					// all texture-coordinates in CxbxVertexShaderTemplate.hlsl				
+					texture_scale[0] = (float)GetPixelContainerWidth(pXboxBaseTexture);
+					texture_scale[1] = (float)GetPixelContainerHeight(pXboxBaseTexture);
+					// Note : Linear textures are two-dimensional at most (right?)
+				}
 			}
 		}
 
@@ -6637,7 +6660,17 @@ void CxbxUpdateHostTextures()
 		if (bNeedRelease) {
 			pHostBaseTexture->Release();
 		}
+		texture_scale += 4;
 	}
+	// Pass above determined texture scaling factors to our HLSL shader.
+	// Note : CxbxVertexShaderTemplate.hlsl applies texture scaling on
+	// output registers oT0 to oT3. It may be needed to move the scaling
+	// and apply it on input registers instead. In that case, we'd have to
+	// figure out which registers are used to pass texture-coordinates into
+	// the shader and allow scaling on any of the input registers (so we'd
+	// need to allow scaling on all 16 attributes, instead of just the four
+	// textures like we do right now).
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_TEXTURES_SCALE_BASE, all_textures_scale, CXBX_D3DVS_TEXTURES_SCALE_SIZE);
 }
 
 extern float* HLE_get_NV2A_vertex_constant_float4_ptr(unsigned const_index); // TMP glue
@@ -6678,9 +6711,9 @@ void CxbxUpdateNativeD3DResources()
 
 	CxbxUpdateHostVertexShader();
 
-    CxbxUpdateHostTextures();
-
 	CxbxUpdateHostVertexShaderConstants();
+
+	CxbxUpdateHostTextures();
 
 	// NOTE: Order is important here
     // Some Texture States depend on RenderState values (Point Sprites)

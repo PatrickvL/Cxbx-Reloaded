@@ -1266,7 +1266,7 @@ void CxbxUpdateHostVertexDeclaration()
 	for (int i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
 		vertexDefaultFlags[i] = pCxbxVertexDeclaration->vRegisterInDeclaration[i] ? 0.0f : 1.0f;
 	}
-	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, 4);
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_SIZE);
 }
 
 void CxbxImpl_SetScreenSpaceOffset(float x, float y)
