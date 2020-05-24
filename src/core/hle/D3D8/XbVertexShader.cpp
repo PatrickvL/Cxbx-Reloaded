@@ -1213,7 +1213,6 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	scale[1] = 1.0f;
 	scale[2] = g_ZScale;
 	scale[3] = 1.0f;
-	CxbxImpl_SetVertexShaderConstant(0, scale, 1);
 
 	float MultiSampleBias = 0.0f; // TODO Set to 0.5f when MultiSample render state is enabled
 	float offset[4];
@@ -1221,7 +1220,11 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	offset[1] = g_Xbox_ScreenSpaceOffset_y - MultiSampleBias;
 	offset[2] = 0.0f;
 	offset[3] = 0.0f;
+#if 0  // TODO : Fix our calculations above, as with this enabled, XDK Ripple sample regresses!
+	// (And we don't want to rely on Xbox setting these constants) 
+	CxbxImpl_SetVertexShaderConstant(0, scale, 1);
 	CxbxImpl_SetVertexShaderConstant(1, offset, 1);
+#endif
 }
 
 CxbxVertexDeclaration* CxbxGetVertexDeclaration()
