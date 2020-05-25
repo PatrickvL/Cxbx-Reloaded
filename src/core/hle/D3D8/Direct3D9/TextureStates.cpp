@@ -185,6 +185,7 @@ void XboxTextureStateConverter::Apply()
                 // These types map 1:1 but have some unsupported values
                 case xbox::X_D3DTSS_ADDRESSU: case xbox::X_D3DTSS_ADDRESSV: case xbox::X_D3DTSS_ADDRESSW:
                     switch (Value) {
+                        case 0: // Lets ignore zero (its no known X_D3DTADDRESS_ mode, but logging this seems useless)
                         case xbox::X_D3DTADDRESS_WRAP:        // = 1 = D3DTADDRESS_WRAP = 1,
                         case xbox::X_D3DTADDRESS_MIRROR:      // = 2 = D3DTADDRESS_MIRROR = 2,
                         case xbox::X_D3DTADDRESS_CLAMP:       // = 3 = D3DTADDRESS_CLAMP = 3,
@@ -242,16 +243,17 @@ void XboxTextureStateConverter::Apply()
                         case X_D3DTSS_TCI_CAMERASPACEREFLECTIONVECTOR: // = 0x00030000
                             // These match host Direct3D 9 values, so no update necessary
                             break;
-                        case X_D3DTSS_TCI_SPHEREMAP:                   // = 0x00050000
-                            // Convert Xbox sphere mapping bit to host Direct3D 9 (which uses a different bit)
-                            Value = D3DTSS_TCI_SPHEREMAP | texCoordIndex;
-                            break;
                         case X_D3DTSS_TCI_OBJECT:                      // = 0x00040000
                             // Collides with host Direct3D 9 D3DTSS_TCI_SPHEREMAP
                             // This value is not supported on host in Direct3D 9
+                            // Ir probably means "TexGen ObjectLinear", or '(untransformed) object space identity mapping'
                             LOG_TEST_CASE("Xbox D3DTSS_TCI_OBJECT unsupported on host");
                             // Test-case : Terrain XDK sample
                             Value = texCoordIndex;
+                            break;
+                        case X_D3DTSS_TCI_SPHEREMAP:                   // = 0x00050000
+                            // Convert Xbox sphere mapping bit to host Direct3D 9 (which uses a different bit)
+                            Value = D3DTSS_TCI_SPHEREMAP | texCoordIndex;
                             break;
                         default:
                             EmuLog(LOG_LEVEL::WARNING, "Unsupported X_D3DTSS_TEXCOORDINDEX value %x", Value);

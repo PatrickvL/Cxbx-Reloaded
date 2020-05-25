@@ -33,6 +33,7 @@
 #include "core\kernel\init\CxbxKrnl.h"
 #include "core\kernel\support\Emu.h"
 #include "core\hle\D3D8\Direct3D9\Direct3D9.h" // For g_Xbox_VertexShader_Handle
+#include "core\hle\D3D8\Direct3D9\RenderStates.h" // For XboxRenderStateConverter
 #include "core\hle\D3D8\Direct3D9\VertexShaderSource.h" // For g_VertexShaderSource
 #include "core\hle\D3D8\XbVertexBuffer.h" // For CxbxImpl_SetVertexData4f
 #include "core\hle\D3D8\XbVertexShader.h"
@@ -49,7 +50,8 @@
 #include <bitset>
 
 // External symbols :
-    extern xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS]; // Declared in XbVertexBuffer.cpp
+extern xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS]; // Declared in XbVertexBuffer.cpp
+extern XboxRenderStateConverter XboxRenderStates; // Declared in Direct3D9.cpp
 
 // Variables set by [D3DDevice|CxbxImpl]_SetVertexShaderInput() :
                       unsigned g_Xbox_SetVertexShaderInput_Count = 0; // Read by GetXboxVertexAttributes
@@ -222,7 +224,7 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 
 	using namespace xbox;
 
-	X_D3DVertexShader* pXboxVertexShader = xbnullptr;
+	X_D3DVertexShader* pXboxVertexShader = xbox::zeroptr;
 #if 0 // TODO : Retrieve vertex shader from actual Xbox D3D state
 	// Only when we're sure of the location of the Xbox Device.m_pVertexShader variable
 	if (XboxVertexShaders.g_XboxAddr_pVertexShader) {
@@ -314,7 +316,7 @@ xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat()
 	}
 
 	xbox::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
-	if (pXboxVertexShader == xbnullptr) {
+	if (pXboxVertexShader == xbox::zeroptr) {
 		// Despite possibly not being used, the pXboxVertexShader argument must always be assigned
 		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
 		return &g_Xbox_SetVertexShaderInput_Attributes; // WRONG result, but it's already strange this happens
@@ -1205,7 +1207,7 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES);
 
 	extern float g_ZScale; // TMP glue
-	extern void ApplyXboxMultiSampleOffset(float& x, float& y); // TMP glue
+	extern float GetMultiSampleOffsetDelta(); // TMP glue
 
 	// Passthrough programs require scale and offset to be set in constants zero and one
 	// (Note, these are different from GetMultiSampleOffsetAndScale)
@@ -1215,10 +1217,13 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	scale[2] = g_ZScale;
 	scale[3] = 1.0f;
 
+	float MultiSampleBias = 0.0f;
+	if (XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_MULTISAMPLEANTIALIAS) > 0) {
+		MultiSampleBias = GetMultiSampleOffsetDelta();
+	}
 	float offset[4];
-	offset[0] = g_Xbox_ScreenSpaceOffset_x;
-	offset[1] = g_Xbox_ScreenSpaceOffset_y;
-	ApplyXboxMultiSampleOffset(offset[0], offset[1]);
+	offset[0] = g_Xbox_ScreenSpaceOffset_x - MultiSampleBias;
+	offset[1] = g_Xbox_ScreenSpaceOffset_y - MultiSampleBias;
 	offset[2] = 0.0f;
 	offset[3] = 0.0f;
 #if 0  // TODO : Fix our calculations above, as with this enabled, XDK Ripple sample regresses!
@@ -1304,7 +1309,7 @@ void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREA
 		assert(VshHandleIsVertexShader(Handle));
 		assert(StreamCount > 0);
 		assert(StreamCount <= X_VSH_MAX_STREAMS);
-		assert(pStreamInputs != xbnullptr);
+		assert(pStreamInputs != xbox::zeroptr);
 
 		X_D3DVertexShader* pXboxVertexShader = VshHandleToXboxVertexShader(Handle);
 		assert(pXboxVertexShader);
