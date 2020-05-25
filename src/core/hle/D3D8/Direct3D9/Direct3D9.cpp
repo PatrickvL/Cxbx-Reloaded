@@ -6626,19 +6626,23 @@ void CxbxUpdateHostTextures()
 			continue;
 		}
 
-		// Get TEXCOORDINDEX for the current texture stage's state
-		// Stores both the texture stage index and information for generating coordinates
-		// See D3DTSS_TEXCOORDINDEX
+		// Texcoord index. Just the texture stage unless fixed function mode
+		int texCoordIndex = i;
+		if (g_Xbox_VertexShader_IsFixedFunction) {
+			// Get TEXCOORDINDEX for the current texture stage's state
+			// Stores both the texture stage index and information for generating coordinates
+			// See D3DTSS_TEXCOORDINDEX
 		auto texCoordIndexState = XboxTextureStates.Get(i, xbox::X_D3DTSS_TEXCOORDINDEX);
 
-		// If coordinates are generated, we don't have to worry about the coordinates coming from the title
-		bool isGenerated = texCoordIndexState & ~0x3;
-		if (isGenerated) {
-			continue;
-		}
+			// If coordinates are generated, we don't have to worry about the coordinates coming from the title
+			bool isGenerated = texCoordIndexState & ~0x3;
+			if (isGenerated) {
+				continue;
+			}
 
-		// Determine the texture coordinate addressing this texture stage
-		auto texCoordIndex = (texCoordIndexState & 0x3); // 0 - 3
+			// Determine the texture coordinate addressing this texture stage
+			texCoordIndex = (texCoordIndexState & 0x3); // 0 - 3
+		}
 		auto texCoordScale = &texcoordScales[texCoordIndex];
 		*texCoordScale = { 1, 1, 1, 1 };
 
