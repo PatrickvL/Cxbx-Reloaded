@@ -1286,6 +1286,16 @@ typedef enum _X_D3DVSD_TOKENTYPE
 #define X_D3DFVF_TEXCOORDSIZE3(Index) (X_D3DFVF_TEXTUREFORMAT3 << (Index * 2 + 16))
 #define X_D3DFVF_TEXCOORDSIZE4(Index) (X_D3DFVF_TEXTUREFORMAT4 << (Index * 2 + 16))
 
+// Values, used with D3DTSS_TEXCOORDINDEX, to specify that the vertex data (position
+// and normal in the camera space) should be taken as texture coordinates.
+// Low 16 bits are used to specify texture coordinate index, to take the WRAP mode from.
+#define X_D3DTSS_TCI_PASSTHRU                             0x00000000
+#define X_D3DTSS_TCI_CAMERASPACENORMAL                    0x00010000
+#define X_D3DTSS_TCI_CAMERASPACEPOSITION                  0x00020000
+#define X_D3DTSS_TCI_CAMERASPACEREFLECTIONVECTOR          0x00030000
+#define X_D3DTSS_TCI_OBJECT                               0x00040000 // Warning! Collides with host Direct3D 9 D3DTSS_TCI_SPHEREMAP
+#define X_D3DTSS_TCI_SPHEREMAP                            0x00050000
+
 typedef DWORD NV2AMETHOD;
 
 //

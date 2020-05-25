@@ -77,7 +77,7 @@ TextureStateInfo CxbxTextureStateInfo[] = {
 
 bool XboxTextureStateConverter::Init(XboxRenderStateConverter* pState)
 {
-    // Deferred states start at 0, this menas that D3DDeferredTextureState IS D3D__TextureState
+    // Deferred states start at 0, this means that D3DDeferredTextureState IS D3D__TextureState
     // No further works is required to derive the offset
     if (g_SymbolAddresses.find("D3DDeferredTextureState") != g_SymbolAddresses.end()) {
         D3D__TextureState = (uint32_t*)g_SymbolAddresses["D3DDeferredTextureState"];
@@ -200,20 +200,37 @@ void XboxTextureStateConverter::Apply()
                         break;
                     }
                     break;
-                case xbox::X_D3DTSS_TEXCOORDINDEX:
-                    switch (Value) {
-                        case 0x00040000:
-                            // This value is TCI_OBJECT on Xbox,which is not supported by the host
-                            // In this case, we reset to 0.
-                            EmuLog(LOG_LEVEL::WARNING, "EmuD3DDevice_SetTextureState_TexCoordIndex: D3DTSS_TCI_OBJECT is unsupported", Value);
-                            Value = 0;
+                case xbox::X_D3DTSS_TEXCOORDINDEX: {
+                    int texCoordIndex = Value & 0x0000FFFF;
+                    if (texCoordIndex > 3) {
+                        LOG_TEST_CASE("TEXCOORDINDEX out of bounds, masking to lowest 2 bits");
+                        texCoordIndex = Value & 3;
+                    }
+                    switch (Value & 0xFFFF0000) {
+                        case X_D3DTSS_TCI_PASSTHRU:                    // = 0x00000000
+                        case X_D3DTSS_TCI_CAMERASPACENORMAL:           // = 0x00010000
+                        case X_D3DTSS_TCI_CAMERASPACEPOSITION:         // = 0x00020000
+                        case X_D3DTSS_TCI_CAMERASPACEREFLECTIONVECTOR: // = 0x00030000
+                            // These match host Direct3D 9 values, so no update necessary
                             break;
-                        case 0x00050000:
-                            // This value is TCI_SPHERE on Xbox, let's map it to D3DTSS_TCI_SPHEREMAP for the host
-                            Value = D3DTSS_TCI_SPHEREMAP;
+                        case X_D3DTSS_TCI_SPHEREMAP:                   // = 0x00050000
+                            // Convert Xbox sphere mapping bit to host Direct3D 9 (which uses a different bit)
+                            Value = D3DTSS_TCI_SPHEREMAP | texCoordIndex;
+                            break;
+                        case X_D3DTSS_TCI_OBJECT:                      // = 0x00040000
+                            // Collides with host Direct3D 9 D3DTSS_TCI_SPHEREMAP
+                            // This value is not supported on host in Direct3D 9
+                            LOG_TEST_CASE("Xbox D3DTSS_TCI_OBJECT unsupported on host");
+                            // Test-case : Terrain XDK sample
+                            Value = texCoordIndex;
+                            break;
+                        default:
+                            EmuLog(LOG_LEVEL::WARNING, "Unsupported X_D3DTSS_TEXCOORDINDEX value %x", Value);
+                            Value = texCoordIndex;
                             break;
                     }
                     break;
+                }
                 // These types require value remapping for all supported values
                 case xbox::X_D3DTSS_COLOROP: case xbox::X_D3DTSS_ALPHAOP:
                     Value = GetHostTextureOpValue(Value);
@@ -277,8 +294,8 @@ void XboxTextureStateConverter::Apply()
 uint32_t XboxTextureStateConverter::Get(int textureStage, DWORD xboxState) {
     if (textureStage < 0 || textureStage > 3)
         CxbxKrnlCleanup("Requested texture stage was out of range: %d", textureStage);
-    if (xboxState < XTL::X_D3DTSS_FIRST || xboxState > XTL::X_D3DTSS_LAST)
+    if (xboxState < xbox::X_D3DTSS_FIRST || xboxState > xbox::X_D3DTSS_LAST)
         CxbxKrnlCleanup("Requested texture state was out of range: %d", xboxState);
 
-    return D3D__TextureState[(textureStage * XTL::X_D3DTS_STAGESIZE) + xboxState];
+    return D3D__TextureState[(textureStage * xbox::X_D3DTS_STAGESIZE) + xboxState];
 }

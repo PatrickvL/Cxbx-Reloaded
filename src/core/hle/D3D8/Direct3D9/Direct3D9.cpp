@@ -2934,7 +2934,7 @@ void GetMultiSampleOffsetAndScale(float& xScale, float& yScale, float& xOffset, 
 	GetMultiSampleOffset(xOffset, yOffset);
 }
 
-static void ApplyXboxMultiSampleOffset(float& x, float& y)
+void ApplyXboxMultiSampleOffset(float& x, float& y)
 {
 	float d = GetMultiSampleOffsetDelta();
 	x += d;
@@ -3942,7 +3942,7 @@ void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
 	vScale[3] = 1.0f; // ?
 }
 
-void CxbxUpdateViewPortOffsetAndScaleConstants()
+void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 {
     float vOffset[4], vScale[4];
     GetViewPortOffsetAndScale(vOffset, vScale);
@@ -6615,41 +6615,21 @@ void CxbxUpdateHostTextures()
 	// Each texture stage has one texture coordinate set associated with it
 	// We'll store scale factors for each texture coordinate set
 	std::array<std::array<float, 4>, xbox::X_D3DTS_STAGECOUNT> texcoordScales = { 0 };
-	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++)
-	{
-		xbox::X_D3DBaseTexture *pXboxBaseTexture = g_pXbox_SetTexture[i];
-		IDirect3DBaseTexture *pHostBaseTexture = nullptr;
-		bool bNeedRelease = false;
+
+	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
+		xbox::X_D3DBaseTexture *pXboxBaseTexture = g_pXbox_SetTexture[stage];
 
 		// No texture, no scaling to do
 		if (pXboxBaseTexture == xbox::zeroptr) {
 			continue;
 		}
 
-		// Texcoord index. Just the texture stage unless fixed function mode
-		int texCoordIndex = i;
-		if (g_Xbox_VertexShader_IsFixedFunction) {
-			// Get TEXCOORDINDEX for the current texture stage's state
-			// Stores both the texture stage index and information for generating coordinates
-			// See D3DTSS_TEXCOORDINDEX
-		auto texCoordIndexState = XboxTextureStates.Get(i, xbox::X_D3DTSS_TEXCOORDINDEX);
-
-			// If coordinates are generated, we don't have to worry about the coordinates coming from the title
-			bool isGenerated = texCoordIndexState & ~0x3;
-			if (isGenerated) {
-				continue;
-			}
-
-			// Determine the texture coordinate addressing this texture stage
-			texCoordIndex = (texCoordIndexState & 0x3); // 0 - 3
-		}
-		auto texCoordScale = &texcoordScales[texCoordIndex];
-		*texCoordScale = { 1, 1, 1, 1 };
-
-		DWORD Type = GetXboxCommonResourceType(pXboxBaseTexture);
-		switch (Type) {
+		IDirect3DBaseTexture *pHostBaseTexture = nullptr;
+		bool bNeedRelease = false;
+		DWORD XboxResourceType = GetXboxCommonResourceType(pXboxBaseTexture);
+		switch (XboxResourceType) {
 		case X_D3DCOMMON_TYPE_TEXTURE:
-			pHostBaseTexture = GetHostBaseTexture(pXboxBaseTexture, /*D3DUsage=*/0, i);
+			pHostBaseTexture = GetHostBaseTexture(pXboxBaseTexture, /*D3DUsage=*/0, stage);
 			break;
 		case X_D3DCOMMON_TYPE_SURFACE:
 			// Surfaces can be set in the texture stages, instead of textures
@@ -6664,6 +6644,33 @@ void CxbxUpdateHostTextures()
 			break;
 		}
 
+		HRESULT hRet = g_pD3DDevice->SetTexture(stage, pHostBaseTexture);
+		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetTexture");
+		if (bNeedRelease) {
+			pHostBaseTexture->Release();
+		}
+
+		// Texcoord index. Just the texture stage unless fixed function mode
+		int texCoordIndex = stage;
+		if (g_Xbox_VertexShader_IsFixedFunction) {
+			// Get TEXCOORDINDEX for the current texture stage's state
+			// Stores both the texture stage index and information for generating coordinates
+			// See D3DTSS_TEXCOORDINDEX
+			auto texCoordIndexState = XboxTextureStates.Get(stage, xbox::X_D3DTSS_TEXCOORDINDEX);
+
+			// If coordinates are generated, we don't have to worry about the coordinates coming from the title
+			bool isGenerated = texCoordIndexState >= X_D3DTSS_TCI_CAMERASPACENORMAL;
+			if (isGenerated) {
+				continue;
+			}
+
+			// Determine the texture coordinate addressing this texture stage
+			texCoordIndex = (texCoordIndexState & 0x3); // 0 - 3
+		}
+
+		auto texCoordScale = &texcoordScales[texCoordIndex];
+		*texCoordScale = { 1.0f, 1.0f, 1.0f, 1.0f };
+
 		// Check for active linear textures.
 		xbox::X_D3DFORMAT XboxFormat = GetXboxPixelContainerFormat(pXboxBaseTexture);
 		if (EmuXBFormatIsLinear(XboxFormat)) {
@@ -6675,14 +6682,8 @@ void CxbxUpdateHostTextures()
 				(float)GetPixelContainerWidth(pXboxBaseTexture),
 				(float)GetPixelContainerHeight(pXboxBaseTexture),
 				(float)CxbxGetPixelContainerDepth(pXboxBaseTexture),
-				1,
+				1.0f
 			};
-		}
-
-		HRESULT hRet = g_pD3DDevice->SetTexture(i, pHostBaseTexture);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetTexture");
-		if (bNeedRelease) {
-			pHostBaseTexture->Release();
 		}
 	}
 	// Pass above determined texture scaling factors to our HLSL shader.
@@ -6702,15 +6703,15 @@ extern float* HLE_get_NV2A_vertex_constant_float4_ptr(unsigned const_index); // 
 // remove our patches on D3DDevice_SetVertexShaderConstant (and CxbxImpl_SetVertexShaderConstant)
 void CxbxUpdateHostVertexShaderConstants()
 {
-	CxbxUpdateViewPortOffsetAndScaleConstants();
+	CxbxUpdateHostViewPortOffsetAndScaleConstants();
 
 	// Transfer all constants that have been flagged dirty to host
 	auto nv2a = g_NV2A->GetDeviceState();
 	for (int i = 0; i < X_D3DVS_CONSTREG_COUNT; i++) {
 		// Note : We don't skip X_D3DSCM_RESERVED_CONSTANT_OFFSET_CORRECTED and
 		// X_D3DSCM_RESERVED_CONSTANT_SCALE_CORRECTED constant indices, as these
-		// are already updated by CxbxUpdateViewPortOffsetAndScaleConstants and
-		// should just be transferred to host like any other
+		// are already updated by CxbxUpdateHostViewPortOffsetAndScaleConstants
+		// and should just be transferred to host like any other
 		if (nv2a->pgraph.vsh_constants_dirty[i]) {
 			nv2a->pgraph.vsh_constants_dirty[i] = false;
 

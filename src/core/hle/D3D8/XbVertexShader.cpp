@@ -1205,6 +1205,7 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES);
 
 	extern float g_ZScale; // TMP glue
+	extern void ApplyXboxMultiSampleOffset(float& x, float& y); // TMP glue
 
 	// Passthrough programs require scale and offset to be set in constants zero and one
 	// (Note, these are different from GetMultiSampleOffsetAndScale)
@@ -1214,10 +1215,10 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	scale[2] = g_ZScale;
 	scale[3] = 1.0f;
 
-	float MultiSampleBias = 0.0f; // TODO Set to 0.5f when MultiSample render state is enabled
 	float offset[4];
-	offset[0] = g_Xbox_ScreenSpaceOffset_x - MultiSampleBias;
-	offset[1] = g_Xbox_ScreenSpaceOffset_y - MultiSampleBias;
+	offset[0] = g_Xbox_ScreenSpaceOffset_x;
+	offset[1] = g_Xbox_ScreenSpaceOffset_y;
+	ApplyXboxMultiSampleOffset(offset[0], offset[1]);
 	offset[2] = 0.0f;
 	offset[3] = 0.0f;
 #if 0  // TODO : Fix our calculations above, as with this enabled, XDK Ripple sample regresses!
