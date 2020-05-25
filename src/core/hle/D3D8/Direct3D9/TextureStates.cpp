@@ -184,20 +184,49 @@ void XboxTextureStateConverter::Apply()
             switch (State) {
                 // These types map 1:1 but have some unsupported values
                 case xbox::X_D3DTSS_ADDRESSU: case xbox::X_D3DTSS_ADDRESSV: case xbox::X_D3DTSS_ADDRESSW:
-                    if (Value == xbox::X_D3DTADDRESS_CLAMPTOEDGE) {
-                        EmuLog(LOG_LEVEL::WARNING, "D3DTADDRESS_CLAMPTOEDGE is unsupported");
-                        // D3DTADDRESS_BORDER is the closest host match, CLAMPTOEDGE is identical
-                        // Except it has additional restrictions.
-                        Value = D3DTADDRESS_BORDER; 
-                        break;
+                    switch (Value) {
+                        case xbox::X_D3DTADDRESS_WRAP:        // = 1 = D3DTADDRESS_WRAP = 1,
+                        case xbox::X_D3DTADDRESS_MIRROR:      // = 2 = D3DTADDRESS_MIRROR = 2,
+                        case xbox::X_D3DTADDRESS_CLAMP:       // = 3 = D3DTADDRESS_CLAMP = 3,
+                        case xbox::X_D3DTADDRESS_BORDER:      // = 4 = D3DTADDRESS_BORDER = 4,
+                            // These match host Direct3D 9 values, so no update necessary
+                            break;
+                        case xbox::X_D3DTADDRESS_CLAMPTOEDGE: // = 5
+                            LOG_TEST_CASE("X_D3DTADDRESS_CLAMPTOEDGE unsupported, falling back to D3DTADDRESS_BORDER");
+                            // D3DTADDRESS_BORDER is the closest host match, CLAMPTOEDGE is identical
+                            // Except it has additional restrictions.
+                            Value = D3DTADDRESS_BORDER; 
+                            break;
+                        default:
+                            EmuLog(LOG_LEVEL::WARNING, "Unsupported X_D3DTSS_ADDRESS? value %x", Value);
+                            Value = D3DTADDRESS_WRAP;
+                            break;
                     }
                     break;
                 case xbox::X_D3DTSS_MAGFILTER: case xbox::X_D3DTSS_MINFILTER: case xbox::X_D3DTSS_MIPFILTER:
-                    if (Value == xbox::X_D3DTEXF_QUINCUNX) {
-                        EmuLog(LOG_LEVEL::WARNING, "D3DTEXF_QUINCUNX is unsupported");
-                        // Fallback to D3DTEXF_ANISOTROPIC 
-                        Value = D3DTEXF_ANISOTROPIC;
-                        break;
+                    switch (Value) {
+                        case xbox::X_D3DTEXF_NONE:        // = 0 = D3DTEXF_NONE = 0,        // filtering disabled (valid for mip filter only)
+                        case xbox::X_D3DTEXF_POINT:       // = 1 = D3DTEXF_POINT = 1,       // nearest
+                        case xbox::X_D3DTEXF_LINEAR:      // = 2 = D3DTEXF_LINEAR = 2,      // linear interpolation
+                        case xbox::X_D3DTEXF_ANISOTROPIC: // = 3 = D3DTEXF_ANISOTROPIC = 3, // anisotropic
+                            // These match host Direct3D 9 values, so no update necessary
+                            break;
+                        case xbox::X_D3DTEXF_QUINCUNX:    // = 4; // quincunx kernel (Xbox extension), also known as "flat cubic"
+                            LOG_TEST_CASE("X_D3DTEXF_QUINCUNX unsupported, falling back to D3DTEXF_ANISOTROPIC");
+                            Value = D3DTEXF_ANISOTROPIC;
+                            break;
+                        case xbox::X_D3DTEXF_GAUSSIANCUBIC: // = 5 // Xbox extension, different cubic kernel
+                            // Direct3D 9 alternatives : 
+                            // D3DTEXF_PYRAMIDALQUAD = 6,    // 4-sample tent
+                            // D3DTEXF_GAUSSIANQUAD = 7,    // 4-sample gaussian
+                            // D3DTEXF_CONVOLUTIONMONO = 8,    // Convolution filter for monochrome textures
+                            LOG_TEST_CASE("X_D3DTEXF_QUINCUNX unsupported, falling back to D3DTEXF_GAUSSIANQUAD");
+                            Value = D3DTEXF_GAUSSIANQUAD;
+                            break;
+                        default:
+                            EmuLog(LOG_LEVEL::WARNING, "Unsupported X_D3DTSS_M??FILTER value %x", Value);
+                            Value = D3DTEXF_NONE;
+                            break;
                     }
                     break;
                 case xbox::X_D3DTSS_TEXCOORDINDEX: {
@@ -235,7 +264,7 @@ void XboxTextureStateConverter::Apply()
                 case xbox::X_D3DTSS_COLOROP: case xbox::X_D3DTSS_ALPHAOP:
                     Value = GetHostTextureOpValue(Value);
                     break;
-                // These types  require no conversion, so we just pass through as-is
+                // These types require no conversion, so we just pass through as-is
                 case xbox::X_D3DTSS_COLORARG0: case xbox::X_D3DTSS_COLORARG1: case xbox::X_D3DTSS_COLORARG2:
                 case xbox::X_D3DTSS_ALPHAARG0: case xbox::X_D3DTSS_ALPHAARG1: case xbox::X_D3DTSS_ALPHAARG2:
                 case xbox::X_D3DTSS_RESULTARG: case xbox::X_D3DTSS_TEXTURETRANSFORMFLAGS:
