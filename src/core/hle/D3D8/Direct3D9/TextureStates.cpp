@@ -273,3 +273,12 @@ void XboxTextureStateConverter::Apply()
         // no need to actually copy here, since it was handled in the loop above
     }
 }
+
+uint32_t XboxTextureStateConverter::Get(int textureStage, DWORD xboxState) {
+    if (textureStage < 0 || textureStage > 3)
+        CxbxKrnlCleanup("Requested texture stage was out of range: %d", textureStage);
+    if (xboxState < XTL::X_D3DTSS_FIRST || xboxState > XTL::X_D3DTSS_LAST)
+        CxbxKrnlCleanup("Requested texture state was out of range: %d", xboxState);
+
+    return D3D__TextureState[(textureStage * XTL::X_D3DTS_STAGESIZE) + xboxState];
+}
