@@ -2911,7 +2911,7 @@ void SetXboxMultiSampleType(xbox::X_D3DMULTISAMPLE_TYPE value)
 	g_Xbox_MultiSampleType = value;
 }
 
-static inline float GetMultiSampleOffsetDelta()
+float GetMultiSampleOffsetDelta()
 {
 	// TODO : What impact does X_D3DMULTISAMPLE_SAMPLING_SUPER have on offset?
 	return (g_Xbox_MultiSampleType & xbox::X_D3DMULTISAMPLE_SAMPLING_MULTI) ? 0.0f : 0.5f;
