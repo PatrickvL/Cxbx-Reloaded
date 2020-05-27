@@ -6606,8 +6606,6 @@ void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
-	extern xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat(); // TMP glue
-
 	// Set the host texture for each stage
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
@@ -6640,6 +6638,11 @@ void CxbxUpdateHostTextures()
 			pHostBaseTexture->Release();
 		}
 	}
+}
+
+void CxbxUpdateHostTextureScaling()
+{
+	extern xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat(); // TMP glue
 
 	// Xbox works with "Linear" and "Swizzled" texture formats
 	// Linear formats are not addressed with normalized coordinates (similar to https://www.khronos.org/opengl/wiki/Rectangle_Texture?)
@@ -6747,6 +6750,7 @@ void CxbxUpdateNativeD3DResources()
     // Some Texture States depend on RenderState values (Point Sprites)
     // And some Pixel Shaders depend on Texture State values (BumpEnvMat, etc)
 	CxbxUpdateHostTextures();
+	CxbxUpdateHostTextureScaling();
     XboxRenderStates.Apply();
     XboxTextureStates.Apply();
 
