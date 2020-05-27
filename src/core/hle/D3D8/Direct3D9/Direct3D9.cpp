@@ -6608,6 +6608,39 @@ void CxbxUpdateHostTextures()
 
 	extern xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat(); // TMP glue
 
+	// Set the host texture for each stage
+	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
+		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
+		IDirect3DBaseTexture* pHostBaseTexture = nullptr;
+		bool bNeedRelease = false;
+
+		if (pXboxBaseTexture != xbox::zeroptr) {
+			DWORD XboxResourceType = GetXboxCommonResourceType(pXboxBaseTexture);
+			switch (XboxResourceType) {
+			case X_D3DCOMMON_TYPE_TEXTURE:
+				pHostBaseTexture = GetHostBaseTexture(pXboxBaseTexture, /*D3DUsage=*/0, stage);
+				break;
+			case X_D3DCOMMON_TYPE_SURFACE:
+				// Surfaces can be set in the texture stages, instead of textures
+				LOG_TEST_CASE("ActiveTexture set to a surface (non-texture) resource"); // Test cases : Burnout, Outrun 2006
+				// We must wrap the surface before using it as a texture
+				pHostBaseTexture = CxbxConvertXboxSurfaceToHostTexture(pXboxBaseTexture);
+				// Release this texture (after SetTexture) when we succeeded in creating it :
+				bNeedRelease = pHostBaseTexture != nullptr;
+				break;
+			default:
+				LOG_TEST_CASE("ActiveTexture set to an unhandled resource type!");
+				break;
+			}
+		}
+
+		HRESULT hRet = g_pD3DDevice->SetTexture(stage, pHostBaseTexture);
+		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetTexture");
+		if (bNeedRelease) {
+			pHostBaseTexture->Release();
+		}
+	}
+
 	// Xbox works with "Linear" and "Swizzled" texture formats
 	// Linear formats are not addressed with normalized coordinates (similar to https://www.khronos.org/opengl/wiki/Rectangle_Texture?)
 	// We want to use normalized coordinates in our shaders, so need to be able to scale the coordinates back
@@ -6615,39 +6648,12 @@ void CxbxUpdateHostTextures()
 	// Each texture stage has one texture coordinate set associated with it
 	// We'll store scale factors for each texture coordinate set
 	std::array<std::array<float, 4>, xbox::X_D3DTS_STAGECOUNT> texcoordScales = { 0 };
-
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
-		xbox::X_D3DBaseTexture *pXboxBaseTexture = g_pXbox_SetTexture[stage];
+		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
 
 		// No texture, no scaling to do
 		if (pXboxBaseTexture == xbox::zeroptr) {
 			continue;
-		}
-
-		IDirect3DBaseTexture *pHostBaseTexture = nullptr;
-		bool bNeedRelease = false;
-		DWORD XboxResourceType = GetXboxCommonResourceType(pXboxBaseTexture);
-		switch (XboxResourceType) {
-		case X_D3DCOMMON_TYPE_TEXTURE:
-			pHostBaseTexture = GetHostBaseTexture(pXboxBaseTexture, /*D3DUsage=*/0, stage);
-			break;
-		case X_D3DCOMMON_TYPE_SURFACE:
-			// Surfaces can be set in the texture stages, instead of textures
-			LOG_TEST_CASE("ActiveTexture set to a surface (non-texture) resource"); // Test cases : Burnout, Outrun 2006
-			// We must wrap the surface before using it as a texture
-			pHostBaseTexture = CxbxConvertXboxSurfaceToHostTexture(pXboxBaseTexture);
-			// Release this texture (after SetTexture) when we succeeded in creating it :
-			bNeedRelease = pHostBaseTexture != nullptr;
-			break;
-		default:
-			LOG_TEST_CASE("ActiveTexture set to an unhandled resource type!");
-			break;
-		}
-
-		HRESULT hRet = g_pD3DDevice->SetTexture(stage, pHostBaseTexture);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetTexture");
-		if (bNeedRelease) {
-			pHostBaseTexture->Release();
 		}
 
 		// Texcoord index. Just the texture stage unless fixed function mode
