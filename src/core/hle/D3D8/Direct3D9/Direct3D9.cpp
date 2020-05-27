@@ -6740,9 +6740,9 @@ void CxbxUpdateNativeD3DResources()
 	// NOTE: Order is important here
     // Some Texture States depend on RenderState values (Point Sprites)
     // And some Pixel Shaders depend on Texture State values (BumpEnvMat, etc)
+	CxbxUpdateHostTextures();
     XboxRenderStates.Apply();
     XboxTextureStates.Apply();
-	CxbxUpdateHostTextures();
 
     // If Pixel Shaders are not disabled, process them
     if (!g_DisablePixelShaders) {
