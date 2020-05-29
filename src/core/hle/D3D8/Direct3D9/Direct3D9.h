@@ -57,6 +57,8 @@ extern uint8_t *ConvertD3DTextureToARGB(
 
 void CxbxUpdateNativeD3DResources();
 
+void CxbxImpl_SetRenderTarget(XTL::X_D3DSurface* pRenderTarget, XTL::X_D3DSurface* pNewZStencil);
+
 // initialize direct3d
 extern VOID EmuD3DInit();
 

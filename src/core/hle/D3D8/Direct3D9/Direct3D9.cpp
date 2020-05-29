@@ -3023,15 +3023,15 @@ void Direct3D_CreateDevice_End()
             g_pXbox_BackBufferSurface = XB_TRMP(D3DDevice_GetRenderTarget2)();
         }
 
-        // At this point, pRenderTarget should now point to a valid render target
+        // At this point, g_pXbox_BackBufferSurface should now point to a valid render target
         // if it still doesn't, we cannot continue without crashing at draw time
         if (g_pXbox_BackBufferSurface == xbox::zeroptr) {
             CxbxKrnlCleanup("Unable to determine default Xbox backbuffer");
         }
 
-        // We must also call our SetRenderTarget patch to properly setup the host state
+        // We must also properly setup the host state
         // Update only the Back buffer
-        xbox::EMUPATCH(D3DDevice_SetRenderTarget)(g_pXbox_BackBufferSurface, xbox::zeroptr);
+        CxbxImpl_SetRenderTarget(g_pXbox_BackBufferSurface, xbox::zeroptr);
     }
 
     // Now do the same, but for the default depth stencil surface
@@ -3049,7 +3049,7 @@ void Direct3D_CreateDevice_End()
             LOG_TEST_CASE("Unable to determine default Xbox depth stencil");
         } else {
             // Update only the depth stencil
-            xbox::EMUPATCH(D3DDevice_SetRenderTarget)(xbox::zeroptr, g_pXbox_DefaultDepthStencilSurface);
+            CxbxImpl_SetRenderTarget(xbox::zeroptr, g_pXbox_DefaultDepthStencilSurface);
         }
     }
 }
@@ -7355,10 +7355,17 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget)
 		LOG_FUNC_ARG(pNewZStencil)
 		LOG_FUNC_END;
 
+	XB_TRMP(D3DDevice_SetRenderTarget)(pRenderTarget, pNewZStencil);
+
+	CxbxImpl_SetRenderTarget(pRenderTarget, pNewZStencil);
+}
+
+bool CxbxImpl_SetRenderTarget(xbox::X_D3DSurface* pRenderTarget, xbox::X_D3DSurface* pNewZStencil)
+{
+	LOG_INIT;
+
 	IDirect3DSurface *pHostRenderTarget = nullptr;
 	IDirect3DSurface *pHostDepthStencil = nullptr;
-
-	XB_TRMP(D3DDevice_SetRenderTarget)(pRenderTarget, pNewZStencil);
 
 	// In Xbox titles, CreateDevice calls SetRenderTarget for the back buffer
 	// We can use this to determine the Xbox backbuffer surface for later use!
@@ -7368,8 +7375,12 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget)
 		// if that happens, we might need to skip the first one or two calls?
 	}
 
+	// In Xbox titles, CreateDevice calls SetRenderTarget (our caller) for the depth stencil
+	// We can use this to determine the Xbox depth stencil surface for later use!
     if (g_pXbox_DefaultDepthStencilSurface == xbox::zeroptr) {
         g_pXbox_DefaultDepthStencilSurface = pNewZStencil;
+		// TODO : Some titles might set another depth stencil later on,
+		// if that happens, we might need to skip the first one or two calls?
     }
 
 	// The current render target is only replaced if it's passed in here non-null
@@ -7414,7 +7425,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget)
 
     // Validate that our host render target is still the correct size
     DWORD HostRenderTarget_Width, HostRenderTarget_Height;
-    if (GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height)) {
+    if (GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height, pHostRenderTarget)) {
         DWORD XboxRenderTarget_Width = GetPixelContainerWidth(g_pXbox_RenderTarget);
         DWORD XboxRenderTarget_Height = GetPixelContainerHeight(g_pXbox_RenderTarget);
         ValidateRenderTargetDimensions(HostRenderTarget_Width, HostRenderTarget_Height, XboxRenderTarget_Width, XboxRenderTarget_Height);
