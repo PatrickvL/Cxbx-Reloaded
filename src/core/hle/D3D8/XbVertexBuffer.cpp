@@ -889,6 +889,7 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 
 	HRESULT hRet = D3D_OK;
 
+	// Always update our attribute storage with the most recently set register value
 	CxbxSetVertexAttribute(Register, a, b, c, d);
 
 	// Grow g_InlineVertexBuffer_Table to contain at least current, and a potentially next vertex

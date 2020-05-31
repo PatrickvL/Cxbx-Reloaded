@@ -3887,8 +3887,8 @@ void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
 {
     // Store viewport offset and scale in constant registers
     // used in shaders to transform back from screen space (Xbox Shader Output) to Clip space (Host Shader Output)
-    D3DVIEWPORT ViewPort;
-    g_pD3DDevice->GetViewport(&ViewPort);
+    D3DVIEWPORT HostViewPort;
+    g_pD3DDevice->GetViewport(&HostViewPort);
 
 	// NOTE: Due to how our GPU emulation works, we need to account for MSAA here, by adjusting the ViewPort dimensions
 	// This fixes the 'offset' models in GTA3
@@ -3896,20 +3896,24 @@ void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
 	float xOffset, yOffset;
 	GetMultiSampleOffsetAndScale(xScale, yScale, xOffset, yOffset);
 	// Since Width and Height are DWORD, subtracting MultiSampleOffset 0.0f or 0.5f makes no sense
-	//ViewPort.Width -= xOffset;
-	//ViewPort.Height -= yOffset;
-	ViewPort.Width /= (DWORD)xScale;
-	ViewPort.Height /= (DWORD)yScale;
+	//HostViewPort.Width -= xOffset;
+	//HostViewPort.Height -= yOffset;
+	HostViewPort.Width /= (DWORD)xScale;
+	HostViewPort.Height /= (DWORD)yScale;
 
+#if 0 // unused?
     // Calculate Width/Height scale & offset
-    float scaleWidth = (2.0f / ViewPort.Width) * g_RenderScaleFactor;
-    float scaleHeight = (2.0f / ViewPort.Height) * g_RenderScaleFactor;
+    float scaleWidth = (2.0f / HostViewPort.Width) * g_RenderScaleFactor;
+    float scaleHeight = (2.0f / HostViewPort.Height) * g_RenderScaleFactor;
     float offsetWidth = scaleWidth;
     float offsetHeight = scaleHeight;
+#endif
 
     // Calculate Z scale & offset
-    float scaleZ = g_ZScale * (ViewPort.MaxZ - ViewPort.MinZ);
-    float offsetZ = g_ZScale * ViewPort.MinZ;
+    float scaleZ = g_ZScale * (HostViewPort.MaxZ - HostViewPort.MinZ);
+#if 0 // unused?
+    float offsetZ = g_ZScale * HostViewPort.MinZ;
+#endif
 
 	// TODO will we need to do something here to support upscaling?
 	// TODO remove the code above as required
@@ -3920,18 +3924,18 @@ void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
 	yScale = 1.0f;
 
 	// Xbox correct values?
-	xOffset = xOffset + (1.0f / 32.0f);
-	yOffset = yOffset + (1.0f / 32.0f);
-	xScale = xScale * ViewPort.Width;
-	yScale = yScale * ViewPort.Height;
+	xOffset += (1.0f / 32.0f);
+	yOffset += (1.0f / 32.0f);
+	xScale *= HostViewPort.Width;
+	yScale *= HostViewPort.Height;
 
 	// HACK: Add a host correction factor to these values
 	// So that after we reverse the screenspace transformation
 	// Pre-transformed 2d geometry is in the same space as the 3d geometry...?
 
 	// Offset with a host correction
-	vOffset[0] = xOffset + (0.5f * (float)ViewPort.Width / (float)g_RenderScaleFactor);
-	vOffset[1] = yOffset + (0.5f * (float)ViewPort.Height / (float)g_RenderScaleFactor);
+	vOffset[0] = xOffset + (0.5f * (float)HostViewPort.Width / (float)g_RenderScaleFactor);
+	vOffset[1] = yOffset + (0.5f * (float)HostViewPort.Height / (float)g_RenderScaleFactor);
 	vOffset[2] = 0.0f; //offsetZ;
 	vOffset[3] = 0.0f;
 

@@ -84,7 +84,7 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 {
 	using namespace xbox;
 
-	// Note : FVFs don't tesselate, all slots read from stream zero, therefor
+	// Note : FVFs don't tessellate, all slots read from stream zero, therefor
 	// the following zero-initialization of IndexOfStream (like all other fields)
 	// is never updated below.
 	g_Xbox_VertexShader_ForFVF = { 0 };
@@ -713,7 +713,7 @@ private:
 		// Does this attribute use no storage present the vertex (check this as early as possible to avoid needless processing) ?
 		if (XboxVertexElementDataType == xbox::X_D3DVSDT_NONE)
 		{
-			// Handle tesselating attributes
+			// Handle tessellating attributes
 			switch (slot.TessellationType) {
 			case 0: return false; // AUTONONE
 			case 1: // AUTONORMAL
@@ -1212,8 +1212,8 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	// Passthrough programs require scale and offset to be set in constants zero and one
 	// (Note, these are different from GetMultiSampleOffsetAndScale)
 	float scale[4];
-	scale[0] = 1.0f;
-	scale[1] = 1.0f;
+	scale[0] = (float)g_RenderScaleFactor;
+	scale[1] = (float)g_RenderScaleFactor;
 	scale[2] = g_ZScale;
 	scale[3] = 1.0f;
 
