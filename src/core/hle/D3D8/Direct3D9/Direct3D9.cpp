@@ -3505,16 +3505,30 @@ VOID __stdcall xbox::EMUPATCH(D3DDevice_LoadVertexShader_0)
 
 // This uses a custom calling convention where parameter is passed in EAX
 // Test-case: Ninja Gaiden
-VOID WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader_4)
+__declspec(naked) VOID xbox::EMUPATCH(D3DDevice_LoadVertexShader_4)
 (
     DWORD                       Address
 )
 {
-	DWORD           Handle;
-	__asm mov Handle, eax;
+	DWORD Handle;
 
-	LOG_FORWARD("D3DDevice_LoadVertexShader");
-	return EMUPATCH(D3DDevice_LoadVertexShader)(Handle, Address);
+	// prologue
+	__asm
+	{
+		push ebp
+		mov  ebp, esp
+		sub  esp, __LOCAL_SIZE
+		mov  Handle, eax // get parameter from eax
+	}
+
+	CxbxImpl_LoadVertexShader(Handle, Address);
+
+	// epilogue
+	__asm {
+		mov  esp, ebp
+		pop  ebp
+		ret  4
+	}
 }
 
 // ******************************************************************
