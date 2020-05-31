@@ -58,6 +58,7 @@ extern uint8_t *ConvertD3DTextureToARGB(
 void CxbxUpdateNativeD3DResources();
 
 void CxbxImpl_SetRenderTarget(XTL::X_D3DSurface* pRenderTarget, XTL::X_D3DSurface* pNewZStencil);
+void CxbxImpl_SetViewPort(XTL::X_D3DVIEWPORT8* pViewport);
 
 // initialize direct3d
 extern VOID EmuD3DInit();
@@ -320,7 +321,7 @@ VOID WINAPI EMUPATCH(D3DDevice_GetBackBuffer)
 // ******************************************************************
 VOID WINAPI EMUPATCH(D3DDevice_SetViewport)
 (
-    CONST X_D3DVIEWPORT8 *pViewport
+    X_D3DVIEWPORT8 *pViewport
 );
 
 // ******************************************************************

@@ -3967,7 +3967,7 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 // ******************************************************************
 VOID WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
 (
-    CONST X_D3DVIEWPORT8 *pViewport
+	X_D3DVIEWPORT8 *pViewport
 )
 {
 	LOG_FUNC_ONE_ARG(pViewport);
@@ -3975,13 +3975,19 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
 	// Always call the Xbox SetViewPort to update D3D Internal State
 	XB_TRMP(D3DDevice_SetViewport)(pViewport);
 
+	CxbxImpl_SetViewPort(pViewport);
+}
+
+void CxbxImpl_SetViewPort(xbox::X_D3DVIEWPORT8* pViewport)
+{
+	LOG_INIT;
+
 	// Host does not support pViewPort = nullptr
 	if (pViewport == nullptr) {
 		LOG_TEST_CASE("pViewport = null");
 		return;
 	}
 
-	D3DVIEWPORT XboxViewPort = *pViewport;
 	D3DVIEWPORT HostViewPort = *pViewport;
 
 	if (g_pXbox_RenderTarget) {
@@ -3997,6 +4003,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
 		DWORD width = right - left;
 		DWORD height = bottom - top;
 
+		D3DVIEWPORT XboxViewPort;
 		XboxViewPort.X = left;
 		XboxViewPort.Y = top;
 		XboxViewPort.Width = width;
@@ -7360,7 +7367,7 @@ VOID WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget)
 	CxbxImpl_SetRenderTarget(pRenderTarget, pNewZStencil);
 }
 
-bool CxbxImpl_SetRenderTarget(xbox::X_D3DSurface* pRenderTarget, xbox::X_D3DSurface* pNewZStencil)
+void CxbxImpl_SetRenderTarget(xbox::X_D3DSurface* pRenderTarget, xbox::X_D3DSurface* pNewZStencil)
 {
 	LOG_INIT;
 
