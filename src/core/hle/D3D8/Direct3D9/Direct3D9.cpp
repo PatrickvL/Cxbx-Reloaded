@@ -6672,10 +6672,14 @@ void CxbxUpdateHostTextureScaling()
 	// Xbox works with "Linear" and "Swizzled" texture formats
 	// Linear formats are not addressed with normalized coordinates (similar to https://www.khronos.org/opengl/wiki/Rectangle_Texture?)
 	// We want to use normalized coordinates in our shaders, so need to be able to scale the coordinates back
+	// Note texcoords aren't only used for texture lookups
+	// TODO store scaling per texture instead of per stage, and scale during lookup in the pixel shader
 
 	// Each texture stage has one texture coordinate set associated with it
 	// We'll store scale factors for each texture coordinate set
-	std::array<std::array<float, 4>, xbox::X_D3DTS_STAGECOUNT> texcoordScales = { 0 };
+	std::array<std::array<float, 4>, xbox::X_D3DTS_STAGECOUNT> texcoordScales;
+	texcoordScales.fill({ 1, 1, 1, 1 });
+
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
 
@@ -6703,7 +6707,6 @@ void CxbxUpdateHostTextureScaling()
 		}
 
 		auto texCoordScale = &texcoordScales[texCoordIndex];
-		*texCoordScale = { 1.0f, 1.0f, 1.0f, 1.0f };
 
 		// Check for active linear textures.
 		xbox::X_D3DFORMAT XboxFormat = GetXboxPixelContainerFormat(pXboxBaseTexture);
