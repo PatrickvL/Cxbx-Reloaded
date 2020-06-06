@@ -347,6 +347,8 @@ uniform float4 xboxViewportOffset  : register(c213);
 
 uniform float4 xboxTextureScale[4] : register(c214);
 
+uniform float4 xboxIsRHWTransformedPosition : register(c218);
+
 struct VS_INPUT
 {
 	float4 v[16] : TEXCOORD;
@@ -370,6 +372,8 @@ struct VS_OUTPUT
 
 float4 reverseScreenspaceTransform(float4 oPos)
 {
+	// Scale screenspace coordinates (0 to viewport width/height) to -1 to +1 range
+
 	// On Xbox, oPos should contain the vertex position in screenspace
 	// We need to reverse this transformation
 	// Conventionally, each Xbox Vertex Shader includes instructions like this
@@ -377,6 +381,12 @@ float4 reverseScreenspaceTransform(float4 oPos)
 	// +rcc r1.x, r12.w
 	// mad oPos.xyz, r12, r1.x, c-37
 	// where c-37 and c-38 are reserved transform values
+
+	if (xboxIsRHWTransformedPosition.x) {
+		// Detect 0 w and avoid 0 division
+		if (oPos.w == 0) oPos.w = 1; // if else doesn't seem to work here
+		oPos.w = 1 / oPos.w; // flip rhw to w
+	}
 
 	oPos.xyz -= xboxViewportOffset.xyz; // reverse offset
 	oPos.xyz *= oPos.w; // reverse perspective divide
@@ -407,22 +417,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
     
     VS_OUTPUT o;
 
-	// Scale screenspace coordinates (0 to viewport width/height) to -1 to +1 range
-	// TODO pass scale and offset to shader
-	float2 viewportSize = float2(640, 480);
-	float4 reverseScreenspaceOffset = float4(viewportSize.x / 2, viewportSize.y / 2, 0, 0);
-	float4 reverseScreenspaceScale = float4(1 / (viewportSize.x / 2), -1 / (viewportSize.y / 2), 1, 1);
-    
-    float4 pos = v0;
-    pos -= reverseScreenspaceOffset; 
-    pos *= reverseScreenspaceScale;
-
-	// Detect 0 w and avoid 0 division
-	if(pos.w == 0) pos.w = 1; // if else doesn't seem to work here
-	pos.w = 1 / pos.w; // flip rhw to w
-	pos.xyz *= pos.w;
-
-    o.oPos = pos;
+    o.oPos = reverseScreenspaceTransform(v0);
     o.oD0 = saturate(v3);
 //o.oD0.a = 1;
     o.oD1 = saturate(v4);

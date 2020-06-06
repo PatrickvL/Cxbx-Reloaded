@@ -1151,9 +1151,11 @@ void CxbxUpdateHostVertexShader()
 	}
 	else if (g_Xbox_VertexShader_IsPassthrough) {
 		if (passthroughshader == nullptr) {
-			ID3DBlob* pBlob;
+			ID3DBlob* pBlob = nullptr;
 			EmuCompileXboxPassthrough(&pBlob);
-			g_pD3DDevice->CreateVertexShader((DWORD*)pBlob->GetBufferPointer(), &passthroughshader);
+			if (pBlob) {
+				g_pD3DDevice->CreateVertexShader((DWORD*)pBlob->GetBufferPointer(), &passthroughshader);
+			}
 		}
 
 		HRESULT hRet = g_pD3DDevice->SetVertexShader(passthroughshader);
