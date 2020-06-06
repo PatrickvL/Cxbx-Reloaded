@@ -771,7 +771,7 @@ void CxbxImpl_End()
 		/*                         15:*/FIELD_OFFSET(D3DIVB, Reg13Up[2])
 	};
 	static const DWORD FormatPerRegister[X_VSH_MAX_ATTRIBUTES] = {
-		/*X_D3DVSDE_POSITION     =  0:*/X_D3DVSDT_FLOAT3,
+		/*X_D3DVSDE_POSITION     =  0:*/X_D3DVSDT_FLOAT4,
 		/*X_D3DVSDE_BLENDWEIGHT  =  1:*/X_D3DVSDT_FLOAT4,
 		/*X_D3DVSDE_NORMAL       =  2:*/X_D3DVSDT_FLOAT3,
 		/*X_D3DVSDE_DIFFUSE      =  3:*/X_D3DVSDT_D3DCOLOR,
@@ -789,7 +789,7 @@ void CxbxImpl_End()
 		/*                         15:*/X_D3DVSDT_FLOAT4
 	};
 	static const DWORD SizePerRegister[X_VSH_MAX_ATTRIBUTES] = {
-		/*X_D3DVSDE_POSITION     =  0:*/sizeof(float) * 3,
+		/*X_D3DVSDE_POSITION     =  0:*/sizeof(float) * 4,
 		/*X_D3DVSDE_BLENDWEIGHT  =  1:*/sizeof(float) * 4,
 		/*X_D3DVSDE_NORMAL       =  2:*/sizeof(float) * 3,
 		/*X_D3DVSDE_DIFFUSE      =  3:*/sizeof(DWORD),

@@ -657,20 +657,20 @@ private:
 	{
 		UsageIndex = 0;
 		switch (VertexRegister) {
-			case xbox::X_D3DVSDE_POSITION    /*= 0*/: return (pRecompiled->Type == D3DDECLTYPE_FLOAT4) ? D3DDECLUSAGE_POSITIONT : D3DDECLUSAGE_POSITION;
-			case xbox::X_D3DVSDE_BLENDWEIGHT /*= 1*/: return D3DDECLUSAGE_BLENDWEIGHT;
-			case xbox::X_D3DVSDE_NORMAL      /*= 2*/: return D3DDECLUSAGE_NORMAL;
-			case xbox::X_D3DVSDE_DIFFUSE     /*= 3*/: return D3DDECLUSAGE_COLOR;
+			case xbox::X_D3DVSDE_POSITION    /*= 0*/:                 return D3DDECLUSAGE_POSITION;
+			case xbox::X_D3DVSDE_BLENDWEIGHT /*= 1*/:                 return D3DDECLUSAGE_BLENDWEIGHT;
+			case xbox::X_D3DVSDE_NORMAL      /*= 2*/:                 return D3DDECLUSAGE_NORMAL;
+			case xbox::X_D3DVSDE_DIFFUSE     /*= 3*/:                 return D3DDECLUSAGE_COLOR;
 			case xbox::X_D3DVSDE_SPECULAR    /*= 4*/: UsageIndex = 1; return D3DDECLUSAGE_COLOR;
-			case xbox::X_D3DVSDE_FOG         /*= 5*/: return D3DDECLUSAGE_FOG;
-			case xbox::X_D3DVSDE_POINTSIZE   /*= 6*/: return D3DDECLUSAGE_PSIZE;
+			case xbox::X_D3DVSDE_FOG         /*= 5*/:                 return D3DDECLUSAGE_FOG;
+			case xbox::X_D3DVSDE_POINTSIZE   /*= 6*/:                 return D3DDECLUSAGE_PSIZE;
 			case xbox::X_D3DVSDE_BACKDIFFUSE /*= 7*/: UsageIndex = 2; return D3DDECLUSAGE_COLOR;
 			case xbox::X_D3DVSDE_BACKSPECULAR/*= 8*/: UsageIndex = 3; return D3DDECLUSAGE_COLOR;
-			case xbox::X_D3DVSDE_TEXCOORD0   /*= 9*/: return D3DDECLUSAGE_TEXCOORD;
+			case xbox::X_D3DVSDE_TEXCOORD0   /*= 9*/:                 return D3DDECLUSAGE_TEXCOORD;
 			case xbox::X_D3DVSDE_TEXCOORD1   /*=10*/: UsageIndex = 1; return D3DDECLUSAGE_TEXCOORD;
 			case xbox::X_D3DVSDE_TEXCOORD2   /*=11*/: UsageIndex = 2; return D3DDECLUSAGE_TEXCOORD;
 			case xbox::X_D3DVSDE_TEXCOORD3   /*=12*/: UsageIndex = 3; return D3DDECLUSAGE_TEXCOORD;
-			default /*13-15*/ : return D3DDECLUSAGE_UNSUPPORTED;
+			default /*13-15*/ :                                       return D3DDECLUSAGE_UNSUPPORTED;
 		}
 	}
 
