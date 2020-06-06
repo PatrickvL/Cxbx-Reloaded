@@ -406,9 +406,23 @@ VS_OUTPUT main(const VS_INPUT xIn)
 	init_v(12); init_v(13); init_v(14); init_v(15);
     
     VS_OUTPUT o;
+
+	// Scale screenspace coordinates (0 to viewport width/height) to -1 to +1 range
+	// TODO pass scale and offset to shader
+	float2 viewportSize = float2(640, 480);
+	float4 reverseScreenspaceOffset = float4(viewportSize.x / 2, viewportSize.y / 2, 0, 0);
+	float4 reverseScreenspaceScale = float4(1 / (viewportSize.x / 2), -1 / (viewportSize.y / 2), 1, 1);
     
-    // Straight copy input to output
-    o.oPos = reverseScreenspaceTransform(v0);
+    float4 pos = v0;
+    pos -= reverseScreenspaceOffset; 
+    pos *= reverseScreenspaceScale;
+
+	// Detect 0 w and avoid 0 division
+	if(pos.w == 0) pos.w = 1; // if else doesn't seem to work here
+	pos.w = 1 / pos.w; // flip rhw to w
+	pos.xyz *= pos.w;
+
+    o.oPos = pos;
     o.oD0 = saturate(v3);
 //o.oD0.a = 1;
     o.oD1 = saturate(v4);
