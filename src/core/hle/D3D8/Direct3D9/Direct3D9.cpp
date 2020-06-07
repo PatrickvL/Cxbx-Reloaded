@@ -3899,29 +3899,11 @@ float GetZScaleForSurface(xbox::X_D3DSurface* pSurface)
 
 void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
 {
-    // Store viewport offset and scale in constant registers
-    // used in shaders to transform back from screen space (Xbox Shader Output) to Clip space (Host Shader Output)
+	// We need to transform back from screen space (Xbox Shader Output) to Clip space (Host Shader Output)
+	// If we know the scale and offset term used to get to Xbox screenspace, will allow us to reverse it
+
     D3DVIEWPORT HostViewPort;
     g_pD3DDevice->GetViewport(&HostViewPort);
-
-	// NOTE: Due to how our GPU emulation works, we need to account for MSAA here, by adjusting the ViewPort dimensions
-	// This fixes the 'offset' models in GTA3
-	float xScale, yScale;
-	float xOffset, yOffset;
-	GetMultiSampleOffsetAndScale(xScale, yScale, xOffset, yOffset);
-	// Since Width and Height are DWORD, subtracting MultiSampleOffset 0.0f or 0.5f makes no sense
-	//HostViewPort.Width -= xOffset;
-	//HostViewPort.Height -= yOffset;
-	HostViewPort.Width /= (DWORD)xScale;
-	HostViewPort.Height /= (DWORD)yScale;
-
-#if 0 // unused?
-    // Calculate Width/Height scale & offset
-    float scaleWidth = (2.0f / HostViewPort.Width) * g_RenderScaleFactor;
-    float scaleHeight = (2.0f / HostViewPort.Height) * g_RenderScaleFactor;
-    float offsetWidth = scaleWidth;
-    float offsetHeight = scaleHeight;
-#endif
 
     // Calculate Z scale & offset
     float scaleZ = g_ZScale * (HostViewPort.MaxZ - HostViewPort.MinZ);
@@ -3929,33 +3911,30 @@ void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
     float offsetZ = g_ZScale * HostViewPort.MinZ;
 #endif
 
-	// TODO will we need to do something here to support upscaling?
-	// TODO remove the code above as required
+	// NOTE: Due to how our GPU emulation works, we need to account for MSAA
+	float multisampleScaleX, multisampleScaleY;
+	float multisampleOffsetX, multisampleOffsetY;
+	GetMultiSampleOffsetAndScale(multisampleScaleX, multisampleScaleY, multisampleOffsetX, multisampleOffsetY);
 
-	// Reset to default scale (as we accounted for MSAA scale above)
-	// But don't reset the offset
-	xScale = 1.0f;
-	yScale = 1.0f;
+	// Scale by frontbuffer width and height
+	// The backbuffer will have been multipled by the multisample scale
+	// This fixes the 'offset' models in GTA3
+	float xboxScreenWidth = GetPixelContainerWidth(g_pXbox_BackBufferSurface) / multisampleScaleX;
+	float xboxScreenHeight = GetPixelContainerHeight(g_pXbox_BackBufferSurface) / multisampleScaleY;
 
-	// Xbox correct values?
-	xOffset += (1.0f / 32.0f);
-	yOffset += (1.0f / 32.0f);
-	xScale *= HostViewPort.Width;
-	yScale *= HostViewPort.Height;
+	// Xbox correct values
+	multisampleOffsetX += (1.0f / 32.0f);
+	multisampleOffsetY += (1.0f / 32.0f);
 
-	// HACK: Add a host correction factor to these values
-	// So that after we reverse the screenspace transformation
-	// Pre-transformed 2d geometry is in the same space as the 3d geometry...?
-
-	// Offset with a host correction
-	vOffset[0] = xOffset + (0.5f * (float)HostViewPort.Width / (float)g_RenderScaleFactor);
-	vOffset[1] = yOffset + (0.5f * (float)HostViewPort.Height / (float)g_RenderScaleFactor);
+	// Offset
+	vOffset[0] = multisampleOffsetX + xboxScreenWidth * 0.5f;
+	vOffset[1] = multisampleOffsetY + xboxScreenHeight * 0.5f;
 	vOffset[2] = 0.0f; //offsetZ;
 	vOffset[3] = 0.0f;
 
-	// Scale with a host correction
-	vScale[0] = xScale * (1.0f / ( 2.0f * (float)g_RenderScaleFactor));
-	vScale[1] = yScale * (1.0f / (-2.0f * (float)g_RenderScaleFactor));
+	// Scale
+	vScale[0] = xboxScreenWidth * 0.5f;
+	vScale[1] = xboxScreenHeight * -0.5f;
 	vScale[2] = scaleZ; // ?
 	vScale[3] = 1.0f; // ?
 }
