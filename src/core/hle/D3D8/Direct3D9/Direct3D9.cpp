@@ -3944,18 +3944,14 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	extern bool g_Xbox_VertexShader_IsPassthrough;
 
 	float isRHWTransformedPosition[4] = { 0 };
-	if (g_Xbox_VertexShader_IsPassthrough) {
-		isRHWTransformedPosition[0] = 1.0f;
-		// TODO : Check if vOffset and vScale match this HLSL code :
-#if 0
-		float2 viewportSize = float2(640, 480);
-		float4 reverseScreenspaceOffset = float4(viewportSize.x / 2, viewportSize.y / 2, 0, 0);
-		float4 reverseScreenspaceScale = float4((viewportSize.x / 2), -(viewportSize.y / 2), 1, 1);
-#endif
-	}
 
     float vOffset[4], vScale[4];
     GetViewPortOffsetAndScale(vOffset, vScale);
+
+	if (g_Xbox_VertexShader_IsPassthrough) {
+		isRHWTransformedPosition[0] = 1.0f;
+		vScale[2] = 1.0f; // Passthrough should not scale Z
+}
 
 	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_SCALE_MIRROR_BASE, vScale, CXBX_D3DVS_VIEWPORT_SCALE_MIRROR_SIZE);
     g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_BASE, vOffset, CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_SIZE);
