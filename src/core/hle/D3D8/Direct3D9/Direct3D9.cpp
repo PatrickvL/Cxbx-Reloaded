@@ -4048,6 +4048,8 @@ void CxbxImpl_SetViewPort(xbox::X_D3DVIEWPORT8* pViewport)
 	// Apply MSAA scale and offset
 	float xScale, yScale;
 	GetMultiSampleScale(xScale, yScale);
+	HostViewPort.X *= (DWORD)xScale;
+	HostViewPort.Y *= (DWORD)yScale;
 	HostViewPort.Width *= (DWORD)xScale;
 	HostViewPort.Height *= (DWORD)yScale;
 	// Since Width and Height are DWORD, adding GetMultiSampleOffset 0.0f or 0.5f makes no sense
