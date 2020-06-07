@@ -3951,9 +3951,11 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	if (g_Xbox_VertexShader_IsPassthrough) {
 		isRHWTransformedPosition[0] = 1.0f;
 		vScale[2] = 1.0f; // Passthrough should not scale Z
-}
+	}
 
-	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_SCALE_MIRROR_BASE, vScale, CXBX_D3DVS_VIEWPORT_SCALE_MIRROR_SIZE);
+	// Get the inverse of the scale, to allow multiply instead of divide on GPU
+	float vScaleInverse[4] = { 1 / vScale[0], 1 / vScale[1], 1 / vScale[2], 1 / vScale[3] };
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_SCALEINVERSE_MIRROR_BASE, vScaleInverse, CXBX_D3DVS_VIEWPORT_SCALE_MIRROR_SIZE);
     g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_BASE, vOffset, CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_SIZE);
 	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_IS_RHW_TRANSFORMED_POSITION_BASE, isRHWTransformedPosition, CXBX_D3DVS_IS_RHW_TRANSFORMED_POSITION_SIZE);
 

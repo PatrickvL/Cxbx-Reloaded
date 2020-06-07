@@ -341,8 +341,8 @@ R"(
 uniform float4 vRegisterDefaultValues[16]  : register(c192);
 uniform float4 vRegisterDefaultFlagsPacked[4]  : register(c208);
 
-uniform float4 xboxViewportScale   : register(c212);
-uniform float4 xboxViewportOffset  : register(c213);
+uniform float4 xboxViewportScaleInverse : register(c212);
+uniform float4 xboxViewportOffset : register(c213);
 
 
 uniform float4 xboxTextureScale[4] : register(c214);
@@ -390,7 +390,7 @@ float4 reverseScreenspaceTransform(float4 oPos)
 
 	oPos.xyz -= xboxViewportOffset.xyz; // reverse offset
 	oPos.xyz *= oPos.w; // reverse perspective divide
-	oPos.xyz /= xboxViewportScale.xyz; // reverse scale
+	oPos.xyz *= xboxViewportScaleInverse.xyz; // reverse scale
 
 	return oPos;
 }
