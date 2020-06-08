@@ -3919,8 +3919,8 @@ void GetViewPortOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
 	// Scale by frontbuffer width and height
 	// The backbuffer will have been multipled by the multisample scale
 	// This fixes the 'offset' models in GTA3
-	float xboxScreenWidth = GetPixelContainerWidth(g_pXbox_BackBufferSurface) / multisampleScaleX;
-	float xboxScreenHeight = GetPixelContainerHeight(g_pXbox_BackBufferSurface) / multisampleScaleY;
+	float xboxScreenWidth = GetPixelContainerWidth(g_pXbox_RenderTarget) / multisampleScaleX;
+	float xboxScreenHeight = GetPixelContainerHeight(g_pXbox_RenderTarget) / multisampleScaleY;
 
 	// Xbox correct values
 	multisampleOffsetX += (1.0f / 32.0f);
