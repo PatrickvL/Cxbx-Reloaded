@@ -1224,9 +1224,11 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	extern float g_ZScale; // TMP glue
 	extern float GetMultiSampleOffsetDelta(); // TMP glue
 
-	// Passthrough programs require scale and offset to be set in constants zero and one
+	// Passthrough programs require scale and offset to be set in constants zero and one (both minus 96)
 	// (Note, these are different from GetMultiSampleOffsetAndScale / GetViewPortOffsetAndScale)
-	float scale[4];
+	float scale[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	float offset[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+#if 0 // Based on (regular) BeginPush XDK and (multisampled) AntiAlias samples, scale and offset should just use above defaults, with both render scale factor 1, but also 2 and higher.
 	scale[0] = (float)g_RenderScaleFactor;
 	scale[1] = (float)g_RenderScaleFactor;
 	scale[2] = 1.0f; // Passthrough should not scale Z (so don't use g_ZScale)
@@ -1236,15 +1238,15 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	if (XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_MULTISAMPLEANTIALIAS) > 0) {
 		MultiSampleBias = GetMultiSampleOffsetDelta();
 	}
-	float offset[4];
+
 	offset[0] = g_Xbox_ScreenSpaceOffset_x - MultiSampleBias;
 	offset[1] = g_Xbox_ScreenSpaceOffset_y - MultiSampleBias;
 	offset[2] = 0.0f;
 	offset[3] = 0.0f;
+#endif
 
 	// Test-case : XDK Ripple sample
 
-	// (And we don't want to rely on Xbox setting these constants)
 	// TODO : Apparently, offset and scale are swapped in some XDK versions, but which?
 	CxbxImpl_SetVertexShaderConstant(0 - X_D3DSCM_CORRECTION, scale, 1);
 	CxbxImpl_SetVertexShaderConstant(1 - X_D3DSCM_CORRECTION, offset, 1);
