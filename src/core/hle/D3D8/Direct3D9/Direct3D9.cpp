@@ -109,6 +109,7 @@ static bool                         g_bHasDepth = false;    // Does device have 
        float                        g_ZScale = 1.0;
 static bool                         g_bHasStencil = false;  // Does device have a Stencil Buffer?
 static DWORD						g_dwPrimPerFrame = 0;	// Number of primitives within one frame
+       bool                         g_bUsePassthroughHLSL = true;
 static float                        g_AspectRatioScale = 1.0f;
 static UINT                         g_AspectRatioScaleWidth = 0;
 static UINT                         g_AspectRatioScaleHeight = 0;
@@ -1934,6 +1935,10 @@ static LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPar
                 // sometimes, so detect it and stop emulation from here too :
                 SendMessage(hWnd, WM_CLOSE, 0, 0); // See StopEmulation();
             }
+			else if (wParam == VK_F7)
+			{
+				g_bUsePassthroughHLSL = !g_bUsePassthroughHLSL;
+			}
             else if(wParam == VK_F8)
             {
                 g_bPrintfOn = !g_bPrintfOn;
@@ -3943,21 +3948,8 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 {
 	extern bool g_Xbox_VertexShader_IsPassthrough;
 
-	float isRHWTransformedPosition[4] = { 0 };
-
     float vOffset[4], vScale[4];
     GetViewPortOffsetAndScale(vOffset, vScale);
-
-	if (g_Xbox_VertexShader_IsPassthrough) {
-		isRHWTransformedPosition[0] = 1.0f;
-		vScale[2] = 1.0f; // Passthrough should not scale Z
-	}
-
-	// Get the inverse of the scale, to allow multiply instead of divide on GPU
-	float vScaleInverse[4] = { 1 / vScale[0], 1 / vScale[1], 1 / vScale[2], 1 / vScale[3] };
-	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_SCALEINVERSE_MIRROR_BASE, vScaleInverse, CXBX_D3DVS_VIEWPORT_SCALE_MIRROR_SIZE);
-    g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_BASE, vOffset, CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_SIZE);
-	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_IS_RHW_TRANSFORMED_POSITION_BASE, isRHWTransformedPosition, CXBX_D3DVS_IS_RHW_TRANSFORMED_POSITION_SIZE);
 
 	// Store viewport offset and scale in constant registers 58 (c-38) and
 	// 59 (c-37) used for screen space transformation.
@@ -3969,6 +3961,19 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 		CxbxImpl_SetVertexShaderConstant(X_D3DSCM_RESERVED_CONSTANT_SCALE, vScale, 1);
 		CxbxImpl_SetVertexShaderConstant(X_D3DSCM_RESERVED_CONSTANT_OFFSET, vOffset, 1);
 	}
+
+	// Get the inverse of the scale, to allow multiply instead of divide on GPU
+	float vScaleInverse[4] = { 1 / vScale[0], 1 / vScale[1], 1 / vScale[2], 1 / vScale[3] };
+	float isRHWTransformedPosition[4] = { 0 };
+
+	if (g_Xbox_VertexShader_IsPassthrough) {
+		isRHWTransformedPosition[0] = 1.0f;
+		vScaleInverse[2] = 1.0f; // Passthrough should not scale Z
+	}
+
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_SCALE_INVERSE_BASE, vScaleInverse, CXBX_D3DVS_VIEWPORT_SCALE_INVERSE_SIZE);
+    g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_BASE, vOffset, CXBX_D3DVS_VIEWPORT_OFFSET_MIRROR_SIZE);
+	g_pD3DDevice->SetVertexShaderConstantF(CXBX_D3DVS_IS_RHW_TRANSFORMED_POSITION_BASE, isRHWTransformedPosition, CXBX_D3DVS_IS_RHW_TRANSFORMED_POSITION_SIZE);
 }
 
 // ******************************************************************

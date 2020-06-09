@@ -1133,6 +1133,8 @@ IDirect3DVertexDeclaration* CxbxCreateHostVertexDeclaration(D3DVERTEXELEMENT *pD
 static IDirect3DVertexShader* passthroughshader;
 void CxbxUpdateHostVertexShader()
 {
+	extern bool g_bUsePassthroughHLSL; // TMP glue
+
 	// TODO Call this when state is dirty
 	// Rather than every time state changes
 
@@ -1149,7 +1151,7 @@ void CxbxUpdateHostVertexShader()
 		// called, which sets host vertex declaration based on the
 		// declaration that XboxVertexShaderFromFVF generated. 
 	}
-	else if (g_Xbox_VertexShader_IsPassthrough) {
+	else if (g_Xbox_VertexShader_IsPassthrough && g_bUsePassthroughHLSL) {
 		if (passthroughshader == nullptr) {
 			ID3DBlob* pBlob = nullptr;
 			EmuCompileXboxPassthrough(&pBlob);
@@ -1223,11 +1225,11 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	extern float GetMultiSampleOffsetDelta(); // TMP glue
 
 	// Passthrough programs require scale and offset to be set in constants zero and one
-	// (Note, these are different from GetMultiSampleOffsetAndScale)
+	// (Note, these are different from GetMultiSampleOffsetAndScale / GetViewPortOffsetAndScale)
 	float scale[4];
 	scale[0] = (float)g_RenderScaleFactor;
 	scale[1] = (float)g_RenderScaleFactor;
-	scale[2] = g_ZScale;
+	scale[2] = 1.0f; // Passthrough should not scale Z (so don't use g_ZScale)
 	scale[3] = 1.0f;
 
 	float MultiSampleBias = 0.0f;
@@ -1239,11 +1241,13 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	offset[1] = g_Xbox_ScreenSpaceOffset_y - MultiSampleBias;
 	offset[2] = 0.0f;
 	offset[3] = 0.0f;
-#if 0  // TODO : Fix our calculations above, as with this enabled, XDK Ripple sample regresses!
-	// (And we don't want to rely on Xbox setting these constants) 
-	CxbxImpl_SetVertexShaderConstant(0, scale, 1);
-	CxbxImpl_SetVertexShaderConstant(1, offset, 1);
-#endif
+
+	// Test-case : XDK Ripple sample
+
+	// (And we don't want to rely on Xbox setting these constants)
+	// TODO : Apparently, offset and scale are swapped in some XDK versions, but which?
+	CxbxImpl_SetVertexShaderConstant(0 - X_D3DSCM_CORRECTION, scale, 1);
+	CxbxImpl_SetVertexShaderConstant(1 - X_D3DSCM_CORRECTION, offset, 1);
 }
 
 CxbxVertexDeclaration* CxbxGetVertexDeclaration()

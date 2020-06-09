@@ -37,6 +37,8 @@ uniform float4 xboxViewportOffset : register(c213);
 
 uniform float4 xboxTextureScale[4] : register(c214);
 
+uniform float4 xboxIsRHWTransformedPosition : register(c218);
+
 // Overloaded casts, assuring all inputs are treated as float4
 float4 _tof4(float  src) { return float4(src, src, src, src); }
 float4 _tof4(float2 src) { return src.xyyy; }
@@ -268,6 +270,12 @@ float4 reverseScreenspaceTransform(float4 oPos)
 	// +rcc r1.x, r12.w
 	// mad oPos.xyz, r12, r1.x, c-37
 	// where c-37 and c-38 are reserved transform values
+
+	if (xboxIsRHWTransformedPosition.x) {
+		// Detect 0 w and avoid 0 division
+		if (oPos.w == 0) oPos.w = 1; // if else doesn't seem to work here
+		oPos.w = 1 / oPos.w; // flip rhw to w
+	}
 
 	oPos.xyz -= xboxViewportOffset.xyz; // reverse offset
 	oPos.xyz *= oPos.w; // reverse perspective divide
