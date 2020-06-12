@@ -412,7 +412,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
 	init_v( 8); init_v( 9); init_v(10); init_v(11);
 	init_v(12); init_v(13); init_v(14); init_v(15);
 
-	// For fixed function, map output variables to their corresponding input registers
+	// For passthrough, map output variables to their corresponding input registers
 	float4 oPos = v0;
 	float4 oD0 = v3;
 	float4 oD1 = v4;
