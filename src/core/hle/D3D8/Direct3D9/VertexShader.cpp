@@ -397,9 +397,6 @@ float4 reverseScreenspaceTransform(float4 oPos)
 
 VS_OUTPUT main(const VS_INPUT xIn)
 {
-	// Address (index) register
-	int1 a0 = 0;
-
 	// Input registers
 	float4 v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
 
@@ -414,24 +411,37 @@ VS_OUTPUT main(const VS_INPUT xIn)
 	init_v( 4); init_v( 5); init_v( 6); init_v( 7);
 	init_v( 8); init_v( 9); init_v(10); init_v(11);
 	init_v(12); init_v(13); init_v(14); init_v(15);
-    
-    VS_OUTPUT o;
 
-    o.oPos = reverseScreenspaceTransform(v0);
-    o.oD0 = saturate(v3);
-//o.oD0.a = 1;
-    o.oD1 = saturate(v4);
-    o.oFog = v5;
-	o.oPts = v6;
-	o.oB0 = saturate(v7);
-	o.oB1 = saturate(v8);
+	// For fixed function, map output variables to their corresponding input registers
+	float4 oPos = v0;
+	float4 oD0 = v3;
+	float4 oD1 = v4;
+	float4 oFog = v5;
+	float4 oPts = v6;
+	float4 oB0 = v7;
+	float4 oB1 = v8;
+	float4 oT0 = v9;
+	float4 oT1 = v10;
+	float4 oT2 = v11;
+	float4 oT3 = v12;
+
+	// Copy variables to output struct
+	VS_OUTPUT xOut;
+
+	xOut.oPos = reverseScreenspaceTransform(oPos);
+	xOut.oD0 = saturate(oD0);
+	xOut.oD1 = saturate(oD1);
+	xOut.oFog = saturate(oFog.x);
+	xOut.oPts = oPts.x;
+	xOut.oB0 = saturate(oB0);
+	xOut.oB1 = saturate(oB1);
 	// Scale textures (TODO : or should we apply this to the input register values?)
-	o.oT0 = v9 / xboxTextureScale[0];
-	o.oT1 = v10 / xboxTextureScale[1];
-	o.oT2 = v11 / xboxTextureScale[2];
-	o.oT3 = v12 / xboxTextureScale[3];
-    
-    return o;
+	xOut.oT0 = oT0 / xboxTextureScale[0];
+	xOut.oT1 = oT1 / xboxTextureScale[1];
+	xOut.oT2 = oT2 / xboxTextureScale[2];
+	xOut.oT3 = oT3 / xboxTextureScale[3];
+
+	return xOut;
 }
 )";
 
