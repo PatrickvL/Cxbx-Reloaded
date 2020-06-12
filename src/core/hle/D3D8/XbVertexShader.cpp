@@ -86,7 +86,7 @@ static xbox::X_D3DVertexShader* XboxVertexShaderFromFVF(DWORD xboxFvf)
 	using namespace xbox;
 
 	// Note : FVFs don't tessellate, all slots read from stream zero, therefor
-	// the following zero-initialization of IndexOfStream (like all other fields)
+	// the following zero-initialization of StreamIndex (like all other fields)
 	// is never updated below.
 	g_Xbox_VertexShader_ForFVF = { 0 };
 
@@ -334,16 +334,16 @@ xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat()
 	return CxbxGetVertexShaderAttributes(pXboxVertexShader);
 }
 
-// Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream number.
+// Reads the active Xbox stream input values (containing VertexBuffer, Offset and Stride) for the given stream index.
 // (These values are set through SetStreamSource and can be overridden by SetVertexShaderInput.)
-xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber)
+xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned XboxStreamNumber)
 {
 	// If SetVertexShaderInput is active, its arguments overrule those of SetStreamSource
 	if (g_Xbox_SetVertexShaderInput_Count > 0) {
-		return g_Xbox_SetVertexShaderInput_Data[StreamNumber];
+		return g_Xbox_SetVertexShaderInput_Data[XboxStreamNumber];
 	}
 
-	return g_Xbox_SetStreamSource[StreamNumber];
+	return g_Xbox_SetStreamSource[XboxStreamNumber];
 }
 
 #define DbgVshPrintf \
@@ -670,27 +670,26 @@ private:
 			case xbox::X_D3DVSDE_TEXCOORD1   /*=10*/: UsageIndex = 1; return D3DDECLUSAGE_TEXCOORD;
 			case xbox::X_D3DVSDE_TEXCOORD2   /*=11*/: UsageIndex = 2; return D3DDECLUSAGE_TEXCOORD;
 			case xbox::X_D3DVSDE_TEXCOORD3   /*=12*/: UsageIndex = 3; return D3DDECLUSAGE_TEXCOORD;
-			default /*13-15*/ :                                       return D3DDECLUSAGE_UNSUPPORTED;
+			default /*13-15*/ :
+				return D3DDECLUSAGE_UNSUPPORTED;
 		}
 	}
 
 	// VERTEX SHADER
 
-	void VshConvertToken_STREAM(DWORD StreamNumber)
+	void VshConvertToken_STREAM(DWORD XboxStreamIndex)
 	{
 		// new stream
-		pCurrentVertexShaderStreamInfo = &(pVertexDeclarationToSet->VertexStreams[StreamNumber]);
+		assert(XboxStreamIndex < X_VSH_MAX_STREAMS);
+		pCurrentVertexShaderStreamInfo = &(pVertexDeclarationToSet->VertexStreams[pVertexDeclarationToSet->NumberOfVertexStreams]);
 		pCurrentVertexShaderStreamInfo->NeedPatch = FALSE;
-		pCurrentVertexShaderStreamInfo->DeclPosition = FALSE;
-		pCurrentVertexShaderStreamInfo->CurrentStreamNumber = 0;
+		pCurrentVertexShaderStreamInfo->XboxStreamIndex = (WORD)XboxStreamIndex;
 		pCurrentVertexShaderStreamInfo->HostVertexStride = 0;
 		pCurrentVertexShaderStreamInfo->NumberOfVertexElements = 0;
 
 		// Dxbx note : Use Dophin(s), FieldRender, MatrixPaletteSkinning and PersistDisplay as a testcase
 
-		pCurrentVertexShaderStreamInfo->CurrentStreamNumber = (WORD)StreamNumber;
 		pVertexDeclarationToSet->NumberOfVertexStreams++;
-		// TODO : Keep a bitmask for all StreamNumber's seen?
 	}
 
 	void VshConvert_RegisterVertexElement(
@@ -699,6 +698,7 @@ private:
 		UINT HostVertexElementByteSize,
 		BOOL NeedPatching)
 	{
+		assert(pCurrentVertexShaderStreamInfo->NumberOfVertexElements < X_VSH_MAX_ATTRIBUTES);
 		CxbxVertexShaderStreamElement* pCurrentElement = &(pCurrentVertexShaderStreamInfo->VertexElements[pCurrentVertexShaderStreamInfo->NumberOfVertexElements]);
 		pCurrentElement->XboxType = XboxVertexElementDataType;
 		pCurrentElement->XboxByteSize = XboxVertexElementByteSize;
@@ -722,7 +722,7 @@ private:
 				// because these could all go through an Xbox to host conversion step, so must be copied over afterwards.
 				pRecompiled->Method = D3DDECLMETHOD_CROSSUV; // for D3DVSD_TESSNORMAL
 				pRecompiled->Usage = D3DDECLUSAGE_NORMAL; // TODO : Is this correct?
-				pRecompiled->UsageIndex = 1; // TODO : Is this correct?
+				pRecompiled->UsageIndex = 0; // Note : 1 would be wrong
 				return true;
 			case 2: // AUTOTEXCOORD
 				// pRecompiled->Stream = 0; // The input stream is unused (but must be set to 0), which is the current default value
@@ -912,8 +912,8 @@ private:
 
 		// Select new stream, if needed
 		if ((pCurrentVertexShaderStreamInfo == nullptr)
-		 || (pCurrentVertexShaderStreamInfo->CurrentStreamNumber != slot.IndexOfStream)) {
-			VshConvertToken_STREAM(slot.IndexOfStream);
+		 || (pCurrentVertexShaderStreamInfo->XboxStreamIndex != slot.StreamIndex)) {
+			VshConvertToken_STREAM(slot.StreamIndex);
 		}
 
 		// save patching information
@@ -923,7 +923,7 @@ private:
 			HostVertexElementByteSize,
 			NeedPatching);
 
-		pRecompiled->Stream = pCurrentVertexShaderStreamInfo->CurrentStreamNumber;
+		pRecompiled->Stream = pCurrentVertexShaderStreamInfo->XboxStreamIndex; // Use Xbox stream index on host
 		pRecompiled->Offset = pCurrentVertexShaderStreamInfo->HostVertexStride;
 		pRecompiled->Type = HostVertexElementDataType;
 		pRecompiled->Method = D3DDECLMETHOD_DEFAULT;
@@ -975,8 +975,8 @@ public:
 			{
 				auto regX = pXboxDeclaration->Slots[x];
 				auto regY = pXboxDeclaration->Slots[y];
-				return std::tie(regX.IndexOfStream, regX.Offset)
-					 < std::tie(regY.IndexOfStream, regY.Offset);
+				return std::tie(regX.StreamIndex, regX.Offset)
+					 < std::tie(regY.StreamIndex, regY.Offset);
 			});
 
 		for (size_t i = 0; i < orderedRegisterIndices.size(); i++) {

@@ -1073,7 +1073,7 @@ X_VSH_SHADER_HEADER;
 // ******************************************************************
 typedef struct _X_VERTEXSHADERINPUT
 {
-    DWORD IndexOfStream;
+    DWORD StreamIndex;
     DWORD Offset;
     DWORD Format;
     BYTE TessellationType;

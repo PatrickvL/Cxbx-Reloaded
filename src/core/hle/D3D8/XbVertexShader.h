@@ -60,11 +60,10 @@ CxbxVertexShaderStreamElement;
 typedef struct _CxbxVertexShaderStreamInfo
 {
 	BOOL  NeedPatch;       // This is to know whether it's data which must be patched
-	BOOL DeclPosition;
 	WORD HostVertexStride;
 	DWORD NumberOfVertexElements;        // Number of the stream data types
-	WORD CurrentStreamNumber;
-	CxbxVertexShaderStreamElement VertexElements[X_VSH_MAX_ATTRIBUTES + 16]; // TODO : Why 16 extra host additions?)
+	WORD XboxStreamIndex;
+	CxbxVertexShaderStreamElement VertexElements[X_VSH_MAX_ATTRIBUTES];
 }
 CxbxVertexShaderStreamInfo;
 
@@ -73,7 +72,7 @@ typedef uint64_t VertexDeclarationKey;
 typedef struct _CxbxVertexDeclaration
 {
 	VertexDeclarationKey Key;
-	CxbxVertexShaderStreamInfo VertexStreams[X_VSH_MAX_STREAMS];
+	CxbxVertexShaderStreamInfo VertexStreams[X_VSH_MAX_STREAMS]; // Note : VertexStreams is indexed by a counter, NOT StreamIndex!
 	IDirect3DVertexDeclaration* pHostVertexDeclaration;
 	UINT NumberOfVertexStreams; // The number of streams the vertex shader uses
 	bool vRegisterInDeclaration[X_VSH_MAX_ATTRIBUTES];
@@ -204,7 +203,7 @@ extern bool g_Xbox_VertexShader_IsFixedFunction;
 
 extern bool CxbxVertexDeclarationNeedsPatching(CxbxVertexDeclaration* pCxbxVertexDeclaration);
 extern CxbxVertexDeclaration* CxbxGetVertexDeclaration();
-extern xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned StreamNumber);
+extern xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned XboxStreamNumber);
 
 extern void CxbxImpl_SetScreenSpaceOffset(float x, float y);
 extern void CxbxImpl_LoadVertexShaderProgram(CONST DWORD* pFunction, DWORD Address);
