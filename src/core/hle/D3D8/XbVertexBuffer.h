@@ -56,7 +56,7 @@ class CxbxPatchedStream
 public:
     CxbxPatchedStream();
     ~CxbxPatchedStream();
-    void Activate(CxbxDrawContext *pDrawContext, UINT uiStream) const;
+    void Activate(CxbxDrawContext *pDrawContext, UINT HostStreamNumber) const;
     bool                    isValid = false;
     xbox::X_D3DPRIMITIVETYPE XboxPrimitiveType = xbox::X_D3DPT_NONE;
     PVOID                   pCachedXboxVertexData = xbox::zeroptr;

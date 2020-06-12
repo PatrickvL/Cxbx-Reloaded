@@ -1100,21 +1100,6 @@ CxbxVertexDeclaration* FetchCachedCxbxVertexDeclaration(VertexDeclarationKey Cac
 	return nullptr;
 }
 
-bool CxbxVertexDeclarationNeedsPatching(CxbxVertexDeclaration* pCxbxVertexDeclaration)
-{
-	if (pCxbxVertexDeclaration == nullptr) {
-		return false;
-	}
-
-	for (uint32_t i = 0; i < pCxbxVertexDeclaration->NumberOfVertexStreams; i++) {
-		if (pCxbxVertexDeclaration->VertexStreams[i].NeedPatch) {
-			return true;
-		}
-	}
-
-    return false;
-}
-
 IDirect3DVertexDeclaration* CxbxCreateHostVertexDeclaration(D3DVERTEXELEMENT *pDeclaration)
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT

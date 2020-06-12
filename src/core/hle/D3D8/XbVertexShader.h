@@ -201,7 +201,6 @@ inline xbox::X_D3DVertexShader *VshHandleToXboxVertexShader(DWORD Handle) { retu
 
 extern bool g_Xbox_VertexShader_IsFixedFunction;
 
-extern bool CxbxVertexDeclarationNeedsPatching(CxbxVertexDeclaration* pCxbxVertexDeclaration);
 extern CxbxVertexDeclaration* CxbxGetVertexDeclaration();
 extern xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned XboxStreamNumber);
 
