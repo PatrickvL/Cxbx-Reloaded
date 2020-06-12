@@ -738,9 +738,7 @@ private:
 			}
 		}
 
-		BOOL NeedPatching = FALSE;
-
-		WORD XboxVertexElementByteSize = 0;
+		WORD XboxVertexElementByteSize = 0; // When set above 0, implies NeedPatching
 		BYTE HostVertexElementDataType = 0;
 		WORD HostVertexElementByteSize = 0;
 
@@ -785,7 +783,6 @@ private:
 				HostVertexElementByteSize = 1 * sizeof(FLOAT);
 			}
 			XboxVertexElementByteSize = 1 * sizeof(xbox::SHORT);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_NORMSHORT2: // 0x21:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_SHORT2N) {
@@ -798,7 +795,6 @@ private:
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT2;
 				HostVertexElementByteSize = 2 * sizeof(FLOAT);
 				XboxVertexElementByteSize = 2 * sizeof(xbox::SHORT);
-				NeedPatching = TRUE;
 			}
 			break;
 		case xbox::X_D3DVSDT_NORMSHORT3: // 0x31:
@@ -812,7 +808,6 @@ private:
 				HostVertexElementByteSize = 3 * sizeof(FLOAT);
 			}
 			XboxVertexElementByteSize = 3 * sizeof(xbox::SHORT);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_NORMSHORT4: // 0x41:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_SHORT4N) {
@@ -825,26 +820,22 @@ private:
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT4;
 				HostVertexElementByteSize = 4 * sizeof(FLOAT);
 				XboxVertexElementByteSize = 4 * sizeof(xbox::SHORT);
-				NeedPatching = TRUE;
 			}
 			break;
 		case xbox::X_D3DVSDT_NORMPACKED3: // 0x16:
 			HostVertexElementDataType = D3DDECLTYPE_FLOAT3;
 			HostVertexElementByteSize = 3 * sizeof(FLOAT);
 			XboxVertexElementByteSize = 1 * sizeof(xbox::DWORD);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_SHORT1: // 0x15:
 			HostVertexElementDataType = D3DDECLTYPE_SHORT2;
 			HostVertexElementByteSize = 2 * sizeof(SHORT);
 			XboxVertexElementByteSize = 1 * sizeof(xbox::SHORT);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_SHORT3: // 0x35:
 			HostVertexElementDataType = D3DDECLTYPE_SHORT4;
 			HostVertexElementByteSize = 4 * sizeof(SHORT);
 			XboxVertexElementByteSize = 3 * sizeof(xbox::SHORT);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_PBYTE1: // 0x14:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
@@ -857,7 +848,6 @@ private:
 				HostVertexElementByteSize = 1 * sizeof(FLOAT);
 			}
 			XboxVertexElementByteSize = 1 * sizeof(xbox::BYTE);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_PBYTE2: // 0x24:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
@@ -870,7 +860,6 @@ private:
 				HostVertexElementByteSize = 2 * sizeof(FLOAT);
 			}
 			XboxVertexElementByteSize = 2 * sizeof(xbox::BYTE);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_PBYTE3: // 0x34:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
@@ -883,7 +872,6 @@ private:
 				HostVertexElementByteSize = 3 * sizeof(FLOAT);
 			}
 			XboxVertexElementByteSize = 3 * sizeof(xbox::BYTE);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_PBYTE4: // 0x44:
 			// Test-case : Panzer
@@ -897,21 +885,29 @@ private:
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT4;
 				HostVertexElementByteSize = 4 * sizeof(FLOAT);
 				XboxVertexElementByteSize = 4 * sizeof(xbox::BYTE);
-				NeedPatching = TRUE;
 			}
 			break;
 		case xbox::X_D3DVSDT_FLOAT2H: // 0x72:
 			HostVertexElementDataType = D3DDECLTYPE_FLOAT4;
 			HostVertexElementByteSize = 4 * sizeof(FLOAT);
 			XboxVertexElementByteSize = 3 * sizeof(FLOAT);
-			NeedPatching = TRUE;
 			break;
 		case xbox::X_D3DVSDT_NONE: // 0x02:
-			// No host element data, so no patching
+			assert(false); // Should already be handled above
 			break;
 		default:
-			//LOG_TEST_CASE("Unknown data type for D3DVSD_REG: 0x%02X\n", XboxVertexElementDataType);
-			break;
+			LOG_TEST_CASE("Unknown data type for D3DVSD_REG"); // TODO : Add : 0x % 02X\n", XboxVertexElementDataType);
+			return false;
+		}
+
+		assert(HostVertexElementDataType > 0);
+		assert(HostVertexElementByteSize > 0);
+
+		BOOL NeedPatching = FALSE;
+		if (XboxVertexElementByteSize == 0) {
+			XboxVertexElementByteSize = HostVertexElementByteSize;
+		} else {
+			NeedPatching = TRUE;
 		}
 
 		// Select new stream, if needed
@@ -923,7 +919,7 @@ private:
 		// save patching information
 		VshConvert_RegisterVertexElement(
 			XboxVertexElementDataType,
-			NeedPatching ? XboxVertexElementByteSize : HostVertexElementByteSize,
+			XboxVertexElementByteSize,
 			HostVertexElementByteSize,
 			NeedPatching);
 
