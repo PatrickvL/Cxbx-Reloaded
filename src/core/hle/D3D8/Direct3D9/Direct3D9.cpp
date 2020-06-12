@@ -2461,9 +2461,9 @@ static DWORD WINAPI EmuCreateDeviceProxy(LPVOID)
                 );
 				DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateVertexBuffer");
 
-                for(int Streams = 0; Streams < 16; Streams++)
+                for(int HostStreamNumber = 0; HostStreamNumber < X_VSH_MAX_STREAMS; HostStreamNumber++)
                 {
-                    hRet = g_pD3DDevice->SetStreamSource(Streams, g_pDummyBuffer,
+                    hRet = g_pD3DDevice->SetStreamSource(HostStreamNumber, g_pDummyBuffer,
 						0, // OffsetInBytes
 						1);
 					DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetStreamSource");
