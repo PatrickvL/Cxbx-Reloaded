@@ -979,10 +979,11 @@ public:
 					 < std::tie(regY.StreamIndex, regY.Offset);
 			});
 
+		EmuLog(LOG_LEVEL::DEBUG, "Parsing vertex declaration");
 		for (size_t i = 0; i < orderedRegisterIndices.size(); i++) {
 			auto regIndex = orderedRegisterIndices[i];
 			auto &slot = pXboxDeclaration->Slots[regIndex];
-			if (slot.Format >= xbox::X_D3DVSDT_NONE) {
+			if (slot.Format > xbox::X_D3DVSDT_NONE) {
 				// Set Direct3D9 vertex element (declaration) members :
 				if (VshConvertToken_STREAMDATA_REG(regIndex, slot)) {
 					// Add this register to the list of declared registers
@@ -990,6 +991,11 @@ public:
 					// Remember a pointer to this register
 					HostVertexElementPerRegister[regIndex] = pRecompiled;
 					pRecompiled++;
+
+					EmuLog(LOG_LEVEL::DEBUG, "\tXbox Stream %d, Offset %d, Format %d, Slot %d",
+						slot.IndexOfStream, slot.Offset, slot.Format, regIndex);
+					EmuLog(LOG_LEVEL::DEBUG, "\tHost Stream %d, Offset %d, Format %d, Usage %d-%d",
+						pRecompiled->Stream, pRecompiled->Offset, pRecompiled->Type, pRecompiled->Usage, pRecompiled->UsageIndex);
 				}
 			}
 		}
