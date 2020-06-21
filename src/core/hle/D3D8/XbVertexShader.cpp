@@ -914,6 +914,7 @@ private:
 		if ((pCurrentVertexShaderStreamInfo == nullptr)
 		 || (pCurrentVertexShaderStreamInfo->XboxStreamIndex != slot.StreamIndex)) {
 			VshConvertToken_STREAM(slot.StreamIndex);
+			pCurrentVertexShaderStreamInfo->HostVertexStride = slot.Offset;
 		}
 
 		// save patching information
@@ -924,6 +925,7 @@ private:
 			NeedPatching);
 
 		pRecompiled->Stream = pCurrentVertexShaderStreamInfo->XboxStreamIndex; // Use Xbox stream index on host
+		// FIXME Don't assume vertex elements are contiguous!
 		pRecompiled->Offset = pCurrentVertexShaderStreamInfo->HostVertexStride;
 		pRecompiled->Type = HostVertexElementDataType;
 		pRecompiled->Method = D3DDECLMETHOD_DEFAULT;
@@ -993,7 +995,7 @@ public:
 					pRecompiled++;
 
 					EmuLog(LOG_LEVEL::DEBUG, "\tXbox Stream %d, Offset %d, Format %d, Slot %d",
-						slot.IndexOfStream, slot.Offset, slot.Format, regIndex);
+						slot.StreamIndex, slot.Offset, slot.Format, regIndex);
 					EmuLog(LOG_LEVEL::DEBUG, "\tHost Stream %d, Offset %d, Format %d, Usage %d-%d",
 						pRecompiled->Stream, pRecompiled->Offset, pRecompiled->Type, pRecompiled->Usage, pRecompiled->UsageIndex);
 				}
