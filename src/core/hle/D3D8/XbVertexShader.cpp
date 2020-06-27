@@ -644,10 +644,10 @@ class XboxVertexDeclarationConverter
 {
 protected:
 	// Internal variables
-	CxbxVertexDeclaration* pVertexDeclarationToSet;
+	CxbxVertexDeclaration* pCurrentVertexDeclaration;
 	CxbxVertexShaderStreamInfo* pCurrentVertexShaderStreamInfo = nullptr;
 	bool IsFixedFunction;
-	D3DVERTEXELEMENT* pRecompiled;
+	D3DVERTEXELEMENT* pCurrentHostVertexElement;
 	std::array<bool, 16> RegVIsPresentInDeclaration;
 
 private:
@@ -677,60 +677,29 @@ private:
 
 	// VERTEX SHADER
 
-	void VshConvertToken_STREAM(DWORD XboxStreamIndex)
-	{
-		// new stream
-		assert(XboxStreamIndex < X_VSH_MAX_STREAMS);
-		pCurrentVertexShaderStreamInfo = &(pVertexDeclarationToSet->VertexStreams[pVertexDeclarationToSet->NumberOfVertexStreams]);
-		pCurrentVertexShaderStreamInfo->NeedPatch = FALSE;
-		pCurrentVertexShaderStreamInfo->XboxStreamIndex = (WORD)XboxStreamIndex;
-		pCurrentVertexShaderStreamInfo->HostVertexStride = 0;
-		pCurrentVertexShaderStreamInfo->NumberOfVertexElements = 0;
-
-		// Dxbx note : Use Dophin(s), FieldRender, MatrixPaletteSkinning and PersistDisplay as a testcase
-
-		pVertexDeclarationToSet->NumberOfVertexStreams++;
-	}
-
-	void VshConvert_RegisterVertexElement(
-		UINT XboxVertexElementDataType,
-		UINT XboxVertexElementByteSize,
-		UINT HostVertexElementByteSize,
-		BOOL NeedPatching)
-	{
-		assert(pCurrentVertexShaderStreamInfo->NumberOfVertexElements < X_VSH_MAX_ATTRIBUTES);
-		CxbxVertexShaderStreamElement* pCurrentElement = &(pCurrentVertexShaderStreamInfo->VertexElements[pCurrentVertexShaderStreamInfo->NumberOfVertexElements]);
-		pCurrentElement->XboxType = XboxVertexElementDataType;
-		pCurrentElement->XboxByteSize = XboxVertexElementByteSize;
-		pCurrentElement->HostByteSize = HostVertexElementByteSize;
-		pCurrentVertexShaderStreamInfo->NumberOfVertexElements++;
-		pCurrentVertexShaderStreamInfo->NeedPatch |= NeedPatching;
-	}
-
 	bool VshConvertToken_STREAMDATA_REG(DWORD VertexRegister, xbox::X_VERTEXSHADERINPUT &slot)
 	{
 		DWORD XboxVertexElementDataType = slot.Format;
 
 		// Does this attribute use no storage present the vertex (check this as early as possible to avoid needless processing) ?
-		if (XboxVertexElementDataType == xbox::X_D3DVSDT_NONE)
-		{
+		if (XboxVertexElementDataType == xbox::X_D3DVSDT_NONE) {
 			// Handle tessellating attributes
 			switch (slot.TessellationType) {
 			case 0: return false; // AUTONONE
 			case 1: // AUTONORMAL
 				// Note : .Stream, .Offset and .Type are copied from pAttributeSlot->TessellationSource in a post-processing step below,
 				// because these could all go through an Xbox to host conversion step, so must be copied over afterwards.
-				pRecompiled->Method = D3DDECLMETHOD_CROSSUV; // for D3DVSD_TESSNORMAL
-				pRecompiled->Usage = D3DDECLUSAGE_NORMAL; // TODO : Is this correct?
-				pRecompiled->UsageIndex = 0; // Note : 1 would be wrong
+				pCurrentHostVertexElement->Method = D3DDECLMETHOD_CROSSUV; // for D3DVSD_TESSNORMAL
+				pCurrentHostVertexElement->Usage = D3DDECLUSAGE_NORMAL; // TODO : Is this correct?
+				pCurrentHostVertexElement->UsageIndex = 0; // Note : 1 would be wrong
 				return true;
 			case 2: // AUTOTEXCOORD
-				// pRecompiled->Stream = 0; // The input stream is unused (but must be set to 0), which is the current default value
-				// pRecompiled->Offset = 0; // The input offset is unused (but must be set to 0), which is the current default value
-				pRecompiled->Type = D3DDECLTYPE_UNUSED; // The input type for D3DDECLMETHOD_UV must be D3DDECLTYPE_UNUSED (the output type implied by D3DDECLMETHOD_UV is D3DDECLTYPE_FLOAT2)
-				pRecompiled->Method = D3DDECLMETHOD_UV; // For X_D3DVSD_MASK_TESSUV
-				pRecompiled->Usage = D3DDECLUSAGE_NORMAL; // Note : In Fixed Function Vertex Pipeline, D3DDECLMETHOD_UV must specify usage D3DDECLUSAGE_TEXCOORD or D3DDECLUSAGE_BLENDWEIGHT. TODO : So, what to do?
-				pRecompiled->UsageIndex = 1; // TODO ; Is this correct?
+				// pCurrentHostVertexElement->Stream = 0; // The input stream is unused (but must be set to 0), which is the current default value
+				// pCurrentHostVertexElement->Offset = 0; // The input offset is unused (but must be set to 0), which is the current default value
+				pCurrentHostVertexElement->Type = D3DDECLTYPE_UNUSED; // The input type for D3DDECLMETHOD_UV must be D3DDECLTYPE_UNUSED (the output type implied by D3DDECLMETHOD_UV is D3DDECLTYPE_FLOAT2)
+				pCurrentHostVertexElement->Method = D3DDECLMETHOD_UV; // For X_D3DVSD_MASK_TESSUV
+				pCurrentHostVertexElement->Usage = D3DDECLUSAGE_NORMAL; // Note : In Fixed Function Vertex Pipeline, D3DDECLMETHOD_UV must specify usage D3DDECLUSAGE_TEXCOORD or D3DDECLUSAGE_BLENDWEIGHT. TODO : So, what to do?
+				pCurrentHostVertexElement->UsageIndex = 1; // TODO ; Is this correct?
 				return true;
 			default:
 				LOG_TEST_CASE("invalid TessellationType");
@@ -742,8 +711,7 @@ private:
 		BYTE HostVertexElementDataType = 0;
 		WORD HostVertexElementByteSize = 0;
 
-		switch (XboxVertexElementDataType)
-		{
+		switch (XboxVertexElementDataType) {
 		case xbox::X_D3DVSDT_FLOAT1: // 0x12:
 			HostVertexElementDataType = D3DDECLTYPE_FLOAT1;
 			HostVertexElementByteSize = 1 * sizeof(FLOAT);
@@ -776,9 +744,7 @@ private:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_SHORT2N) {
 				HostVertexElementDataType = D3DDECLTYPE_SHORT2N;
 				HostVertexElementByteSize = 2 * sizeof(SHORT);
-			}
-			else
-			{
+			} else {
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT1;
 				HostVertexElementByteSize = 1 * sizeof(FLOAT);
 			}
@@ -789,9 +755,7 @@ private:
 				HostVertexElementDataType = D3DDECLTYPE_SHORT2N;
 				HostVertexElementByteSize = 2 * sizeof(SHORT);
 				// No need for patching in D3D9
-			}
-			else
-			{
+			} else {
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT2;
 				HostVertexElementByteSize = 2 * sizeof(FLOAT);
 				XboxVertexElementByteSize = 2 * sizeof(xbox::SHORT);
@@ -801,9 +765,7 @@ private:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_SHORT4N) {
 				HostVertexElementDataType = D3DDECLTYPE_SHORT4N;
 				HostVertexElementByteSize = 4 * sizeof(SHORT);
-			}
-			else
-			{
+			} else {
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT3;
 				HostVertexElementByteSize = 3 * sizeof(FLOAT);
 			}
@@ -814,9 +776,7 @@ private:
 				HostVertexElementDataType = D3DDECLTYPE_SHORT4N;
 				HostVertexElementByteSize = 4 * sizeof(SHORT);
 				// No need for patching in D3D9
-			}
-			else
-			{
+			} else {
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT4;
 				HostVertexElementByteSize = 4 * sizeof(FLOAT);
 				XboxVertexElementByteSize = 4 * sizeof(xbox::SHORT);
@@ -841,9 +801,7 @@ private:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
 				HostVertexElementDataType = D3DDECLTYPE_UBYTE4N;
 				HostVertexElementByteSize = 4 * sizeof(BYTE);
-			}
-			else
-			{
+			} else {
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT1;
 				HostVertexElementByteSize = 1 * sizeof(FLOAT);
 			}
@@ -853,9 +811,7 @@ private:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
 				HostVertexElementDataType = D3DDECLTYPE_UBYTE4N;
 				HostVertexElementByteSize = 4 * sizeof(BYTE);
-			}
-			else
-			{
+			} else {
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT2;
 				HostVertexElementByteSize = 2 * sizeof(FLOAT);
 			}
@@ -865,9 +821,7 @@ private:
 			if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
 				HostVertexElementDataType = D3DDECLTYPE_UBYTE4N;
 				HostVertexElementByteSize = 4 * sizeof(BYTE);
-			}
-			else
-			{
+			} else {
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT3;
 				HostVertexElementByteSize = 3 * sizeof(FLOAT);
 			}
@@ -879,9 +833,7 @@ private:
 				HostVertexElementDataType = D3DDECLTYPE_UBYTE4N;
 				HostVertexElementByteSize = 4 * sizeof(BYTE);
 				// No need for patching when D3D9 supports D3DDECLTYPE_UBYTE4N
-			}
-			else
-			{
+			} else {
 				HostVertexElementDataType = D3DDECLTYPE_FLOAT4;
 				HostVertexElementByteSize = 4 * sizeof(FLOAT);
 				XboxVertexElementByteSize = 4 * sizeof(xbox::BYTE);
@@ -903,34 +855,48 @@ private:
 		assert(HostVertexElementDataType > 0);
 		assert(HostVertexElementByteSize > 0);
 
-		BOOL NeedPatching = FALSE;
-		if (XboxVertexElementByteSize == 0) {
-			XboxVertexElementByteSize = HostVertexElementByteSize;
-		} else {
-			NeedPatching = TRUE;
-		}
-
 		// Select new stream, if needed
 		if ((pCurrentVertexShaderStreamInfo == nullptr)
 		 || (pCurrentVertexShaderStreamInfo->XboxStreamIndex != slot.StreamIndex)) {
-			VshConvertToken_STREAM(slot.StreamIndex);
+			assert(slot.StreamIndex < X_VSH_MAX_STREAMS);
+			assert(pCurrentVertexDeclaration->NumberOfVertexStreams < X_VSH_MAX_STREAMS);
+
+			pCurrentVertexShaderStreamInfo =
+				&(pCurrentVertexDeclaration->VertexStreams[
+					pCurrentVertexDeclaration->NumberOfVertexStreams++]);
+			pCurrentVertexShaderStreamInfo->NeedPatch = FALSE;
+			pCurrentVertexShaderStreamInfo->XboxStreamIndex = (WORD)slot.StreamIndex;
 			pCurrentVertexShaderStreamInfo->HostVertexStride = slot.Offset;
+			pCurrentVertexShaderStreamInfo->NumberOfVertexElements = 0;
+			// Dxbx note : Use Dophin(s), FieldRender, MatrixPaletteSkinning and PersistDisplay as a testcase
 		}
 
 		// save patching information
-		VshConvert_RegisterVertexElement(
-			XboxVertexElementDataType,
-			XboxVertexElementByteSize,
-			HostVertexElementByteSize,
-			NeedPatching);
+		assert(pCurrentVertexShaderStreamInfo->NumberOfVertexElements < X_VSH_MAX_ATTRIBUTES);
 
-		pRecompiled->Stream = pCurrentVertexShaderStreamInfo->XboxStreamIndex; // Use Xbox stream index on host
+		CxbxVertexShaderStreamElement* pCurrentVertexShaderStreamElementInfo =
+			&(pCurrentVertexShaderStreamInfo->VertexElements[
+				pCurrentVertexShaderStreamInfo->NumberOfVertexElements++]);
+
+		if (XboxVertexElementByteSize == 0) {
+			XboxVertexElementByteSize = HostVertexElementByteSize;
+		} else {
+			pCurrentVertexShaderStreamInfo->NeedPatch |= TRUE;
+		}
+
+		pCurrentVertexShaderStreamElementInfo->XboxType = XboxVertexElementDataType;
+		pCurrentVertexShaderStreamElementInfo->XboxByteSize = XboxVertexElementByteSize;
+		pCurrentVertexShaderStreamElementInfo->HostDataType = HostVertexElementDataType;
+		pCurrentVertexShaderStreamElementInfo->HostByteSize = HostVertexElementByteSize;
+
+		// Convert to host vertex element
+		pCurrentHostVertexElement->Stream = pCurrentVertexShaderStreamInfo->XboxStreamIndex; // Use Xbox stream index on host
 		// FIXME Don't assume vertex elements are contiguous!
-		pRecompiled->Offset = pCurrentVertexShaderStreamInfo->HostVertexStride;
-		pRecompiled->Type = HostVertexElementDataType;
-		pRecompiled->Method = D3DDECLMETHOD_DEFAULT;
+		pCurrentHostVertexElement->Offset = pCurrentVertexShaderStreamInfo->HostVertexStride;
+		pCurrentHostVertexElement->Type = pCurrentVertexShaderStreamElementInfo->HostDataType;
+		pCurrentHostVertexElement->Method = D3DDECLMETHOD_DEFAULT;
 		if (IsFixedFunction) {
-			pRecompiled->Usage = Xb2PCRegisterType(VertexRegister, /*&*/pRecompiled->UsageIndex);
+			pCurrentHostVertexElement->Usage = Xb2PCRegisterType(VertexRegister, /*&*/pCurrentHostVertexElement->UsageIndex);
 		}
 		else {
 			// D3DDECLUSAGE_TEXCOORD can be useds for any user-defined data
@@ -938,8 +904,8 @@ private:
 			// Xbox has no concept of 'usage types', it only requires a list of attribute register numbers.
 			// So we treat them all as 'user-defined' with an Index of the Vertex Register Index
 			// this prevents information loss in shaders due to non-matching dcl types!
-			pRecompiled->Usage = D3DDECLUSAGE_TEXCOORD;
-			pRecompiled->UsageIndex = (BYTE)VertexRegister;
+			pCurrentHostVertexElement->Usage = D3DDECLUSAGE_TEXCOORD;
+			pCurrentHostVertexElement->UsageIndex = (BYTE)VertexRegister;
 		}
 
 		pCurrentVertexShaderStreamInfo->HostVertexStride += HostVertexElementByteSize;
@@ -951,7 +917,7 @@ public:
 	D3DVERTEXELEMENT* Convert(xbox::X_VERTEXATTRIBUTEFORMAT* pXboxDeclaration, bool bIsFixedFunction, CxbxVertexDeclaration* pCxbxVertexDeclaration)
 	{
 		// Get a preprocessed copy of the original Xbox Vertex Declaration
-		pVertexDeclarationToSet = pCxbxVertexDeclaration;
+		pCurrentVertexDeclaration = pCxbxVertexDeclaration;
 
 		IsFixedFunction = bIsFixedFunction;
 
@@ -964,7 +930,7 @@ public:
 		unsigned HostDeclarationSize = (X_VSH_MAX_ATTRIBUTES + 1) * sizeof(D3DVERTEXELEMENT);
 
 		D3DVERTEXELEMENT* HostVertexElements = (D3DVERTEXELEMENT*)calloc(1, HostDeclarationSize);
-		pRecompiled = HostVertexElements;
+		pCurrentHostVertexElement = HostVertexElements;
 
 		std::array<byte, X_VSH_MAX_ATTRIBUTES> orderedRegisterIndices;
 		for (byte i = 0; i < orderedRegisterIndices.size(); i++)
@@ -991,18 +957,18 @@ public:
 					// Add this register to the list of declared registers
 					RegVIsPresentInDeclaration[regIndex] = true;
 					// Remember a pointer to this register
-					HostVertexElementPerRegister[regIndex] = pRecompiled;
-					pRecompiled++;
+					HostVertexElementPerRegister[regIndex] = pCurrentHostVertexElement;
+					pCurrentHostVertexElement++;
 
 					EmuLog(LOG_LEVEL::DEBUG, "\tXbox Stream %d, Offset %d, Format %d, Slot %d",
 						slot.StreamIndex, slot.Offset, slot.Format, regIndex);
 					EmuLog(LOG_LEVEL::DEBUG, "\tHost Stream %d, Offset %d, Format %d, Usage %d-%d",
-						pRecompiled->Stream, pRecompiled->Offset, pRecompiled->Type, pRecompiled->Usage, pRecompiled->UsageIndex);
+						pCurrentHostVertexElement->Stream, pCurrentHostVertexElement->Offset, pCurrentHostVertexElement->Type, pCurrentHostVertexElement->Usage, pCurrentHostVertexElement->UsageIndex);
 				}
 			}
 		}
 
-		*pRecompiled = D3DDECL_END();
+		*pCurrentHostVertexElement = D3DDECL_END();
 
 		// Post-process host vertex elements that have a D3DDECLMETHOD_CROSSUV method :
 		for (int AttributeIndex = 0; AttributeIndex < X_VSH_MAX_ATTRIBUTES; AttributeIndex++) {
@@ -1025,7 +991,7 @@ public:
 		// In particular "All vertex elements for a stream must be consecutive and sorted by offset"
 		// Test case: King Kong (due to register redefinition)
 		// Note : Xbox slots might use non-ordered stream indices, so we can't rely on the output ordering of our converted elements!
-		std::sort(/*First=*/HostVertexElements, /*Last=*/pRecompiled, /*Pred=*/[] (const auto& x, const auto& y)
+		std::sort(/*First=*/HostVertexElements, /*Last=*/pCurrentHostVertexElement, /*Pred=*/[] (const auto& x, const auto& y)
 			{ return std::tie(x.Stream, x.Method, x.Offset) < std::tie(y.Stream, y.Method, y.Offset); });
 
 		// Record which registers are in the vertex declaration

@@ -116,7 +116,7 @@ CxbxPatchedStream::CxbxPatchedStream()
     isValid = false;
 }
 
-CxbxPatchedStream::~CxbxPatchedStream()
+void CxbxPatchedStream::Clear()
 {
     if (bCachedHostVertexStreamZeroDataIsAllocated) {
         free(pCachedHostVertexStreamZeroData);
@@ -129,6 +129,11 @@ CxbxPatchedStream::~CxbxPatchedStream()
         pCachedHostVertexBuffer->Release();
         pCachedHostVertexBuffer = nullptr;
     }
+}
+
+CxbxPatchedStream::~CxbxPatchedStream()
+{
+	Clear();
 }
 
 CxbxVertexBufferConverter::CxbxVertexBufferConverter()
@@ -343,19 +348,10 @@ void CxbxVertexBufferConverter::ConvertStream
     m_TotalCacheMisses++;
 
     // If execution reaches here, the cached vertex buffer was not valid and we must reconvert the data
-    if (patchedStream.isValid) {
-        pHostVertexData = (uint8_t*)patchedStream.pCachedHostVertexStreamZeroData;
-        pNewHostVertexBuffer = patchedStream.pCachedHostVertexBuffer;
-
-        // Free the existing buffers
-        if (pHostVertexData != nullptr) {
-            free(pHostVertexData);
-            pHostVertexData = nullptr;
-        } else if (pNewHostVertexBuffer != nullptr) {
-            pNewHostVertexBuffer->Release();
-            pNewHostVertexBuffer = nullptr;
-        }
-    }
+    // Free the existing buffers
+	patchedStream.Clear();
+    assert(pHostVertexData == nullptr);
+	assert(pNewHostVertexBuffer == nullptr);
 
 	// If dwHostVertexDataSize is zero, the allocation/creation will fail
 	// This can be caused by a stride of 0, and 'other' invalid configurations
@@ -414,9 +410,7 @@ void CxbxVertexBufferConverter::ConvertStream
 						// Make it SHORT2N
 						pHostVertexAsShort[0] = pXboxVertexAsShort[0];
 						pHostVertexAsShort[1] = 0;
-					}
-					else
-					{
+					} else {
 						// Make it FLOAT1
 						pHostVertexAsFloat[0] = NormShortToFloat(pXboxVertexAsShort[0]);
 						//pHostVertexAsFloat[1] = 0.0f; // Would be needed for FLOAT2
@@ -432,9 +426,7 @@ void CxbxVertexBufferConverter::ConvertStream
 						// Make it SHORT2N
 						pHostVertexAsShort[0] = pXboxVertexAsShort[0];
 						pHostVertexAsShort[1] = pXboxVertexAsShort[1];
-					}
-					else
-					{
+					} else {
 						// Make it FLOAT2
 						pHostVertexAsFloat[0] = NormShortToFloat(pXboxVertexAsShort[0]);
 						pHostVertexAsFloat[1] = NormShortToFloat(pXboxVertexAsShort[1]);
@@ -449,9 +441,7 @@ void CxbxVertexBufferConverter::ConvertStream
 						pHostVertexAsShort[1] = pXboxVertexAsShort[1];
 						pHostVertexAsShort[2] = pXboxVertexAsShort[2];
 						pHostVertexAsShort[3] = 32767; // TODO : verify
-					}
-					else
-					{
+					} else {
 						// Make it FLOAT3
 						pHostVertexAsFloat[0] = NormShortToFloat(pXboxVertexAsShort[0]);
 						pHostVertexAsFloat[1] = NormShortToFloat(pXboxVertexAsShort[1]);
@@ -470,9 +460,7 @@ void CxbxVertexBufferConverter::ConvertStream
 						pHostVertexAsShort[1] = pXboxVertexAsShort[1];
 						pHostVertexAsShort[2] = pXboxVertexAsShort[2];
 						pHostVertexAsShort[3] = pXboxVertexAsShort[3];
-					}
-					else
-					{
+					} else {
 						// Make it FLOAT4
 						pHostVertexAsFloat[0] = NormShortToFloat(pXboxVertexAsShort[0]);
 						pHostVertexAsFloat[1] = NormShortToFloat(pXboxVertexAsShort[1]);
@@ -522,9 +510,7 @@ void CxbxVertexBufferConverter::ConvertStream
 						pHostVertexAsByte[1] = 0;
 						pHostVertexAsByte[2] = 0;
 						pHostVertexAsByte[3] = 255; // TODO : Verify
-					}
-					else
-					{
+					} else {
 						// Make it FLOAT1
 						pHostVertexAsFloat[0] = ByteToFloat(pXboxVertexAsByte[0]);
 					}
@@ -537,9 +523,7 @@ void CxbxVertexBufferConverter::ConvertStream
 						pHostVertexAsByte[1] = pXboxVertexAsByte[1];
 						pHostVertexAsByte[2] = 0;
 						pHostVertexAsByte[3] = 255; // TODO : Verify
-					}
-					else
-					{
+					} else {
 						// Make it FLOAT2
 						pHostVertexAsFloat[0] = ByteToFloat(pXboxVertexAsByte[0]);
 						pHostVertexAsFloat[1] = ByteToFloat(pXboxVertexAsByte[1]);
@@ -554,9 +538,7 @@ void CxbxVertexBufferConverter::ConvertStream
 						pHostVertexAsByte[1] = pXboxVertexAsByte[1];
 						pHostVertexAsByte[2] = pXboxVertexAsByte[2];
 						pHostVertexAsByte[3] = 255; // TODO : Verify
-					}
-					else
-					{
+					} else {
 						// Make it FLOAT3
 						pHostVertexAsFloat[0] = ByteToFloat(pXboxVertexAsByte[0]);
 						pHostVertexAsFloat[1] = ByteToFloat(pXboxVertexAsByte[1]);
@@ -575,9 +557,7 @@ void CxbxVertexBufferConverter::ConvertStream
 						pHostVertexAsByte[1] = pXboxVertexAsByte[1];
 						pHostVertexAsByte[2] = pXboxVertexAsByte[2];
 						pHostVertexAsByte[3] = pXboxVertexAsByte[3];
-					}
-					else
-					{
+					} else {
 						// Make it FLOAT4
 						pHostVertexAsFloat[0] = ByteToFloat(pXboxVertexAsByte[0]);
 						pHostVertexAsFloat[1] = ByteToFloat(pXboxVertexAsByte[1]);

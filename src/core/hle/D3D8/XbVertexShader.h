@@ -40,9 +40,10 @@
 
 typedef struct _CxbxVertexShaderStreamElement
 {
-	UINT XboxType; // The stream element data types (xbox)
-	UINT XboxByteSize; // The stream element data sizes (xbox)
-	UINT HostByteSize; // The stream element data sizes (pc)
+	UINT XboxType; // The stream element data type (xbox)
+	UINT XboxByteSize; // The stream element data size (xbox)
+	BYTE HostDataType; // The stream element data type (pc)
+	UINT HostByteSize; // The stream element data size (pc)
 }
 CxbxVertexShaderStreamElement;
 
