@@ -561,7 +561,7 @@ DEVICE_WRITE32(PGRAPH)
         break;
     }
 	case NV_PGRAPH_CHANNEL_CTX_TRIGGER: {
-		xbaddr context_address =
+		xbox::addr context_address =
 			GET_MASK(pg->regs[NV_PGRAPH_CHANNEL_CTX_POINTER],
 				NV_PGRAPH_CHANNEL_CTX_POINTER_INST) << 4;
 

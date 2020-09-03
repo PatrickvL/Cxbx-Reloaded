@@ -866,7 +866,7 @@ private:
 					pCurrentVertexDeclaration->NumberOfVertexStreams++]);
 			pCurrentVertexShaderStreamInfo->NeedPatch = FALSE;
 			pCurrentVertexShaderStreamInfo->XboxStreamIndex = (WORD)slot.StreamIndex;
-			pCurrentVertexShaderStreamInfo->HostVertexStride = slot.Offset;
+			pCurrentVertexShaderStreamInfo->HostVertexStride = (WORD)slot.Offset;
 			pCurrentVertexShaderStreamInfo->NumberOfVertexElements = 0;
 			// Dxbx note : Use Dophin(s), FieldRender, MatrixPaletteSkinning and PersistDisplay as a testcase
 		}
@@ -1521,7 +1521,7 @@ void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD C
 	// Mark the constant as dirty, so that CxbxUpdateHostVertexShaderConstants will pick it up
 	extern NV2ADevice* g_NV2A; // TMP glue
 	auto nv2a = g_NV2A->GetDeviceState();
-	for (int i = 0; i < ConstantCount; i++) {
+	for (DWORD i = 0; i < ConstantCount; i++) {
 		nv2a->pgraph.vsh_constants_dirty[Register + i] = true;
 	}
 }

@@ -3872,7 +3872,7 @@ void ValidateRenderTargetDimensions(DWORD HostRenderTarget_Width, DWORD HostRend
 float GetZScaleForSurface(xbox::X_D3DSurface* pSurface)
 {
     // If no surface was present, fallback to 1
-    if (pSurface == xbox:zeroptr) {
+    if (pSurface == xbox::zeroptr) {
         return 1.0f;
     }
 
@@ -4298,7 +4298,7 @@ VOID __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
 
     if (Stage >= 0) {
 		// Switch Texture updates the data pointer of an active texture using pushbuffer commands
-		if (g_pXbox_SetTexture[Stage] == xbox:zeroptr) {
+		if (g_pXbox_SetTexture[Stage] == xbox::zeroptr) {
 			LOG_TEST_CASE("D3DDevice_SwitchTexture without an active texture");
 		}
 		else {
