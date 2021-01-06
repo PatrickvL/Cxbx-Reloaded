@@ -399,15 +399,15 @@ float DoPointSpriteSize()
     const PointSprite ps = state.PointSprite;
     float pointSize = ps.PointSize;
 
-    // Note : if (ps.PointScaleEnable) not required because when disabled, CPU sets RenderTargetHeight and ScaleA to 1, and ScaleB and ScaleC to 0
+    // Note : if (ps.PointScaleEnable) not required because when disabled, CPU sets RenderTargetHeight and PointScale _A to 1, and _B and _C to 0
     {
         const float eyeDistance = length(View.Position);
-        const float factor = ps.ScaleA + ps.ScaleB * eyeDistance + ps.ScaleC * (eyeDistance * eyeDistance);
+        const float factor = ps.PointScale_A + ps.PointScale_B * eyeDistance + ps.PointScale_C * (eyeDistance * eyeDistance);
 
         pointSize *= ps.RenderTargetHeight * sqrt(1 / factor);
     }
 
-	return clamp(pointSize, ps.PointSizeMin, ps.PointSizeMax);
+	return clamp(pointSize, ps.PointSize_Min, ps.PointSize_Max);
 }
 
 VS_INPUT InitializeInputRegisters(const VS_INPUT xInput)
