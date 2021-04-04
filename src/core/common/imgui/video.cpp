@@ -36,6 +36,7 @@ void ImGuiVideo::DrawMenu()
 {
 	if (ImGui::BeginMenu("Video")) {
 		ImGui::MenuItem("Debug Vertex Buffer Cache Stats", NULL, &m_windows.cache_stats_vertex);
+		ImGui::MenuItem("Xbox D3D Resources", NULL, &m_windows.xbox_resources);
 		ImGui::EndMenu();
 	}
 }
@@ -59,6 +60,24 @@ void ImGuiVideo::DrawWidgets(bool is_focus, ImGuiWindowFlags input_handler)
 		if (g_devs[port].type == XBOX_INPUT_DEVICE::LIGHTGUN && g_devs[port].info.ligthgun.laser) {
 			ImGui::Begin("Laser", nullptr, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoDecoration);
 			ImGui::GetForegroundDrawList()->AddCircleFilled(g_InputDeviceManager.CalcLaserPos(port), 5, m_laser_col[port], 0);
+			ImGui::End();
+		}
+	}
+
+	if (m_windows.xbox_resources) {
+		ImGui::SetNextWindowPos(ImVec2(IMGUI_MIN_DIST_SIDE, IMGUI_MIN_DIST_TOP), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.0f));
+		ImGui::SetNextWindowSize(ImVec2(200, 275), ImGuiCond_FirstUseEver);
+		if (ImGui::Begin("Xbox D3D Resources", nullptr, input_handler | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+			if (ImGui::CollapsingHeader("Texture Stages", ImGuiTreeNodeFlags_DefaultOpen)) {
+				extern void DrawXboxTextureStages(); // TMP glue - TODO : Move to shared header
+
+				DrawXboxTextureStages();
+			}
+/*
+			if (ImGui::CollapsingHeader("Render States", ImGuiTreeNodeFlags_DefaultOpen)) {
+				DrawXboxRenderStates();
+			}
+*/
 			ImGui::End();
 		}
 	}

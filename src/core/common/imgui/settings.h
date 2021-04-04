@@ -49,5 +49,6 @@ typedef struct {
 
 typedef struct {
 	bool cache_stats_vertex;
-	bool Reserved[3];
+	bool xbox_resources;
+	bool Reserved[2];
 } imgui_video_windows;

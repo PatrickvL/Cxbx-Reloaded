@@ -2527,6 +2527,26 @@ static void CreateDefaultD3D9Device
     });
 }
 
+void DrawXboxTextureStages()
+{
+	for (unsigned Stage = 0; Stage < xbox::X_D3DTS_STAGECOUNT; Stage++) {
+		if (Stage > 0) ImGui::Separator();
+		ImGui::Text("Stage %u : 0x%p", Stage, g_pXbox_SetTexture[Stage]);
+		if (g_pXbox_SetTexture[Stage] != nullptr) {
+			ImGui::TextWrapped("Common : 0x%.08x", g_pXbox_SetTexture[Stage]->Common);
+			ImGui::TextWrapped("Data   : 0x%p", g_pXbox_SetTexture[Stage]->Data);
+			ImGui::TextWrapped("Format : 0x%p", g_pXbox_SetTexture[Stage]->Format);
+			ImGui::TextWrapped("Lock   : 0x%.08x", g_pXbox_SetTexture[Stage]->Lock);
+			ImGui::TextWrapped("Size   : 0x%.08x", g_pXbox_SetTexture[Stage]->Size);
+			if (g_pXbox_SetTexture[Stage] = &CxbxActiveTextureCopies[Stage])
+				ImGui::TextUnformatted("[Switched copy]");
+		}
+//		ImGui::Text("Hits: %u", std::exchange(m_TotalCacheHits, 0));
+//		ImGui::Text("Total misses: %u", totalMisses);
+//		ImGui::TextUnformatted("Cache miss details:");
+//		ImGui::TextWrapped("Data not in cache: %u", std::exchange(m_DataNotInCacheMisses, 0));
+	}
+}
 
 // check if a resource has been registered yet (if not, register it)
 void CreateHostResource(xbox::X_D3DResource *pResource, DWORD D3DUsage, int iTextureStage, DWORD dwSize); // Forward declartion to prevent restructure of code
