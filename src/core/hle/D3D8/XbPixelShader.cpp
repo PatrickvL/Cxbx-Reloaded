@@ -395,6 +395,7 @@ typedef struct s_CxbxPSDef {
 	bool RenderStateFogEnable;
 	bool RenderStateSpecularEnable;
 	bool AlphaKill[4]; // Read from XboxTextureStates.Get(stage, xbox::X_D3DTSS_ALPHAKILL);
+	int TextureFormat[4];
 
 	bool IsEquivalent(const s_CxbxPSDef &Another)
 	{
@@ -434,6 +435,10 @@ typedef struct s_CxbxPSDef {
 			if (AlphaKill[i] != Another.AlphaKill[i])
 				return false;
 
+		for (unsigned i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++)
+			if (TextureFormat[i] != Another.TextureFormat[i])
+				return false;
+
 		// All ActiveTextureTypes must correspond as well (otherwise the recompiled shader would sample incorrectly) :
 		for (unsigned i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++)
 			if (ActiveTextureTypes[i] != Another.ActiveTextureTypes[i])
@@ -460,14 +465,20 @@ typedef struct s_CxbxPSDef {
 	{
 		// These values are checked in IsEquivalent to see if a cached pixel shader matches this declaration
 
-		// Fetch currently active texture types, which impact AdjustTextureModes
+		// Fetch currently active textures format and type, which impact AdjustTextureModes
 		for (unsigned i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
+			extern xbox::X_D3DFORMAT GetXboxPixelContainerFormat(const xbox::dword_xt XboxPixelContainer_Format);
 			extern xbox::X_D3DRESOURCETYPE GetXboxD3DResourceType(const xbox::X_D3DResource *pXboxResource);
 
-			if (g_pXbox_SetTexture[i])
-				ActiveTextureTypes[i] = GetXboxD3DResourceType(g_pXbox_SetTexture[i]);
-			else
+			auto xbox_texture = g_pXbox_SetTexture[i];
+			if (xbox_texture) {
+				auto format = xbox_texture->Format;
+				TextureFormat[i] = (int)GetXboxPixelContainerFormat(format);
+				ActiveTextureTypes[i] = GetXboxD3DResourceType(xbox_texture);
+			}  else {
+				TextureFormat[i] = 0; // X_D3DFMT_ANY
 				ActiveTextureTypes[i] = xbox::X_D3DRTYPE_NONE;
+			}
 		}
 
 		// Pre-decode TexModeAdjust, which impacts AdjustTextureModes
@@ -606,6 +617,10 @@ typedef struct s_CxbxPSDef {
 		RC.AlphaKill[1] = AlphaKill[1];
 		RC.AlphaKill[2] = AlphaKill[2];
 		RC.AlphaKill[3] = AlphaKill[3];
+		RC.TextureFormat[0] = TextureFormat[0];
+		RC.TextureFormat[1] = TextureFormat[1];
+		RC.TextureFormat[2] = TextureFormat[2];
+		RC.TextureFormat[3] = TextureFormat[3];
 		AdjustTextureModes(RC);
 		AdjustFinalCombiner(RC);
 	}
@@ -792,6 +807,7 @@ IDirect3DPixelShader9* GetFixedFunctionShader()
 	// Create a key from state that will be baked in to the shader
 	PsTextureHardcodedState states[4] = {};
 	int sampleType[4] = { SAMPLE_NONE, SAMPLE_NONE, SAMPLE_NONE, SAMPLE_NONE };
+	xbox::X_D3DFORMAT TextureFormat[4] = {};
 	bool pointSpriteEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_POINTSPRITEENABLE);
 
 	bool previousStageDisabled = false;
@@ -835,7 +851,10 @@ IDirect3DPixelShader9* GetFixedFunctionShader()
 		// Get sample type
 		// TODO move XD3D8 resource query functions out of Direct3D9.cpp so we can use them here
 		if (g_pXbox_SetTexture[i]) {
+			extern xbox::X_D3DFORMAT GetXboxPixelContainerFormat(const xbox::dword_xt XboxPixelContainer_Format);
+
 			auto format = g_pXbox_SetTexture[i]->Format;
+			TextureFormat[i] = GetXboxPixelContainerFormat(format);
 			if (format & X_D3DFORMAT_CUBEMAP)
 				sampleType[i] = SAMPLE_CUBE;
 			else if (((format & X_D3DFORMAT_DIMENSION_MASK) >> X_D3DFORMAT_DIMENSION_SHIFT) > 2)
@@ -873,9 +892,26 @@ IDirect3DPixelShader9* GetFixedFunctionShader()
 	// Build and compile a new shader
 	auto hlslTemplate = GetFixedFunctionShaderTemplate();
 
+	// Write texture format to hlsl
+	const std::string textureFormatPattern = "TEXTURE_FORMAT;";
+	auto textureFormatReplace = hlslTemplate.find(textureFormatPattern);
+
+	static constexpr std::string_view formatToString[] = {
+		"X_D3DFMT_ANY",
+		"X_D3DFMT_P8"
+	};
+
+	std::stringstream textureFormatString;
+	textureFormatString << "{"
+		<< formatToString[TextureFormat[0] == xbox::X_D3DFMT_P8 ? 1 : 0] << ", "
+		<< formatToString[TextureFormat[1] == xbox::X_D3DFMT_P8 ? 1 : 0] << ", "
+		<< formatToString[TextureFormat[2] == xbox::X_D3DFMT_P8 ? 1 : 0] << ", "
+		<< formatToString[TextureFormat[3] == xbox::X_D3DFMT_P8 ? 1 : 0] << "};";
+	auto intermediateShader = hlslTemplate.replace(textureFormatReplace, textureFormatPattern.size(), textureFormatString.str());
+
 	// In D3D9 it seems we need to know hardcode if we're doing a 2D or 3D lookup
 	const std::string sampleTypePattern = "TEXTURE_SAMPLE_TYPE;";
-	auto sampleTypeReplace = hlslTemplate.find(sampleTypePattern);
+	auto sampleTypeReplace = intermediateShader.find(sampleTypePattern);
 
 	static constexpr std::string_view typeToString[] = {
 		"SAMPLE_NONE",
@@ -891,7 +927,7 @@ IDirect3DPixelShader9* GetFixedFunctionShader()
 		<< typeToString[sampleType[2]] << ", "
 		<< typeToString[sampleType[3]] << "};";
 
-	auto finalShader = hlslTemplate.replace(sampleTypeReplace, sampleTypePattern.size(), sampleTypeString.str());
+	auto finalShader = intermediateShader.replace(sampleTypeReplace, sampleTypePattern.size(), sampleTypeString.str());
 
 	// Hardcode the texture stage operations and arguments
 	// So the shader handles exactly one combination of values

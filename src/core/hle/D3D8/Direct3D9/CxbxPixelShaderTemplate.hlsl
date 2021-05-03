@@ -242,6 +242,16 @@ return input * input;
 // Declare one sampler per each {Sampler Type, Texture Stage} combination
 // TODO : Generate sampler status?
 sampler samplers[4] : register(s0);
+sampler palettes[4] : register(s4);
+
+// D3DFMT texture formats // TODO : Move to a shared include
+static int X_D3DFMT_ANY = 0; // Not really a format - merely indicates no format conversion is required
+static int X_D3DFMT_P8 = 0x0b; // 8 bit paletted
+
+#ifndef TEXTURE_FORMAT
+	#define TEXTURE_FORMAT {X_D3DFMT_ANY, X_D3DFMT_ANY, X_D3DFMT_ANY, X_D3DFMT_ANY}
+#endif
+static int TextureFormat[4] = TEXTURE_FORMAT;
 
 // Declare alphakill as a variable (avoiding a constant, to allow false's to be optimized away) :
 #ifndef ALPHAKILL
@@ -249,8 +259,13 @@ sampler samplers[4] : register(s0);
 #endif
 static bool alphakill[4] = ALPHAKILL;
 
-float4 PostProcessTexel(const int ts, float4 t)
+float4 PostProcessTexel(int ts, float4 t)
 {
+	// Perform TextureFormat based conversions
+	int format = TextureFormat[i];
+	if (format == X_D3DFMT_P8)
+		t = tex1D(palettes[ts], t.r * (255./256) + (0.5/256)); // See https://stackoverflow.com/a/13149247/12170
+
 	if (alphakill[ts])
 		if (t.a == 0)
 			discard;

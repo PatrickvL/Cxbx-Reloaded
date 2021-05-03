@@ -40,7 +40,7 @@
 // G = green
 // B = blue
 // L = luminance, byte : 0 = pure black ARGB(1, 0,0,0) to 255 = pure white ARGB(1,255,255,255)
-// P = pallete
+// P = palette
 enum _ComponentEncoding {
 	NoCmpnts = 0, // Format doesn't contain any component (ARGB/QWVU)
 	A1R5G5B5,
@@ -65,7 +65,6 @@ enum _ComponentEncoding {
 	____DXT1,
 	____DXT3,
 	____DXT5,
-	______P8,
 	____YUY2,
 	____UYVY,
 };
@@ -671,16 +670,6 @@ void ____DXT5ToARGBRow_C(const uint8_t* data, uint8_t* dst_argb, int width) {
 	}
 }
 
-void ______P8ToARGBRow_C(const uint8_t* src_p8, uint8_t* dst_argb, int width) {
-	TRGB32 *pTexturePalette = *(TRGB32 **)dst_argb; // dirty hack to avoid another argument
-	int x;
-	for (x = 0; x < width; ++x) {
-		uint8_t p = src_p8[x];
-		TRGB32 color = pTexturePalette[p];
-		((TRGB32 *)dst_argb)[x] = color;
-	}
-}
-
 static __inline int32_t clamp0(int32_t v) {
 	return ((-(v) >> 31) & (v));
 }
@@ -837,7 +826,6 @@ static const FormatToARGBRow ComponentConverters[] = {
 	____DXT1ToARGBRow_C, // ____DXT1
 	____DXT3ToARGBRow_C, // ____DXT3
 	____DXT5ToARGBRow_C, // ____DXT5
-	______P8ToARGBRow_C, // ______P8
 	____YUY2ToARGBRow_C, // ____YUY2
 	____UYVYToARGBRow_C, // ____UYVY
 };
@@ -886,7 +874,7 @@ static const FormatInfo FormatInfos[] = {
 	/* 0x08 undefined             */ {},
 	/* 0x09 undefined             */ {},
 	/* 0x0A undefined             */ {},
-	/* 0x0B X_D3DFMT_P8           */ {  8, Swzzld, ______P8, D3DFMT_P8        , Texture, "X_D3DFMT_P8 -> D3DFMT_L8" }, // 8-bit palletized
+	/* 0x0B X_D3DFMT_P8           */ {  8, Swzzld, NoCmpnts, D3DFMT_L8        , Texture }, // 8-bit paletted. Note : color lookup is performed in pixel shader hlsl  // Test case: DRIV3R
 	/* 0x0C X_D3DFMT_DXT1         */ {  4, Cmprsd, ____DXT1, D3DFMT_DXT1      }, // opaque/one-bit alpha // NOTE : DXT1 is half byte per pixel, so divide Size and Pitch calculations by two!
 	/* 0x0D undefined             */ {},
 	/* 0x0E X_D3DFMT_DXT3         */ {  8, Cmprsd, ____DXT3, D3DFMT_DXT3      }, // Alias : X_D3DFMT_DXT2 // linear alpha

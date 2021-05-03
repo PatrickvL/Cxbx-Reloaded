@@ -2,6 +2,7 @@
 
 uniform FixedFunctionPixelShaderState state : register(c0);
 sampler samplers[4] : register(s0);
+sampler palettes[4] : register(s4);
 
 struct PS_INPUT // Declared identical to vertex shader output (see VS_OUTPUT)
 {
@@ -34,6 +35,9 @@ static float4 TexCoords[4];
 // The define keeps the shader compilable without the replacement
 #define TEXTURE_SAMPLE_TYPE {SAMPLE_2D, SAMPLE_2D, SAMPLE_2D, SAMPLE_2D};
 static int TextureSampleType[4] = TEXTURE_SAMPLE_TYPE;
+
+#define TEXTURE_FORMAT {X_D3DFMT_ANY, X_D3DFMT_ANY, X_D3DFMT_ANY, X_D3DFMT_ANY};
+static int TextureFormat[4] = TEXTURE_FORMAT;
 
 bool HasFlag(float value, float flag) {
 	// http://theinstructionlimit.com/encoding-boolean-flags-into-a-float-in-hlsl
@@ -182,6 +186,11 @@ TextureArgs ExecuteTextureStage(
 		t = tex3D(samplers[i], TexCoords[i].xyz + offset.xyz);
 	else if (type == SAMPLE_CUBE)
 		t = texCUBE(samplers[i], TexCoords[i].xyz + offset.xyz);
+
+	// Perform shader based texture format conversions
+	int format = TextureFormat[i];
+	if (format == X_D3DFMT_P8)
+		t = tex1D(palettes[i], t.r * (255./256) + (0.5/256)); // See https://stackoverflow.com/a/13149247/12170
 
 #ifdef ENABLE_FF_ALPHAKILL
 	if (stage.ALPHAKILL)

@@ -515,6 +515,7 @@ struct DecodedRegisterCombiner {
 	bool TexModeAdjust;
 	// Variables
 	bool AlphaKill[4]; // X_D3DTSS_ALPHAKILL
+	int TextureFormat[4]; // X_D3DFMT_*
 
 	static void GetPSTextureModes(xbox::X_D3DPIXELSHADERDEF* pPSDef, PS_TEXTUREMODES psTextureModes[xbox::X_D3DTS_STAGECOUNT]);
 	static void GetPSDotMapping(xbox::X_D3DPIXELSHADERDEF* pPSDef, PS_DOTMAPPING psDotMapping[xbox::X_D3DTS_STAGECOUNT]);

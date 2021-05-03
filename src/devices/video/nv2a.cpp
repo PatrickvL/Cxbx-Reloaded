@@ -690,7 +690,7 @@ void cxbx_gl_render_framebuffer(NV2AState *d)
 {
 	// Update the frame texture
 	uint8_t* frame_pixels = (uint8_t*)(/*CONTIGUOUS_MEMORY_BASE=*/0x80000000 | d->pcrtc.start); // NV_PCRTC_START
-	uint8_t* palette_data = xbox::zeroptr; // Note : Framebuffer formats aren't paletized
+	uint8_t* palette_data = xbox::zeroptr; // Note : Framebuffer formats aren't paletted
 
 	TextureShape s;
 	s.cubemap = false; // Note : Unused in upload_gl_texture GL_TEXTURE_2D path

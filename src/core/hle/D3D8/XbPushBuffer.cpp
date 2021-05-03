@@ -39,9 +39,6 @@
 #include "devices/video/nv2a_int.h" // For NV** defines
 #include "Logging.h"
 
-// TODO: Find somewhere to put this that doesn't conflict with xbox::
-extern void CxbxUpdateHostTextures();
-
 const char *NV2AMethodToString(DWORD dwMethod); // forward
 
 static void DbgDumpMesh(WORD *pIndexData, DWORD dwCount);

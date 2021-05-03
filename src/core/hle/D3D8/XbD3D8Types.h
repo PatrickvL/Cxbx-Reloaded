@@ -158,7 +158,7 @@ typedef enum _X_D3DFORMAT
 	X_D3DFMT_X8R8G8B8 = 0x07,
 	X_D3DFMT_X8L8V8U8 = 0x07, // Alias
 
-	X_D3DFMT_P8 = 0x0b, // 8-bit Palletized
+	X_D3DFMT_P8 = 0x0b, // 8-bit Paletted
 
 	X_D3DFMT_A8 = 0x19,
 	X_D3DFMT_A8L8 = 0x1a,

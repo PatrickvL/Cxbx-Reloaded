@@ -68,6 +68,10 @@ namespace FixedFunctionPixelShader {
 	const int SAMPLE_3D = 2;
 	const int SAMPLE_CUBE = 3;
 
+	// D3DFMT texture formats // TODO : Move to a shared include
+	const int X_D3DFMT_ANY = 0; // Not really a format - merely indicates no format conversion is required
+	const int X_D3DFMT_P8 = 0x0b; // 8 bit paletted
+
 	// This state is passed to the shader
 	struct PsTextureStageState {
 		// Values correspond to XD3D8 version of D3DTEXTURESTAGESTATETYPE

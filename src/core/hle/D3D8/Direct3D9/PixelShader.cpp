@@ -302,6 +302,12 @@ void BuildShader(DecodedRegisterCombiner* pShader, std::stringstream& hlsl)
 		<< (pShader->AlphaKill[2] ? "true, " : "false, ")
 		<< (pShader->AlphaKill[3] ? "true}"  : "false}");
 
+	hlsl << "\n#define TEXTURE_FORMAT {"
+		<< (pShader->TextureFormat[0] == xbox::X_D3DFMT_P8 ? "X_D3DFMT_P8, " : "X_D3DFMT_ANY, ")
+		<< (pShader->TextureFormat[1] == xbox::X_D3DFMT_P8 ? "X_D3DFMT_P8, " : "X_D3DFMT_ANY, ")
+		<< (pShader->TextureFormat[2] == xbox::X_D3DFMT_P8 ? "X_D3DFMT_P8, " : "X_D3DFMT_ANY, ")
+		<< (pShader->TextureFormat[3] == xbox::X_D3DFMT_P8 ? "X_D3DFMT_P8}"  : "X_D3DFMT_ANY}");
+
 	hlsl << "\n#define PS_COMBINERCOUNT " << pShader->NumberOfCombiners;
 	if (pShader->NumberOfCombiners > 0) {
 		OutputDefineFlag(hlsl, pShader->CombinerHasUniqueC0, "PS_COMBINERCOUNT_UNIQUE_C0", "PS_COMBINERCOUNT_SAME_C0");

@@ -181,7 +181,19 @@ void XboxTextureStateConverter::Apply()
         for (int State = xbox::X_D3DTSS_FIRST; State <= xbox::X_D3DTSS_LAST; State++) {
             // Read the value of the current stage/state from the Xbox data structure
             DWORD XboxValue = Get(XboxStage, State);
-            DWORD PcValue = XboxValue;
+
+			// Override, to avoid filtering on paletted textures :
+			if ((State == xbox::X_D3DTSS_MAGFILTER)
+				|| (State == xbox::X_D3DTSS_MINFILTER)
+				|| (State == xbox::X_D3DTSS_MIPFILTER)) {
+				extern bool IsPalettedTexture(const xbox::dword_xt XboxPixelContainer_Format); // TODO : Move to header
+
+				if (g_pXbox_SetTexture[XboxStage] != xbox::zeroptr) {
+					if (IsPalettedTexture(g_pXbox_SetTexture[XboxStage]->Format)) {
+						XboxValue = (DWORD)xbox::X_D3DTEXF_POINT;
+					}
+				}
+			}
 
             // If the state hasn't changed, skip setting it
             auto lastState = &PreviousStates[XboxStage][State];
@@ -189,6 +201,7 @@ void XboxTextureStateConverter::Apply()
                 continue;
             }
 
+            DWORD PcValue = XboxValue;
             switch (State) {
                 // These types map 1:1 but have some unsupported values
                 case xbox::X_D3DTSS_ADDRESSU: case xbox::X_D3DTSS_ADDRESSV: case xbox::X_D3DTSS_ADDRESSW:

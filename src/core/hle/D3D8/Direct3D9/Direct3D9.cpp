@@ -267,8 +267,6 @@ typedef struct resource_key_hash {
 			// For xbox::X_D3DPixelContainer's we also set these fields :
 			DWORD Format; // We set this as-is
 			DWORD Size; // We set this as-is
-			// For X_D3DFMT_P8 paletized pixel-containers, we also set this field :
-			uint64_t PaletteHash;
 		};
 	};
 
@@ -279,8 +277,8 @@ typedef struct resource_key_hash {
 			&& (Data == other.Data)
 			&& (Format == other.Format)
 			&& (Size == other.Size)
-			&& (PaletteHash == other.PaletteHash);
-		// Note : ResourceAddr doesn't need comparison, since it's union'ed with Format,Size,PaletteHash already
+			;
+		// Note : ResourceAddr doesn't need comparison, since it's union'ed with Format already
 	}
 
 	// See https://marknelson.us/posts/2011/09/03/hash-functions-for-c-unordered-containers.html
@@ -867,7 +865,7 @@ inline bool IsResourceTypeGPUReadable(const DWORD ResourceType)
 	return false;
 }
 
-inline bool IsPaletizedTexture(const xbox::dword_xt XboxPixelContainer_Format)
+bool IsPalettedTexture(const xbox::dword_xt XboxPixelContainer_Format)
 {
 	return GetXboxPixelContainerFormat(XboxPixelContainer_Format) == xbox::X_D3DFMT_P8;
 }
@@ -929,7 +927,6 @@ typedef struct _resource_info_t {
 
 typedef std::unordered_map<resource_key_t, resource_info_t, resource_key_hash> resource_cache_t;
 resource_cache_t g_Cxbx_Cached_Direct3DResources;
-resource_cache_t g_Cxbx_Cached_PaletizedTextures;
 
 bool IsResourceAPixelContainer(xbox::dword_xt XboxResource_Common)
 {
@@ -954,8 +951,8 @@ bool IsResourceAPixelContainer(xbox::X_D3DResource* pXboxResource)
 
 resource_cache_t& GetResourceCache(resource_key_t& key)
 {
-	return IsResourceAPixelContainer(key.Common) && IsPaletizedTexture(key.Format)
-		? g_Cxbx_Cached_PaletizedTextures : g_Cxbx_Cached_Direct3DResources;
+	// TODO : Split up cache per resource type?
+	return g_Cxbx_Cached_Direct3DResources;
 }
 
 resource_key_t GetHostResourceKey(xbox::X_D3DResource* pXboxResource, int iTextureStage = -1)
@@ -970,22 +967,6 @@ resource_key_t GetHostResourceKey(xbox::X_D3DResource* pXboxResource, int iTextu
 			auto pPixelContainer = (xbox::X_D3DPixelContainer*)pXboxResource;
 			key.Format = pPixelContainer->Format;
 			key.Size = pPixelContainer->Size;
-			// For paletized textures, include the current palette hash as well
-			if (IsPaletizedTexture(pPixelContainer->Format)) {
-				if (iTextureStage < 0) {
-					// ForceResourceRehash (called by Lock[23]DSurface) could hit this (not knowing the texture-stage)
-					LOG_TEST_CASE("Unknown texture stage!");
-				} else {
-					assert(iTextureStage < xbox::X_D3DTS_STAGECOUNT);
-					// Protect for when this gets hit before an actual palette is set
-					if (g_Xbox_Palette_Size[iTextureStage] > 0) {
-						// This caters for palette changes (only the active one will be used,
-						// any intermediate changes have no effect). Obsolete palette texture
-						// conversions will be pruned from g_Cxbx_Cached_PaletizedTextures
-						key.PaletteHash = ComputeHash(g_pXbox_Palette_Data[iTextureStage], g_Xbox_Palette_Size[iTextureStage]);
-					}
-				}
-			}
 		} else {
 			// For other resource types, do include their Xbox resource address (TODO : come up with something better)
 			key.ResourceAddr = (xbox::addr_xt)pXboxResource;
@@ -1005,15 +986,6 @@ void FreeHostResource(resource_key_t key)
 void ClearResourceCache(resource_cache_t& ResourceCache)
 {
 	ResourceCache.clear();
-}
-
-void PrunePaletizedTexturesCache()
-{
-	// TODO : Implement a better cache eviction algorithm (like least-recently used, or just at-random)
-	// Poor mans cache eviction policy: just clear it once it overflows
-	if (g_Cxbx_Cached_PaletizedTextures.size() >= 1500) {
-		ClearResourceCache(g_Cxbx_Cached_PaletizedTextures);
-	}
 }
 
 void ForceResourceRehash(xbox::X_D3DResource* pXboxResource)
@@ -2167,7 +2139,6 @@ static void CreateDefaultD3D9Device
 
         g_pD3DDevice->EndScene();
 
-        ClearResourceCache(g_Cxbx_Cached_PaletizedTextures);
         ClearResourceCache(g_Cxbx_Cached_Direct3DResources);
 
         // TODO: ensure all other resources are cleaned up too
@@ -6017,25 +5988,14 @@ void CreateHostResource(xbox::X_D3DResource *pResource, DWORD D3DUsage, int iTex
 				if (bConvertToARGB) {
 					EmuLog(LOG_LEVEL::DEBUG, "Unsupported texture format, expanding to D3DFMT_A8R8G8B8");
 
-					// In case where there is a palettized texture without a palette attached,
-					// fill it with zeroes for now. This might not be correct, but it prevents a crash.
-					// Test case: DRIV3R
-					bool missingPalette = X_Format == xbox::X_D3DFMT_P8 && g_pXbox_Palette_Data[iTextureStage] == nullptr;
-					if (missingPalette) {
-						LOG_TEST_CASE("Palettized texture bound without a palette");
-
-						memset(pDst, 0, dwDstRowPitch * pxMipHeight);
-					}
-					else {
-						// Try to convert to ARGB
-						if (!ConvertD3DTextureToARGBBuffer(
-							X_Format,
-							pSrc, pxMipWidth, pxMipHeight, dwMipRowPitch, mip2dSize,
-							pDst, dwDstRowPitch, dwDstSlicePitch,
-							pxMipDepth,//used pxMipDepth here because in 3D mip map the 3rd dimension also shrinked to 1/2 at each mip level.
-							g_pXbox_Palette_Data[iTextureStage])) {
-							CxbxrAbort("Unhandled conversion!");
-						}
+					// Convert a row at a time, using a libyuv-like callback approach :
+					if (!ConvertD3DTextureToARGBBuffer(
+						X_Format,
+						pSrc, pxMipWidth, pxMipHeight, dwMipRowPitch, mip2dSize,
+						pDst, dwDstRowPitch, dwDstSlicePitch,
+						pxMipDepth,//used pxMipDepth here because in 3D mip map the 3rd dimension also shrinked to 1/2 at each mip level.
+						iTextureStage)) {
+						CxbxrAbort("Unhandled conversion!");
 					}
 				}
 				else if (bSwizzled) {
@@ -7328,6 +7288,54 @@ IDirect3DBaseTexture* CxbxConvertXboxSurfaceToHostTexture(xbox::X_D3DBaseTexture
 	return pNewHostBaseTexture;
 }
 
+IDirect3DTexture* g_pHostPaletteTextures[xbox::X_D3DTS_STAGECOUNT] = {};
+uint64_t g_HostPaletteTextureHashes[xbox::X_D3DTS_STAGECOUNT] = {};
+
+void CxbxUpdateHostPalette(const int stage)
+{
+	LOG_INIT; // Allows use of DEBUG_D3DRESULT
+
+	auto xbox_palette = g_pXbox_Palette_Data[stage];
+	auto xbox_palette_size = g_Xbox_Palette_Size[stage];
+
+	// Protect for when this gets hit before an actual palette is set
+	if (xbox_palette && xbox_palette_size >= 0) {
+		// Only update host texture when the palette hash changes
+		uint64_t XboxPaletteHash = ComputeHash(xbox_palette, xbox_palette_size);
+		if (g_HostPaletteTextureHashes[stage] != XboxPaletteHash) {
+			g_HostPaletteTextureHashes[stage] = XboxPaletteHash;
+
+			HRESULT hRet;
+			if (g_pHostPaletteTextures[stage] == nullptr) {
+				// Allocate a dedicated 1D host palette texture, one per stage 
+				hRet = g_pD3DDevice->CreateTexture(/*Width=*/256, /*Height=*/1, /*Levels=*/1, /*Usage=*/D3DUSAGE_DYNAMIC, /*Format=*/D3DFMT_A8R8G8B8, /*Pool=*/D3DPOOL_DEFAULT, /*ppTexture=*/&g_pHostPaletteTextures[stage], /*pSharedHandle=*/nullptr);
+				DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture");
+
+				HRESULT hRet = g_pD3DDevice->SetTexture(xbox::X_D3DTS_STAGECOUNT + stage, g_pHostPaletteTextures[stage]);
+				DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetTexture");
+
+				// Avoid filtering on the palette textures, otherwise palette colors would blend :
+				g_pD3DDevice->SetSamplerState(xbox::X_D3DTS_STAGECOUNT + stage, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+				g_pD3DDevice->SetSamplerState(xbox::X_D3DTS_STAGECOUNT + stage, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+				g_pD3DDevice->SetSamplerState(xbox::X_D3DTS_STAGECOUNT + stage, D3DSAMP_MIPFILTER, D3DTEXF_POINT);
+			}
+
+			// Lock host palette texture :
+			D3DLOCKED_RECT palette_locked_rect;
+			hRet = g_pHostPaletteTextures[stage]->LockRect(/*Level=*/0, &palette_locked_rect, /*pRect=*/nullptr, /*Flags=*/D3DLOCK_DISCARD | D3DLOCK_NOSYSLOCK);
+			DEBUG_D3DRESULT(hRet, "g_pHostPaletteTextures[stage]->LockRect");
+
+			// Copy Xbox RGBA palette to host texture on stage + 4
+			memcpy(palette_locked_rect.pBits, xbox_palette, xbox_palette_size);
+			g_pHostPaletteTextures[stage]->UnlockRect(0);
+		}
+	}
+	// TODO : In case where there is a palettized texture without a palette attached,
+	// fill it with zeroes. This might not be correct, but it prevents a crash.
+	// Test case: DRIV3R
+	// memset(texture, 0, xbox_palette_size);
+}
+
 void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
@@ -7355,6 +7363,10 @@ void CxbxUpdateHostTextures()
 			default:
 				LOG_TEST_CASE("ActiveTexture set to an unhandled resource type!");
 				break;
+			}
+
+			if (IsPalettedTexture(pXboxBaseTexture->Format)) {
+				CxbxUpdateHostPalette(stage);
 			}
 		}
 
@@ -7609,8 +7621,6 @@ extern void CxbxUpdateHostVertexShader(); // TMP glue
 void CxbxUpdateNativeD3DResources()
 {
 	// Before we start, make sure our resource cache stays limited in size
-	PrunePaletizedTexturesCache(); // TODO : Could we move this to Swap instead?
-
 	CxbxUpdateHostVertexDeclaration();
 
 	CxbxUpdateHostVertexShader();
@@ -8484,7 +8494,7 @@ static void CxbxImpl_SetPalette
 	if (Stage >= xbox::X_D3DTS_STAGECOUNT) {
 		LOG_TEST_CASE("Stage out of bounds");
 	} else {
-		// Note : Actual update of paletized textures (X_D3DFMT_P8) happens in CxbxUpdateHostTextures!
+		// Note : Actual update of (X_D3DFMT_P8) texture palettes happens in CxbxUpdateHostPalette!
 		g_pXbox_Palette_Data[Stage] = GetDataFromXboxResource(pPalette);
 		g_Xbox_Palette_Size[Stage] = pPalette ? XboxD3DPaletteSizeToBytes(GetXboxPaletteSize(pPalette)) : 0;
 	}
