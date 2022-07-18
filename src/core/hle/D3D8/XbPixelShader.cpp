@@ -648,13 +648,13 @@ constexpr int PSH_XBOX_CONSTANT_FC1 = PSH_XBOX_CONSTANT_FC0 + 1; // = 17
 // Fog requires a constant (as host PS1.4 doesn't support the FOG register)
 constexpr int PSH_XBOX_CONSTANT_FOG = PSH_XBOX_CONSTANT_FC1 + 1; // = 18
 // Texture color sign
-constexpr int PSH_XBOX_CONSTANT_COLORSIGN = PSH_XBOX_CONSTANT_FOG + 1; // = 19..22
+constexpr int PSH_XBOX_CONSTANT_BEM = PSH_XBOX_CONSTANT_FOG + 1; // = 19..22
 // Bump Environment Material registers
-constexpr int PSH_XBOX_CONSTANT_BEM = PSH_XBOX_CONSTANT_COLORSIGN + 4; // = 23..26
+constexpr int PSH_XBOX_CONSTANT_LUM = PSH_XBOX_CONSTANT_BEM + 4; // = 23..26
 // Bump map Luminance registers
-constexpr int PSH_XBOX_CONSTANT_LUM = PSH_XBOX_CONSTANT_BEM + 4; // = 27..30
+constexpr int PSH_XBOX_CONSTANT_COLORSIGN = PSH_XBOX_CONSTANT_LUM + 4; // = 27..30
 // Which winding order to consider as the front face
-constexpr int PSH_XBOX_CONSTANT_FRONTFACE_FACTOR = PSH_XBOX_CONSTANT_LUM + 4; // = 31
+constexpr int PSH_XBOX_CONSTANT_FRONTFACE_FACTOR = PSH_XBOX_CONSTANT_COLORSIGN + 4; // = 31
 // This concludes the set of constants that need to be set on host :
 constexpr int PSH_XBOX_CONSTANT_MAX = PSH_XBOX_CONSTANT_FRONTFACE_FACTOR + 1; // = 32
 
@@ -977,14 +977,14 @@ float CxbxComponentColorSignFromXboxAndHost(bool XboxMarksComponentSigned, bool 
 D3DXCOLOR CxbxCalcColorSign(int stage_nr)
 {
 	// Initially use what the running executable put in COLORSIGN :
-	DWORD XboxColorSign = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_COLORSIGN);
-
-	{ // This mimicks behaviour of XDK LazySetShaderStageProgram, which we bypass due to our drawing patches without trampolines.
+	//DWORD XboxColorSign = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_COLORSIGN); // leaving this here for now
+	DWORD XboxColorSign = (0, 0, 0, 0);
+	/* { // This mimicks behaviour of XDK LazySetShaderStageProgram, which we bypass due to our drawing patches without trampolines.
 		// When bump environment mapping is enabled
 		if (XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_COLOROP) >= xbox::X_D3DTOP_BUMPENVMAP)
 			// Always mark the blue (alias for U) and green (alias for  V) color channels as signed :
 			XboxColorSign |= xbox::X_D3DTSIGN_GSIGNED | xbox::X_D3DTSIGN_BSIGNED;
-	}
+	}*/
 
 #if 0 // When this block is enabled, XDK samples BumpEarth and BumpLens turn red-ish, so keep this off for now...
 	// Check if the pixel shader specifies bump mapping for this stage (TODO : How to handle this with the fixed function shader?)
@@ -995,37 +995,12 @@ D3DXCOLOR CxbxCalcColorSign(int stage_nr)
 
 #endif
 	// Host D3DFMT's with one or more signed components : D3DFMT_V8U8, D3DFMT_Q8W8V8U8, D3DFMT_V16U16, D3DFMT_Q16W16V16U16, D3DFMT_CxV8U8
-	D3DFORMAT H/*ostTextureFormat*/ = g_HostTextureFormats[stage_nr];
-	// See https://docs.microsoft.com/en-us/windows/win32/direct3d9/bump-map-pixel-formats
-	// No need to check for unused formats : D3DFMT_Q16W16V16U16, D3DFMT_CxV8U8, D3DFMT_A2W10V10U10
-#if 0 // Original signed-ness checking code gave effectively this :
-	// Host format     | Signed components
-	// ----------------+------------------
-	// D3DFMT_Q8W8V8U8 | A,R,G,B
-	// D3DFMT_L6V5U5   |     G,B
-	// D3DFMT_V8U8     |   R,G
-	// D3DFMT_V16U16   |   R,G
-	// D3DFMT_X8L8V8U8 |   R,G
-	bool HostTextureFormatIsSignedForA = (H == D3DFMT_Q8W8V8U8);
-	bool HostTextureFormatIsSignedForR = (H == D3DFMT_Q8W8V8U8)                         || (H == D3DFMT_V8U8) || (H == D3DFMT_V16U16) || (H == D3DFMT_X8L8V8U8);
-	bool HostTextureFormatIsSignedForG = (H == D3DFMT_Q8W8V8U8) || (H == D3DFMT_L6V5U5) || (H == D3DFMT_V8U8) || (H == D3DFMT_V16U16) || (H == D3DFMT_X8L8V8U8);
-	bool HostTextureFormatIsSignedForB = (H == D3DFMT_Q8W8V8U8) || (H == D3DFMT_L6V5U5);
-#else // New, as experimentally discovered by medievil :
-	// Host format     | Signed components
-	// ----------------+------------------
-	// D3DFMT_Q8W8V8U8 | A,R,G,B
-	// D3DFMT_L6V5U5   | A,R
-	// D3DFMT_V8U8     |   R,G
-	// D3DFMT_V16U16   |   R,G
-	// D3DFMT_X8L8V8U8 |   R,G
-	// TODO : Verify D3DFMT_L6V5U5 indeed maps to A,R (instead of G,B).
-	// If not, research why this (then incorret) change *does* improve both BumpEarth samples
-	// (while keeping BumpLens and JSFR boost dash effect working). Perhaps duplicate signed range conversion in the shader?
-	bool HostTextureFormatIsSignedForA = (H == D3DFMT_Q8W8V8U8) || (H == D3DFMT_L6V5U5);
-	bool HostTextureFormatIsSignedForR = (H == D3DFMT_Q8W8V8U8) || (H == D3DFMT_L6V5U5) || (H == D3DFMT_V8U8) || (H == D3DFMT_V16U16) || (H == D3DFMT_X8L8V8U8);
-	bool HostTextureFormatIsSignedForG = (H == D3DFMT_Q8W8V8U8)                         || (H == D3DFMT_V8U8) || (H == D3DFMT_V16U16) || (H == D3DFMT_X8L8V8U8);
-	bool HostTextureFormatIsSignedForB = (H == D3DFMT_Q8W8V8U8);
-##endif
+	D3DFORMAT HostTextureFormat = g_HostTextureFormats[stage_nr];
+	bool HostTextureFormatIsSignedForB = (HostTextureFormat == D3DFMT_Q8W8V8U8); // No need to check for unused formats : D3DFMT_Q16W16V16U16, D3DFMT_CxV8U8, D3DFMT_A2W10V10U10
+	bool HostTextureFormatIsSignedForG = (HostTextureFormat == D3DFMT_V8U8) || (HostTextureFormat == D3DFMT_V16U16) || (HostTextureFormat == D3DFMT_X8L8V8U8) || HostTextureFormatIsSignedForB;
+	bool HostTextureFormatIsSignedForR = HostTextureFormatIsSignedForG || (HostTextureFormat == D3DFMT_L6V5U5);
+	bool HostTextureFormatIsSignedForA = HostTextureFormatIsSignedForR || (HostTextureFormat == D3DFMT_L6V5U5);
+
 	D3DXCOLOR CxbxColorSign;
 	CxbxColorSign.r = CxbxComponentColorSignFromXboxAndHost(XboxColorSign & xbox::X_D3DTSIGN_RSIGNED, HostTextureFormatIsSignedForR); // Maps to COLORSIGN.r
 	CxbxColorSign.g = CxbxComponentColorSignFromXboxAndHost(XboxColorSign & xbox::X_D3DTSIGN_GSIGNED, HostTextureFormatIsSignedForG); // Maps to COLORSIGN.g
