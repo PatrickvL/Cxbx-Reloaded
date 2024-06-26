@@ -1060,7 +1060,7 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 			Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
 #else
 		// TODO : Check if the shader will fit in g_D3DCaps.MaxPixelShader30InstructionSlots
-		Result = g_pD3DDevice->CreatePixelShader((DWORD*)g_ps30_main, &pHLSLPixelShader);
+		Result = g_pD3DDevice->CreatePixelShader((DWORD*)g_ps30_g_ps30_main, &pHLSLPixelShader); // For an unknown reason, compiling g_ps30_main gives g_ps30_g_ps30_main
 #endif
 			pShaderBuffer->Release();
 			if (FAILED(Result)) {
