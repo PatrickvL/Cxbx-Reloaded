@@ -1377,7 +1377,6 @@ struct CxbxPSInput // TODO : Complete and pass this in through code (and/or vert
 
 float4 main(uniform CxbxPSInput aInput) : COLOR
 {
-return aInput.Diffuse; // TODO : Even this stays black; Input doesn't seem to work? FIXME!!
 	nointerpolation ps_state state = (ps_state) 0; // Clearing like this avoids error X3508: 'do_color_combiner_stage': output parameter 'state' not completely initialized
 	// Note, the above also sets state.RegisterValues[PS_REGISTER_ZERO] to 0!
 
@@ -1395,7 +1394,6 @@ return aInput.Diffuse; // TODO : Even this stays black; Input doesn't seem to wo
 
 	// Process all four texture stages :
 	fetch_texture(state, 0, aInput.TextureCoords0, texture_modes[0]);
-// TODO : Fix input reading : return get_plain_register_as_float4(state, PS_REGISTER_T0);
 	fetch_texture(state, 1, aInput.TextureCoords1, texture_modes[1]);
 	fetch_texture(state, 2, aInput.TextureCoords2, texture_modes[2]);
 	fetch_texture(state, 3, aInput.TextureCoords3, texture_modes[3]);
@@ -1427,8 +1425,8 @@ return aInput.Diffuse; // TODO : Even this stays black; Input doesn't seem to wo
     assert(num_stages <= 8);
 #endif
 #ifdef AVOID_INVALID_ACCESSES
-    num_stages = min(num_stages, 1u);
-    num_stages = max(num_stages, 8u);
+    num_stages = max(num_stages, 1u);
+    num_stages = min(num_stages, 8u);
 #endif
 
 //	return DebugColor(3);
