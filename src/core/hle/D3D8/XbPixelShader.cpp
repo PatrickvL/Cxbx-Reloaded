@@ -1009,259 +1009,77 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 {
 	using namespace XTL;
 
-  const PSH_RECOMPILED_SHADER* RecompiledPixelShader = nullptr;
-		static PSH_RECOMPILED_SHADER RecompiledPixelShader_HLSL = {};
+	static PSH_RECOMPILED_SHADER RecompiledPixelShader_HLSL = {};
 
-		if (RecompiledPixelShader_HLSL.ConstInUse[0] == false) {
-			// Initialize static RecompiledPixelShader_HLSL once :
-			for (int i = 0; i < PSH_XBOX_CONSTANT_MAX; i++) {
-				RecompiledPixelShader_HLSL.ConstInUse[i] = true;
-				RecompiledPixelShader_HLSL.ConstMapping[i] = i;
-			}
+	if (RecompiledPixelShader_HLSL.ConstInUse[0] == false) {
+		// Initialize static RecompiledPixelShader_HLSL once :
+		for (int i = 0; i < PSH_XBOX_CONSTANT_MAX; i++) {
+			RecompiledPixelShader_HLSL.ConstInUse[i] = true;
+			RecompiledPixelShader_HLSL.ConstMapping[i] = i;
 		}
+	}
 
-		RecompiledPixelShader = &RecompiledPixelShader_HLSL;
-
-		static IDirect3DPixelShader9 *pHLSLPixelShader = nullptr;
+	static IDirect3DPixelShader9 *pHLSLPixelShader = nullptr;
 
 	// Create the uber shader once
-		if (pHLSLPixelShader == nullptr) {
-#if 0		
-		static LPCSTR HLSLPixelShader_String = ;
-			DWORD dwFlags = 0 | D3DXSHADER_DEBUG;
-			D3DXMACRO *pDefines = nullptr;
-			LPD3DXINCLUDE pInclude = nullptr;
-			LPCSTR pFunctionName = nullptr;
-			LPCSTR pProfile = nullptr;
-
-			LPD3DXBUFFER pShaderBuffer = nullptr;
-			LPD3DXBUFFER pErrorMsgs = nullptr;
-			LPD3DXCONSTANTTABLE pConstantTable = nullptr;
-
-			Result = D3DXCompileShader(
-				/*pSrcData=*/HLSLPixelShader_String,
-				/*SrcDataLen=*/strlen(HLSLPixelShader_String),
-				pDefines, pInclude, pFunctionName, pProfile, dwFlags,
-				/*OUT*/&pShaderBuffer, &pErrorMsgs, &pConstantTable
-			);
-
-			if (pErrorMsgs) {
-				char* szErrors = (char*)pErrorMsgs->GetBufferPointer();
-				EmuLog(FAILED(Result) ? LOG_LEVEL::FATAL : LOG_LEVEL::WARNING, szErrors);
-				// CxbxShowError(szErrors);
-				pErrorMsgs->Release();
-			}
-
-			if (FAILED(Result)) {
-				// CxbxShowError("HLSL pixel shader compilation failed");
-				return;
-			}
-
-			Result = g_pD3DDevice->CreatePixelShader((DWORD*)pShaderBuffer->GetBufferPointer(), &pHLSLPixelShader);
-#else
+	if (pHLSLPixelShader == nullptr) {
 		// TODO : Check if the shader will fit in g_D3DCaps.MaxPixelShader30InstructionSlots
-		Result = g_pD3DDevice->CreatePixelShader((DWORD*)g_ps30_g_ps30_main, &pHLSLPixelShader); // For an unknown reason, compiling g_ps30_main gives g_ps30_g_ps30_main
-#endif
-			pShaderBuffer->Release();
-			if (FAILED(Result)) {
-				// CxbxShowError("HLSL pixel shader creation failed");
-				return;
-			}
+		HRESULT Result = g_pD3DDevice->CreatePixelShader((DWORD*)g_ps30_g_ps30_main, &pHLSLPixelShader);
+		if (FAILED(Result)) {
+			EmuLog(LOG_LEVEL::WARNING, "HLSL pixel shader creation failed");
+			return;
+		}
+	}
+
+	RecompiledPixelShader_HLSL.ConvertedPixelShader = pHLSLPixelShader;
+
+	// Switch to the HLSL uber shader
+	Microsoft::WRL::ComPtr<IDirect3DPixelShader> CurrentPixelShader;
+	g_pD3DDevice->GetPixelShader(/*out*/CurrentPixelShader.GetAddressOf());
+	if (CurrentPixelShader.Get() != pHLSLPixelShader) {
+		g_pD3DDevice->SetPixelShader(pHLSLPixelShader);
+	}
+
+	// Transfer all Xbox pixel shader render states to the HLSL shader as constant registers.
+	// The HLSL register combiner interpreter expects render state DWORDs split into 4 float byte
+	// components (one byte per float channel), except for color constants which are ARGB colors.
+	// The Xbox render state indices 0-56 map directly to the HLSL constant register layout c0-c56.
+	float ConstantData[57 * 4]; // 57 render states, 4 floats each
+
+	for (int rs = xbox::X_D3DRS_PSALPHAINPUTS0; rs <= xbox::X_D3DRS_PSINPUTTEXTURE; rs++) {
+		DWORD dwRenderState;
+
+		if (rs == xbox::X_D3DRS_PS_RESERVED) {
+			// PSTextureModes is stored outside the pixel shader render state range
+			dwRenderState = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+		} else {
+			dwRenderState = XboxRenderStates.GetXboxRenderState(rs);
 		}
 
-		RecompiledPixelShader->ConvertedPixelShader = pHLSLPixelShader;
-#if 0 // TODO : Merge with below after rebase is done
-		// Transfer all current render state values to the HLSL pixel shader through host pixel shader constants
-		for (int rs = XTL::X_D3DRS_PSALPHAINPUTS0; i <= XTL::X_D3DRS_PSCOMBINERCOUNT; i++) {
-			DWORD dwRenderState = XboxRenderStates.GetXboxRenderState(i);
+		// Check if this is a color constant (needs ARGB->float4 conversion)
+		bool is_color_constant =
+			(rs >= xbox::X_D3DRS_PSCONSTANT0_0 && rs <= xbox::X_D3DRS_PSCONSTANT1_7)
+			|| (rs == xbox::X_D3DRS_PSFINALCOMBINERCONSTANT0)
+			|| (rs == xbox::X_D3DRS_PSFINALCOMBINERCONSTANT1);
 
-			float ConstantData[4];
-/*
-			bool is_color_constant = (rs >= XTL::X_D3DRS_PSCONSTANT0_0 && rs <= XTL::X_D3DRS_PSCONSTANT1_7)
-				|| (rs == X_D3DRS_PSFINALCOMBINERCONSTANT0)
-				|| (rs == X_D3DRS_PSFINALCOMBINERCONSTANT1);
-
-			if (is_color_constant)
-			{
-				ConstantData[0] = 0.0f;
-				ConstantData[1] = 0.0f;
-				ConstantData[2] = 0.0f;
-				ConstantData[3] = 0.0f;
-			}
-			else
-*/
-			{
-				ConstantData[0] = (float)(dwRenderState & 0xFF);
-				ConstantData[1] = (float)((dwRenderState >> 8) & 0xFF);
-				ConstantData[2] = (float)((dwRenderState >> 16) & 0xFF);
-				ConstantData[3] = (float)((dwRenderState >> 24)& 0xFF);
-			}
-
-			g_pD3DDevice->SetPixelShaderConstantF(i, ConstantData, 1);
+		int base = rs * 4;
+		if (is_color_constant) {
+			// Color constants: convert ARGB DWORD to normalized float4 (r, g, b, a)
+			ConstantData[base + 0] = ((dwRenderState >> 16) & 0xFF) / 255.0f; // R
+			ConstantData[base + 1] = ((dwRenderState >> 8)  & 0xFF) / 255.0f; // G
+			ConstantData[base + 2] = ((dwRenderState)       & 0xFF) / 255.0f; // B
+			ConstantData[base + 3] = ((dwRenderState >> 24) & 0xFF) / 255.0f; // A
+		} else {
+			// Non-color render states: split DWORD into 4 byte-valued floats
+			ConstantData[base + 0] = (float)((dwRenderState)       & 0xFF);
+			ConstantData[base + 1] = (float)((dwRenderState >> 8)  & 0xFF);
+			ConstantData[base + 2] = (float)((dwRenderState >> 16) & 0xFF);
+			ConstantData[base + 3] = (float)((dwRenderState >> 24) & 0xFF);
 		}
-#endif // TODO		
-	} else {
-	// Non-HLSL pixel shader path :
+	}
 
-  // Create a copy of the pixel shader definition, as it is residing in render state register slots :
-  CxbxPSDef CompletePSDef;
-  CompletePSDef.PSDef = *pPSDef;
-  // Copy-in the PSTextureModes value which is stored outside the range of Xbox pixel shader render state slots :
-  CompletePSDef.PSDef.PSTextureModes = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
-  // Fetch all other values that are used in the IsEquivalent check :
-  CompletePSDef.SnapshotRuntimeVariables();
-
-  // Support hotloading hlsl
-  static int pixelShaderVersion = -1;
-  int shaderVersion = g_ShaderSources.Update();
-  if (pixelShaderVersion != shaderVersion) {
-	  pixelShaderVersion = shaderVersion;
-	  g_pD3DDevice->SetPixelShader(nullptr);
-
-	  for (auto& hostShader : g_RecompiledPixelShaders) {
-		  if (hostShader.ConvertedPixelShader)
-			  hostShader.ConvertedPixelShader->Release();
-	  }
-
-	  g_RecompiledPixelShaders.clear();
-  }
-
-  // Now, see if we already have a shader compiled for this definition :
-  // TODO : Change g_RecompiledPixelShaders into an unordered_map, hash just the identifying PSDef members, and add cache eviction (clearing host resources when pruning)
-  for (const auto& it : g_RecompiledPixelShaders) {
-    if (CompletePSDef.IsEquivalent(it.CompletePSDef)) {
-      RecompiledPixelShader = &it;
-      break;
-    }
-  }
-
-  // If none was found, recompile this shader and remember it :
-  if (RecompiledPixelShader == nullptr) {
-    // Recompile this pixel shader :
-    g_RecompiledPixelShaders.push_back(CxbxRecompilePixelShader(CompletePSDef));
-    RecompiledPixelShader = &g_RecompiledPixelShaders.back();
-  }
-}
-  // Switch to the converted pixel shader (if it's any different from our currently active
-  // pixel shader, to avoid many unnecessary state changes on the local side).
-  Microsoft::WRL::ComPtr<IDirect3DPixelShader> CurrentPixelShader;
-  g_pD3DDevice->GetPixelShader(/*out*/CurrentPixelShader.GetAddressOf());
-  if (CurrentPixelShader.Get() != RecompiledPixelShader->ConvertedPixelShader) {
-    g_pD3DDevice->SetPixelShader(RecompiledPixelShader->ConvertedPixelShader);
-  }
-
-  //PS_TEXTUREMODES psTextureModes[xbox::X_D3DTS_STAGECOUNT];
-  //PSH_XBOX_SHADER::GetPSTextureModes(pPSDef, psTextureModes);
-  //
-  //for (i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++)
-  //{
-  //    switch (psTextureModes[i])
-  //    {
-  //    default:
-  //        break;
-  //    }
-  //}
-
-  // Set constants, not based on g_PixelShaderConstants, but based on
-  // the render state slots containing the pixel shader constants,
-  // as these could have been updated via SetRenderState or otherwise :
-  D3DXCOLOR fColor[PSH_XBOX_CONSTANT_MAX];
-
-  // PSH_XBOX_CONSTANT_C0..C15 are stored as-is in (and should thus be read from) the Xbox render state pixel shader constant slots
-  for (unsigned constant_nr = 0; constant_nr < 16; constant_nr++) {
-    fColor[PSH_XBOX_CONSTANT_C0 + constant_nr] = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSCONSTANT0_0 + constant_nr); // Note : 0xAARRGGBB format
-  }
-
-  fColor[PSH_XBOX_CONSTANT_FC0] = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSFINALCOMBINERCONSTANT0);
-  fColor[PSH_XBOX_CONSTANT_FC1] = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSFINALCOMBINERCONSTANT1);
-
-  // Fog requires a constant (as host PS1.4 doesn't support the FOG register)
-  // Note : FOG.RGB is correct like this, but FOG.a should be coming
-  // from the vertex shader (oFog) - however, D3D8 does not forward this...
-  fColor[PSH_XBOX_CONSTANT_FOG] = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR);
-#if 0 // New, doesn't work yet
-  // Bump Environment Material registers
-  for (int stage_nr = 0; stage_nr < xbox::X_D3DTS_STAGECOUNT; stage_nr++) {
-    // Note : No loop, because X_D3DTSS_BUMPENVMAT11 and X_D3DTSS_BUMPENVMAT10 are swapped
-    fColor[PSH_XBOX_CONSTANT_BEM + stage_nr].r = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_BUMPENVMAT00); // Maps to BEM[stage].x
-    fColor[PSH_XBOX_CONSTANT_BEM + stage_nr].g = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_BUMPENVMAT01); // Maps to BEM[stage].y
-    fColor[PSH_XBOX_CONSTANT_BEM + stage_nr].b = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_BUMPENVMAT10); // Maps to BEM[stage].z
-    fColor[PSH_XBOX_CONSTANT_BEM + stage_nr].a = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_BUMPENVMAT11); // Maps to BEM[stage].w
-  }
-
-  // Bump map Luminance registers
-  for (int stage_nr = 0; stage_nr < xbox::X_D3DTS_STAGECOUNT; stage_nr++) {
-	  fColor[PSH_XBOX_CONSTANT_LUM + stage_nr].r = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_BUMPENVLSCALE); // Maps to LUM[stage].x
-	  fColor[PSH_XBOX_CONSTANT_LUM + stage_nr].g = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_BUMPENVLOFFSET); // Maps to LUM[stage].y
-	  fColor[PSH_XBOX_CONSTANT_LUM + stage_nr].b = 0;
-	  fColor[PSH_XBOX_CONSTANT_LUM + stage_nr].a = 0;
-  }
-#else
-  for (int i = 0; i < PSH_XBOX_CONSTANT_MAX; i++) {
-    switch (i) {
-      case PSH_XBOX_CONSTANT_BEM + 0:
-      case PSH_XBOX_CONSTANT_BEM + 1:
-      case PSH_XBOX_CONSTANT_BEM + 2:
-      case PSH_XBOX_CONSTANT_BEM + 3:
-      {
-        int stage_nr = i - PSH_XBOX_CONSTANT_BEM;
-        DWORD* value = (DWORD*)&fColor[i];; // Note : This overlays D3DXCOLOR's FLOAT r, g, b, a
-
-        g_pD3DDevice->GetTextureStageState(stage_nr, D3DTSS_BUMPENVMAT00, &value[0]); // Maps to BEM[stage].x
-        g_pD3DDevice->GetTextureStageState(stage_nr, D3DTSS_BUMPENVMAT01, &value[1]); // Maps to BEM[stage].y
-        g_pD3DDevice->GetTextureStageState(stage_nr, D3DTSS_BUMPENVMAT10, &value[2]); // Maps to BEM[stage].z
-        g_pD3DDevice->GetTextureStageState(stage_nr, D3DTSS_BUMPENVMAT11, &value[3]); // Maps to BEM[stage].w
-        // Note : The TSS values being read here, have been transfered from Xbox to host in XboxTextureStateConverter::Apply()
-        break;
-      }
-      case PSH_XBOX_CONSTANT_LUM + 0:
-      case PSH_XBOX_CONSTANT_LUM + 1:
-      case PSH_XBOX_CONSTANT_LUM + 2:
-      case PSH_XBOX_CONSTANT_LUM + 3:
-      {
-        int stage_nr = i - PSH_XBOX_CONSTANT_LUM;
-        DWORD* value = (DWORD*)&fColor[i]; // Note : This overlays D3DXCOLOR's FLOAT r, g, b, a
-
-        g_pD3DDevice->GetTextureStageState(stage_nr, D3DTSS_BUMPENVLSCALE,  &value[0]); // Maps to LUM[stage].x
-        g_pD3DDevice->GetTextureStageState(stage_nr, D3DTSS_BUMPENVLOFFSET, &value[1]); // Maps to LUM[stage].y
-        value[2] = 0;
-        value[3] = 0;
-        break;
-      }
-    }
-  }
-#endif
-
-  // Control whether to use front or back diffuse/specular colours
-  // This factor should be multipled with VFACE
-  // Test cases:
-  // Amped (snowboard trails should use front colours, but use both CW and CCW winding)
-  // TwoSidedLighting sample
-  float frontfaceFactor = 0; // 0 == always use the front colours
-  if (XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_TWOSIDEDLIGHTING)) {
-	  LOG_TEST_CASE("Two sided lighting");
-	  // VFACE is positive for clockwise faces
-	  // If Xbox designates counter-clockwise as front-facing, we invert VFACE
-	  auto cwFrontface = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FRONTFACE) == 0x900; // clockwise; = NV097_SET_FRONT_FACE_V_CW = NV2A_FRONT_FACE_CW
-	  frontfaceFactor = cwFrontface ? 1.0 : -1.0;
-  }
-  fColor[PSH_XBOX_CONSTANT_FRONTFACE_FACTOR].r = frontfaceFactor;
-  float fogEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) > 0;
-  const float fogTableMode = XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE);
-  const float fogDensity = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY);
-  const float fogStart = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART);
-  const float fogEnd = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND);
-  
-  fColor[CXBX_D3DPS_CONSTREG_FOGINFO].r = fogTableMode;
-  fColor[CXBX_D3DPS_CONSTREG_FOGINFO].g = fogDensity;
-  fColor[CXBX_D3DPS_CONSTREG_FOGINFO].b = fogStart;
-  fColor[CXBX_D3DPS_CONSTREG_FOGINFO].a = fogEnd;
-  fColor[PSH_XBOX_CONSTANT_FOGENABLE].r = fogEnable;
-  
-  // Assume all constants are in use (this is much easier than tracking them for no other purpose than to skip a few here)
-  // Read the color from the corresponding render state slot :
-  // Set all host constant values using a single call:
-  g_pD3DDevice->SetPixelShaderConstantF(0, reinterpret_cast<const float*>(fColor), PSH_XBOX_CONSTANT_MAX);
+	// Set all constant registers c0-c56 in a single call
+	g_pD3DDevice->SetPixelShaderConstantF(0, ConstantData, 57);
 }
 
 // PatrickvL's Dxbx pixel shader translation
