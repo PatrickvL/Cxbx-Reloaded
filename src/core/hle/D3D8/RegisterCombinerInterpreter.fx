@@ -577,6 +577,10 @@ nointerpolation float4 D3DRS_PSTEXTUREMODES             : register(c54); // 4 by
 nointerpolation float4 D3DRS_PSDOTMAPPING               : register(c55); // 4 byte floats - TODO unimplemented
 nointerpolation float4 D3DRS_PSINPUTTEXTURE             : register(c56); // 4 byte floats - TODO unimplemented
 
+// Additional Cxbx constants beyond the Xbox render state range :
+// Texture color sign per stage (float4 per stage: r,g,b,a sign values: 0=keep, >0=unsigned_to_signed, <0=signed_to_unsigned)
+nointerpolation float4 D3DRS_COLORSIGN[4]               : register(c57); // 4 texture stages
+
 #endif
 
 //
@@ -1191,6 +1195,28 @@ float4 do_final_combiner(inout ps_state state)
 // Samplers bound to device texture stages s0-s3, set by CxbxUpdateHostTextures()
 sampler samplers[4] : register(s0);
 
+// Color sign conversion: handles the mismatch between Xbox's expected texture component
+// signedness (set via X_D3DTSS_COLORSIGN) and the host texture format's actual signedness.
+// Per color channel, based on the ColorSign setting:
+//   0 = keep the value range as-is (Xbox and host signedness match)
+//  >0 = convert from [0..1] to [-1..+1] (Xbox wants signed, host has unsigned)
+//  <0 = convert from [-1..1] to [0..1] (Xbox wants unsigned, host has signed)
+#define unsigned_to_signed(x) (((x) * 2) - 1)
+#define signed_to_unsigned(x) (((x) + 1) / 2)
+
+float4 PerformColorSign(const float4 ColorSign, float4 t)
+{
+	if (ColorSign.r > 0) t.r = unsigned_to_signed(t.r);
+	if (ColorSign.g > 0) t.g = unsigned_to_signed(t.g);
+	if (ColorSign.b > 0) t.b = unsigned_to_signed(t.b);
+	if (ColorSign.a > 0) t.a = unsigned_to_signed(t.a);
+	if (ColorSign.r < 0) t.r = signed_to_unsigned(t.r);
+	if (ColorSign.g < 0) t.g = signed_to_unsigned(t.g);
+	if (ColorSign.b < 0) t.b = signed_to_unsigned(t.b);
+	if (ColorSign.a < 0) t.a = signed_to_unsigned(t.a);
+	return t;
+}
+
 // Texture sampling helper functions, abstracting away sampler specifics
 float4 SampleTexture2D(uniform byte_t ts, float2 s)
 {
@@ -1354,7 +1380,11 @@ void fetch_texture(inout ps_state state, uniform byte_t texture_stage, uniform f
 	}
 
 	byte_t texture_register = PS_REGISTER_T0 + texture_stage;
-	texture_register = max(texture_register, PS_REGISTER_T3); // Avoids warning X3550: array reference cannot be used as an l-value; not natively addressable, forcing loop to unroll 
+	texture_register = max(texture_register, PS_REGISTER_T3); // Avoids warning X3550: array reference cannot be used as an l-value; not natively addressable, forcing loop to unroll
+
+	// Apply color sign conversion (handles signedness mismatch between Xbox expectations and host texture format)
+	texture_value = PerformColorSign(D3DRS_COLORSIGN[texture_stage], texture_value);
+
 	set_plain_register_as_float4(state, texture_register, texture_value);
 }
 

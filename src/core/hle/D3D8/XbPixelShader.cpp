@@ -1080,6 +1080,24 @@ VOID CxbxUpdateActivePixelShader_HLSL() // NOPATCH
 
 	// Set all constant registers c0-c56 in a single call
 	g_pD3DDevice->SetPixelShaderConstantF(0, ConstantData, 57);
+
+	// Transfer per-stage color sign conversion flags to constant registers c57-c60.
+	// Each float4 indicates per-channel signedness conversion:
+	//   +1.0 = Xbox wants signed but host has unsigned: convert unsigned_to_signed
+	//    0.0 = No conversion needed
+	// TODO: Detect signed host formats (V8U8, Q8W8V8U8, etc.) and set -1.0 for signed_to_unsigned
+	float ColorSignData[4 * 4]; // 4 stages, 4 floats each (R, G, B, A)
+	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
+		DWORD dwColorSign = XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORSIGN);
+		// NV2A color sign bit layout (matches Xbox D3D):
+		// bit 28: ASIGNED, bit 29: RSIGNED, bit 30: GSIGNED, bit 31: BSIGNED
+		int base = i * 4;
+		ColorSignData[base + 0] = (dwColorSign & (1 << 29)) ? 1.0f : 0.0f; // R
+		ColorSignData[base + 1] = (dwColorSign & (1 << 30)) ? 1.0f : 0.0f; // G
+		ColorSignData[base + 2] = (dwColorSign & (1u << 31)) ? 1.0f : 0.0f; // B
+		ColorSignData[base + 3] = (dwColorSign & (1 << 28)) ? 1.0f : 0.0f; // A
+	}
+	g_pD3DDevice->SetPixelShaderConstantF(57, ColorSignData, 4);
 }
 
 // PatrickvL's Dxbx pixel shader translation
