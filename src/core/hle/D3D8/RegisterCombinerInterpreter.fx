@@ -1188,67 +1188,170 @@ float4 do_final_combiner(inout ps_state state)
     return FinalOutput;
 }
 
-texture tex0;
-texture tex1;
-texture tex2;
-texture tex3;
+// Samplers bound to device texture stages s0-s3, set by CxbxUpdateHostTextures()
+sampler samplers[4] : register(s0);
 
-// TODO : Declare all possible samplers (type + configuration) and use according to settings
-sampler1D samp1d;
-sampler2D samp2d = sampler_state { // https://docs.microsoft.com/en-us/windows/win32/direct3d9/effect-states#sampler-states
-    // Sampler state (see https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dsamplerstatetype)
-    AddressU = /* D3DTEXTUREADDRESS::D3DTADDRESS_*/CLAMP;
-    AddressV = /* D3DTEXTUREADDRESS::D3DTADDRESS_*/CLAMP;
-    AddressW = /* D3DTEXTUREADDRESS::D3DTADDRESS_*/CLAMP;
-    BorderColor = /* D3DCOLOR = */0xFF0000FF; // Red
-    Filter = /* D3DTEXTUREFILTERTYPE::D3DTEXF_*/LINEAR;
-    MaxAnisotropy = /* D3DSAMP_MAXANISOTROPY = */1;
-    MaxMipLevel = /* D3DSAMP_MAXMIPLEVEL = */0;
-    MinFilter = /* D3DTEXTUREFILTERTYPE::D3DTEXF_*/POINT;
-    MipFilter = /* D3DTEXTUREFILTERTYPE::D3DTEXF_*/NONE;
-    MipLODBias = /* D3DSAMP_MIPMAPLODBIAS = */0;
-    //SRGBTexture = /* D3DSAMP_SRGBTEXTURE = */0;
-    MaxLOD = 0;
-    MinLOD = 0;
-    // sampler-comparison state
-    ComparisonFunc = 0;
-};
-sampler3D samp3d;
-samplerCUBE samp6s;
+// Texture sampling helper functions, abstracting away sampler specifics
+float4 SampleTexture2D(uniform byte_t ts, float2 s)
+{
+	float4 result = tex2D(samplers[ts], s);
+	return result;
+}
+
+float4 SampleTexture3D(uniform byte_t ts, float3 s)
+{
+	float4 result = tex3D(samplers[ts], s);
+	return result;
+}
+
+float4 SampleTextureCube(uniform byte_t ts, float3 s)
+{
+	float4 result = texCUBE(samplers[ts], s);
+	return result;
+}
 
 void fetch_texture(inout ps_state state, uniform byte_t texture_stage, uniform float4 texture_coords, uniform byte_t texture_mode)
 {
-	float4 texture_value;
-
-	// TODO : Fully implement texture fetch (preferrably in this shader, including conversion of X_D3DFMT_P8 and other unsupported textures formats)
+	float4 texture_value = float4(0, 0, 0, 1);
 
 	switch (texture_mode) {
 	case PS_TEXTUREMODES_NONE:
 		return;
-	//case PS_TEXTUREMODES_PROJECT2D: ;
-	//case PS_TEXTUREMODES_PROJECT3D: ;        
-	//case PS_TEXTUREMODES_CUBEMAP: ;          
-	//case PS_TEXTUREMODES_PASSTHRU: ;         
-	//case PS_TEXTUREMODES_CLIPPLANE: ;        
-	//case PS_TEXTUREMODES_BUMPENVMAP:; 
-	//case PS_TEXTUREMODES_BUMPENVMAP_LUM:;
-	//case PS_TEXTUREMODES_BRDF: ;       
-	//case PS_TEXTUREMODES_DOT_ST: ;     
-	//case PS_TEXTUREMODES_DOT_ZW: ;     
-	//case PS_TEXTUREMODES_DOT_RFLCT_DIFF: ;
-	//case PS_TEXTUREMODES_DOT_RFLCT_SPEC: ;
-	//case PS_TEXTUREMODES_DOT_STR_3D: ; 
-	//case PS_TEXTUREMODES_DOT_STR_CUBE:;
-	//case PS_TEXTUREMODES_DPNDNT_AR: ;  
-	//case PS_TEXTUREMODES_DPNDNT_GB: ;  
-	//case PS_TEXTUREMODES_DOTPRODUCT: ; 
-	//case PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST: ;
+	case PS_TEXTUREMODES_PROJECT2D:
+		// Sample 2D texture using projected coordinates (s/q, t/q)
+		texture_value = SampleTexture2D(texture_stage, texture_coords.xy / texture_coords.w);
+		break;
+	case PS_TEXTUREMODES_PROJECT3D:
+		// Sample 3D/volume texture using projected coordinates (s/q, t/q, r/q)
+		texture_value = SampleTexture3D(texture_stage, texture_coords.xyz / texture_coords.w);
+		break;
+	case PS_TEXTUREMODES_CUBEMAP:
+		// Sample cubemap texture using (s, t, r) as direction vector
+		texture_value = SampleTextureCube(texture_stage, texture_coords.xyz);
+		break;
+	case PS_TEXTUREMODES_PASSTHRU:
+		// Pass texture coordinates directly as texture register value (no sampling)
+		texture_value = texture_coords;
+		break;
+	case PS_TEXTUREMODES_CLIPPLANE:
+		// Clip plane mode: discard pixel if any texture coordinate component is negative
+		if (texture_coords.x < 0 || texture_coords.y < 0 || texture_coords.z < 0 || texture_coords.w < 0)
+			discard;
+		texture_value = SampleTexture2D(texture_stage, texture_coords.xy);
+		break;
+	case PS_TEXTUREMODES_BUMPENVMAP:
+	{
+		// Bump environment mapping: perturb texture coordinates of next stage using du,dv from this stage
+		// The source texture is sampled with 2D, du/dv values are stored in T[stage] for the next stage to use
+		texture_value = SampleTexture2D(texture_stage, texture_coords.xy);
+		break;
 	}
-
-	//texture_value = tex1D(samp1d, (float) texture_coords);
-	texture_value = tex2D(samp2d, (float2) texture_coords); // or default float4(0,0,0,1)
-	//texture_value = tex3D(samp3d, (float3) texture_coords);
-	//texture_value = texCUBE(samp6s, (float3) texture_coords);
+	case PS_TEXTUREMODES_BUMPENVMAP_LUM:
+	{
+		// Bump environment mapping with luminance: like BUMPENVMAP but also includes luminance scaling
+		texture_value = SampleTexture2D(texture_stage, texture_coords.xy);
+		break;
+	}
+	case PS_TEXTUREMODES_DPNDNT_AR:
+	{
+		// Dependent texture lookup using alpha and red channels of previous stage as (u, v)
+		float4 prev_tex = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		texture_value = SampleTexture2D(texture_stage, prev_tex.ar);
+		break;
+	}
+	case PS_TEXTUREMODES_DPNDNT_GB:
+	{
+		// Dependent texture lookup using green and blue channels of previous stage as (u, v)
+		float4 prev_tex = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		texture_value = SampleTexture2D(texture_stage, prev_tex.gb);
+		break;
+	}
+	case PS_TEXTUREMODES_DOTPRODUCT:
+	{
+		// Dot product texture mode: compute dot product of texture coords with source texture
+		// Result is stored for use in subsequent DOT_ST/DOT_ZW/DOT_STR modes
+		float4 src = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		texture_value = float4(dot(texture_coords.xyz, src.xyz), 0, 0, 0);
+		break;
+	}
+	case PS_TEXTUREMODES_DOT_ST:
+	{
+		// Dot product S,T: use two preceding dot product results as S,T coordinates for 2D lookup
+		float4 prev_dot = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		float4 src = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 2u);
+		float dot_s = src.x; // dot result from stage-2
+		float dot_t = prev_dot.x; // dot result from stage-1
+		texture_value = SampleTexture2D(texture_stage, float2(dot_s, dot_t));
+		break;
+	}
+	case PS_TEXTUREMODES_DOT_ZW:
+	{
+		// Dot product Z,W: similar to DOT_ST but stores results as Z,W
+		float4 src = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		texture_value = float4(0, 0, dot(texture_coords.xyz, src.xyz), 1);
+		break;
+	}
+	case PS_TEXTUREMODES_DOT_RFLCT_DIFF:
+	{
+		// Dot product reflection (diffuse): use dot product for diffuse reflection cubemap lookup
+		float4 src = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		float3 normal = normalize(texture_coords.xyz);
+		float3 reflection = normal * dot(normal, src.xyz) * 2.0f - src.xyz;
+		texture_value = SampleTextureCube(texture_stage, reflection);
+		break;
+	}
+	case PS_TEXTUREMODES_DOT_RFLCT_SPEC:
+	{
+		// Dot product reflection (specular): compute specular reflection vector for cubemap
+		float4 src = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		float3 normal = normalize(texture_coords.xyz);
+		float3 eye = float3(0, 0, 1); // TODO : Eye vector should come from shader input
+		float3 reflection = reflect(-eye, normal);
+		texture_value = SampleTextureCube(texture_stage, reflection);
+		break;
+	}
+	case PS_TEXTUREMODES_DOT_STR_3D:
+	{
+		// Dot product S,T,R for 3D texture: use three preceding dot results for 3D lookup
+		float4 dot_r2 = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 2u);
+		float4 dot_r1 = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		float4 src = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage);
+		float dot_val = dot(texture_coords.xyz, src.xyz);
+		texture_value = SampleTexture3D(texture_stage, float3(dot_r2.x, dot_r1.x, dot_val));
+		break;
+	}
+	case PS_TEXTUREMODES_DOT_STR_CUBE:
+	{
+		// Dot product S,T,R for cubemap: use three preceding dot results for cubemap lookup
+		float4 dot_r2 = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 2u);
+		float4 dot_r1 = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		float4 src = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage);
+		float dot_val = dot(texture_coords.xyz, src.xyz);
+		texture_value = SampleTextureCube(texture_stage, float3(dot_r2.x, dot_r1.x, dot_val));
+		break;
+	}
+	case PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST:
+	{
+		// Same as DOT_RFLCT_SPEC but with constant eye vector from shader constants
+		float4 src = get_plain_register_as_float4(state, PS_REGISTER_T0 + texture_stage - 1u);
+		float3 normal = normalize(texture_coords.xyz);
+		float3 eye = float3(0, 0, 1); // TODO : Constant eye vector should come from D3DRS_PSINPUTTEXTURE or similar
+		float3 reflection = reflect(-eye, normal);
+		texture_value = SampleTextureCube(texture_stage, reflection);
+		break;
+	}
+	case PS_TEXTUREMODES_BRDF:
+	{
+		// BRDF mode: requires eye vector and light direction; use 2D lookup as approximation
+		// TODO : Proper BRDF implementation needs eye vector and light sigma inputs
+		texture_value = SampleTexture2D(texture_stage, texture_coords.xy);
+		break;
+	}
+	default:
+		// Unknown texture mode - use 2D sampling as fallback
+		texture_value = SampleTexture2D(texture_stage, texture_coords.xy);
+		break;
+	}
 
 	byte_t texture_register = PS_REGISTER_T0 + texture_stage;
 	texture_register = max(texture_register, PS_REGISTER_T3); // Avoids warning X3550: array reference cannot be used as an l-value; not natively addressable, forcing loop to unroll 
