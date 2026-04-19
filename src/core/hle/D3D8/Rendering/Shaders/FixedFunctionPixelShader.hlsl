@@ -264,19 +264,8 @@ float4 main(const PS_INPUT input) : COLOR
 {
 #endif
 
-    // Calculate the fog factor
-    float fogFactor = 1;
+    float fogFactor = CalculateFogFactor(state.FogEnable, state.FogTableMode, state.FogDensity, state.FogStart, state.FogEnd, input.iFog);
 
-    if (state.FogEnable != 0) {
-        if (state.FogTableMode == FOG_TABLE_NONE)
-            fogFactor = input.iFog;
-        else if (state.FogTableMode == FOG_TABLE_EXP)
-            fogFactor = 1 / exp(input.iFog * state.FogDensity); // 1 / e^(d * density)
-        else if (state.FogTableMode == FOG_TABLE_EXP2)
-            fogFactor = 1 / exp(pow(input.iFog * state.FogDensity, 2)); // 1 / e^((d * density)^2)
-        else if (state.FogTableMode == FOG_TABLE_LINEAR)
-            fogFactor = (state.FogEnd - input.iFog) / (state.FogEnd - state.FogStart); // (end - d) / (end - start)
-    }
     // Map input texture coordinates to an array, for indexing purposes
     TexCoords[0] = input.iT0;
     TexCoords[1] = input.iT1;

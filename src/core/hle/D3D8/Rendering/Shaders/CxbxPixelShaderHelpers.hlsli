@@ -104,4 +104,22 @@ void PerformAlphaTest(const float3 alphaTest, float alpha)
 	}
 }
 
+// Compute fog blending factor from fog parameters
+// fogTableMode: 0=NONE, 1=EXP, 2=EXP2, 3=LINEAR
+float CalculateFogFactor(float fogEnable, float fogTableMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
+{
+	float fogFactor = 1;
+	if (fogEnable != 0) {
+		if (fogTableMode == 0) // NONE (vertex fog passthrough)
+			fogFactor = fogDepth;
+		else if (fogTableMode == 1) // EXP
+			fogFactor = 1 / exp(fogDepth * fogDensity); // 1 / e^(d * density)
+		else if (fogTableMode == 2) // EXP2
+			fogFactor = 1 / exp(pow(fogDepth * fogDensity, 2)); // 1 / e^((d * density)^2)
+		else if (fogTableMode == 3) // LINEAR
+			fogFactor = (fogEnd - fogDepth) / (fogEnd - fogStart); // (end - d) / (end - start)
+	}
+	return fogFactor;
+}
+
 #endif // CXBX_PIXEL_SHADER_HELPERS_HLSLI
