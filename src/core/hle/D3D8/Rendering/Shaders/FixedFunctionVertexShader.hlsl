@@ -158,7 +158,7 @@ LightingOutput DoLight(const Light l, const float2 powers)
 		float cosAlpha = dot(l.DirectionVN, toVertexN);
 		// I = ( cos(a) - cos(phi/2) ) / ( cos(theta/2) - cos(phi/2) )
 		float spotBase = saturate((cosAlpha - l.CosHalfPhi) / l.SpotIntensityDivisor);
-		float spotIntensity = pow(spotBase, l.Falloff);
+		spotIntensity = pow(spotBase, l.Falloff);
 	}
 
 	if (l.Type == LIGHT_TYPE_POINT || l.Type == LIGHT_TYPE_SPOT) {
@@ -379,8 +379,8 @@ float4 DoTexCoord(const uint stage, const VS_INPUT xIn)
             // http://www.bluevoid.com/opengl/sig99/advanced99/notes/node177.html
             const float3 R = reflected;
             const float p = sqrt(pow(R.x, 2) + pow(R.y, 2) + pow(R.z + 1, 2));
-            texCoord.x = R.x / 2 * p + 0.5f;
-            texCoord.y = R.y / 2 * p + 0.5f;
+            texCoord.x = R.x / (2 * p) + 0.5f;
+            texCoord.y = R.y / (2 * p) + 0.5f;
         }
     }
 
