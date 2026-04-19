@@ -360,24 +360,7 @@ float4 main(const PS_INPUT input) : COLOR
 		ctx.CURRENT.rgb += ctx.SPECULAR.rgb;
 	}
 
-	// D3D11: Alpha test (D3D11 has no fixed-function alpha test)
-	// NV2A quantizes both alpha output and reference to 8-bit before comparing,
-	// so we replicate that to avoid float precision issues with == and !=.
-	if (state.AlphaTest.x) { // AlphaTestEnable
-		int alphaVal = (int)round(saturate(ctx.CURRENT.a) * 255);
-		int alphaRefI = (int)round(saturate(state.AlphaTest.y) * 255);
-		int alphaFunc = (int)state.AlphaTest.z;
-		// D3DCMPFUNC: 1=NEVER,2=LESS,3=EQUAL,4=LESSEQUAL,5=GREATER,6=NOTEQUAL,7=GREATEREQUAL,8=ALWAYS
-		bool alphaPass = (alphaFunc == 8); // ALWAYS
-		if (alphaFunc == 1) alphaPass = false;                          // NEVER
-		if (alphaFunc == 2) alphaPass = (alphaVal < alphaRefI);         // LESS
-		if (alphaFunc == 3) alphaPass = (alphaVal == alphaRefI);        // EQUAL
-		if (alphaFunc == 4) alphaPass = (alphaVal <= alphaRefI);        // LESSEQUAL
-		if (alphaFunc == 5) alphaPass = (alphaVal > alphaRefI);         // GREATER
-		if (alphaFunc == 6) alphaPass = (alphaVal != alphaRefI);        // NOTEQUAL
-		if (alphaFunc == 7) alphaPass = (alphaVal >= alphaRefI);        // GREATEREQUAL
-		if (!alphaPass) clip(-1);
-	}
+	PerformAlphaTest(state.AlphaTest.xyz, ctx.CURRENT.a);
 
 	// Output whatever is in current at the end
 	return ctx.CURRENT;
