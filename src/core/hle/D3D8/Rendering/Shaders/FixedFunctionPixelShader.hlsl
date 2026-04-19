@@ -3,13 +3,6 @@
 #include "CxbxPixelShaderHelpers.hlsli"
 
 uniform FixedFunctionPixelShaderState state : register(c0);
-// Individual samplers instead of an array, because the D3D11 HLSL compiler
-// cannot resolve a sampler array where different elements are used with
-// different DX9-style intrinsics (tex2D vs tex3D vs texCUBE).
-sampler sampler_0 : register(s0);
-sampler sampler_1 : register(s1);
-sampler sampler_2 : register(s2);
-sampler sampler_3 : register(s3);
 
 // These 'D3DTA' texture argument values
 // may be used during each texture stage

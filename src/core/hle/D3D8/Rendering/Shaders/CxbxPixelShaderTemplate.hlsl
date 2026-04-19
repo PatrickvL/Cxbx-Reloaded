@@ -234,21 +234,13 @@ return input * input;
 #define PS_DOTMAPPING_HILO_HEMISPHERE_GL(in)  CalcHiLo(in); dm = float3(hls(H), hls(L), sqrt(1-p2(H)-p2(L))) // :H16L16  ->(H,L,sqrt(1-H^2-L^2)):?                      0x8000=>-1, 0x0000=>0,                     0x7fff=>1 thus : output =  (input < 0x8000) ? (input / 0x7fff) : ((input - 0x10000) / 0x8000)
 #define PS_DOTMAPPING_HILO_HEMISPHERE(in)     CalcHiLo(in); dm = float3(hls(H), hls(L), sqrt(1-p2(H)-p2(L))) // :H16L16  ->(H,L,sqrt(1-H^2-L^2)): 0x8000=>-32768/32767, 0x8001=>-1, 0x0000=>0,                     0x7fff=>1 thus : output =  (input < 0x8000) ? (input / 0x7fff) : ((input - 0x10000) / 0x7fff)
 
-// Declare one sampler per texture stage (individual samplers instead of an array,
-// because the D3D11 HLSL compiler cannot resolve a sampler array where different
-// elements are used with different DX9-style intrinsics like tex2D vs texCUBE).
-sampler sampler_0 : register(s0);
-sampler sampler_1 : register(s1);
-sampler sampler_2 : register(s2);
-sampler sampler_3 : register(s3);
+#include "CxbxPixelShaderHelpers.hlsli"
 
 // Declare alphakill as a variable (avoiding a constant, to allow false's to be optimized away) :
 #ifndef ALPHAKILL
 	#define ALPHAKILL {false, false, false, false}
 #endif
 static bool alphakill[4] = ALPHAKILL;
-
-#include "CxbxPixelShaderHelpers.hlsli"
 
 float4 PostProcessTexel(const int ts, float4 t)
 {

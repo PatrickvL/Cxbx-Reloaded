@@ -25,6 +25,14 @@ struct PS_INPUT // Declared identical to vertex shader output (see VS_OUTPUT)
 #endif
 };
 
+// Individual samplers instead of an array, because the D3D11 HLSL compiler
+// cannot resolve a sampler array where different elements are used with
+// different DX9-style intrinsics (tex2D vs tex3D vs texCUBE).
+sampler sampler_0 : register(s0);
+sampler sampler_1 : register(s1);
+sampler sampler_2 : register(s2);
+sampler sampler_3 : register(s3);
+
 static const float4 WarningColor = float4(0, 1, 1, 1); // Returned when unhandled scenario is encountered
 
 #define unsigned_to_signed(x) (((x) * 2) - 1) // Shifts range from [0..1] to [-1..1] (just like s_bx2)
