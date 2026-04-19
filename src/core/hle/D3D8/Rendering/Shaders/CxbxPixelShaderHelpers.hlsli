@@ -1,6 +1,30 @@
 #ifndef CXBX_PIXEL_SHADER_HELPERS_HLSLI
 #define CXBX_PIXEL_SHADER_HELPERS_HLSLI
 
+struct PS_INPUT // Declared identical to vertex shader output (see VS_OUTPUT)
+{
+#if defined(CXBX_USE_D3D11) || __HLSL_VERSION >= 4
+	float4 iPos : SV_Position; // Screen space position (SM4.0+ requires float4 xyzw)
+#else
+	float2 iPos : VPOS; // Screen space x,y pixel location
+#endif
+	float4 iD0  : COLOR0; // Front-facing primary (diffuse) vertex color (clamped to 0..1)
+	float4 iD1  : COLOR1; // Front-facing secondary (specular) vertex color (clamped to 0..1)
+	float  iFog : FOG;
+	float  iPts : PSIZE;
+	float4 iB0  : TEXCOORD4; // Back-facing primary (diffuse) vertex color (clamped to 0..1)
+	float4 iB1  : TEXCOORD5; // Back-facing secondary (specular) vertex color (clamped to 0..1)
+	float4 iT0  : TEXCOORD0; // Texture Coord 0
+	float4 iT1  : TEXCOORD1; // Texture Coord 1
+	float4 iT2  : TEXCOORD2; // Texture Coord 2
+	float4 iT3  : TEXCOORD3; // Texture Coord 3
+#if defined(CXBX_USE_D3D11) || __HLSL_VERSION >= 4
+	bool   iFF  : SV_IsFrontFace; // SM4.0+: bool type required
+#else
+	float  iFF  : VFACE; // Front facing if > 0
+#endif
+};
+
 static const float4 WarningColor = float4(0, 1, 1, 1); // Returned when unhandled scenario is encountered
 
 #define unsigned_to_signed(x) (((x) * 2) - 1) // Shifts range from [0..1] to [-1..1] (just like s_bx2)
