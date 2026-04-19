@@ -824,7 +824,7 @@ void ____DXT5ToARGBRow_C(const uint8_t* data, uint8_t* dst_argb, int width)
 		dst_line0[0] = colormap[colori0 & 0x03];
 		dst_line0[0].A = alphamap[alphai0 & 0x07];
 		dst_line0[1] = colormap[(colori0 & 0x0c) >> 2];
-		dst_line0[1].A = alphamap[(alphai0 & 0x38 >> 3)];
+		dst_line0[1].A = alphamap[((alphai0 & 0x38) >> 3)];
 		dst_line0[2] = colormap[(colori0 & 0x30) >> 4];
 		dst_line0[2].A = alphamap[((alphai0 & 0xc0) >> 6) | (alphai1 & 0x01)];
 		dst_line0[3] = colormap[colori0 >> 6];
@@ -842,7 +842,7 @@ void ____DXT5ToARGBRow_C(const uint8_t* data, uint8_t* dst_argb, int width)
 		dst_line2[0] = colormap[colori2 & 0x03];
 		dst_line2[0].A = alphamap[alphai3 & 0x07];
 		dst_line2[1] = colormap[(colori2 & 0x0c) >> 2];
-		dst_line2[1].A = alphamap[(alphai3 & 0x38 >> 3)];
+		dst_line2[1].A = alphamap[((alphai3 & 0x38) >> 3)];
 		dst_line2[2] = colormap[(colori2 & 0x30) >> 4];
 		dst_line2[2].A = alphamap[((alphai3 & 0xc0) >> 6) | (alphai4 & 0x01)];
 		dst_line2[3] = colormap[colori2 >> 6];
