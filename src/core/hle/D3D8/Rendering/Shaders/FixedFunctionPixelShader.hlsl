@@ -192,12 +192,7 @@ TextureArgs ExecuteTextureStage(
 	}
 
 	// Apply texture format channel fixup (D3D11: luminance replication, channel swizzle)
-	[branch] if (stage.TEXFMTFIXUP != TEXFMTFIXUP_IDENTITY) {
-		if (stage.TEXFMTFIXUP == TEXFMTFIXUP_GBAR) t = t.gbar;
-		else if (stage.TEXFMTFIXUP == TEXFMTFIXUP_ABGR) t = t.abgr;
-		else if (stage.TEXFMTFIXUP == TEXFMTFIXUP_LUM) t = float4(t.r, t.r, t.r, t.a);
-		else if (stage.TEXFMTFIXUP == TEXFMTFIXUP_ALUM) t = float4(t.r, t.r, t.r, t.g);
-	}
+	t = ApplyTexFmtFixup(t, stage.TEXFMTFIXUP);
 
 	// Bump environment mapping with luminance special case
 	if (previousOp == X_D3DTOP_BUMPENVMAPLUMINANCE) {

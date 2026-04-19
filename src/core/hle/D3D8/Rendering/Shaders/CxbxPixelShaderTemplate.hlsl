@@ -250,17 +250,6 @@ static bool alphakill[4] = ALPHAKILL;
 
 #include "CxbxPixelShaderHelpers.hlsli"
 
-float4 ApplyTexFmtFixup(float4 t, float fixup)
-{
-	[branch] if (fixup != 0) {
-		if (fixup == 1) return t.gbar;                       // B8G8R8A8 uploaded as R8G8B8A8
-		if (fixup == 2) return t.abgr;                       // R8G8B8A8 uploaded as R8G8B8A8
-		if (fixup == 3) return float4(t.r, t.r, t.r, t.a);   // Luminance: R→(R,R,R,A)
-		if (fixup == 4) return float4(t.r, t.r, t.r, t.g);   // Alpha-luminance: RG→(R,R,R,G)
-	}
-	return t;
-}
-
 float4 PostProcessTexel(const int ts, float4 t)
 {
 	t = ApplyTexFmtFixup(t, TEXFMTFIXUP[ts]);
