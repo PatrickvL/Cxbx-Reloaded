@@ -446,12 +446,13 @@ void CreateDefaultD3D9Device
    	g_renderbase->SetDeviceRelease([] {
    	   	ImGui_ImplDX11_Shutdown();
    	   	g_VertexShaderCache.Clear();
-   	   	CxbxD3D11ReleaseBackendResources();
+   	   	CxbxD3D11ReleaseBackendResources(); // Also resets g_pD3DCurrentRTV for cached entries
    	   	if (g_pD3DDepthStencilView) { g_pD3DDepthStencilView->Release(); g_pD3DDepthStencilView = nullptr; }
    	   	if (g_pD3DDepthStencilBuffer) { g_pD3DDepthStencilBuffer->Release(); g_pD3DDepthStencilBuffer = nullptr; }
+   	   	// Reset g_pD3DCurrentRTV before releasing back buffer view (it may equal g_pD3DBackBufferView)
+   	   	g_pD3DCurrentRTV = nullptr;
    	   	if (g_pD3DBackBufferView) { g_pD3DBackBufferView->Release(); g_pD3DBackBufferView = nullptr; }
    	   	if (g_pD3DBackBufferSurface) { g_pD3DBackBufferSurface->Release(); g_pD3DBackBufferSurface = nullptr; }
-   	   	if (g_pD3DCurrentRTV && g_pD3DCurrentRTV != g_pD3DBackBufferView) { g_pD3DCurrentRTV->Release(); g_pD3DCurrentRTV = nullptr; }
    	   	if (g_pSwapChain) { g_pSwapChain->Release(); g_pSwapChain = nullptr; }
    	   	if (g_pD3DDeviceContext) { g_pD3DDeviceContext->Release(); g_pD3DDeviceContext = nullptr; }
    	   	g_pD3DDevice->Release();

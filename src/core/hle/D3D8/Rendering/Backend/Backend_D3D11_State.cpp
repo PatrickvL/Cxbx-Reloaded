@@ -283,6 +283,11 @@ void ClearRTVCache()
 		if (pair.second) pair.second->Release();
 	}
 	g_RTVCache.clear();
+	// Reset the current RTV pointer if it was referencing a cached entry
+	// (CxbxSetRenderTarget skips Release for cached RTVs, so the cache owns them)
+	if (g_pD3DCurrentRTV != nullptr && g_pD3DCurrentRTV != g_pD3DBackBufferView) {
+		g_pD3DCurrentRTV = nullptr;
+	}
 }
 
 // ******************************************************************
