@@ -31,6 +31,20 @@
 // * after Xbox→PC value conversion. Updates D3D11 state descriptors
 // * and sets dirty flags for deferred state object recreation.
 // ******************************************************************
+
+// Helper: remap color-referencing blend factors to their alpha equivalents
+// for use in BlendAlpha slots (D3D11 separates color/alpha factor interpretation)
+static D3D11_BLEND RemapBlendForAlpha(D3D11_BLEND blend)
+{
+	switch (blend) {
+	case D3D11_BLEND_SRC_COLOR:      return D3D11_BLEND_SRC_ALPHA;
+	case D3D11_BLEND_INV_SRC_COLOR:  return D3D11_BLEND_INV_SRC_ALPHA;
+	case D3D11_BLEND_DEST_COLOR:     return D3D11_BLEND_DEST_ALPHA;
+	case D3D11_BLEND_INV_DEST_COLOR: return D3D11_BLEND_INV_DEST_ALPHA;
+	default:                         return blend;
+	}
+}
+
 void CxbxD3D11SetRenderState(uint32_t State, uint32_t Value)
 {
    	switch (State) {
@@ -133,12 +147,12 @@ void CxbxD3D11SetRenderState(uint32_t State, uint32_t Value)
    	   	   	break;
    	   	case xbox::X_D3DRS_SRCBLEND:
    	   	   	g_D3D11BlendDesc.RenderTarget[0].SrcBlend = (D3D11_BLEND)Value;
-   	   	   	g_D3D11BlendDesc.RenderTarget[0].SrcBlendAlpha = (D3D11_BLEND)Value;
+   	   	   	g_D3D11BlendDesc.RenderTarget[0].SrcBlendAlpha = RemapBlendForAlpha((D3D11_BLEND)Value);
    	   	   	g_bD3D11BlendStateDirty = true;
    	   	   	break;
    	   	case xbox::X_D3DRS_DESTBLEND:
    	   	   	g_D3D11BlendDesc.RenderTarget[0].DestBlend = (D3D11_BLEND)Value;
-   	   	   	g_D3D11BlendDesc.RenderTarget[0].DestBlendAlpha = (D3D11_BLEND)Value;
+   	   	   	g_D3D11BlendDesc.RenderTarget[0].DestBlendAlpha = RemapBlendForAlpha((D3D11_BLEND)Value);
    	   	   	g_bD3D11BlendStateDirty = true;
    	   	   	break;
    	   	case xbox::X_D3DRS_BLENDOP:
