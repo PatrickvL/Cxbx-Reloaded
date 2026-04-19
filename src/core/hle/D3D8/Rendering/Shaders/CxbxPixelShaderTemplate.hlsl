@@ -199,14 +199,14 @@ uniform const float4 ALPHATEST : register(c43); // D3D11: alpha test state (x=en
 
 float m21d(const float input)
 {
-	int tmp = (int)(input * 255); // Convert float 0..1 into byte 0..255
+	int tmp = (int)round(input * 255); // Convert float 0..1 into byte 0..255 (round to avoid truncation off-by-one)
 	tmp -= 128; // 0 lowers to -128, 128 lowers to 0, 255 lowers to 127
 	return (float)tmp / 127; // -128 scales to -1.007874016, 0 scales to 0.0, 127 scales to 1.0
 }
 
 float m21g(const float input)
 {
-	int tmp = (int)(input * 255); // Convert float 0..1 into byte 0..255
+	int tmp = (int)round(input * 255); // Convert float 0..1 into byte 0..255 (round to avoid truncation off-by-one)
 	if (tmp >= 128) {
 		tmp -= 256; // 128 lowers to -128, 255 lowers to -1
 	} // 0 stays 0, 127 stays 127
@@ -216,7 +216,7 @@ float m21g(const float input)
 
 float m21(const float input)
 {
-	int tmp = (int)(input * 255); // Convert float 0..1 into byte 0..255
+	int tmp = (int)round(input * 255); // Convert float 0..1 into byte 0..255 (round to avoid truncation off-by-one)
 	if (tmp >= 128) {
 		tmp -= 256; // 128 lowers to -128, 255 lowers to -1
 	} // 0 stays 0, 127 stays 127
@@ -519,18 +519,21 @@ PS_OUTPUT main(const PS_INPUT xIn)
 	xOut.oR0 = r0;
 
 	// D3D11: Alpha test (D3D11 has no fixed-function alpha test)
+	// NV2A quantizes both alpha output and reference to 8-bit before comparing,
+	// so we replicate that to avoid float precision issues with == and !=.
 	if (ALPHATEST.x) { // AlphaTestEnable
-		float alphaRef = ALPHATEST.y;
+		int alphaVal = (int)round(saturate(xOut.oR0.a) * 255);
+		int alphaRefI = (int)round(saturate(ALPHATEST.y) * 255);
 		int alphaFunc = (int)ALPHATEST.z;
 		// D3DCMPFUNC: 1=NEVER,2=LESS,3=EQUAL,4=LESSEQUAL,5=GREATER,6=NOTEQUAL,7=GREATEREQUAL,8=ALWAYS
 		bool alphaPass = (alphaFunc == 8); // ALWAYS
-		if (alphaFunc == 1) alphaPass = false;                        // NEVER
-		if (alphaFunc == 2) alphaPass = (xOut.oR0.a < alphaRef);     // LESS
-		if (alphaFunc == 3) alphaPass = (xOut.oR0.a == alphaRef);    // EQUAL
-		if (alphaFunc == 4) alphaPass = (xOut.oR0.a <= alphaRef);    // LESSEQUAL
-		if (alphaFunc == 5) alphaPass = (xOut.oR0.a > alphaRef);     // GREATER
-		if (alphaFunc == 6) alphaPass = (xOut.oR0.a != alphaRef);    // NOTEQUAL
-		if (alphaFunc == 7) alphaPass = (xOut.oR0.a >= alphaRef);    // GREATEREQUAL
+		if (alphaFunc == 1) alphaPass = false;                          // NEVER
+		if (alphaFunc == 2) alphaPass = (alphaVal < alphaRefI);         // LESS
+		if (alphaFunc == 3) alphaPass = (alphaVal == alphaRefI);        // EQUAL
+		if (alphaFunc == 4) alphaPass = (alphaVal <= alphaRefI);        // LESSEQUAL
+		if (alphaFunc == 5) alphaPass = (alphaVal > alphaRefI);         // GREATER
+		if (alphaFunc == 6) alphaPass = (alphaVal != alphaRefI);        // NOTEQUAL
+		if (alphaFunc == 7) alphaPass = (alphaVal >= alphaRefI);        // GREATEREQUAL
 		if (!alphaPass) clip(-1);
 	}
 
