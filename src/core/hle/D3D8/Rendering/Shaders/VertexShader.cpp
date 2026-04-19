@@ -325,7 +325,7 @@ extern HRESULT EmuCompileVertexShader
 	hlsl_stream << g_ShaderSources.vertexShaderTemplateHlsl[1]; // Finish with the HLSL template footer
 	std::string hlsl_str = hlsl_stream.str();
 
-	const char* notionalSourceName = "CxbxVertexShaderTemplate.hlsl";
+	const char* notionalSourceName = g_ShaderSources.vertexShaderTemplatePath.c_str();
 	HRESULT hRet = EmuCompileShader(hlsl_str, g_vs_model, ppHostShader, notionalSourceName);
 	
 	if (FAILED(hRet) && (g_vs_model != _9_11(vs_model_3_0, vs_model_5_0))) {
