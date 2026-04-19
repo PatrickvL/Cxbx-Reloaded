@@ -36,8 +36,7 @@ uniform float4 vRegisterDefaultValues[16]  : register(c192);
 uniform float4 vRegisterDefaultFlagsPacked[4]  : register(c208);
 #endif
 
-uniform float4 xboxScreenspaceScale : register(c212);
-uniform float4 xboxScreenspaceOffset : register(c213);
+#include "CxbxScreenspaceTransform.hlsli"
 
 uniform float4 xboxTextureScale[4] : register(c214);
 
@@ -264,33 +263,6 @@ float _rcp(float src)
 	// This prevents issues with XYZRHW modes
 	// where the w component may be 0
 	return _rcc(src);
-}
-
-float4 reverseScreenspaceTransform(float4 oPos)
-{
-	// On Xbox, oPos should contain the vertex position in screenspace
-	// We need to reverse this transformation
-	// Conventionally, each Xbox Vertex Shader includes instructions like this
-	// mul oPos.xyz, r12, c-38
-	// +rcc r1.x, r12.w
-	// mad oPos.xyz, r12, r1.x, c-37
-	// where c-37 and c-38 are reserved transform values
-
-	// oPos.w and xboxViewportScale.z might be VERY big when a D24 depth buffer is used
-	// and multiplying oPos.xyz by oPos.w may cause precision issues.
-	// Test case: Burnout 3
-
-	// Reverse screenspace offset
-	oPos -= xboxScreenspaceOffset;
-	// Reverse screenspace scale
-	oPos /= xboxScreenspaceScale;
-
-	// Ensure w is nonzero
-	if(oPos.w == 0) oPos.w = 1;
-	// Reverse perspective divide
-	oPos.xyz *= oPos.w;
-	
-	return oPos;
 }
 
 VS_OUTPUT main(const VS_INPUT xIn)

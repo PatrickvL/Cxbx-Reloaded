@@ -7,8 +7,7 @@ uniform float4 vRegisterDefaultValues[16]  : register(c192);
 uniform float4 vRegisterDefaultFlagsPacked[4]  : register(c208);
 #endif
 
-uniform float4 xboxScreenspaceScale : register(c212);
-uniform float4 xboxScreenspaceOffset : register(c213);
+#include "CxbxScreenspaceTransform.hlsli"
 
 
 uniform float4 xboxTextureScale[4] : register(c214);
@@ -45,30 +44,6 @@ struct VS_OUTPUT
     float4 oT2  : TEXCOORD2; // Texture coordinate set 2
     float4 oT3  : TEXCOORD3; // Texture coordinate set 3
 };
-
-float4 reverseScreenspaceTransform(float4 oPos)
-{
-    // Scale screenspace coordinates (0 to viewport width/height) to -1 to +1 range
-
-    // On Xbox, oPos should contain the vertex position in screenspace
-    // We need to reverse this transformation
-    // Conventionally, each Xbox Vertex Shader includes instructions like this
-    // mul oPos.xyz, r12, c-38
-    // +rcc r1.x, r12.w
-    // mad oPos.xyz, r12, r1.x, c-37
-    // where c-37 and c-38 are reserved transform values
-
-    // Reverse screenspace offset
-    oPos -= xboxScreenspaceOffset;
-    // Reverse screenspace scale
-    oPos /= xboxScreenspaceScale;
-
-    // Ensure w is nonzero
-    if(oPos.w == 0) oPos.w = 1;
-    // Reverse perspective divide
-    oPos.xyz *= oPos.w;
-    return oPos;
-}
 
 VS_OUTPUT main(const VS_INPUT xIn)
 {
