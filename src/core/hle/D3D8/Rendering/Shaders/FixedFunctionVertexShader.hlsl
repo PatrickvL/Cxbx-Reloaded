@@ -9,6 +9,9 @@
 #define CXBX_VS_CUSTOM_INPUT
 #endif
 #include "CxbxVertexShaderCommon.hlsli"
+#ifdef CXBX_IA_BYPASS
+#include "CxbxVertexFetch.hlsli"
+#endif
 
 // Whether each vertex register is present in the vertex declaration.
 // Used by DoMaterial to determine ColorVertex behavior.
@@ -406,6 +409,15 @@ VS_INPUT InitializeInputRegisters(const VS_INPUT xInput)
 {
     VS_INPUT xIn;
 
+#ifdef CXBX_IA_BYPASS
+    // IA bypass: fetch all attributes from ByteAddressBuffer using SV_VertexID
+    {
+        uint xboxVtxIdx = ResolveVertexIndex(xInput.vertexId);
+        float4 vArr[16];
+        FetchAllAttributes(xboxVtxIdx, vArr);
+        [unroll] for (uint i = 0; i < 16u; i++) xIn.v[i] = vArr[i];
+    }
+#else
     // Initialize input registers from the vertex buffer data
     // Or use the register's default value (which can be changed by the title)
     for (uint i = 0; i < 16; i++)
@@ -439,6 +451,7 @@ VS_INPUT InitializeInputRegisters(const VS_INPUT xInput)
             if(i == reserved2) xIn.reserved[2] = value; // Note : Untested
         #endif
     }
+#endif // CXBX_IA_BYPASS
 
     return xIn; // Note : Untested setters are required to avoid "variable 'xIn' used without having been completely initialized" here
 }

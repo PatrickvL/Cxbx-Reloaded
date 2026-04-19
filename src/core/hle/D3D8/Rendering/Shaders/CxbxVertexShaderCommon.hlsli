@@ -6,7 +6,14 @@
 // under D3D11; under D3D9, FixedFunctionVertexShader overrides this
 // with a semantic-based layout by defining CXBX_VS_CUSTOM_INPUT before
 // including this header.
-#ifndef CXBX_VS_CUSTOM_INPUT
+#ifdef CXBX_IA_BYPASS
+// IA bypass mode: VS receives only SV_VertexID, all attributes are
+// fetched from a ByteAddressBuffer via CxbxVertexFetch.hlsli
+struct VS_INPUT
+{
+	uint vertexId : SV_VertexID;
+};
+#elif !defined(CXBX_VS_CUSTOM_INPUT)
 struct VS_INPUT
 {
 	float4 v[16] : TEXCOORD;

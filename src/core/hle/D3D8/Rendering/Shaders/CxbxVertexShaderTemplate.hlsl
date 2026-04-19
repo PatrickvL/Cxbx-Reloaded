@@ -1,4 +1,7 @@
 #include "CxbxVertexShaderCommon.hlsli"
+#ifdef CXBX_IA_BYPASS
+#include "CxbxVertexFetch.hlsli"
+#endif
 
 #define X_D3DSCM_CORRECTION                 96 // Add 96 to arrive at the range 0..191 (instead of -96..95)
 #define X_D3DVS_CONSTREG_COUNT              192
@@ -252,22 +255,38 @@ VS_OUTPUT main(const VS_INPUT xIn)
 	// Input registers
 	float4 v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
 
-#ifdef CXBX_USE_D3D11
+#ifdef CXBX_IA_BYPASS
+	// IA bypass: fetch all attributes from ByteAddressBuffer using SV_VertexID
+	{
+		uint xboxVtxIdx = ResolveVertexIndex(xIn.vertexId);
+		float4 vArr[16];
+		FetchAllAttributes(xboxVtxIdx, vArr);
+		v0=vArr[0]; v1=vArr[1]; v2=vArr[2]; v3=vArr[3];
+		v4=vArr[4]; v5=vArr[5]; v6=vArr[6]; v7=vArr[7];
+		v8=vArr[8]; v9=vArr[9]; v10=vArr[10]; v11=vArr[11];
+		v12=vArr[12]; v13=vArr[13]; v14=vArr[14]; v15=vArr[15];
+	}
+#elif defined(CXBX_USE_D3D11)
 	// D3D11: The input assembler delivers correct values for all 16 attributes.
 	// Streamed attributes come from their real vertex buffer slots.
 	// Non-streamed attributes come from the zero-stride defaults buffer (slot 16)
 	// which holds the NV2A's sticky inline_value[] registers.
 	#define init_v(i) v##i = xIn.v[i];
-#else
-	// D3D9: Lerp between vertex data and constant buffer defaults
-	float vRegisterDefaultFlags[16] = (float[16])vRegisterDefaultFlagsPacked;
-	#define init_v(i) v##i = lerp(xIn.v[i], vRegisterDefaultValues[i], vRegisterDefaultFlags[i]);
-#endif
 	// Note : unroll manually instead of for-loop, because of the ## concatenation
 	init_v( 0); init_v( 1); init_v( 2); init_v( 3);
 	init_v( 4); init_v( 5); init_v( 6); init_v( 7);
 	init_v( 8); init_v( 9); init_v(10); init_v(11);
 	init_v(12); init_v(13); init_v(14); init_v(15);
+#else
+	// D3D9: Lerp between vertex data and constant buffer defaults
+	float vRegisterDefaultFlags[16] = (float[16])vRegisterDefaultFlagsPacked;
+	#define init_v(i) v##i = lerp(xIn.v[i], vRegisterDefaultValues[i], vRegisterDefaultFlags[i]);
+	// Note : unroll manually instead of for-loop, because of the ## concatenation
+	init_v( 0); init_v( 1); init_v( 2); init_v( 3);
+	init_v( 4); init_v( 5); init_v( 6); init_v( 7);
+	init_v( 8); init_v( 9); init_v(10); init_v(11);
+	init_v(12); init_v(13); init_v(14); init_v(15);
+#endif
 
 	// Temp variable for paired VS instruction
 	float4 temp;
