@@ -242,6 +242,7 @@ void ShaderSources::LoadShadersFromDisk() {
 		std::stringstream tmp;
 		auto dir = hlslDir;
 		dir.append("CxbxVertexShaderTemplate.hlsl");
+		this->vertexShaderTemplatePath = dir.string();
 		tmp << OpenWithRetry(dir.string()).rdbuf();
 		std::string hlsl = tmp.str();
 

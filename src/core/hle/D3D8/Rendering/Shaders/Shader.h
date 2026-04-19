@@ -46,6 +46,7 @@ struct ShaderSources {
 
 	// Vertex Shader
 	std::string vertexShaderTemplateHlsl[2];
+	std::string vertexShaderTemplatePath;
 
 	std::string fixedFunctionVertexShaderHlsl;
 	std::string fixedFunctionVertexShaderPath;
