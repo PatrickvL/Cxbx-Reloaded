@@ -1,6 +1,15 @@
 #ifndef CXBX_PIXEL_SHADER_HELPERS_HLSLI
 #define CXBX_PIXEL_SHADER_HELPERS_HLSLI
 
+// Integer steering type: D3D11 uses native int, D3D9 uses float for SM3 compat
+#ifndef CXBX_STEERING_INT
+#ifdef CXBX_USE_D3D11
+#define CXBX_STEERING_INT int
+#else
+#define CXBX_STEERING_INT float
+#endif
+#endif
+
 struct PS_INPUT // Declared identical to vertex shader output (see VS_OUTPUT)
 {
 #if defined(CXBX_USE_D3D11) || __HLSL_VERSION >= 4
@@ -60,7 +69,7 @@ float4 PerformColorSign(const float4 ColorSign, float4 t)
 	return t;
 }
 
-float4 PerformColorKeyOp(const float ColorKeyOp, const float4 ColorKeyColor, float4 t)
+float4 PerformColorKeyOp(const CXBX_STEERING_INT ColorKeyOp, const float4 ColorKeyColor, float4 t)
 {
 	// Handle all D3DTCOLORKEYOP_ modes :
 	if (ColorKeyOp == 0) // = _DISABLE
@@ -82,7 +91,7 @@ float4 PerformColorKeyOp(const float ColorKeyOp, const float4 ColorKeyColor, flo
 	return WarningColor;
 }
 
-void PerformAlphaKill(const float AlphaKill, float4 t)
+void PerformAlphaKill(const CXBX_STEERING_INT AlphaKill, float4 t)
 {
 	if (AlphaKill)
 		if (t.a == 0)
@@ -114,7 +123,7 @@ void PerformAlphaTest(const float3 alphaTest, float alpha)
 
 // Apply texture format channel fixup (D3D11: luminance replication, channel swizzle)
 // fixup: 0=identity, 1=.gbar, 2=.abgr, 3=luminance, 4=alpha-luminance
-float4 ApplyTexFmtFixup(float4 t, float fixup)
+float4 ApplyTexFmtFixup(float4 t, CXBX_STEERING_INT fixup)
 {
 	[branch] if (fixup != 0) {
 		if (fixup == 1) return t.gbar;                       // B8G8R8A8 uploaded as R8G8B8A8
@@ -127,7 +136,7 @@ float4 ApplyTexFmtFixup(float4 t, float fixup)
 
 // Compute fog blending factor from fog parameters
 // fogTableMode: 0=NONE, 1=EXP, 2=EXP2, 3=LINEAR
-float CalculateFogFactor(float fogEnable, float fogTableMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
+float CalculateFogFactor(CXBX_STEERING_INT fogEnable, CXBX_STEERING_INT fogTableMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
 {
 	float fogFactor = 1;
 	if (fogEnable != 0) {

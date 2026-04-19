@@ -549,19 +549,19 @@ IDirect3DPixelShader* GetFixedFunctionShader()
 				sampleType[i] = SAMPLE_2D;
 		}
 
-		states[i].COLORARG0 = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG0);
-		states[i].COLORARG1 = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG1);
-		states[i].COLORARG2 = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG2);
+		states[i].COLORARG0 = XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG0);
+		states[i].COLORARG1 = XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG1);
+		states[i].COLORARG2 = XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG2);
 
 		auto alphaOp = XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAOP);
 		if (alphaOp == X_D3DTOP_DISABLE) LOG_TEST_CASE("Alpha stage disabled when colour stage is enabled");
 
-		states[i].ALPHAOP = (float)alphaOp;
-		states[i].ALPHAARG0 = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAARG0);
-		states[i].ALPHAARG1 = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAARG1);
-		states[i].ALPHAARG2 = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAARG2);
+		states[i].ALPHAOP = alphaOp;
+		states[i].ALPHAARG0 = XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAARG0);
+		states[i].ALPHAARG1 = XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAARG1);
+		states[i].ALPHAARG2 = XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAARG2);
 
-		states[i].RESULTARG = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_RESULTARG);
+		states[i].RESULTARG = XboxTextureStates.Get(i, xbox::X_D3DTSS_RESULTARG);
 	}
 
 	// Create a key from the shader state
@@ -807,10 +807,10 @@ void UpdateFixedFunctionPixelShaderState()
 
 	FixedFunctionPixelShaderState ffPsState;
 	{ D3DXCOLOR c(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_TEXTUREFACTOR)); ffPsState.TextureFactor = D3DXVECTOR4(c.r, c.g, c.b, c.a); }
-	ffPsState.SpecularEnable = static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE));
-	ffPsState.FogEnable = static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE));
+	ffPsState.SpecularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) ? 1 : 0;
+	ffPsState.FogEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1 : 0;
 	{ D3DXCOLOR c(FogColor_ABGR_to_ARGB(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR))); ffPsState.FogColor = D3DXVECTOR3(c.r, c.g, c.b); }
-	ffPsState.FogTableMode = static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE));
+	ffPsState.FogTableMode = XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE);
 	ffPsState.FogDensity = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY);
 	ffPsState.FogStart = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART);
 	ffPsState.FogEnd = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND);
@@ -822,13 +822,13 @@ void UpdateFixedFunctionPixelShaderState()
 	// Texture state
 	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
 		auto stage = &ffPsState.stages[i];
-		stage->COLORKEYOP = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYOP);
+		stage->COLORKEYOP = XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYOP);
 		auto CxbxColorSign = CxbxCalcColorSign(i);
 		stage->COLORSIGN.x = CxbxColorSign.r;
 		stage->COLORSIGN.y = CxbxColorSign.g;
 		stage->COLORSIGN.z = CxbxColorSign.b;
 		stage->COLORSIGN.w = CxbxColorSign.a;
-		stage->ALPHAKILL = (float)XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAKILL);
+		stage->ALPHAKILL = XboxTextureStates.Get(i, xbox::X_D3DTSS_ALPHAKILL);
 		stage->BUMPENVMAT00 = AsFloat(XboxTextureStates.Get(i, xbox::X_D3DTSS_BUMPENVMAT00));
 		stage->BUMPENVMAT01 = AsFloat(XboxTextureStates.Get(i, xbox::X_D3DTSS_BUMPENVMAT01));
 		stage->BUMPENVMAT10 = AsFloat(XboxTextureStates.Get(i, xbox::X_D3DTSS_BUMPENVMAT10));

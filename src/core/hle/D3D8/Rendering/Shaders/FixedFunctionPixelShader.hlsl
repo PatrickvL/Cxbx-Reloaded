@@ -23,16 +23,30 @@ static float4 TexCoords[4];
 #define TEXTURE_SAMPLE_TYPE {SAMPLE_2D, SAMPLE_2D, SAMPLE_2D, SAMPLE_2D};
 static int TextureSampleType[4] = TEXTURE_SAMPLE_TYPE;
 
+#ifdef CXBX_USE_D3D11
+// D3D11: Use native integer bitwise operations for D3DTA flag extraction
+bool HasFlag(int value, int flag) {
+	return (value & flag) != 0;
+}
+
+float4 GetArg(int arg, TextureArgs ctx) {
+	// https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dta
+	bool alphaReplicate = (arg & X_D3DTA_ALPHAREPLICATE) != 0;
+	bool complement = (arg & X_D3DTA_COMPLEMENT) != 0;
+	arg = arg & 0xF; // Extract base selector (bits 0-3)
+#else
+// D3D9: Float-based flag extraction (SM3 has no integer bitwise ops)
 bool HasFlag(float value, float flag) {
 	// http://theinstructionlimit.com/encoding-boolean-flags-into-a-float-in-hlsl
-	return fmod(value, flag) >= flag / 2;
+	return fmod(value / flag, 2.0) >= 1.0;
 }
 
 float4 GetArg(float arg, TextureArgs ctx) {
 	// https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dta
 	bool alphaReplicate = HasFlag(arg, X_D3DTA_ALPHAREPLICATE);
 	bool complement = HasFlag(arg, X_D3DTA_COMPLEMENT);
-	arg = arg % 16;
+	arg = fmod(arg, 16); // Extract base selector (bits 0-3)
+#endif
 
 	float4 o;
 
@@ -57,7 +71,11 @@ float4 GetArg(float arg, TextureArgs ctx) {
 		return o;
 }
 
+#ifdef CXBX_USE_D3D11
+float4 ExecuteTextureOp(int op, float4 arg1, float4 arg2, float4 arg0, TextureArgs ctx, PsTextureStageState stage) {
+#else
 float4 ExecuteTextureOp(float op, float4 arg1, float4 arg2, float4 arg0, TextureArgs ctx, PsTextureStageState stage) {
+#endif
 	// https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dtextureop
 
 	// Note : When we use separate "if"'s here instead of below "else if"'s,
