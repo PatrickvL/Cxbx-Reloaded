@@ -1,35 +1,22 @@
 #include "FixedFunctionVertexShaderState.hlsli"
 
-// Whether each vertex register is present in the vertex declaration.
-// Used by DoMaterial to determine ColorVertex behavior (all shaders),
-// and by D3D9's init_v lerp to select between vertex data and defaults.
-uniform float4 vRegisterDefaultFlagsPacked[4] : register(c208);
-static  bool  vRegisterDefaultFlags[16];
-
 #ifndef CXBX_USE_D3D11
-// D3D9 path: init_v() lerps between vertex data and these defaults
-uniform float4 vRegisterDefaultValues[16] : register(c192);
+// D3D9: FixedFunction uses a semantic-based VS_INPUT layout.
+// Suppress the TEXCOORD-array VS_INPUT from the common header.
+#define CXBX_VS_CUSTOM_INPUT
 #endif
+#include "CxbxVertexShaderCommon.hlsli"
+
+// Whether each vertex register is present in the vertex declaration.
+// Used by DoMaterial to determine ColorVertex behavior.
+static  bool  vRegisterDefaultFlags[16];
 
 uniform FixedFunctionVertexShaderState state : register(c0);
 
-uniform float4 xboxTextureScale[4] : register(c214);
-
-#ifdef CXBX_USE_D3D11
-// D3D11: Use a flat TEXCOORD array so all three vertex shader types
-// (FixedFunction, Passthrough, Programmable) share the same VS_INPUT layout.
-// This matches the NV2A model of 16 generic vertex attribute registers.
-#define CXBX_ALL_TEXCOORD_INPUTS
-#else
-#undef CXBX_ALL_TEXCOORD_INPUTS // Enable this to disable semantics in VS_INPUT (instead, we'll use an array of generic TEXCOORD's)
-#endif
-
-// Input registers
+#ifndef CXBX_USE_D3D11
+// D3D9: semantic-based input layout for fixed function vertex shader
 struct VS_INPUT
 {
-#ifdef CXBX_ALL_TEXCOORD_INPUTS
-    float4 v[16] : TEXCOORD;
-#else
     float4 pos : POSITION;
     float4 bw : BLENDWEIGHT;
 	float4 normal : NORMAL;
@@ -39,8 +26,8 @@ struct VS_INPUT
     float4 backColor[2] : TEXCOORD4;
     float4 texcoord[4] : TEXCOORD;
 	float4 reserved[3] : TEXCOORD6;
-#endif
 };
+#endif
 
 // Input register indices (also known as attributes, as given in VS_INPUT.v array)
 // TODO : Convert FVF codes on CPU to a vertex declaration with these standardized register indices:
@@ -66,7 +53,7 @@ static const uint reserved2 = 15;   // Has no X_D3DFVF_*     / X_D3DVSDE_*
 
 float4 Get(const VS_INPUT xIn, const uint index)
 {
-#ifdef CXBX_ALL_TEXCOORD_INPUTS
+#ifdef CXBX_USE_D3D11
     return xIn.v[index];
 #else
     // switch statements inexplicably don't work here
@@ -89,26 +76,6 @@ float4 Get(const VS_INPUT xIn, const uint index)
     return 1;
 #endif
 }
-
-// Output registers
-struct VS_OUTPUT
-{
-#if defined(CXBX_USE_D3D11) || __HLSL_VERSION >= 4
-    float4 oPos : SV_Position;  // Homogeneous clip space position (SM4.0+)
-#else
-    float4 oPos : POSITION;  // Homogeneous clip space position
-#endif
-    float4 oD0  : COLOR0;    // Primary color (front-facing)
-    float4 oD1  : COLOR1;    // Secondary color (front-facing)
-    float  oFog : FOG;       // Fog coordinate
-    float  oPts : PSIZE;	 // Point size
-    float4 oB0  : TEXCOORD4; // Back-facing primary color
-    float4 oB1  : TEXCOORD5; // Back-facing secondary color
-    float4 oT0  : TEXCOORD0; // Texture coordinate set 0
-    float4 oT1  : TEXCOORD1; // Texture coordinate set 1
-    float4 oT2  : TEXCOORD2; // Texture coordinate set 2
-    float4 oT3  : TEXCOORD3; // Texture coordinate set 3
-};
 
 struct TransformInfo
 {

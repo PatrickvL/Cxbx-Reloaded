@@ -1,27 +1,4 @@
-struct VS_INPUT
-{
-	float4 v[16] : TEXCOORD;
-};
-
-// Output registers
-struct VS_OUTPUT // Declared identical to pixel shader input (see PS_INPUT)
-{
-#if defined(CXBX_USE_D3D11) || __HLSL_VERSION >= 4
-	float4 oPos : SV_Position;  // Homogeneous clip space position (SM4.0+)
-#else
-	float4 oPos : POSITION;  // Homogeneous clip space position
-#endif
-	float4 oD0  : COLOR0;    // Primary color (front-facing)
-	float4 oD1  : COLOR1;    // Secondary color (front-facing)
-	float  oFog : FOG;       // Fog coordinate
-	float  oPts : PSIZE;     // Point size
-	float4 oB0  : TEXCOORD4; // Back-facing primary color
-	float4 oB1  : TEXCOORD5; // Back-facing secondary color
-	float4 oT0  : TEXCOORD0; // Texture coordinate set 0
-	float4 oT1  : TEXCOORD1; // Texture coordinate set 1
-	float4 oT2  : TEXCOORD2; // Texture coordinate set 2
-	float4 oT3  : TEXCOORD3; // Texture coordinate set 3
-};
+#include "CxbxVertexShaderCommon.hlsli"
 
 #define X_D3DSCM_CORRECTION                 96 // Add 96 to arrive at the range 0..191 (instead of -96..95)
 #define X_D3DVS_CONSTREG_COUNT              192
@@ -29,19 +6,7 @@ struct VS_OUTPUT // Declared identical to pixel shader input (see PS_INPUT)
 // Xbox constant registers
 uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 
-#ifndef CXBX_USE_D3D11
-// Default values for vertex registers, and whether to use them
-// D3D9 path: init_v() lerps between vertex data and these defaults
-uniform float4 vRegisterDefaultValues[16]  : register(c192);
-uniform float4 vRegisterDefaultFlagsPacked[4]  : register(c208);
-#endif
-
 #include "CxbxScreenspaceTransform.hlsli"
-
-uniform float4 xboxTextureScale[4] : register(c214);
-
-// Parameters for mapping the shader's fog output value to a fog factor
-uniform float4  CxbxFogInfo: register(c218); // = CXBX_D3DVS_CONSTREG_FOGINFO
 
 // Overloaded casts, assuring all inputs are treated as float4
 float4 _tof4(float  src) { return float4(src, src, src, src); }
