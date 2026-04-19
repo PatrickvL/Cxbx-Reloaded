@@ -1,6 +1,9 @@
 #include "FixedFunctionVertexShaderState.hlsli"
 
-#ifndef CXBX_USE_D3D11
+#ifdef CXBX_USE_D3D11
+// D3D11: VS_INPUT uses a flat v[16] array, so init_v() addresses by index.
+#define CXBX_ALL_TEXCOORD_INPUTS
+#else
 // D3D9: FixedFunction uses a semantic-based VS_INPUT layout.
 // Suppress the TEXCOORD-array VS_INPUT from the common header.
 #define CXBX_VS_CUSTOM_INPUT
