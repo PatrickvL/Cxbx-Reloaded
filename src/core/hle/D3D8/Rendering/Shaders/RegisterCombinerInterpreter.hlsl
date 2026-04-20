@@ -201,18 +201,23 @@ float4 ResolveInput(float4 Regs[16], uint regByte, bool isAlpha, uint stageIdx,
     bool isFinal   = (stageIdx >= 8u);
     bool isFinalAB = (stageIdx == 9u);
 
+    // Clamp stage index to [0,7] for PSConstant0/1 array access.
+    // The isFinal guard prevents out-of-range reads at runtime, but the
+    // HLSL compiler cannot prove this statically (X3504).
+    uint safeStage = min(stageIdx, 7u);
+
     float4 val;
     switch (regIdx)
     {
         case PS_REGISTER_C0:
             val = isFinal    ? PSFinalCombinerConstant[0]
-                : flagUniqueC0 ? PSConstant0[stageIdx]
+                : flagUniqueC0 ? PSConstant0[safeStage]
                                : PSConstant0[0];
             break;
 
         case PS_REGISTER_C1:
             val = isFinal    ? PSFinalCombinerConstant[1]
-                : flagUniqueC1 ? PSConstant1[stageIdx]
+                : flagUniqueC1 ? PSConstant1[safeStage]
                                : PSConstant1[0];
             break;
 
