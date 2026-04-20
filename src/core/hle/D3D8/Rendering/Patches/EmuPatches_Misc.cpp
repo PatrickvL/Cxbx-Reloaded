@@ -51,7 +51,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginVisibilityTest)()
 		}
 	}
 
-	return D3D_OK;
+	return S_OK;
 }
 
 // LTCG specific D3DDevice_EndVisibilityTest function...
@@ -108,7 +108,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_EndVisibilityTest)
 		}
 	}
 
-   	return D3D_OK;
+   	return S_OK;
 }
 
 // ******************************************************************
@@ -163,7 +163,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult)
 		*pTimeStamp = sizeof(DWORD); // TODO : This should be an incrementing GPU-memory based DWORD-aligned memory address
 	}
 
-   	return D3D_OK;
+   	return S_OK;
 }
 
 // ******************************************************************
@@ -497,7 +497,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetModelView)
 
 	*pModelView = *d3d8TransformState.GetWorldView(0);
 
-	return D3D_OK;
+	return S_OK;
 }
 
 

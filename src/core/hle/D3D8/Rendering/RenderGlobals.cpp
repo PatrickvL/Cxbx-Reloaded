@@ -127,7 +127,7 @@ const char *CxbxGetErrorDescription(HRESULT hResult)
 	case D3DERR_NOTAVAILABLE: return "Not Available";
 	// case D3DERR_OUTOFVIDEOMEMORY: return "Out of Video Memory"; // duplicate of DDERR_OUTOFVIDEOMEMORY
 
-	case D3D_OK: return "No error occurred.";
+	case S_OK: return "No error occurred.";
 #if 0
 	case D3DERR_BADMAJORVERSION: return "The service that you requested is unavailable in this major version of DirectX. (A major version denotes a primary release, such as DirectX 6.0.) ";
 	case D3DERR_BADMINORVERSION: return "The service that you requested is available in this major version of DirectX, but not in this minor version. Get the latest version of the component run time from Microsoft. (A minor version denotes a secondary release, such as DirectX 6.1.) ";

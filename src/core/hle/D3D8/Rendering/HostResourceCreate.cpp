@@ -216,7 +216,7 @@ static HRESULT CreateGpuPixelContainerResource(
 )
 {
 	LOG_INIT;
-	HRESULT hRet = D3D_OK;
+	HRESULT hRet = S_OK;
 
 	// Create the surface/volume/(volume/cube/)texture
 	switch (XboxResourceType) {
@@ -247,7 +247,7 @@ static HRESULT CreateGpuPixelContainerResource(
 		hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
 		// If the fallback failed, show an error and exit execution.
-		if (hRet != D3D_OK) {
+		if (hRet != S_OK) {
 			// We cannot safely continue in this state.
 			CxbxrAbort("CreateImageSurface Failed!\n\nError: %s\nDesc: %s",
 				DXGetErrorString(hRet), DXGetErrorDescription(hRet));
@@ -279,7 +279,7 @@ static HRESULT CreateGpuPixelContainerResource(
 		hRet = g_pD3DDevice->CreateTexture3D(&desc, NULL, reinterpret_cast<ID3D11Texture3D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture3D (standalone volume)");
 
-		if (hRet != D3D_OK) {
+		if (hRet != S_OK) {
 			CxbxrAbort("CreateTexture3D (standalone volume) Failed!\n\n"
 				"Error: 0x%X\nFormat: %d\nDimensions: %dx%dx%d", hRet, PCFormat, hostWidth, hostHeight, desc.Depth);
 		}
@@ -355,18 +355,18 @@ static HRESULT CreateGpuPixelContainerResource(
 
 		// If the above failed, we might be able to use an ARGB texture instead
 		DXGI_FORMAT TmpPCFormat;
-		if ((hRet != D3D_OK) && (PCFormat != EMUFMT_A8R8G8B8) && EmuXBFormatCanBeConverted(X_Format, TmpPCFormat)) {
+		if ((hRet != S_OK) && (PCFormat != EMUFMT_A8R8G8B8) && EmuXBFormatCanBeConverted(X_Format, TmpPCFormat)) {
 			desc.Format = TmpPCFormat;
 			hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
-			if (hRet == D3D_OK) {
+			if (hRet == S_OK) {
 				// Okay, now this works, make sure the texture gets converted
 				bConvertTextureFormat = true;
 				PCFormat = TmpPCFormat;
 			}
 		}
 
-		if (hRet != D3D_OK) {
+		if (hRet != S_OK) {
 			CxbxrAbort("CreateTexture2D Failed!\n\n"
 				"Error: 0x%X\nFormat: %d\nDimensions: %dx%d", hRet, PCFormat, hostWidth, hostHeight);
 		}
@@ -398,7 +398,7 @@ static HRESULT CreateGpuPixelContainerResource(
 		hRet = g_pD3DDevice->CreateTexture3D(&desc, NULL, reinterpret_cast<ID3D11Texture3D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture3D");
 
-		if (hRet != D3D_OK) {
+		if (hRet != S_OK) {
 			CxbxrAbort("CreateTexture3D Failed!\n\n"
 				"Error: 0x%X\nFormat: %d\nDimensions: %dx%dx%d", hRet, PCFormat, hostWidth, hostHeight, dwDepth);
 		}
@@ -430,7 +430,7 @@ static HRESULT CreateGpuPixelContainerResource(
 		hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
 
-		if (hRet != D3D_OK) {
+		if (hRet != S_OK) {
 			CxbxrAbort("CreateCubeTexture Failed!\n\nError: \nDesc: "/*,
 				DXGetErrorString(hRet), DXGetErrorDescription(hRet)*/);
 		}
@@ -583,7 +583,7 @@ static void CreateHostPixelContainer(
 			static int dwDumpCubeTexture = 0;
 			for (unsigned int face = 0; face <= 5; face++) {
 				ID3D11Texture2D *pSurface;
-				if (D3D_OK == pNewHostCubeTexture->GetCubeMapSurface((int)face, 0, &pSurface)) {
+				if (S_OK == pNewHostCubeTexture->GetCubeMapSurface((int)face, 0, &pSurface)) {
 					sprintf(szFilePath, _DEBUG_DUMP_TEXTURE_REGISTER "%.03d-CubeTexure%.03d-%d.dds", X_Format, dwDumpCubeTexture, face);
 					D3DXSaveSurfaceToFileA(szFilePath, D3DXIFF_DDS, pSurface, nullptr, nullptr);
 					pSurface->Release();

@@ -722,7 +722,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes)
 		LOG_FUNC_ARG(Flags)
 		LOG_FUNC_END;
 
-   	HRESULT hRet = D3D_OK;
+   	HRESULT hRet = S_OK;
 
    	switch(Flags) // Member of X_D3DSET_DEPTH_CLIP_PLANES_FLAGS enum
    	{

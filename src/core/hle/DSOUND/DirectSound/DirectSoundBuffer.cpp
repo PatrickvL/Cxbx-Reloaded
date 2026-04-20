@@ -1502,7 +1502,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IDirectSoundBuffer_Stop)
 
 	LOG_FUNC_ONE_ARG(pHybridThis);
 
-    HRESULT hRet = D3D_OK;
+    HRESULT hRet = S_OK;
 
     if (pHybridThis != nullptr) {
         // TODO : Test Stop (emulated via Stop + SetCurrentPosition(0)) :

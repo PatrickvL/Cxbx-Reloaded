@@ -679,7 +679,7 @@ void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 {
 	using namespace xbox;
 
-	HRESULT hRet = D3D_OK;
+	HRESULT hRet = S_OK;
 
 	// Grow g_InlineVertexBuffer_Table to contain at least current, and a potentially next vertex
 	if (g_InlineVertexBuffer_TableLength <= g_InlineVertexBuffer_TableOffset + 1) {

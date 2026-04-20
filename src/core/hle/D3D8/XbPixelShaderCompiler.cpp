@@ -346,7 +346,7 @@ PSH_RECOMPILED_SHADER CxbxRecompilePixelShader(CxbxPSDef &CompletePSDef)
 		DWORD *pFunction = (DWORD*)pShader->GetBufferPointer();
 		if (pFunction) {
 			DWORD hRet = CxbxCreatePixelShader(pShader->GetBufferPointer(), pShader->GetBufferSize(), &(Result.ConvertedPixelShader));
-			if (hRet != D3D_OK) {
+			if (hRet != S_OK) {
 				printf(D3DErrorString(hRet));
 			}
 		}

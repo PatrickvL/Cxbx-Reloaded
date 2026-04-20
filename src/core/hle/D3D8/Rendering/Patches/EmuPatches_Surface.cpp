@@ -402,7 +402,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 	HRESULT hRet = CxbxGetBackBuffer(&pCurrentHostBackBuffer);
 
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->GetBackBuffer - Unable to get backbuffer surface!");
-	if (hRet == D3D_OK) {
+	if (hRet == S_OK) {
 		assert(pCurrentHostBackBuffer != nullptr);
 
    	   	// Clear the backbuffer surface, this prevents artifacts when switching aspect-ratio
@@ -459,7 +459,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	   	   	/* Filter = */ LoadSurfaceFilter
    	   	   	);
 		
-			if (hRet != D3D_OK) {
+			if (hRet != S_OK) {
 				EmuLog(LOG_LEVEL::WARNING, "Couldn't blit Xbox BackBuffer to host BackBuffer : %X", hRet);
 			}
 		}
@@ -707,7 +707,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 
 	DWORD result;
 	if (Flags == CXBX_SWAP_PRESENT_FORWARD) // Only do this when forwarded from Present
-		result = D3D_OK; // Present always returns success
+		result = S_OK; // Present always returns success
 	else
 		result = g_Xbox_SwapData.Swap; // Swap returns number of swaps
 

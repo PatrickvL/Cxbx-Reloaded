@@ -406,7 +406,7 @@ typedef enum _D3DPOOL {
 // Texture coordinate index flags
 #define D3DTSS_TCI_SPHEREMAP   0x00040000
 
-// D3D_OK and D3D error codes\n#define D3D_OK S_OK
+// D3D error codes
 #define _FACD3D 0x876
 #define MAKE_D3DHRESULT(code) MAKE_HRESULT(1, _FACD3D, code)
 #define D3DERR_INVALIDCALL              MAKE_D3DHRESULT(2156)

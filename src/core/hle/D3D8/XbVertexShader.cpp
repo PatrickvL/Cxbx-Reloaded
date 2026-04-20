@@ -892,7 +892,7 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 	// D3DDevice_LoadVertexShader and D3DDevice_SelectVertexShader.
 	// Otherwise the shader is send using push buffer commands.
 
-	HRESULT hRet = D3D_OK;
+	HRESULT hRet = S_OK;
 
 	xbox::X_D3DVertexShader* pXboxVertexShader = CxbxGetXboxVertexShaderForHandle(Handle);
 

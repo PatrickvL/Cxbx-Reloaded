@@ -98,7 +98,7 @@ void UploadPixelContainerMips(
 	bool bHostIsDynamic
 )
 {
-	HRESULT hRet = D3D_OK;
+	HRESULT hRet = S_OK;
 
 	DWORD dwCubeFaceOffset = 0;
 	int last_face = (bCubemap) ? 5 : 0;
@@ -236,10 +236,10 @@ void UploadPixelContainerMips(
 				MappedResource.pData = pStagingBuffer;
 				MappedResource.RowPitch = stagingRowPitch;
 				MappedResource.DepthPitch = stagingRowPitch * numRows;
-				hRet = D3D_OK;
+				hRet = S_OK;
 			}
 
-			if (hRet != D3D_OK) {
+			if (hRet != S_OK) {
 				EmuLog(LOG_LEVEL::WARNING, "Locking host %s failed!", ResourceTypeName);
 				continue; // This often happens on depth-stencil surfaces - let's ignore their copies for now
 			}

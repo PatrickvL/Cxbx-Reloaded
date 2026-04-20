@@ -227,7 +227,7 @@ LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
    	   	   	CxbxReleaseCursor();
    	   	   	DeleteObject(g_hBgBrush);
    	   	   	PostQuitMessage(0);
-   	   	   	return D3D_OK; // = 0
+   	   	   	return S_OK; // = 0
    	   	}
    	   	break;
 
@@ -629,7 +629,7 @@ void UpdateHostBackBufferDesc()
    	ID3D11Texture2D *pCurrentHostBackBuffer = nullptr;
 
    	HRESULT hRet = CxbxGetBackBuffer(&pCurrentHostBackBuffer);
-   	if (hRet != D3D_OK) {
+   	if (hRet != S_OK) {
    	   	CxbxrAbort("Unable to get host backbuffer surface");
    	}
 
