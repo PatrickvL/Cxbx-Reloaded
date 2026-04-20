@@ -127,9 +127,9 @@ VSI_CONST VSI_FLD_A0X_BIT3         = 1;   // bit 1
 VSI_CONST VSI_FLD_FINAL_BIT3       = 0;   // bit 0
 
 // MUX values for input source selection
-VSI_CONST VSI_MUX_R = 0; // Temporary register
-VSI_CONST VSI_MUX_V = 1; // Vertex input register
-VSI_CONST VSI_MUX_C = 2; // Constant register
+VSI_CONST VSI_MUX_R = 1; // Temporary register (matches PARAM_R in hardware encoding)
+VSI_CONST VSI_MUX_V = 2; // Vertex input register (matches PARAM_V)
+VSI_CONST VSI_MUX_C = 3; // Constant register (matches PARAM_C)
 
 // MAC opcode values
 VSI_CONST VSI_MAC_NOP = 0;
