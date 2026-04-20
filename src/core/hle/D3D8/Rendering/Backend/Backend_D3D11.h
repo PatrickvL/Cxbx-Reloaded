@@ -124,6 +124,18 @@ bool CxbxD3D11InitRCInterpreter();
 // interpreter is active, before the draw call.
 void CxbxD3D11UploadRCInterpreterState();
 
+// ******************************************************************
+// * Vertex shader interpreter (VS ubershader)
+// ******************************************************************
+
+// When true, use the vertex shader interpreter ubershader instead of
+// per-program recompiled vertex shaders. Set via user option or debug toggle.
+extern bool g_bUseVSInterpreter;
+
+// Compile the VS interpreter ubershader and create its constant buffer.
+// Called lazily on first use.  Returns true if compilation succeeded.
+bool CxbxD3D11InitVSInterpreter();
+
 // D3D11 blit: copy source texture region to dest texture region with optional filtering
 // Fast path for same-size copies, shader-based path for scaled copies
 HRESULT CxbxD3D11Blt(

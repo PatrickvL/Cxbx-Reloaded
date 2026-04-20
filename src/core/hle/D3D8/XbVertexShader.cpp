@@ -40,6 +40,7 @@
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A, HLE_get_NV2A_vertex_constant_float4_ptr
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Internal.h" // For g_pD3D11VSInterpreterCB, VSInterpreterCBLayout
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
 #include "devices\xbox.h"
 #include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST, NV2A_VP_UPLOAD_CONST_ID, NV2A_VP_UPLOAD_CONST
@@ -487,6 +488,41 @@ ID3D11VertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* labe
 	return shader;
 }
 
+// Upload NV2A vertex shader microcode to the VS interpreter constant buffer (cbuffer b1)
+// and bind it to the VS stage.
+void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* pXboxMicrocode)
+{
+	static const UINT VSI_CB_SLOT = 1; // b1
+
+	VSInterpreterCBLayout cb = {};
+
+	// Count instructions by scanning for the FLD_FINAL bit
+	uint32_t instCount = 0;
+	const uint32_t* pTokens = (const uint32_t*)pXboxMicrocode;
+	for (uint32_t i = 0; i < VSI_MAX_SLOTS; i++) {
+		const uint32_t* slot = &pTokens[i * X_VSH_INSTRUCTION_SIZE];
+		cb.Instructions[i].x = slot[0];
+		cb.Instructions[i].y = slot[1];
+		cb.Instructions[i].z = slot[2];
+		cb.Instructions[i].w = slot[3];
+		instCount = i + 1;
+		// Check FLD_FINAL (bit 0 of SubToken 3)
+		if (slot[3] & 1)
+			break;
+	}
+
+	cb.InstructionCount = instCount;
+	// Pad the padding field
+	cb._pad_InstructionCount[0] = 0;
+	cb._pad_InstructionCount[1] = 0;
+	cb._pad_InstructionCount[2] = 0;
+
+	CxbxD3D11UpdateDynamicBuffer(g_pD3D11VSInterpreterCB, &cb, sizeof(cb));
+
+	// Bind the interpreter CB to VS slot b1
+	g_pD3DDeviceContext->VSSetConstantBuffers(VSI_CB_SLOT, 1, &g_pD3D11VSInterpreterCB);
+}
+
 void CxbxUpdateHostVertexShader()
 {
 	extern bool g_bUsePassthroughHLSL; // TMP glue
@@ -517,6 +553,11 @@ void CxbxUpdateHostVertexShader()
 		}
 		if (g_pD3D11PassthroughBytecode) { g_pD3D11PassthroughBytecode->Release(); g_pD3D11PassthroughBytecode = nullptr; }
 		passthroughShader = InitShader(EmuCompileXboxPassthrough, "Passthrough Vertex Shader", &g_pD3D11PassthroughBytecode);
+
+		// Invalidate the VS interpreter so it recompiles from updated sources
+		if (g_pD3D11VSInterpreterVS) { g_pD3D11VSInterpreterVS->Release(); g_pD3D11VSInterpreterVS = nullptr; }
+		if (g_pD3D11VSInterpreterBytecode) { g_pD3D11VSInterpreterBytecode->Release(); g_pD3D11VSInterpreterBytecode = nullptr; }
+		if (g_pD3D11VSInterpreterCB) { g_pD3D11VSInterpreterCB->Release(); g_pD3D11VSInterpreterCB = nullptr; }
 	}
 
 	// TODO Call this when state is dirty
@@ -539,15 +580,24 @@ void CxbxUpdateHostVertexShader()
 	else {
 		auto pTokens = GetCxbxVertexShaderSlotPtr(g_Xbox_VertexShader_FunctionSlots_StartAddress);
 		assert(pTokens);
-		// Create a vertex shader from the tokens
-		DWORD shaderSize;
-		auto VertexShaderKey = g_VertexShaderCache.CreateShader(pTokens, &shaderSize);
-		ID3D11VertexShader* pHostVertexShader = g_VertexShaderCache.GetShader(VertexShaderKey);
-		// Track the active shader key so CxbxUpdateHostVertexDeclaration can create the input layout
-		g_D3D11ActiveVertexShaderKey = VertexShaderKey;
-		g_D3D11HasActiveShaderKey = true;
-		HRESULT hRet = CxbxSetVertexShader(pHostVertexShader);
-		DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(pHostVertexShader)");
+
+		if (g_bUseVSInterpreter && CxbxD3D11InitVSInterpreter()) {
+			// Upload the raw NV2A microcode to the interpreter constant buffer
+			CxbxD3D11UploadVSInterpreterState(pTokens);
+			HRESULT hRet = CxbxSetVertexShader(g_pD3D11VSInterpreterVS);
+			g_D3D11HasActiveShaderKey = false;
+			DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(VSInterpreter)");
+		} else {
+			// Fallback: compile pipeline
+			DWORD shaderSize;
+			auto VertexShaderKey = g_VertexShaderCache.CreateShader(pTokens, &shaderSize);
+			ID3D11VertexShader* pHostVertexShader = g_VertexShaderCache.GetShader(VertexShaderKey);
+			// Track the active shader key so CxbxUpdateHostVertexDeclaration can create the input layout
+			g_D3D11ActiveVertexShaderKey = VertexShaderKey;
+			g_D3D11HasActiveShaderKey = true;
+			HRESULT hRet = CxbxSetVertexShader(pHostVertexShader);
+			DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(pHostVertexShader)");
+		}
 	}
 }
 
@@ -680,6 +730,11 @@ ID3DBlob* CxbxGetActiveVertexShaderBytecode()
 {
 	if (g_D3D11HasActiveShaderKey)
 		return g_VertexShaderCache.GetShaderBytecode(g_D3D11ActiveVertexShaderKey);
+	// VS interpreter provides its own bytecode for input layout creation
+	if (g_bUseVSInterpreter && g_pD3D11VSInterpreterBytecode &&
+		(g_Xbox_VertexShaderMode == VertexShaderMode::ShaderProgram ||
+		 g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough))
+		return g_pD3D11VSInterpreterBytecode;
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction)
 		return g_pD3D11FixedFunctionBytecode;
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough)

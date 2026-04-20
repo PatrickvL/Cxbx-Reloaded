@@ -179,6 +179,14 @@ ID3D11PixelShader         *g_pD3D11RCInterpreterPS = nullptr;
 ID3D11Buffer              *g_pD3D11RCInterpreterCB = nullptr; // matches RCInterpreterCBLayout cbuffer
 
 // ******************************************************************
+// * Vertex shader interpreter (VS ubershader) resources
+// ******************************************************************
+bool                       g_bUseVSInterpreter = true; // default on — ubershader path
+ID3D11VertexShader        *g_pD3D11VSInterpreterVS = nullptr;
+ID3DBlob                  *g_pD3D11VSInterpreterBytecode = nullptr; // kept for input layout creation
+ID3D11Buffer              *g_pD3D11VSInterpreterCB = nullptr; // matches VSInterpreterCBLayout cbuffer b1
+
+// ******************************************************************
 // * Compute shader vertex format conversion resources
 // ******************************************************************
 ID3D11ComputeShader       *g_pD3D11VertexConvertCS = nullptr;
@@ -415,6 +423,59 @@ bool CxbxD3D11InitRCInterpreter()
 
 	EmuLog(LOG_LEVEL::INFO, "RC Interpreter ubershader compiled successfully (%u byte cbuffer)",
 		(unsigned)sizeof(RCInterpreterCBLayout));
+	return true;
+}
+
+// ******************************************************************
+// * Vertex shader interpreter — init + compile
+// ******************************************************************
+
+bool CxbxD3D11InitVSInterpreter()
+{
+	if (g_pD3D11VSInterpreterVS)
+		return true; // Already compiled
+
+	// Load shader source
+	const std::string& hlsl = g_ShaderSources.vertexShaderInterpreterHlsl;
+	if (hlsl.empty()) {
+		EmuLog(LOG_LEVEL::WARNING, "VS Interpreter HLSL not loaded from disk");
+		return false;
+	}
+
+	// Compile
+	EmuLog(LOG_LEVEL::INFO, "Compiling VS Interpreter vertex shader (this may take a moment)...");
+	ID3DBlob* pBlob = nullptr;
+	HRESULT hr = EmuCompileShader(hlsl, "vs_5_0", &pBlob,
+		g_ShaderSources.vertexShaderInterpreterPath.c_str());
+	if (FAILED(hr) || !pBlob) {
+		EmuLog(LOG_LEVEL::WARNING, "VS Interpreter vertex shader compilation failed");
+		return false;
+	}
+
+	hr = g_pD3DDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(),
+		nullptr, &g_pD3D11VSInterpreterVS);
+	if (FAILED(hr)) {
+		EmuLog(LOG_LEVEL::WARNING, "VS Interpreter CreateVertexShader failed: 0x%08X", hr);
+		pBlob->Release();
+		return false;
+	}
+
+	// Keep the bytecode alive for input layout creation
+	g_pD3D11VSInterpreterBytecode = pBlob;
+
+	// Create the constant buffer for the microcode upload (cbuffer b1)
+	hr = CxbxD3D11CreateConstantBuffer(sizeof(VSInterpreterCBLayout), true, &g_pD3D11VSInterpreterCB);
+	if (FAILED(hr)) {
+		EmuLog(LOG_LEVEL::WARNING, "VS Interpreter CreateConstantBuffer failed: 0x%08X", hr);
+		g_pD3D11VSInterpreterVS->Release();
+		g_pD3D11VSInterpreterVS = nullptr;
+		g_pD3D11VSInterpreterBytecode->Release();
+		g_pD3D11VSInterpreterBytecode = nullptr;
+		return false;
+	}
+
+	EmuLog(LOG_LEVEL::INFO, "VS Interpreter ubershader compiled successfully (%u byte cbuffer)",
+		(unsigned)sizeof(VSInterpreterCBLayout));
 	return true;
 }
 
@@ -1253,6 +1314,9 @@ void CxbxD3D11ReleaseBackendResources()
 	if (g_pD3D11FormatConvertCB) { g_pD3D11FormatConvertCB->Release(); g_pD3D11FormatConvertCB = nullptr; }
 	if (g_pD3D11RCInterpreterPS) { g_pD3D11RCInterpreterPS->Release(); g_pD3D11RCInterpreterPS = nullptr; }
 	if (g_pD3D11RCInterpreterCB) { g_pD3D11RCInterpreterCB->Release(); g_pD3D11RCInterpreterCB = nullptr; }
+	if (g_pD3D11VSInterpreterVS) { g_pD3D11VSInterpreterVS->Release(); g_pD3D11VSInterpreterVS = nullptr; }
+	if (g_pD3D11VSInterpreterBytecode) { g_pD3D11VSInterpreterBytecode->Release(); g_pD3D11VSInterpreterBytecode = nullptr; }
+	if (g_pD3D11VSInterpreterCB) { g_pD3D11VSInterpreterCB->Release(); g_pD3D11VSInterpreterCB = nullptr; }
 	ClearRTVCache();
 }
 

@@ -171,6 +171,8 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/NV2APixelShaderConstants.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/RegisterCombinerInterpreter.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/RegisterCombinerInterpreterState.hlsli"
+ "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/VertexShaderInterpreter.hlsl"
+ "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/VertexShaderInterpreterState.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/FixedFunctionVertexShader.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/FixedFunctionVertexShaderState.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11.h"

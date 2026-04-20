@@ -296,6 +296,15 @@ void ShaderSources::LoadShadersFromDisk() {
 		tmp << OpenWithRetry(this->registerCombinerInterpreterPath).rdbuf();
 		this->registerCombinerInterpreterHlsl = tmp.str();
 	}
+
+	// Vertex Shader Interpreter (VS ubershader)
+	{
+		auto dir = hlslDir;
+		this->vertexShaderInterpreterPath = dir.append("VertexShaderInterpreter.hlsl").string();
+		std::stringstream tmp;
+		tmp << OpenWithRetry(this->vertexShaderInterpreterPath).rdbuf();
+		this->vertexShaderInterpreterHlsl = tmp.str();
+	}
 }
 
 void ShaderSources::InitShaderHotloading() {

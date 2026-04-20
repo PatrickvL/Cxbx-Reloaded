@@ -58,6 +58,10 @@ struct ShaderSources {
 	std::string registerCombinerInterpreterHlsl;
 	std::string registerCombinerInterpreterPath;
 
+	// Vertex Shader Interpreter (VS ubershader)
+	std::string vertexShaderInterpreterHlsl;
+	std::string vertexShaderInterpreterPath;
+
 	// Load shaders from disk (if out-of-date)
 	// and return the current loaded shader version
 	int Update();
