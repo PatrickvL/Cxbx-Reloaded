@@ -798,9 +798,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(Lock2DSurface)
 
 	// Pass through to the Xbox implementation of this function
 	XB_TRMP(Lock2DSurface)(pPixelContainer, FaceType, Level, pLockedRect, pRect, Flags);
-
-	// Mark the resource as modified
-	ForceResourceRehash(pPixelContainer);
 }
 
 // ******************************************************************
@@ -858,9 +855,6 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(Lock2DSurface_16__LTCG_esi
 		call XB_TRMP(Lock2DSurface_16__LTCG_esi4_eax5)
 	}
 
-	// Mark the resource as modified
-	ForceResourceRehash(pPixelContainer);
-
 	__asm {
 		LTCG_EPILOGUE
 		ret  16
@@ -889,9 +883,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(Lock3DSurface)
 
 	// Pass through to the Xbox implementation of this function
 	XB_TRMP(Lock3DSurface)(pPixelContainer, Level, pLockedVolume, pBox, Flags);
-
-	// Mark the resource as modified
-	ForceResourceRehash(pPixelContainer);
 }
 
 // ******************************************************************
@@ -944,9 +935,6 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(Lock3DSurface_16__LTCG_eax
 		push pPixelContainer
 		call XB_TRMP(Lock3DSurface_16__LTCG_eax4)
 	}
-
-	// Mark the resource as modified
-	ForceResourceRehash(pPixelContainer);
 
 	__asm {
 		LTCG_EPILOGUE

@@ -36,7 +36,6 @@
 #include "common\Settings.hpp" // For Settings::s_video
 #include "common\util\hasher.h" // For ComputeHash
 
-#include <chrono>
 #include <queue>
 #include <stack>
 #include <map>
@@ -347,11 +346,6 @@ typedef struct _resource_info_t {
 	DWORD dwXboxResourceType = 0;
 	void* pXboxData = xbox::zeroptr;
 	size_t szXboxDataSize = 0;
-	uint64_t hash = 0;
-	bool forceRehash = false;
-	std::chrono::time_point<std::chrono::steady_clock> nextHashTime;
-	std::chrono::milliseconds hashLifeTime = std::chrono::milliseconds{1};
-	std::chrono::time_point<std::chrono::steady_clock> lastUpdate;
 } resource_info_t;
 
 typedef std::unordered_map<resource_key_t, resource_info_t, resource_key_hash> resource_cache_t;
@@ -398,7 +392,6 @@ resource_cache_t& GetResourceCache(resource_key_t& key);
 void PrunePaletizedTexturesCache();
 void CxbxGetPixelContainerMeasures(xbox::X_D3DPixelContainer *pPixelContainer, DWORD dwMipMapLevel, UINT *pWidth, UINT *pHeight, UINT *pDepth, UINT *pRowPitch, UINT *pSlicePitch);
 void CreateHostResource(xbox::X_D3DResource *pResource, DWORD D3DUsage, int iTextureStage, DWORD dwSize);
-void ForceResourceRehash(xbox::X_D3DResource* pXboxResource);
 int XboxD3DPaletteSizeToBytes(const xbox::X_D3DPALETTESIZE Size);
 xbox::X_D3DPALETTESIZE GetXboxPaletteSize(const xbox::X_D3DPalette *pPalette);
 

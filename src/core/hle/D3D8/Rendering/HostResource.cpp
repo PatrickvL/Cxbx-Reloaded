@@ -23,9 +23,7 @@
 // *
 // ******************************************************************
 #include "EmuD3D8_common.h"
-#ifdef CXBX_USE_D3D11
 #include "Backend/Backend_D3D11_PageTracker.h"
-#endif
 
 
 xbox::X_D3DRESOURCETYPE GetXboxD3DResourceType(const xbox::X_D3DResource *pXboxResource)
@@ -190,7 +188,6 @@ resource_key_t GetHostResourceKey(xbox::X_D3DResource* pXboxResource, int iTextu
 			// For paletized textures, include the current palette hash as well
 			if (IsPaletizedTexture(pPixelContainer->Format)) {
 				if (iTextureStage < 0) {
-					// ForceResourceRehash (called by Lock[23]DSurface) could hit this (not knowing the texture-stage)
 					LOG_TEST_CASE("Unknown texture stage!");
 				} else {
 					assert(iTextureStage < xbox::X_D3DTS_STAGECOUNT);
@@ -236,16 +233,6 @@ void PrunePaletizedTexturesCache()
 	// Poor mans cache eviction policy: just clear it once it overflows
 	if (g_Cxbx_Cached_PaletizedTextures.size() >= 1500) {
 		ClearResourceCache(g_Cxbx_Cached_PaletizedTextures);
-	}
-}
-
-void ForceResourceRehash(xbox::X_D3DResource* pXboxResource)
-{
-	auto key = GetHostResourceKey(pXboxResource); // Note : iTextureStage is unknown here!
-	auto& ResourceCache = GetResourceCache(key);
-	auto it = ResourceCache.find(key);
-	if (it != ResourceCache.end() && it->second.pHostResource) {
-		it->second.forceRehash = true;
 	}
 }
 
@@ -326,7 +313,6 @@ bool HostResourceRequiresUpdate(resource_key_t key, xbox::X_D3DResource* pXboxRe
 	}
 
 	// If the resource size got bigger, we need to re-create it
-	// if it got smaller, just hashing will suffice
 	if (dwSize > it->second.szXboxDataSize) {
 		return true;
 	}
@@ -336,7 +322,6 @@ bool HostResourceRequiresUpdate(resource_key_t key, xbox::X_D3DResource* pXboxRe
 		return true;
 	}
 
-#ifdef CXBX_USE_D3D11
 	// Dirty-page-gated texture update: for textures in contiguous memory
 	// (0x80000000..0x83FFFFFF), check the page tracker's texture-dirty bitmap
 	// instead of hashing. If no pages covering this texture have been written
@@ -351,35 +336,9 @@ bool HostResourceRequiresUpdate(resource_key_t key, xbox::X_D3DResource* pXboxRe
 			return CxbxPageTrackerIsTextureDirty(offset, size);
 		}
 	}
-#endif
 
-	bool modified = false;
-
-	auto now = std::chrono::steady_clock::now();
-	if (now > it->second.nextHashTime || it->second.forceRehash) {
-		uint64_t oldHash = it->second.hash;
-		it->second.hash = ComputeHash(it->second.pXboxData, it->second.szXboxDataSize);
-
-		if (it->second.hash != oldHash) {
-			// The data changed, so reset the hash lifetime
-			it->second.hashLifeTime = 1ms;
-   	   	   	it->second.lastUpdate = now;
-			modified = true;
-		} else if (it->second.lastUpdate + 1000ms < now) {
-			// The data did not change, so increase the hash lifetime
-			// TODO: choose a sensible upper limit
-			if (it->second.hashLifeTime < 1000ms) {
-				it->second.hashLifeTime += 10ms;
-			}
-		}
-		
-		it->second.forceRehash = false;
-	}
-
-	// Update the next hash time based on the hash lifetime
-	it->second.nextHashTime = now + it->second.hashLifeTime;
-
-	return modified;
+	// Texture not in contiguous memory — can't use page tracking, assume dirty
+	return true;
 }
 
 void SetHostResource(xbox::X_D3DResource* pXboxResource, IDirect3DResource* pHostResource, int iTextureStage, DWORD D3DUsage, EMUFORMAT PCFormat)
@@ -397,13 +356,7 @@ void SetHostResource(xbox::X_D3DResource* pXboxResource, IDirect3DResource* pHos
 	resourceInfo.dwXboxResourceType = GetXboxCommonResourceType(pXboxResource);
 	resourceInfo.pXboxData = GetDataFromXboxResource(pXboxResource);
 	resourceInfo.szXboxDataSize = GetXboxResourceSize(pXboxResource);
-	resourceInfo.hash = ComputeHash(resourceInfo.pXboxData, resourceInfo.szXboxDataSize);
-	resourceInfo.hashLifeTime = 1ms;
-	resourceInfo.lastUpdate = std::chrono::steady_clock::now();
-	resourceInfo.nextHashTime = resourceInfo.lastUpdate + resourceInfo.hashLifeTime;
-	resourceInfo.forceRehash = false;
 	if (PCFormat == EMUFMT_UNKNOWN) {
-#ifdef CXBX_USE_D3D11
 		D3D11_TEXTURE2D_DESC tex2dDesc = {};
 		D3D11_TEXTURE3D_DESC tex3dDesc = {};
 		switch (resourceInfo.dwXboxResourceType) {// TODO : Better check pHostResource class type
@@ -418,30 +371,6 @@ void SetHostResource(xbox::X_D3DResource* pXboxResource, IDirect3DResource* pHos
 			PCFormat = tex3dDesc.Format;
 			break;
 		}
-#else
-		HRESULT hRet = STATUS_INVALID_PARAMETER; // Default to an error condition, so we can use D3D_OK to check for success
-		D3DSURFACE_DESC surfaceDesc;
-		D3DVOLUME_DESC volumeDesc;
-		UINT Level = 0; // TODO : When should Level every be something other than zero, and if so : what other value?
-		switch (resourceInfo.dwXboxResourceType) {// TODO : Better check pHostResource class type
-		case xbox::X_D3DRTYPE_SURFACE:
-			hRet = ((IDirect3DSurface9*)pHostResource)->GetDesc(&surfaceDesc);
-			break;
-		case xbox::X_D3DRTYPE_TEXTURE:
-			hRet = ((IDirect3DTexture9*)pHostResource)->GetLevelDesc(Level, &surfaceDesc);
-			break;
-		case xbox::X_D3DRTYPE_VOLUMETEXTURE: {
-			hRet = ((IDirect3DVolumeTexture9*)pHostResource)->GetLevelDesc(Level, &volumeDesc);
-			break; }
-		case xbox::X_D3DRTYPE_CUBETEXTURE:
-			hRet = ((IDirect3DCubeTexture9*)pHostResource)->GetLevelDesc(Level, &surfaceDesc);
-			break;
-		}
-
-		if (SUCCEEDED(hRet)) {
-			PCFormat = (resourceInfo.dwXboxResourceType == xbox::X_D3DRTYPE_VOLUMETEXTURE) ? volumeDesc.Format : surfaceDesc.Format;
-		}
-#endif
 	}
 
 	resourceInfo.HostFormat = PCFormat;
@@ -789,7 +718,6 @@ static void EmuVerifyResourceIsRegistered(xbox::X_D3DResource *pResource, DWORD 
 
 	CreateHostResource(pResource, D3DUsage, iTextureStage, dwSize);
 
-#ifdef CXBX_USE_D3D11
 	// After creating/re-creating a texture, clear its texture-dirty bits so that
 	// subsequent draws skip re-upload until the CPU modifies those pages again.
 	if (IsResourceAPixelContainer(pResource)) {
@@ -802,6 +730,5 @@ static void EmuVerifyResourceIsRegistered(xbox::X_D3DResource *pResource, DWORD 
 			CxbxPageTrackerClearTextureDirty(offset, texSize);
 		}
 	}
-#endif
 }
 
