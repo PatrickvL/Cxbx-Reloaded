@@ -103,5 +103,11 @@ void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size);
 struct ID3D11ShaderResourceView;
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV();
 
+// Get typed SRV views over the mirror buffer (for hardware format decode in vertex fetch).
+// These view the same 64 MiB buffer with typed formats, enabling zero-ALU format
+// conversion for attributes whose byte offset is dword-aligned.
+ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_SNORM16x2(); // R16G16_SNORM (t2)
+ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_UNORM8x4();  // R8G8B8A8_UNORM (t3)
+
 #endif // CXBX_USE_D3D11
 #endif // BACKEND_D3D11_PAGE_TRACKER_H

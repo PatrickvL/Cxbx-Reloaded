@@ -22,6 +22,14 @@ ByteAddressBuffer g_VtxData : register(t0);
 ByteAddressBuffer g_IdxData : register(t1);
 
 // ---------------------------------------------------------------
+// Typed SRV views over the same vertex data buffer (hardware format decode)
+// These view the same underlying buffer as t0, but with typed formats.
+// Element index = byteOffset / 4 (all elements are 4 bytes).
+// ---------------------------------------------------------------
+Buffer<float2> g_VtxSNorm16x2 : register(t2);  // R16G16_SNORM: 2 signed normalized shorts
+Buffer<float4> g_VtxUNorm8x4  : register(t3);  // R8G8B8A8_UNORM: 4 unsigned normalized bytes
+
+// ---------------------------------------------------------------
 // Vertex layout constant buffer (b1)
 // ---------------------------------------------------------------
 // Header: general draw state
@@ -294,7 +302,8 @@ float4 FetchAttribute(uint xboxVtxIdx, uint4 attribDesc, float4 defaultVal)
     case CXBX_VTXFMT_FLOAT4:
         return float4(asfloat(ReadU32(byteOff)), asfloat(ReadU32(byteOff + 4u)), asfloat(ReadU32(byteOff + 8u)), asfloat(ReadU32(byteOff + 12u)));
     case CXBX_VTXFMT_D3DCOLOR:
-        return DecodeD3DColor(ReadU32(byteOff));
+        // R8G8B8A8_UNORM typed load: bytes [B,G,R,A] → float4(B,G,R,A) → swizzle to RGBA
+        return g_VtxUNorm8x4.Load(byteOff / 4u).zyxw;
     case CXBX_VTXFMT_SHORT2:
         return DecodeShort2(byteOff);
     case CXBX_VTXFMT_SHORT4:
@@ -302,36 +311,36 @@ float4 FetchAttribute(uint xboxVtxIdx, uint4 attribDesc, float4 defaultVal)
     case CXBX_VTXFMT_NORMPACKED3:
         return float4(DecodeNormPacked3(ReadU32(byteOff)), 1.0f);
     case CXBX_VTXFMT_SHORT2N:
-        return DecodeShort2N(byteOff);
+        // R16G16_SNORM typed load: hardware decodes 2 int16 to [-1,1] float2
+        return float4(g_VtxSNorm16x2.Load(byteOff / 4u), 0.0f, 1.0f);
     case CXBX_VTXFMT_SHORT4N:
-        return DecodeShort4N(byteOff);
+    {
+        // Two R16G16_SNORM loads for 4 shorts
+        float2 lo = g_VtxSNorm16x2.Load(byteOff / 4u);
+        float2 hi = g_VtxSNorm16x2.Load(byteOff / 4u + 1u);
+        return float4(lo, hi);
+    }
     case CXBX_VTXFMT_PBYTE4:
-        return DecodePByte4(ReadU32(byteOff));
+        // R8G8B8A8_UNORM typed load: hardware decodes 4 bytes to [0,1] float4
+        return g_VtxUNorm8x4.Load(byteOff / 4u);
     case CXBX_VTXFMT_FLOAT2H:
         return DecodeFloat2H(byteOff);
     case CXBX_VTXFMT_SHORT1N:
         return float4((float)SignExtend(ReadU16(byteOff), 16u) / 32767.0f, 0.0f, 0.0f, 1.0f);
     case CXBX_VTXFMT_SHORT3N:
     {
-        float sx = (float)SignExtend(ReadU16(byteOff),      16u) / 32767.0f;
-        float sy = (float)SignExtend(ReadU16(byteOff + 2u), 16u) / 32767.0f;
-        float sz = (float)SignExtend(ReadU16(byteOff + 4u), 16u) / 32767.0f;
-        return float4(sx, sy, sz, 1.0f);
+        // Two R16G16_SNORM loads: first gives (x,y), second gives (z, garbage)
+        float2 lo = g_VtxSNorm16x2.Load(byteOff / 4u);
+        float2 hi = g_VtxSNorm16x2.Load(byteOff / 4u + 1u);
+        return float4(lo, hi.x, 1.0f);
     }
     case CXBX_VTXFMT_PBYTE1:
-        return float4((float)(ReadU32(byteOff) & 0xFFu) / 255.0f, 0.0f, 0.0f, 1.0f);
+        // R8G8B8A8_UNORM typed load, take only .x channel
+        return float4(g_VtxUNorm8x4.Load(byteOff / 4u).x, 0.0f, 0.0f, 1.0f);
     case CXBX_VTXFMT_PBYTE2:
-    {
-        uint raw = ReadU16(byteOff);
-        return float4((float)(raw & 0xFFu) / 255.0f, (float)((raw >> 8u) & 0xFFu) / 255.0f, 0.0f, 1.0f);
-    }
+        return float4(g_VtxUNorm8x4.Load(byteOff / 4u).xy, 0.0f, 1.0f);
     case CXBX_VTXFMT_PBYTE3:
-    {
-        uint lo = ReadU16(byteOff);
-        uint hi = ReadU32(byteOff) >> 16u; // 3rd byte
-        return float4((float)(lo & 0xFFu) / 255.0f, (float)((lo >> 8u) & 0xFFu) / 255.0f,
-                      (float)(hi & 0xFFu) / 255.0f, 1.0f);
-    }
+        return float4(g_VtxUNorm8x4.Load(byteOff / 4u).xyz, 1.0f);
     case CXBX_VTXFMT_SHORT1:
         return float4((float)SignExtend(ReadU16(byteOff), 16u), 0.0f, 0.0f, 1.0f);
     case CXBX_VTXFMT_SHORT3:

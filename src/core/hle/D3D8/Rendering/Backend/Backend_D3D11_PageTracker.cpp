@@ -72,10 +72,12 @@ static uint32_t s_GpuDirtyBitmap[BITMAP_DWORDS] = {};
 static uint32_t s_TiledCommittedBitmap[BITMAP_DWORDS] = {};
 
 // ******************************************************************
-// * GPU mirror buffer (64 MiB ByteAddressBuffer)
+// * GPU mirror buffer (64 MiB ByteAddressBuffer + typed SRV views)
 // ******************************************************************
 static ID3D11Buffer*             s_pMirrorBuf = nullptr;
 static ID3D11ShaderResourceView* s_pMirrorSRV = nullptr;
+static ID3D11ShaderResourceView* s_pMirrorSRV_SNORM16x2 = nullptr; // R16G16_SNORM typed view
+static ID3D11ShaderResourceView* s_pMirrorSRV_UNORM8x4 = nullptr;  // R8G8B8A8_UNORM typed view
 
 // ******************************************************************
 // * VEH handle
@@ -244,6 +246,26 @@ void CxbxPageTrackerInit()
 		return;
 	}
 
+	// Create typed SRV views for hardware format decode (vertex fetch)
+	{
+		D3D11_SHADER_RESOURCE_VIEW_DESC typedDesc = {};
+		typedDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		typedDesc.Buffer.FirstElement = 0;
+		typedDesc.Buffer.NumElements = CONTIG_SIZE / 4; // 4 bytes per element
+
+		// R16G16_SNORM: each element = 4 bytes → 2 signed normalized shorts
+		typedDesc.Format = DXGI_FORMAT_R16G16_SNORM;
+		hr = g_pD3DDevice->CreateShaderResourceView(s_pMirrorBuf, &typedDesc, &s_pMirrorSRV_SNORM16x2);
+		if (FAILED(hr))
+			EmuLog(LOG_LEVEL::WARNING, "PageTrackerInit: Failed to create SNORM16x2 SRV (hr=0x%08X)", hr);
+
+		// R8G8B8A8_UNORM: each element = 4 bytes → 4 unsigned normalized bytes
+		typedDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		hr = g_pD3DDevice->CreateShaderResourceView(s_pMirrorBuf, &typedDesc, &s_pMirrorSRV_UNORM8x4);
+		if (FAILED(hr))
+			EmuLog(LOG_LEVEL::WARNING, "PageTrackerInit: Failed to create UNORM8x4 SRV (hr=0x%08X)", hr);
+	}
+
 	// Initial full upload of contiguous memory to GPU mirror
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -303,6 +325,8 @@ void CxbxPageTrackerShutdown()
 		}
 	}
 
+	if (s_pMirrorSRV_UNORM8x4) { s_pMirrorSRV_UNORM8x4->Release(); s_pMirrorSRV_UNORM8x4 = nullptr; }
+	if (s_pMirrorSRV_SNORM16x2) { s_pMirrorSRV_SNORM16x2->Release(); s_pMirrorSRV_SNORM16x2 = nullptr; }
 	if (s_pMirrorSRV) { s_pMirrorSRV->Release(); s_pMirrorSRV = nullptr; }
 	if (s_pMirrorBuf) { s_pMirrorBuf->Release(); s_pMirrorBuf = nullptr; }
 
@@ -428,6 +452,16 @@ void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size)
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV()
 {
 	return s_pMirrorSRV;
+}
+
+ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_SNORM16x2()
+{
+	return s_pMirrorSRV_SNORM16x2;
+}
+
+ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_UNORM8x4()
+{
+	return s_pMirrorSRV_UNORM8x4;
 }
 
 #endif // CXBX_USE_D3D11
