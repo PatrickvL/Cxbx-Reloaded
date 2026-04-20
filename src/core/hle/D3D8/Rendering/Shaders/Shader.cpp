@@ -297,6 +297,15 @@ void ShaderSources::LoadShadersFromDisk() {
 		tmp << OpenWithRetry(this->vertexShaderPassthroughPath).rdbuf();
 		this->vertexShaderPassthroughHlsl = tmp.str();
 	}
+
+	// Register Combiner Interpreter (PS ubershader)
+	{
+		auto dir = hlslDir;
+		this->registerCombinerInterpreterPath = dir.append("RegisterCombinerInterpreter.hlsl").string();
+		std::stringstream tmp;
+		tmp << OpenWithRetry(this->registerCombinerInterpreterPath).rdbuf();
+		this->registerCombinerInterpreterHlsl = tmp.str();
+	}
 }
 
 void ShaderSources::InitShaderHotloading() {

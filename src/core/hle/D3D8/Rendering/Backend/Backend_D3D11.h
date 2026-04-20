@@ -109,6 +109,23 @@ void CxbxD3D11FlushPixelShaderConstants();
 // Read back vertex shader constants from the shadow buffer
 void CxbxGetVertexShaderConstants(UINT startRegister, float* pConstantData, UINT Vector4fCount);
 
+// ******************************************************************
+// * Register combiner interpreter (PS ubershader)
+// ******************************************************************
+
+// When true, use the register combiner interpreter ubershader instead of
+// per-program recompiled pixel shaders. Set via user option or debug toggle.
+extern bool g_bUseRCInterpreter;
+
+// Compile the RC interpreter ubershader and create its constant buffer.
+// Called lazily on first use.  Returns true if compilation succeeded.
+bool CxbxD3D11InitRCInterpreter();
+
+// Upload Xbox register combiner state to the RC interpreter constant buffer
+// and bind it to the pixel shader stage.  Called each frame when the
+// interpreter is active, before the draw call.
+void CxbxD3D11UploadRCInterpreterState();
+
 // D3D11 blit: copy source texture region to dest texture region with optional filtering
 // Fast path for same-size copies, shader-based path for scaled copies
 HRESULT CxbxD3D11Blt(

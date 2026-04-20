@@ -175,6 +175,13 @@ ID3D11ComputeShader       *g_pD3D11FormatConvertCS = nullptr;
 ID3D11Buffer              *g_pD3D11FormatConvertCB = nullptr; // constant buffer: maskX, maskY, width, height, bpp, fmtType, swizzled, pad
 
 // ******************************************************************
+// * Register combiner interpreter (PS ubershader) resources
+// ******************************************************************
+bool                       g_bUseRCInterpreter = true; // default on — ubershader path
+ID3D11PixelShader         *g_pD3D11RCInterpreterPS = nullptr;
+ID3D11Buffer              *g_pD3D11RCInterpreterCB = nullptr; // matches XboxPixelShaderState cbuffer
+
+// ******************************************************************
 // * Compute shader vertex format conversion resources
 // ******************************************************************
 ID3D11ComputeShader       *g_pD3D11VertexConvertCS = nullptr;
@@ -376,7 +383,56 @@ void CxbxD3D11FlushPixelShaderConstants()
 		return;
 
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11PSConstantBuffer, g_D3D11PSConstants, sizeof(g_D3D11PSConstants));
+	// Always rebind the standard PS cbuffer — the RC interpreter may have swapped it
+	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
 	g_bD3D11PSConstantsDirty = false;
+}
+
+// ******************************************************************
+// * Register combiner interpreter — init + compile
+// ******************************************************************
+
+bool CxbxD3D11InitRCInterpreter()
+{
+	if (g_pD3D11RCInterpreterPS)
+		return true; // Already compiled
+
+	// Load shader source
+	const std::string& hlsl = g_ShaderSources.registerCombinerInterpreterHlsl;
+	if (hlsl.empty()) {
+		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter HLSL not loaded from disk");
+		return false;
+	}
+
+	// Compile
+	ID3DBlob* pBlob = nullptr;
+	HRESULT hr = EmuCompileShader(hlsl, "ps_5_0", &pBlob,
+		g_ShaderSources.registerCombinerInterpreterPath.c_str());
+	if (FAILED(hr) || !pBlob) {
+		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter pixel shader compilation failed");
+		return false;
+	}
+
+	hr = g_pD3DDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(),
+		nullptr, &g_pD3D11RCInterpreterPS);
+	pBlob->Release();
+	if (FAILED(hr)) {
+		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter CreatePixelShader failed: 0x%08X", hr);
+		return false;
+	}
+
+	// Create the constant buffer
+	hr = CxbxD3D11CreateConstantBuffer(sizeof(RCInterpreterCBLayout), true, &g_pD3D11RCInterpreterCB);
+	if (FAILED(hr)) {
+		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter CreateConstantBuffer failed: 0x%08X", hr);
+		g_pD3D11RCInterpreterPS->Release();
+		g_pD3D11RCInterpreterPS = nullptr;
+		return false;
+	}
+
+	EmuLog(LOG_LEVEL::INFO, "RC Interpreter ubershader compiled successfully (%u byte cbuffer)",
+		(unsigned)sizeof(RCInterpreterCBLayout));
+	return true;
 }
 
 // ******************************************************************
@@ -1212,6 +1268,8 @@ void CxbxD3D11ReleaseBackendResources()
 	g_IndexConvertOutputBufSize = 0;
 	if (g_pD3D11FormatConvertCS) { g_pD3D11FormatConvertCS->Release(); g_pD3D11FormatConvertCS = nullptr; }
 	if (g_pD3D11FormatConvertCB) { g_pD3D11FormatConvertCB->Release(); g_pD3D11FormatConvertCB = nullptr; }
+	if (g_pD3D11RCInterpreterPS) { g_pD3D11RCInterpreterPS->Release(); g_pD3D11RCInterpreterPS = nullptr; }
+	if (g_pD3D11RCInterpreterCB) { g_pD3D11RCInterpreterCB->Release(); g_pD3D11RCInterpreterCB = nullptr; }
 	ClearRTVCache();
 }
 

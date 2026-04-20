@@ -48,6 +48,10 @@
 #include "Rendering\TextureStates.h"
 #include <wrl/client.h>
 #include <cstring> // For std::memcpy
+#ifdef CXBX_USE_D3D11
+#include "Rendering\Backend\Backend_D3D11.h"
+#include "Rendering\Backend\Backend_D3D11_Internal.h"
+#endif
 
 // The Xbox kernel's SetRenderState_FogColor swaps R↔B before calling
 // SetRenderState_Simple, so D3D__RenderState stores the fog color in NV2A
@@ -858,6 +862,63 @@ void CxbxSetPixelShader(IDirect3DPixelShader* pPixelShader)
 }
 
 bool g_UseFixedFunctionPixelShader = true;
+
+#ifdef CXBX_USE_D3D11
+// Upload Xbox register combiner state to the RC interpreter constant buffer.
+// Reads directly from Xbox render state and texture state.
+void CxbxD3D11UploadRCInterpreterState()
+{
+	if (!g_pD3D11RCInterpreterCB)
+		return;
+
+	// Use the pixel shader def from render state (same source as CxbxUpdateActivePixelShader)
+	const xbox::X_D3DPIXELSHADERDEF *pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
+	if (!pPSDef)
+		return;
+
+	RCInterpreterCBLayout cb = {};
+
+	// Copy raw DWORD fields
+	for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value = pPSDef->PSAlphaInputs[i];
+	cb.PSFinalCombinerInputsABCD.value = pPSDef->PSFinalCombinerInputsABCD;
+	cb.PSFinalCombinerInputsEFG.value = pPSDef->PSFinalCombinerInputsEFG;
+
+	// PSConstant0/1: Xbox stores as packed ARGB DWORDs; convert to float4 RGBA
+	for (int i = 0; i < 8; i++) cb.PSConstant0[i] = DwordColorToFloat4(pPSDef->PSConstant0[i]);
+	for (int i = 0; i < 8; i++) cb.PSConstant1[i] = DwordColorToFloat4(pPSDef->PSConstant1[i]);
+
+	for (int i = 0; i < 8; i++) cb.PSAlphaOutputs[i].value = pPSDef->PSAlphaOutputs[i];
+	for (int i = 0; i < 8; i++) cb.PSRGBInputs[i].value = pPSDef->PSRGBInputs[i];
+	cb.PSCompareMode.value = pPSDef->PSCompareMode;
+
+	// Final combiner constants — also packed ARGB DWORDs
+	cb.PSFinalCombinerConstant[0] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant0);
+	cb.PSFinalCombinerConstant[1] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant1);
+
+	for (int i = 0; i < 8; i++) cb.PSRGBOutputs[i].value = pPSDef->PSRGBOutputs[i];
+	cb.PSCombinerCount.value = pPSDef->PSCombinerCount;
+
+	// PSTextureModes is stored in a different render state slot than the PSDef struct
+	cb.PSTextureModes.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+
+	cb.PSDotMapping.value = pPSDef->PSDotMapping;
+	cb.PSInputTexture.value = pPSDef->PSInputTexture;
+
+	// Color sign conversion — per-stage
+	for (int stage = 0; stage < 4; stage++) {
+		D3DXCOLOR cs = CxbxCalcColorSign(stage);
+		cb.ColorSign[stage] = { cs.r, cs.g, cs.b, cs.a };
+	}
+
+	// Fog color — convert from stored ABGR to float4 RGB
+	DWORD fogArgb = FogColor_ABGR_to_ARGB(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR));
+	cb.FogColor = DwordColorToFloat4(fogArgb);
+
+	// Upload and bind to b0
+	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterCB, &cb, sizeof(cb));
+	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterCB);
+}
+#endif // CXBX_USE_D3D11
 void CxbxUpdateActivePixelShader() // NOPATCH
 {
   // The first RenderState is PSAlpha,
@@ -881,8 +942,36 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 	}
 
 	CxbxSetPixelShader(pShader);
+#ifdef CXBX_USE_D3D11
+	// When switching away from the RC interpreter, rebind the normal PS cbuffer
+	if (g_bUseRCInterpreter && g_pD3D11PSConstantBuffer)
+		g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
+#endif
    	return;
   }
+
+#ifdef CXBX_USE_D3D11
+  // --- RC interpreter ubershader path ---
+  if (g_bUseRCInterpreter) {
+	// Lazy init: compile ubershader on first use
+	if (!g_pD3D11RCInterpreterPS) {
+		if (!CxbxD3D11InitRCInterpreter()) {
+			// Fall through to recompilation path if compile failed
+			g_bUseRCInterpreter = false;
+			EmuLog(LOG_LEVEL::WARNING, "RC Interpreter init failed; falling back to per-shader recompilation");
+			goto recompile_path;
+		}
+	}
+
+	// Bind the ubershader
+	CxbxSetPixelShader(g_pD3D11RCInterpreterPS);
+
+	// Upload combiner state as cbuffer
+	CxbxD3D11UploadRCInterpreterState();
+	return;
+  }
+  recompile_path:
+#endif
 
   // Create a copy of the pixel shader definition, as it is residing in render state register slots :
   CxbxPSDef CompletePSDef;
