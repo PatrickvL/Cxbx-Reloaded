@@ -23,6 +23,9 @@
 // *
 // ******************************************************************
 #include "EmuD3D8_common.h"
+#ifdef CXBX_USE_D3D11
+#include "Backend/Backend_D3D11_PageTracker.h"
+#endif
 
 
 xbox::X_D3DRESOURCETYPE GetXboxD3DResourceType(const xbox::X_D3DResource *pXboxResource)
@@ -332,6 +335,23 @@ bool HostResourceRequiresUpdate(resource_key_t key, xbox::X_D3DResource* pXboxRe
 	if (it->second.dwXboxResourceType != GetXboxCommonResourceType(pXboxResource)) {
 		return true;
 	}
+
+#ifdef CXBX_USE_D3D11
+	// Dirty-page-gated texture update: for textures in contiguous memory
+	// (0x80000000..0x83FFFFFF), check the page tracker's texture-dirty bitmap
+	// instead of hashing. If no pages covering this texture have been written
+	// by the CPU since the last host texture upload, the host texture is still valid.
+	{
+		uintptr_t dataAddr = (uintptr_t)it->second.pXboxData;
+		if (dataAddr >= CONTIGUOUS_MEMORY_BASE &&
+			dataAddr < (CONTIGUOUS_MEMORY_BASE + XBOX_CONTIGUOUS_MEMORY_SIZE))
+		{
+			uint32_t offset = (uint32_t)(dataAddr - CONTIGUOUS_MEMORY_BASE);
+			uint32_t size = (uint32_t)it->second.szXboxDataSize;
+			return CxbxPageTrackerIsTextureDirty(offset, size);
+		}
+	}
+#endif
 
 	bool modified = false;
 
@@ -768,5 +788,20 @@ static void EmuVerifyResourceIsRegistered(xbox::X_D3DResource *pResource, DWORD 
 	}
 
 	CreateHostResource(pResource, D3DUsage, iTextureStage, dwSize);
+
+#ifdef CXBX_USE_D3D11
+	// After creating/re-creating a texture, clear its texture-dirty bits so that
+	// subsequent draws skip re-upload until the CPU modifies those pages again.
+	if (IsResourceAPixelContainer(pResource)) {
+		uintptr_t dataAddr = (uintptr_t)GetDataFromXboxResource(pResource);
+		if (dataAddr >= CONTIGUOUS_MEMORY_BASE &&
+			dataAddr < (CONTIGUOUS_MEMORY_BASE + XBOX_CONTIGUOUS_MEMORY_SIZE))
+		{
+			uint32_t offset = (uint32_t)(dataAddr - CONTIGUOUS_MEMORY_BASE);
+			uint32_t texSize = (uint32_t)GetXboxResourceSize(pResource);
+			CxbxPageTrackerClearTextureDirty(offset, texSize);
+		}
+	}
+#endif
 }
 

@@ -109,5 +109,23 @@ ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV();
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_SNORM16x2(); // R16G16_SNORM (t2)
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_UNORM8x4();  // R8G8B8A8_UNORM (t3)
 
+// ******************************************************************
+// * Texture-dirty tracking (dirty-page-gated texture update)
+// ******************************************************************
+// Pages flushed to the GPU mirror are also marked "texture-dirty".
+// Before re-uploading a texture (swizzled or linear), check if any
+// pages in its range are texture-dirty. After upload, clear those
+// bits. This eliminates per-frame hash recomputation for unchanged
+// textures.
+
+// Check if any pages in [offset, offset+size) have been written by
+// the CPU since the last CxbxPageTrackerClearTextureDirty for that range.
+// offset: byte offset from CONTIGUOUS_MEMORY_BASE (0x80000000).
+bool CxbxPageTrackerIsTextureDirty(uint32_t offset, uint32_t size);
+
+// Clear texture-dirty bits for a range after the host texture has been
+// re-created / re-uploaded from the current Xbox memory contents.
+void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size);
+
 #endif // CXBX_USE_D3D11
 #endif // BACKEND_D3D11_PAGE_TRACKER_H

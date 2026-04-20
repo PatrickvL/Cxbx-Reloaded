@@ -67,6 +67,15 @@ static constexpr uint32_t BITMAP_DWORDS   = PAGE_COUNT / 32;         // 512
 static uint32_t s_GpuDirtyBitmap[BITMAP_DWORDS] = {};
 
 // ******************************************************************
+// * Texture-dirty bitmap — set when CPU-written pages are flushed to
+// * the GPU mirror. Cleared per-texture after host upload completes.
+// * This gates texture re-upload: if no texture-dirty pages overlap
+// * a texture's address range, the host texture is still valid.
+// * Applies to all texture types (swizzled, linear, compressed).
+// ******************************************************************
+static uint32_t s_TextureDirtyBitmap[BITMAP_DWORDS] = {};
+
+// ******************************************************************
 // * Tiled committed bitmap — tracks which 0xF0 pages are committed
 // ******************************************************************
 static uint32_t s_TiledCommittedBitmap[BITMAP_DWORDS] = {};
@@ -215,6 +224,8 @@ void CxbxPageTrackerInit()
 {
 	memset(s_GpuDirtyBitmap, 0, sizeof(s_GpuDirtyBitmap));
 	memset(s_TiledCommittedBitmap, 0, sizeof(s_TiledCommittedBitmap));
+	// All pages start texture-dirty so the first deswizzle for each texture is triggered
+	memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
 
 	// Create 64 MiB GPU mirror buffer (DYNAMIC ByteAddressBuffer with SRV)
 	D3D11_BUFFER_DESC desc = {};
@@ -332,6 +343,7 @@ void CxbxPageTrackerShutdown()
 
 	memset(s_GpuDirtyBitmap, 0, sizeof(s_GpuDirtyBitmap));
 	memset(s_TiledCommittedBitmap, 0, sizeof(s_TiledCommittedBitmap));
+	memset(s_TextureDirtyBitmap, 0, sizeof(s_TextureDirtyBitmap));
 }
 
 // ******************************************************************
@@ -356,6 +368,19 @@ uint32_t CxbxPageTrackerFlushToGPU()
 
 	if (result != 0 || count == 0)
 		return 0;
+
+	// Mark all flushed pages as texture-dirty (for deswizzle gating).
+	// This must happen regardless of the upload strategy below, so that
+	// HostResourceRequiresUpdate can detect which textures need re-deswizzle.
+	if (count > PAGE_COUNT / 4) {
+		// Bulk dirty — mark all pages as texture-dirty
+		memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
+	} else {
+		for (ULONG_PTR i = 0; i < count; i++) {
+			uint32_t pageIdx = (uint32_t)((uintptr_t)s_WriteWatchPages[i] - CONTIG_BASE) / PAGE_SIZE_;
+			SetBit(s_TextureDirtyBitmap, pageIdx);
+		}
+	}
 
 	if (count > PAGE_COUNT / 4) {
 		// Many pages dirty — full DISCARD + memcpy is cheaper
@@ -462,6 +487,100 @@ ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_SNORM16x2()
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_UNORM8x4()
 {
 	return s_pMirrorSRV_UNORM8x4;
+}
+
+// ******************************************************************
+// * Public: Check if any pages in a texture's range are texture-dirty
+// ******************************************************************
+bool CxbxPageTrackerIsTextureDirty(uint32_t offset, uint32_t size)
+{
+	if (size == 0 || offset >= CONTIG_SIZE)
+		return false;
+	if (offset + size > CONTIG_SIZE)
+		size = CONTIG_SIZE - offset;
+
+	uint32_t firstPage = offset / PAGE_SIZE_;
+	uint32_t lastPage = (offset + size - 1) / PAGE_SIZE_;
+
+	// Fast path: check whole DWORDs in the middle
+	uint32_t firstDW = firstPage >> 5;
+	uint32_t lastDW = lastPage >> 5;
+
+	if (firstDW == lastDW) {
+		// All pages in a single DWORD — build a mask for [firstPage..lastPage]
+		uint32_t lo = firstPage & 31;
+		uint32_t hi = lastPage & 31;
+		uint32_t mask = ((2u << hi) - 1) & ~((1u << lo) - 1);
+		return (s_TextureDirtyBitmap[firstDW] & mask) != 0;
+	}
+
+	// Check partial first DWORD
+	{
+		uint32_t lo = firstPage & 31;
+		uint32_t mask = ~((1u << lo) - 1); // bits [lo..31]
+		if (s_TextureDirtyBitmap[firstDW] & mask)
+			return true;
+	}
+
+	// Check full DWORDs in the middle
+	for (uint32_t dw = firstDW + 1; dw < lastDW; dw++) {
+		if (s_TextureDirtyBitmap[dw] != 0)
+			return true;
+	}
+
+	// Check partial last DWORD
+	{
+		uint32_t hi = lastPage & 31;
+		uint32_t mask = (2u << hi) - 1; // bits [0..hi]
+		if (s_TextureDirtyBitmap[lastDW] & mask)
+			return true;
+	}
+
+	return false;
+}
+
+// ******************************************************************
+// * Public: Clear texture-dirty bits after host texture upload
+// ******************************************************************
+void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size)
+{
+	if (size == 0 || offset >= CONTIG_SIZE)
+		return;
+	if (offset + size > CONTIG_SIZE)
+		size = CONTIG_SIZE - offset;
+
+	uint32_t firstPage = offset / PAGE_SIZE_;
+	uint32_t lastPage = (offset + size - 1) / PAGE_SIZE_;
+
+	uint32_t firstDW = firstPage >> 5;
+	uint32_t lastDW = lastPage >> 5;
+
+	if (firstDW == lastDW) {
+		uint32_t lo = firstPage & 31;
+		uint32_t hi = lastPage & 31;
+		uint32_t mask = ((2u << hi) - 1) & ~((1u << lo) - 1);
+		s_TextureDirtyBitmap[firstDW] &= ~mask;
+		return;
+	}
+
+	// Clear partial first DWORD
+	{
+		uint32_t lo = firstPage & 31;
+		uint32_t mask = ~((1u << lo) - 1);
+		s_TextureDirtyBitmap[firstDW] &= ~mask;
+	}
+
+	// Clear full DWORDs in the middle
+	for (uint32_t dw = firstDW + 1; dw < lastDW; dw++) {
+		s_TextureDirtyBitmap[dw] = 0;
+	}
+
+	// Clear partial last DWORD
+	{
+		uint32_t hi = lastPage & 31;
+		uint32_t mask = (2u << hi) - 1;
+		s_TextureDirtyBitmap[lastDW] &= ~mask;
+	}
 }
 
 #endif // CXBX_USE_D3D11

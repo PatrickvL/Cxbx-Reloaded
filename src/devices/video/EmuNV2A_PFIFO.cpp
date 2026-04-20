@@ -144,6 +144,14 @@ static void pfifo_run_puller(NV2AState *d)
             qemu_cond_signal(&d->pfifo.pusher_cond);            
         }
 
+        // In HLE mode (opengl_enabled == false), the D3D HLE layer handles
+        // all rendering; NV2A GPU methods pushed by unpatched Xbox D3D
+        // functions are irrelevant.  Just drain CACHE1 to keep the pusher
+        // (and therefore D3D_MakeRequestedSpace) from stalling.
+        if (!d->pgraph.opengl_enabled) {
+            continue;
+        }
+
 
         uint32_t method = method_entry & 0x1FFC;
         uint32_t subchannel = GET_MASK(method_entry, NV_PFIFO_CACHE1_METHOD_SUBCHANNEL);
@@ -221,7 +229,9 @@ int pfifo_puller_thread(NV2AState *d)
     g_AffinityPolicy->SetAffinityOther();
     CxbxSetThreadName("Cxbx NV2A FIFO puller");
 
-    glo_set_current(d->pgraph.gl_context);
+    if (d->pgraph.opengl_enabled) {
+        glo_set_current(d->pgraph.gl_context);
+    }
 
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
     while (true) {
@@ -234,7 +244,9 @@ int pfifo_puller_thread(NV2AState *d)
     }
     qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 
-	glo_set_current(NULL); // Cxbx addition
+    if (d->pgraph.opengl_enabled) {
+        glo_set_current(NULL); // Cxbx addition
+    }
 
 	return NULL;
 }
