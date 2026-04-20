@@ -553,7 +553,11 @@ void CxbxUpdateHostVertexShader()
 		g_D3D11HasActiveShaderKey = false; // Prevent stale programmable shader key from being used for input layout
 #endif
 	}
-	else if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL) {
+	else if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL
+#ifdef CXBX_USE_D3D11
+		&& false // D3D11: passthrough goes through the shader cache (NV2A binary → template)
+#endif
+	) {
 		HRESULT hRet = CxbxSetVertexShader(passthroughShader);
 		if (FAILED(hRet)) CxbxrAbort("Failed to set passthrough shader");
 #ifdef CXBX_USE_D3D11

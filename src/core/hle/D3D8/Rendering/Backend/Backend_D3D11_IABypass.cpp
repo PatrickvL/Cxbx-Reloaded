@@ -272,10 +272,11 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	if (!s_pLayoutCB || !s_pDefaultsCB)
 		return false;
 
-	// The fixed function and passthrough shaders are compiled without IA
-	// bypass (16 attrs × 20 format switch is too slow/hangs the HLSL
-	// compiler); fall back to the normal IA path for those modes.
-	if (g_Xbox_VertexShaderMode != VertexShaderMode::ShaderProgram) {
+	// The fixed function shader is compiled without IA bypass (16 attrs ×
+	// format switch + full lighting engine hangs the HLSL compiler at O3).
+	// Passthrough is now routed through the shader cache using the NV2A
+	// binary, so it uses the template with IA bypass like any other program.
+	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
 		s_IAAlreadyNull = false; // normal path will reconfigure IA
 		return false;
 	}

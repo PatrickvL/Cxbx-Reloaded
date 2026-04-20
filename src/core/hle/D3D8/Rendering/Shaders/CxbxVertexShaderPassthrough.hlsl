@@ -6,10 +6,7 @@
 #endif
 #include "CxbxScreenspaceTransform.hlsli"
 
-// TEXCOORDINDEX remapping: xyzw = texcoord source index for stages 0-3
-// On NV2A, the texture unit applies TEXCOORDINDEX after VS output interpolation.
-// In D3D11, we must do this in the VS since there's no hardware texcoord routing.
-uniform float4 xboxTexCoordIndex : register(c219); // = CXBX_D3DVS_CONSTREG_TEXCOORDINDEX
+// Note: xboxTexCoordIndex is now declared in CxbxVertexShaderCommon.hlsli (c219)
 
 VS_OUTPUT main(const VS_INPUT xIn)
 {

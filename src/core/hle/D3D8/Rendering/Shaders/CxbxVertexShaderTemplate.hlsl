@@ -305,6 +305,16 @@ VS_OUTPUT main(const VS_INPUT xIn)
 	xOut.oPts = oPts.x;
 	xOut.oB0 = saturate(oB0);
 	xOut.oB1 = saturate(oB1);
+	// Apply TEXCOORDINDEX remapping: NV2A texture units route interpolated
+	// texcoords to stages based on D3DTSS_TEXCOORDINDEX. In D3D11 we do this
+	// in the VS since there's no hardware texcoord routing post-interpolation.
+	{
+		float4 texcoordSets[4] = { oT0, oT1, oT2, oT3 };
+		oT0 = texcoordSets[(int)xboxTexCoordIndex.x];
+		oT1 = texcoordSets[(int)xboxTexCoordIndex.y];
+		oT2 = texcoordSets[(int)xboxTexCoordIndex.z];
+		oT3 = texcoordSets[(int)xboxTexCoordIndex.w];
+	}
 	// Scale textures (TODO : or should we apply this to the input register values?)
 	xOut.oT0 = oT0 / xboxTextureScale[0];
 	xOut.oT1 = oT1 / xboxTextureScale[1];

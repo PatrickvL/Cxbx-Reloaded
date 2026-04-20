@@ -86,6 +86,29 @@ cbuffer CxbxVertexLayoutCB : register(b1)
 #define CXBX_PRIM_LINELOOP  4
 
 // ---------------------------------------------------------------
+// Read helpers
+// ---------------------------------------------------------------
+
+// Read an unaligned uint32 from the vertex data buffer
+uint ReadU32(uint byteOff)
+{
+    uint a = byteOff & ~3u;
+    uint s = (byteOff & 3u) * 8u;
+    if (s == 0u) return g_VtxData.Load(a);
+    return (g_VtxData.Load(a) >> s) | (g_VtxData.Load(a + 4u) << (32u - s));
+}
+
+// Read an unaligned uint16 from the vertex data buffer
+uint ReadU16(uint byteOff)
+{
+    uint a = byteOff & ~3u;
+    uint s = (byteOff & 3u) * 8u;
+    uint d = g_VtxData.Load(a);
+    if (s <= 16u) return (d >> s) & 0xFFFFu;
+    return ((d >> s) | (g_VtxData.Load(a + 4u) << (32u - s))) & 0xFFFFu;
+}
+
+// ---------------------------------------------------------------
 // Topology conversion: compute Xbox vertex index from SV_VertexID
 // ---------------------------------------------------------------
 
@@ -167,25 +190,6 @@ uint ResolveVertexIndex(uint hostVertId)
 // ---------------------------------------------------------------
 // Format decode helpers
 // ---------------------------------------------------------------
-
-// Read an unaligned uint32 from the vertex data buffer
-uint ReadU32(uint byteOff)
-{
-    uint a = byteOff & ~3u;
-    uint s = (byteOff & 3u) * 8u;
-    if (s == 0u) return g_VtxData.Load(a);
-    return (g_VtxData.Load(a) >> s) | (g_VtxData.Load(a + 4u) << (32u - s));
-}
-
-// Read an unaligned uint16 from the vertex data buffer
-uint ReadU16(uint byteOff)
-{
-    uint a = byteOff & ~3u;
-    uint s = (byteOff & 3u) * 8u;
-    uint d = g_VtxData.Load(a);
-    if (s <= 16u) return (d >> s) & 0xFFFFu;
-    return ((d >> s) | (g_VtxData.Load(a + 4u) << (32u - s))) & 0xFFFFu;
-}
 
 // Sign-extend a value from 'bits' width to 32-bit int
 int SignExtend(uint val, uint bits)

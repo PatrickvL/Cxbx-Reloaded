@@ -55,4 +55,9 @@ uniform float4 xboxTextureScale[4] : register(c214);
 // Parameters for mapping the shader's fog output value to a fog factor
 uniform float4 CxbxFogInfo : register(c218); // = CXBX_D3DVS_CONSTREG_FOGINFO
 
+// TEXCOORDINDEX remapping: xyzw = texcoord source index for stages 0-3.
+// On NV2A, the texture unit routes interpolated texcoords based on
+// D3DTSS_TEXCOORDINDEX. In D3D11 we apply this in the VS footer.
+uniform float4 xboxTexCoordIndex : register(c219); // = CXBX_D3DVS_CONSTREG_TEXCOORDINDEX
+
 #endif // CXBX_VERTEX_SHADER_COMMON_HLSLI
