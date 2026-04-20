@@ -4,7 +4,7 @@
 //
 // Instead of recompiling each Xbox vertex shader program into host HLSL,
 // this single precompiled shader interprets the raw NV2A microcode at
-// runtime. The 128-bit instruction slots are uploaded to cbuffer b1;
+// runtime. The 128-bit instruction slots are uploaded to cbuffer b3;
 // vertex constants (c0–c191) are in the existing cbuffer b0.
 //
 // Architecture mirrors the register combiner interpreter:
@@ -190,7 +190,7 @@ float4 exec_ilu(uint opcode, float4 c_in)
             float diffuse = c_in.x;
             float blinn = c_in.y;
             float specPower = clamp(c_in.w, -(128.0 - 1.0/256.0), 128.0 - 1.0/256.0);
-            float litZ = (diffuse > 0 && blinn > 0) ? pow(blinn, specPower) : 0;
+            float litZ = (diffuse > 0 && blinn > 0) ? pow(abs(blinn), specPower) : 0;
             return float4(1.0, max(0.0, diffuse), litZ, 1.0);
         }
         default: return float4(0, 0, 0, 0);

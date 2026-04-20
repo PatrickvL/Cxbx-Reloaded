@@ -492,7 +492,7 @@ ID3D11VertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* labe
 // and bind it to the VS stage.
 void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* pXboxMicrocode)
 {
-	static const UINT VSI_CB_SLOT = 1; // b1
+	static const UINT VSI_CB_SLOT = 3; // b3 (b1/b2 used by CxbxVertexFetch.hlsli)
 
 	VSInterpreterCBLayout cb = {};
 

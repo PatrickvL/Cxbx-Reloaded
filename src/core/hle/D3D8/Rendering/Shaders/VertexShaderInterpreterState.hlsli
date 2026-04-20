@@ -24,7 +24,7 @@ struct VSI_Uint4 { uint32_t x, y, z, w; };
 
 #else
 // HLSL side
-#define VSI_BEGIN cbuffer VSInterpreterCB : register(b1) {
+#define VSI_BEGIN cbuffer VSInterpreterCB : register(b3) {
 #define VSI_END   };
 #define VSI_UINT(name)            uint name
 #define VSI_UINT4_ARRAY(name, n)  uint4 name[n]

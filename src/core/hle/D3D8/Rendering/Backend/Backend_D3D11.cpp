@@ -184,7 +184,7 @@ ID3D11Buffer              *g_pD3D11RCInterpreterCB = nullptr; // matches RCInter
 bool                       g_bUseVSInterpreter = true; // default on — ubershader path
 ID3D11VertexShader        *g_pD3D11VSInterpreterVS = nullptr;
 ID3DBlob                  *g_pD3D11VSInterpreterBytecode = nullptr; // kept for input layout creation
-ID3D11Buffer              *g_pD3D11VSInterpreterCB = nullptr; // matches VSInterpreterCBLayout cbuffer b1
+ID3D11Buffer              *g_pD3D11VSInterpreterCB = nullptr; // matches VSInterpreterCBLayout cbuffer b3
 
 // ******************************************************************
 // * Compute shader vertex format conversion resources
