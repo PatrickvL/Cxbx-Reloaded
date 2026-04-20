@@ -954,6 +954,24 @@ void CxbxD3D11UploadRCInterpreterState()
 	};
 	cb.FogEnable.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1u : 0u;
 
+	// Alpha kill per stage (D3DTALPHAKILL_ENABLE = 4)
+	cb.AlphaKill = {
+		static_cast<float>(XboxTextureStates.Get(0, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
+		static_cast<float>(XboxTextureStates.Get(1, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
+		static_cast<float>(XboxTextureStates.Get(2, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
+		static_cast<float>(XboxTextureStates.Get(3, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0)
+	};
+
+	// Front-face factor for two-sided lighting
+	{
+		float ff = 0.0f; // 0 = always use front colours
+		if (XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_TWOSIDEDLIGHTING)) {
+			bool cwFrontface = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FRONTFACE) == 0x900; // NV2A_FRONT_FACE_CW
+			ff = cwFrontface ? 1.0f : -1.0f;
+		}
+		cb.FrontFaceInfo = { ff, 0.0f, 0.0f, 0.0f };
+	}
+
 	// Upload and bind to b0
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterCB, &cb, sizeof(cb));
 	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterCB);

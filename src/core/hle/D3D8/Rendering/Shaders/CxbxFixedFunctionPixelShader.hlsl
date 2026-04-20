@@ -255,7 +255,9 @@ TextureArgs ExecuteTextureStage(
 }
 
 float4 main(const PS_INPUT input) : SV_Target {
-    float fogFactor = CalculateFogFactor(state.FogEnable, state.FogTableMode, state.FogDensity, state.FogStart, state.FogEnd, input.iFog);
+    float fogFactor = state.FogEnable
+        ? CalculateFogFactor(state.FogTableMode, state.FogDensity, state.FogStart, state.FogEnd, input.iFog)
+        : 1.0f;
 
     // Map input texture coordinates to an array, for indexing purposes
     TexCoords[0] = input.iT0;
@@ -308,7 +310,7 @@ float4 main(const PS_INPUT input) : SV_Target {
 
 	// Add fog if enabled
 	if (state.FogEnable) {
-		ctx.CURRENT.rgb = lerp(state.FogColor.rgb, ctx.CURRENT.rgb, saturate(fogFactor));
+		ctx.CURRENT.rgb = lerp(state.FogColor.rgb, ctx.CURRENT.rgb, fogFactor);
 	}
 
 	// Add specular if enabled

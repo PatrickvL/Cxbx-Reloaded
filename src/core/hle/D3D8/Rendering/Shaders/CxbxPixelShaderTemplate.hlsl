@@ -352,7 +352,9 @@ PS_OUTPUT main(const PS_INPUT xIn)
 	// Don't abs fogDepth! NV2A has separate *_ABS fog modes that abs the computed fogFactor
 	// (not the input distance), but Xbox D3D8 API values (0-3) never include those modes.
 	// Abs'ing the input here breaks games with negative fog coordinates (test-case: DolphinClassic).
-	float fogFactor = CalculateFogFactor(FOGENABLE, FOGINFO.x, FOGINFO.y, FOGINFO.z, FOGINFO.w, xIn.iFog.x);
+	float fogFactor = (FOGENABLE != 0.0f)
+		? CalculateFogFactor((int)FOGINFO.x, FOGINFO.y, FOGINFO.z, FOGINFO.w, xIn.iFog.x)
+		: 1.0f;
 
 	// Local constants
 	const float4 zero = 0;

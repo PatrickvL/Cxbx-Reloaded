@@ -131,7 +131,7 @@ namespace FixedFunctionPixelShader {
 	// Texture format fixup constants (shared between C++ and HLSL)
 	const CXBX_STEERING_INT TEXFMTFIXUP_IDENTITY = 0;
 	const CXBX_STEERING_INT TEXFMTFIXUP_GBAR     = 1; // B8G8R8A8 uploaded as R8G8B8A8
-	const CXBX_STEERING_INT TEXFMTFIXUP_ABGR     = 2; // R8G8B8A8 uploaded as R8G8B8A8
+	const CXBX_STEERING_INT TEXFMTFIXUP_ABGR     = 2; // A8B8G8R8 uploaded as R8G8B8A8
 	const CXBX_STEERING_INT TEXFMTFIXUP_LUM      = 3; // Luminance: R8→(R,R,R,1)
 	const CXBX_STEERING_INT TEXFMTFIXUP_ALUM     = 4; // Alpha-luminance: R8G8→(R,R,R,G);
 

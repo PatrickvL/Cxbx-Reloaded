@@ -298,20 +298,96 @@ float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB,
 }
 
 // ============================================================
+// PSInputTexture source-stage decoder
+//
+// PSInputTexture is a packed uint:
+//   Stage 0: no input
+//   Stage 1: always 0
+//   Stage 2: bit 16 (1 bit: 0 or 1)
+//   Stage 3: bits 20-21 (2 bits: 0, 1, or 2)
+// ============================================================
+
+uint GetSourceStage(uint stage)
+{
+    if (stage <= 1u) return 0u; // stage 0 has no pred; stage 1 always reads 0
+    if (stage == 2u) return (PSInputTexture >> 16u) & 0x1u;
+    /* stage 3 */   return (PSInputTexture >> 20u) & 0x3u;
+}
+
+// ============================================================
+// PSCompareMode decoder
+//
+// 4 bits per stage (RSTQ), each bit selects LT (1) or GE (0).
+// ============================================================
+
+void ApplyCompareMode(uint stage, float4 coords)
+{
+    uint bits = (PSCompareMode >> (stage * 4u)) & 0xFu;
+    // Each bit: 0 = GE (clip if >= 0), 1 = LT (clip if < 0)
+    // Per NV2A: bit set means "discard if coord < 0"
+    bool killR = (bits & 1u) != 0u ? (coords.x < 0.0f) : (coords.x >= 0.0f);
+    bool killS = (bits & 2u) != 0u ? (coords.y < 0.0f) : (coords.y >= 0.0f);
+    bool killT = (bits & 4u) != 0u ? (coords.z < 0.0f) : (coords.z >= 0.0f);
+    bool killQ = (bits & 8u) != 0u ? (coords.w < 0.0f) : (coords.w >= 0.0f);
+    if (killR || killS || killT || killQ)
+        discard;
+}
+
+// ============================================================
+// PSDotMapping decoder
+//
+// 3 bits per stage (stage 1 in bits 0-2, stage 2 in bits 4-6, stage 3 in bits 8-10).
+// Returns the remapped float3 value of the source texture register for dot product.
+// ============================================================
+
+float3 ApplyDotMapping(uint stage, float4 src)
+{
+    uint mapping = 0u;
+    if (stage >= 1u && stage <= 3u)
+        mapping = (PSDotMapping >> ((stage - 1u) * 4u)) & 0x7u;
+
+    // PS_DOTMAPPING values (from NV2A docs):
+    // 0 = ZERO_TO_ONE        — identity
+    // 1 = MINUS1_TO_1_D3D    — (v - 128) / 127
+    // 2 = MINUS1_TO_1_GL     — two's complement
+    // 3 = MINUS1_TO_1        — (v < 128 ? v : v-256) / 127
+    // 4 = HILO_1             — 16-bit unsigned
+    // 5 = HILO_HEMISPHERE_D3D
+    // 6 = HILO_HEMISPHERE_GL
+    // 7 = HILO_HEMISPHERE
+    //
+    // Most games use mapping 0 or 1. Implement the common cases;
+    // HILO modes are extremely rare and would need 16-bit decode.
+    if (mapping == 0u)
+        return src.rgb; // ZERO_TO_ONE: identity [0,1]
+    if (mapping == 1u) {
+        // MINUS1_TO_1_D3D: (byte - 128) / 127
+        float3 b = floor(saturate(src.rgb) * 255.0f + 0.5f);
+        return (b - 128.0f) / 127.0f;
+    }
+    // Fallback: treat as identity for unimplemented HILO/GL modes
+    return src.rgb;
+}
+
+// ============================================================
 // Post-process a sampled texel (matches compiled PS pipeline)
 // ============================================================
 
 float4 PostProcessTexel(uint stage, float4 t)
 {
     // 1. Channel swizzle / luminance fixup
-    int fixups[4] = { (int)TexFmtFixup.x, (int)TexFmtFixup.y, (int)TexFmtFixup.z, (int)TexFmtFixup.w };
-    t = ApplyTexFmtFixup(t, fixups[stage]);
+    t = ApplyTexFmtFixup(t, (int)TexFmtFixup[stage]);
 
     // 2. Color sign conversion
-    t = PerformColorSign(ColorSign[stage], t);
+    [branch] if (any(ColorSign[stage] != 0.0f))
+        t = PerformColorSign(ColorSign[stage], t);
 
     // 3. Color key
-    t = PerformColorKeyOp((int)ColorKeyOp[stage].x, ColorKeyColor[stage], t);
+    [branch] if (ColorKeyOp[stage].x != 0.0f)
+        t = PerformColorKeyOp((int)ColorKeyOp[stage].x, ColorKeyColor[stage], t);
+
+    // 4. Alpha kill
+    PerformAlphaKill((int)AlphaKill[stage], t);
 
     return t;
 }
@@ -387,18 +463,16 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         break;
 
     case PS_TEXTUREMODES_CLIPPLANE:
-        // Discard pixel if any coordinate is negative.
-        // Bug fix: T[stage] stays (0,0,0,1) — no sampling after the test.
-        if (coords.x < 0.0f || coords.y < 0.0f ||
-            coords.z < 0.0f || coords.w < 0.0f)
-            discard;
+        // Per-component compare mode from PSCompareMode (4 bits per stage)
+        ApplyCompareMode(stage, coords);
         // val stays (0,0,0,1)
         break;
 
     case PS_TEXTUREMODES_BUMPENVMAP:
     case PS_TEXTUREMODES_BUMPENVMAP_LUM:
     {
-        // Sample the bump map, then perturb the next stage's tex coords
+        // BEM uses the raw sampled value for perturbation;
+        // PostProcessTexel runs at the function tail, after BEM perturbation is done.
         val = Sample2D(stage, coords.xy);
         // Apply BEM matrix perturbation to next stage's coordinates
         if (stage < 3u) {
@@ -406,55 +480,67 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
             float4 bem = BEM[stage];
             float u = nextCoords.x + bem.x * val.r + bem.z * val.g;
             float v = nextCoords.y + bem.y * val.r + bem.w * val.g;
-            // Store perturbed coords for next stage to pick up
-            // (nextCoords is the texcoord that was pre-loaded into T[stage+1])
             Regs[PS_REGISTER_T0 + stage + 1u] = float4(u, v, nextCoords.z, nextCoords.w);
+        }
+        // Apply luminance scaling for BUMPENVMAP_LUM
+        if (mode == PS_TEXTUREMODES_BUMPENVMAP_LUM) {
+            // LUM[stage].x = BumpEnvLScale, .y = BumpEnvLOffset
+            // Scale rgb by (scale * src.b + offset), matching compiled PS LSO() macro
+            float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+            float lumFactor = LUM[stage].x * src.b + LUM[stage].y;
+            val.rgb *= lumFactor;
         }
         break;
     }
 
     case PS_TEXTUREMODES_DPNDNT_AR:
     {
-        // Dependent lookup: use .a and .r from T[stage-1] as (u,v)
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        val = Sample2D(stage, prev.ar);
+        // Dependent lookup: use .a and .r from source stage as (u,v)
+        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        val = Sample2D(stage, src.ar);
         break;
     }
 
     case PS_TEXTUREMODES_DPNDNT_GB:
     {
-        // Dependent lookup: use .g and .b from T[stage-1] as (u,v)
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        val = Sample2D(stage, prev.gb);
+        // Dependent lookup: use .g and .b from source stage as (u,v)
+        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        val = Sample2D(stage, src.gb);
         break;
     }
 
     case PS_TEXTUREMODES_DOTPRODUCT:
     {
-        // Compute dot(tex_coords, T[stage-1].rgb); store scalar in .x
-        // Subsequent DOT_ST / DOT_ZW / DOT_STR modes read T[stage].x
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        float  d    = dot(coords.xyz, prev.xyz);
+        // Apply dot mapping to the source stage's texture register, then dot with coords
+        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float3 dm  = ApplyDotMapping(stage, src);
+        float  d   = dot(coords.xyz, dm);
         val = float4(d, 0.0f, 0.0f, 1.0f);
         break;
     }
 
     case PS_TEXTUREMODES_DOT_ST:
     {
-        // Use dot results from T[stage-2].x and T[stage-1].x as (s,t)
-        float s = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
-        float t = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        // Current stage dot + use two preceding dots as (s,t) for 2D lookup
+        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float3 dm  = ApplyDotMapping(stage, src);
+        float  d   = dot(coords.xyz, dm);
+        float  s   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
+        float  t   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
         val = Sample2D(stage, float2(s, t));
         break;
     }
 
     case PS_TEXTUREMODES_DOT_ZW:
     {
-        // (stage-2 dot result, current dot result) stored as (z, w)
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        float  s    = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
-        float  t    = dot(coords.xyz, prev.xyz);
-        val = float4(0.0f, 0.0f, s, t);
+        // texm3x2depth: compute n = (prev_dot, current_dot), depth = n.x / n.y
+        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float3 dm  = ApplyDotMapping(stage, src);
+        float  d   = dot(coords.xyz, dm);
+        float  prevDot = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        // Avoid division by near-zero (matches compiled PS guard)
+        float  depth = (abs(d) < 0.00001f) ? 1.0f : (prevDot / d);
+        val = float4(depth, depth, depth, depth);
         break;
     }
 
@@ -465,8 +551,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         // There is no reflection computation for the DIFF mode (that is SPEC).
         float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
         float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        float  nz   = dot(coords.xyz, prev.xyz);
+        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float3 dm   = ApplyDotMapping(stage, src);
+        float  nz   = dot(coords.xyz, dm);
         val = SampleCube(stage, float3(nx, ny, nz));
         break;
     }
@@ -478,8 +565,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         // (NV2A hardcodes these indices).
         float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
         float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        float  nz   = dot(coords.xyz, prev.xyz);
+        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float3 dm   = ApplyDotMapping(stage, src);
+        float  nz   = dot(coords.xyz, dm);
         float3 N    = normalize(float3(nx, ny, nz));
         float3 E    = normalize(float3(Regs[PS_REGISTER_T1].w,
                                        Regs[PS_REGISTER_T2].w,
@@ -493,8 +581,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
     {
         float  s    = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
         float  t    = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        float  r    = dot(coords.xyz, prev.xyz);
+        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float3 dm   = ApplyDotMapping(stage, src);
+        float  r    = dot(coords.xyz, dm);
         val = Sample3D(stage, float3(s, t, r));
         break;
     }
@@ -503,8 +592,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
     {
         float  s    = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
         float  t    = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        float  r    = dot(coords.xyz, prev.xyz);
+        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float3 dm   = ApplyDotMapping(stage, src);
+        float  r    = dot(coords.xyz, dm);
         val = SampleCube(stage, float3(s, t, r));
         break;
     }
@@ -515,8 +605,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         // TODO: wire SetEyeVector() / D3DRS_PSINPUTTEXTURE to a cbuffer entry
         float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
         float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
-        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
-        float  nz   = dot(coords.xyz, prev.xyz);
+        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float3 dm   = ApplyDotMapping(stage, src);
+        float  nz   = dot(coords.xyz, dm);
         float3 N    = normalize(float3(nx, ny, nz));
         float3 E    = float3(0.0f, 0.0f, 1.0f); // placeholder
         float3 R    = 2.0f * dot(N, E) * N - E;
@@ -764,7 +855,11 @@ float4 main(PS_INPUT input) : SV_Target
 #endif
 
     // --- Set vertex-derived registers ---
-    bool  isFront = input.iFF;
+    // Use FRONTFACE_FACTOR to match compiled PS winding-order correction:
+    // 0 = always front, +/-1 = two-sided with CW/CCW convention
+    bool isFront = (FrontFaceInfo.x == 0.0f)
+        ? true
+        : ((input.iFF ? 1.0f : -1.0f) * FrontFaceInfo.x >= 0.0f);
     float4 diffuse  = isFront ? input.iD0 : input.iB0;
     float4 specular = isFront ? input.iD1 : input.iB1;
     RegWrite(Regs, PS_REGISTER_V0, diffuse);
@@ -797,10 +892,10 @@ float4 main(PS_INPUT input) : SV_Target
 
     // --- Fog blending ---
     // FogInfo: x=tableMode, y=density, z=start, w=end
-    if (FogEnable != 0u) {
-        float fogFactor = CalculateFogFactor(FogEnable, FogInfo.x, FogInfo.y,
+    [branch] if (FogEnable != 0u) {
+        float fogFactor = CalculateFogFactor((int)FogInfo.x, FogInfo.y,
                                              FogInfo.z, FogInfo.w, input.iFog);
-        result.rgb = lerp(FogColor.rgb, result.rgb, saturate(fogFactor));
+        result.rgb = lerp(FogColor.rgb, result.rgb, fogFactor);
     }
 
     return result;

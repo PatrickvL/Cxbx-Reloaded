@@ -76,6 +76,8 @@ RCI_BEGIN
     RCI_FLOAT4_ARRAY(LUM, 4);                   // Per-stage bump luminance (scale, offset)
     RCI_FLOAT4(FogInfo);                        // x=tableMode, y=density, z=start, w=end
     RCI_UINT(FogEnable);                        // Fog enable flag
+    RCI_FLOAT4(AlphaKill);                      // Per-stage: 0=disabled, nonzero=kill if alpha==0
+    RCI_FLOAT4(FrontFaceInfo);                  // x=FrontFaceFactor (0=no 2-sided, +1/-1=CW/CCW)
 RCI_END
 
 // Clean up macros to avoid polluting the global namespace
@@ -87,7 +89,7 @@ RCI_END
 #undef RCI_FLOAT4_ARRAY
 
 #ifdef __cplusplus
-static_assert(sizeof(RCInterpreterCBLayout) == 1312, "RC cbuffer layout size mismatch");
+static_assert(sizeof(RCInterpreterCBLayout) == 1344, "RC cbuffer layout size mismatch");
 
 // Convert a packed DWORD ARGB color (0xAARRGGBB) to RCI_Float4 RGBA [0..1]
 inline RCI_Float4 DwordColorToFloat4(uint32_t color)
