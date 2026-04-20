@@ -75,12 +75,8 @@ float4 fetch_input(
 // ============================================================
 void write_masked(inout float4 dest, float4 src, uint mask)
 {
-    dest = float4(
-        (mask & VSI_MASK_X) ? src.x : dest.x,
-        (mask & VSI_MASK_Y) ? src.y : dest.y,
-        (mask & VSI_MASK_Z) ? src.z : dest.z,
-        (mask & VSI_MASK_W) ? src.w : dest.w
-    );
+    bool4 sel = (uint4(VSI_MASK_X, VSI_MASK_Y, VSI_MASK_Z, VSI_MASK_W) & mask) != 0;
+    dest = sel ? src : dest;
 }
 
 // ============================================================
@@ -103,9 +99,9 @@ float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
         case VSI_MAC_MUL: return a * b;
         case VSI_MAC_ADD: return a + c_in;
         case VSI_MAC_MAD: return a * b + c_in;
-        case VSI_MAC_DP3: { float d = dot(a.xyz, b.xyz); return float4(d, d, d, d); }
-        case VSI_MAC_DPH: { float d = dot(a.xyz, b.xyz) + b.w; return float4(d, d, d, d); }
-        case VSI_MAC_DP4: { float d = dot(a, b); return float4(d, d, d, d); }
+        case VSI_MAC_DP3: return dot(a.xyz, b.xyz).xxxx;
+        case VSI_MAC_DPH: return (dot(a.xyz, b.xyz) + b.w).xxxx;
+        case VSI_MAC_DP4: return dot(a, b).xxxx;
         case VSI_MAC_DST: return float4(1.0, a.y * b.y, a.z, b.w);
         case VSI_MAC_MIN: return min(a, b);
         case VSI_MAC_MAX: return max(a, b);
@@ -139,13 +135,9 @@ float4 exec_ilu(uint opcode, float4 c_in)
             rv = (rv >= 0)
                 ? clamp(rv, 5.42101e-020f, 1.84467e+019f)
                 : clamp(rv, -1.84467e+019f, -5.42101e-020f);
-            return float4(rv, rv, rv, rv);
+            return rv.xxxx;
         }
-        case VSI_ILU_RSQ: {
-            float a = abs(s);
-            float r = rsqrt(a);
-            return float4(r, r, r, r);
-        }
+        case VSI_ILU_RSQ: return rsqrt(abs(s)).xxxx;
         case VSI_ILU_EXP: {
             float fl = vsi_floor(s);
             return float4(exp2(fl), s - fl, exp2(s), 1.0);
@@ -174,7 +166,8 @@ VS_OUTPUT main(const VS_INPUT xIn)
 {
     // Output registers: sparse array indexed by NV2A output address
     // 0=oPos, 1-2=unused, 3=oD0, 4=oD1, 5=oFog, 6=oPts, 7=oB0, 8=oB1, 9-12=oT0-oT3
-    float4 oRegs[13];
+    // Padded to 16 so out_address & 0xF (from the 8-bit field) never goes out of bounds.
+    float4 oRegs[16];
     oRegs[0]  = float4(0, 0, 0, 1); // oPos
     oRegs[1]  = float4(0, 0, 0, 0); // unused
     oRegs[2]  = float4(0, 0, 0, 0); // unused
@@ -188,6 +181,9 @@ VS_OUTPUT main(const VS_INPUT xIn)
     oRegs[10] = float4(0, 0, 0, 1); // oT1
     oRegs[11] = float4(0, 0, 0, 1); // oT2
     oRegs[12] = float4(0, 0, 0, 1); // oT3
+    oRegs[13] = float4(0, 0, 0, 0); // scratch (unused on NV2A)
+    oRegs[14] = float4(0, 0, 0, 0); // scratch
+    oRegs[15] = float4(0, 0, 0, 0); // scratch
 
     // Address register
     int a0 = 0;
@@ -196,16 +192,9 @@ VS_OUTPUT main(const VS_INPUT xIn)
     float4 r[12];
     [unroll] for (uint ri = 0; ri < 12; ri++) r[ri] = float4(0, 0, 0, 0);
 
-    // Input registers v0-v15
+    // Input registers v0-v15 — fetch directly into array, bypassing named scalars
     float4 v_regs[16];
-    {
-        float4 v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
-#include "CxbxVertexInputLoad.hlsli"
-        v_regs[0]=v0; v_regs[1]=v1; v_regs[2]=v2; v_regs[3]=v3;
-        v_regs[4]=v4; v_regs[5]=v5; v_regs[6]=v6; v_regs[7]=v7;
-        v_regs[8]=v8; v_regs[9]=v9; v_regs[10]=v10; v_regs[11]=v11;
-        v_regs[12]=v12; v_regs[13]=v13; v_regs[14]=v14; v_regs[15]=v15;
-    }
+    FetchAllAttributes(ResolveVertexIndex(xIn.vertexId), v_regs);
 
     // ============================================================
     // Instruction execution loop

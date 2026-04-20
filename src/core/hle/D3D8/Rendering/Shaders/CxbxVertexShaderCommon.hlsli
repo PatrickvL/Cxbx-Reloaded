@@ -28,8 +28,9 @@ struct VS_OUTPUT
 // Whether each vertex register is present in the vertex declaration
 uniform float4 vRegisterDefaultFlagsPacked[4]  : register(c208);
 
-// Per-stage texture coordinate scale factors
-uniform float4 xboxTextureScale[4] : register(c214);
+// Per-stage reciprocal texture coordinate scale factors (1/scale)
+// Uploaded from C++ as rcp(scale); multiply is cheaper than divide per vertex.
+uniform float4 xboxTextureScaleRcp[4] : register(c214);
 
 // Parameters for mapping the shader's fog output value to a fog factor
 uniform float4 CxbxFogInfo : register(c218); // = CXBX_D3DVS_CONSTREG_FOGINFO

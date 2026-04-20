@@ -221,15 +221,15 @@ void CxbxUpdateHostTextureScaling()
 			(*texCoordScale)[2] = (float)GetZScaleForPixelContainer(pXboxBaseTexture);
 		}
 	}
-	// Pass above determined texture scaling factors to our HLSL shader.
-	// Note : CxbxVertexShaderTemplate.hlsl applies texture scaling on
-	// output registers oT0 to oT3. It may be needed to move the scaling
-	// and apply it on input registers instead. In that case, we'd have to
-	// figure out which registers are used to pass texture-coordinates into
-	// the shader and allow scaling on any of the input registers (so we'd
-	// need to allow scaling on all 16 attributes, instead of just the four
-	// textures like we do right now).
-	CxbxSetVertexShaderConstantF(CXBX_D3DVS_TEXTURES_SCALE_BASE, (float*)texcoordScales.data(), CXBX_D3DVS_TEXTURES_SCALE_SIZE);
+	// Convert texture scales to reciprocals for GPU-side multiply (cheaper than divide).
+	// Upload as xboxTextureScaleRcp[4] at c214.
+	std::array<std::array<float, 4>, xbox::X_D3DTS_STAGECOUNT> texcoordScaleRcp;
+	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
+		for (int j = 0; j < 4; j++) {
+			texcoordScaleRcp[i][j] = 1.0f / texcoordScales[i][j];
+		}
+	}
+	CxbxSetVertexShaderConstantF(CXBX_D3DVS_TEXTURES_SCALE_BASE, (float*)texcoordScaleRcp.data(), CXBX_D3DVS_TEXTURES_SCALE_SIZE);
 
 	// Upload TEXCOORDINDEX remapping for the passthrough vertex shader.
 	// On NV2A, the texture unit applies D3DTSS_TEXCOORDINDEX after VS output

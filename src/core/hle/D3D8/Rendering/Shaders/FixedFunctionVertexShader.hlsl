@@ -439,10 +439,10 @@ VS_OUTPUT main(const VS_INPUT xInput)
     xOut.oPts = DoPointSpriteSize();
 
     // Texture coordinates
-    xOut.oT0 = DoTexCoord(0) / xboxTextureScale[0];
-    xOut.oT1 = DoTexCoord(1) / xboxTextureScale[1];
-    xOut.oT2 = DoTexCoord(2) / xboxTextureScale[2];
-    xOut.oT3 = DoTexCoord(3) / xboxTextureScale[3];
+    xOut.oT0 = DoTexCoord(0) * xboxTextureScaleRcp[0];
+    xOut.oT1 = DoTexCoord(1) * xboxTextureScaleRcp[1];
+    xOut.oT2 = DoTexCoord(2) * xboxTextureScaleRcp[2];
+    xOut.oT3 = DoTexCoord(3) * xboxTextureScaleRcp[3];
 
     return xOut;
 }
