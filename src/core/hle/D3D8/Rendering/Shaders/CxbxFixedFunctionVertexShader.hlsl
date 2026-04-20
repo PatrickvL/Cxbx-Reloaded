@@ -1,4 +1,4 @@
-#include "FixedFunctionVertexShaderState.hlsli"
+#include "CxbxFixedFunctionVertexShaderState.hlsli"
 
 #include "CxbxVertexShaderCommon.hlsli"
 #include "CxbxVertexFetch.hlsli"

@@ -25,7 +25,7 @@
 #pragma once
 
 #include "core\hle\D3D8\XbVertexShader.h"
-#include "FixedFunctionVertexShaderState.hlsli"
+#include "CxbxFixedFunctionVertexShaderState.hlsli"
 
 enum class ShaderType {
 	Empty = 0,

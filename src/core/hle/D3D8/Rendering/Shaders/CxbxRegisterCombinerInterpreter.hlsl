@@ -1,4 +1,4 @@
-// RegisterCombinerInterpreter.hlsl
+// CxbxRegisterCombinerInterpreter.hlsl
 //
 // DX11 / SM5 Xbox NV2A register combiner interpreter ubershader.
 //
@@ -58,8 +58,8 @@
 // Shared constants and cbuffer layout (defined once in .hlsli headers,
 // shared with C++ backend code)
 // ============================================================
-#include "NV2APixelShaderConstants.hlsli"
-#include "RegisterCombinerInterpreterState.hlsli"
+#include "CxbxNV2APixelShaderConstants.hlsli"
+#include "CxbxRegisterCombinerInterpreterState.hlsli"
 
 // Shared pure-math pixel shader helpers (ApplyTexFmtFixup, PerformColorSign,
 // PerformColorKeyOp, PerformAlphaTest, CalculateFogFactor, etc.)

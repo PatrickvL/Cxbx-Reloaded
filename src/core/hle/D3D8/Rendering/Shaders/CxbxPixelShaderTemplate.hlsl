@@ -34,7 +34,7 @@ uniform const float4 c_fog : register(c18); // Note : Maps to PSH_XBOX_CONSTANT_
 uniform const float4 FC0 : register(c16); // Note : Maps to PSH_XBOX_CONSTANT_FC0, must be generated as argument to xfc instead of C0
 uniform const float4 FC1 : register(c17); // Note : Maps to PSH_XBOX_CONSTANT_FC1, must be generated as argument to xfc instead of C1
 
-// TODO : Use struct PsTextureStageState (declared in FixedFunctionPixelShader.hlsli) instead of these :
+// TODO : Use struct PsTextureStageState (declared in CxbxFixedFunctionPixelShader.hlsli) instead of these :
 
 // Texture color sign
 uniform const float4 COLORSIGN[4] : register(c19); // Note : PSH_XBOX_CONSTANT_COLORSIGN for 4 texture stages

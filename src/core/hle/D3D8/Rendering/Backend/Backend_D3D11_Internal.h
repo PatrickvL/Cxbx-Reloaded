@@ -118,9 +118,9 @@ extern ID3D11PixelShader         *g_pD3D11RCInterpreterPS;
 extern ID3D11Buffer              *g_pD3D11RCInterpreterCB;
 
 // RC interpreter constant buffer layout — shared with the HLSL cbuffer
-// definition in RegisterCombinerInterpreterState.hlsli.
-#include "../Shaders/NV2APixelShaderConstants.hlsli"
-#include "../Shaders/RegisterCombinerInterpreterState.hlsli"
+// definition in CxbxRegisterCombinerInterpreterState.hlsli.
+#include "../Shaders/CxbxNV2APixelShaderConstants.hlsli"
+#include "../Shaders/CxbxRegisterCombinerInterpreterState.hlsli"
 
 // ******************************************************************
 // * Vertex shader interpreter (VS ubershader)
@@ -131,8 +131,8 @@ extern ID3DBlob                  *g_pD3D11VSInterpreterBytecode;
 extern ID3D11Buffer              *g_pD3D11VSInterpreterCB;
 
 // VS interpreter constant buffer layout — shared with the HLSL cbuffer
-// definition in VertexShaderInterpreterState.hlsli.
-#include "../Shaders/VertexShaderInterpreterState.hlsli"
+// definition in CxbxVertexShaderInterpreterState.hlsli.
+#include "../Shaders/CxbxVertexShaderInterpreterState.hlsli"
 
 // ******************************************************************
 // * Compute shader resources — vertex convert

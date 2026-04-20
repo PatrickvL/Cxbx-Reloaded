@@ -36,7 +36,7 @@
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\kernel\init\CxbxKrnl.h"
 #include "util\hasher.h"
-#include "core\hle\D3D8\Rendering\Shaders\FixedFunctionPixelShader.hlsli"
+#include "core\hle\D3D8\Rendering\Shaders\CxbxFixedFunctionPixelShader.hlsli"
 #include "common/FilePaths.hpp"
 #include <assert.h>
 #include <process.h>

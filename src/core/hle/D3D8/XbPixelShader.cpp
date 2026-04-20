@@ -46,7 +46,7 @@
 
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxrAbort()
 #include "util\hasher.h"
-#include "core\hle\D3D8\Rendering\Shaders\FixedFunctionPixelShader.hlsli"
+#include "core\hle\D3D8\Rendering\Shaders\CxbxFixedFunctionPixelShader.hlsli"
 #include "common/FilePaths.hpp" // For szFilePath_CxbxReloaded_Exe
 
 #include <assert.h> // assert()

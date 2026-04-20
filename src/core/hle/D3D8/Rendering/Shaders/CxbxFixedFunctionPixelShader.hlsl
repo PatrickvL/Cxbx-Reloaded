@@ -1,4 +1,4 @@
-#include "FixedFunctionPixelShader.hlsli"
+#include "CxbxFixedFunctionPixelShader.hlsli"
 
 #include "CxbxPixelShaderInput.hlsli"
 

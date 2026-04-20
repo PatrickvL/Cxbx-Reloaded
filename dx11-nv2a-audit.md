@@ -8,7 +8,7 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 1. Alpha Test Not Implemented in D3D11 Shaders
 - [x] Fixed
-- **Files**: `Backend_D3D11.cpp:475`, `FixedFunctionPixelShader.hlsl`, `CxbxPixelShaderTemplate.hlsl`
+- **Files**: `Backend_D3D11.cpp:475`, `CxbxFixedFunctionPixelShader.hlsl`, `CxbxPixelShaderTemplate.hlsl`
 - **Description**: `X_D3DRS_ALPHATESTENABLE`, `X_D3DRS_ALPHAREF`, `X_D3DRS_ALPHAFUNC` are grouped under "states handled as shader constants" at Backend_D3D11.cpp:475, but neither pixel shader reads or applies them. D3D11 has no fixed-function alpha test. The existing `AlphaKill` and `ColorKey` operations are per-texture-stage mechanisms, not the global alpha test. Any game using `D3DRS_ALPHATESTENABLE` will render all fragments regardless of alpha comparison.
 - **Impact**: 100% of titles using alpha test (vegetation, fences, HUD elements, etc.)
 
@@ -123,14 +123,14 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 18. ~~DOT_PRODUCT3 Bias/Scale Timing~~ (N/A)
 - [x] Fixed
-- **Files**: `FixedFunctionPixelShader.hlsl:189`
+- **Files**: `CxbxFixedFunctionPixelShader.hlsl:189`
 - **Description**: Bias/scale may be applied at the wrong point in the DOT_PRODUCT3 calculation relative to NV2A hardware order.
 - **Resolution**: N/A — Per D3D9/Xbox SDK docs, `D3DTOP_DOTPRODUCT3` is defined to automatically expand inputs from [0,1] to [-1,1]. The bias/scale at DOT_PRODUCT3 time is the correct and intended behavior. Misleading TODO comment cleaned up.
 - **Impact**: None
 
 ### 19. ~~BUMPENVMAP Source Register Uncertain~~ (N/A)
 - [x] Fixed
-- **Files**: `FixedFunctionPixelShader.hlsl:199-209`
+- **Files**: `CxbxFixedFunctionPixelShader.hlsl:199-209`
 - **Description**: Comment "TODO : Verify" on which register provides the bump environment map source.
 - **Resolution**: N/A — Using `ctx.CURRENT` (previous stage result) is correct per D3D9/Xbox SDK. Bump perturbation data comes from the processed pipeline result. Misleading TODO comment cleaned up.
 - **Impact**: None
@@ -148,7 +148,7 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 21. Fog Calculation: `if` Instead of `else if`
 - [x] Fixed
-- **Files**: `FixedFunctionPixelShader.hlsl:329`, `CxbxPixelShaderTemplate.hlsl:449`
+- **Files**: `CxbxFixedFunctionPixelShader.hlsl:329`, `CxbxPixelShaderTemplate.hlsl:449`
 - **Description**: Both pixel shaders use chained `if` for fog mode instead of `else if`. Functionally correct since only one mode matches at a time, but `fogFactor` would be uninitialized if `FogTableMode` has an unexpected value. The FF PS also has a redundant `FogEnable == 0` check inside the else branch.
 - **Impact**: Cosmetic code issue; potential uninitialized value on invalid fog mode
 

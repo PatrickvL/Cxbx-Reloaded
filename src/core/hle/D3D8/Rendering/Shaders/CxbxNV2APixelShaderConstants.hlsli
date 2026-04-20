@@ -1,13 +1,13 @@
-// NV2APixelShaderConstants.hlsli — shared C++ / HLSL header
+// CxbxNV2APixelShaderConstants.hlsli — shared C++ / HLSL header
 //
 // Defines NV2A register combiner constants that are used by both the
-// HLSL RegisterCombinerInterpreter ubershader and the C++ backend.
+// HLSL CxbxRegisterCombinerInterpreter ubershader and the C++ backend.
 // Include from either language; the preprocessor adapts types automatically.
 //
 // In C++ this header is included via:
-//   #include "NV2APixelShaderConstants.hlsli"
+//   #include "CxbxNV2APixelShaderConstants.hlsli"
 // In HLSL this header is included via:
-//   #include "NV2APixelShaderConstants.hlsli"
+//   #include "CxbxNV2APixelShaderConstants.hlsli"
 
 #ifdef __cplusplus
 #pragma once

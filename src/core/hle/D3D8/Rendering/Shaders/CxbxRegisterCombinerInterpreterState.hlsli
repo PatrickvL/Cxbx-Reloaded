@@ -1,4 +1,4 @@
-// RegisterCombinerInterpreterState.hlsli — shared C++ / HLSL header
+// CxbxRegisterCombinerInterpreterState.hlsli — shared C++ / HLSL header
 //
 // Defines the constant buffer layout for the register combiner interpreter
 // ubershader.  Included by both the HLSL pixel shader and the C++ backend

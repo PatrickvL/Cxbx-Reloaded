@@ -229,7 +229,7 @@ void ShaderSources::LoadShadersFromDisk() {
 	// Fixed Function Pixel Shader
 	{
 		auto dir = hlslDir;
-		this->fixedFunctionPixelShaderPath = dir.append("FixedFunctionPixelShader.hlsl").string();
+		this->fixedFunctionPixelShaderPath = dir.append("CxbxFixedFunctionPixelShader.hlsl").string();
 		std::stringstream tmp;
 		tmp << OpenWithRetry(this->fixedFunctionPixelShaderPath).rdbuf();
 		this->fixedFunctionPixelShaderHlsl = tmp.str();
@@ -262,7 +262,7 @@ void ShaderSources::LoadShadersFromDisk() {
 	// Fixed Function Vertex Shader
 	{
 		auto dir = hlslDir;
-		this->fixedFunctionVertexShaderPath = dir.append("FixedFunctionVertexShader.hlsl").string();
+		this->fixedFunctionVertexShaderPath = dir.append("CxbxFixedFunctionVertexShader.hlsl").string();
 		std::stringstream tmp;
 		tmp << OpenWithRetry(this->fixedFunctionVertexShaderPath).rdbuf();
 		this->fixedFunctionVertexShaderHlsl = tmp.str();
@@ -280,7 +280,7 @@ void ShaderSources::LoadShadersFromDisk() {
 	// Register Combiner Interpreter (PS ubershader)
 	{
 		auto dir = hlslDir;
-		this->registerCombinerInterpreterPath = dir.append("RegisterCombinerInterpreter.hlsl").string();
+		this->registerCombinerInterpreterPath = dir.append("CxbxRegisterCombinerInterpreter.hlsl").string();
 		std::stringstream tmp;
 		tmp << OpenWithRetry(this->registerCombinerInterpreterPath).rdbuf();
 		this->registerCombinerInterpreterHlsl = tmp.str();
@@ -289,7 +289,7 @@ void ShaderSources::LoadShadersFromDisk() {
 	// Vertex Shader Interpreter (VS ubershader)
 	{
 		auto dir = hlslDir;
-		this->vertexShaderInterpreterPath = dir.append("VertexShaderInterpreter.hlsl").string();
+		this->vertexShaderInterpreterPath = dir.append("CxbxVertexShaderInterpreter.hlsl").string();
 		std::stringstream tmp;
 		tmp << OpenWithRetry(this->vertexShaderInterpreterPath).rdbuf();
 		this->vertexShaderInterpreterHlsl = tmp.str();

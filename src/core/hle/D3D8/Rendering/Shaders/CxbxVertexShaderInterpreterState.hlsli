@@ -1,4 +1,4 @@
-// VertexShaderInterpreterState.hlsli — shared C++ / HLSL header
+// CxbxVertexShaderInterpreterState.hlsli — shared C++ / HLSL header
 //
 // Defines the constant buffer layout for the NV2A vertex shader interpreter
 // ubershader. Included by both the HLSL vertex shader and the C++ backend

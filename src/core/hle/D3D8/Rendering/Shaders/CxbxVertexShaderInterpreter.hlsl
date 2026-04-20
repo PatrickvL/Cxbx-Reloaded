@@ -1,4 +1,4 @@
-// VertexShaderInterpreter.hlsl
+// CxbxVertexShaderInterpreter.hlsl
 //
 // DX11 / SM5 Xbox NV2A vertex shader interpreter ubershader.
 //
@@ -23,7 +23,7 @@
 uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 
 #include "CxbxScreenspaceTransform.hlsli"
-#include "VertexShaderInterpreterState.hlsli"
+#include "CxbxVertexShaderInterpreterState.hlsli"
 
 // ============================================================
 // Swizzle helper: rearrange float4 components by packed index
