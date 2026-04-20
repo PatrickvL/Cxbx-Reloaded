@@ -33,9 +33,12 @@ struct alignas(16) RCI_Float4 { float x, y, z, w; };
 
 #else
 // HLSL: the cbuffer keyword defines the layout directly.
+// Single uint fields must be padded to 16 bytes (one constant register) to
+// match the C++ alignas(16) layout.  Without this, SM5 cbuffer packing rules
+// pack consecutive scalars together, shifting all subsequent field offsets.
 #define RCI_BEGIN cbuffer RCInterpreterCBLayout : register(b0) {
 #define RCI_END   };
-#define RCI_UINT(name)       uint name
+#define RCI_UINT(name)       uint name; uint3 _pad_##name
 #define RCI_UINT_ARRAY(name, n)  uint name[n]
 #define RCI_FLOAT4(name)     float4 name
 #define RCI_FLOAT4_ARRAY(name, n) float4 name[n]

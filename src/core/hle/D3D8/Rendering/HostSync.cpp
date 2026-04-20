@@ -33,6 +33,7 @@ void CxbxUpdateHostTextures()
 	// Per-stage SRV cache: avoids recreating SRVs every frame for the same resource
 	static ID3D11Resource*           s_CachedResource[xbox::X_D3DTS_STAGECOUNT] = {};
 	static ID3D11ShaderResourceView* s_CachedSRV[xbox::X_D3DTS_STAGECOUNT] = {};
+	static D3D11_SRV_DIMENSION       s_CachedDim[xbox::X_D3DTS_STAGECOUNT] = {};
 
 	// Set the host texture for each stage
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
@@ -72,6 +73,12 @@ void CxbxUpdateHostTextures()
 			// Reuse cached SRV if the underlying resource hasn't changed
 			if (s_CachedResource[stage] == pHostBaseTexture && s_CachedSRV[stage] != nullptr) {
 				g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &s_CachedSRV[stage]);
+				if (g_bUseRCInterpreter) {
+					if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURE3D)
+						g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &s_CachedSRV[stage]);
+					else if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURECUBE)
+						g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &s_CachedSRV[stage]);
+				}
 			} else {
 				// Release old cached SRV
 				if (s_CachedSRV[stage]) {
@@ -122,7 +129,17 @@ void CxbxUpdateHostTextures()
 				if (SUCCEEDED(hRet) && pSRV != nullptr) {
 					s_CachedResource[stage] = pHostBaseTexture;
 					s_CachedSRV[stage] = pSRV; // Keep ref for cache
+					s_CachedDim[stage] = srvDesc.ViewDimension;
+					// Always bind to the base slot (for compiled PS path)
 					g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pSRV);
+					// RC interpreter uses separate Texture2D/3D/Cube declarations
+					// at t0-3/t4-7/t8-11; bind to the type-appropriate slot too
+					if (g_bUseRCInterpreter) {
+						if (srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE3D)
+							g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pSRV);
+						else if (srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE)
+							g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pSRV);
+					}
 				}
 			}
 		} else {
@@ -134,6 +151,10 @@ void CxbxUpdateHostTextures()
 			s_CachedResource[stage] = nullptr;
 			ID3D11ShaderResourceView* pNullSRV = nullptr;
 			g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pNullSRV);
+			if (g_bUseRCInterpreter) {
+				g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pNullSRV);
+				g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pNullSRV);
+			}
 		}
 		if (bNeedRelease) {
 			pHostBaseTexture->Release();
