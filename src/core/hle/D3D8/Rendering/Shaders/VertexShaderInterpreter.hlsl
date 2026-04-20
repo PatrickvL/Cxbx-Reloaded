@@ -60,20 +60,12 @@ float4 fetch_input(
     }
     else {
         // Constant register c0-c191
-        int c_index = (int)const_idx;
-        // Convert from Xbox encoded format to linear 0..191
-        // The encoding is: ((((CReg >> 5) & 7) - 3) * 32) + (CReg & 31)
-        c_index = ((int)((const_idx >> 5) & 7) - 3) * 32 + (int)(const_idx & 31);
-        // Apply relative addressing with a0
+        // The Xbox encoding collapses to: (const_idx & 0xFF) maps to 0..191
+        int c_index = (int)(const_idx & 0xFF);
         if (use_a0x)
             c_index += a0;
-        // Map to 0..191 range
-        c_index += (int)X_D3DSCM_CORRECTION;
-        // Bounds check
-        if (c_index < 0 || c_index >= (int)X_D3DVS_CONSTREG_COUNT)
-            raw = float4(0, 0, 0, 0);
-        else
-            raw = C[c_index];
+        raw = (c_index >= 0 && c_index < (int)X_D3DVS_CONSTREG_COUNT)
+            ? C[c_index] : float4(0, 0, 0, 0);
     }
 
     float4 swizzled = apply_swizzle(raw, swz_x, swz_y, swz_z, swz_w);
@@ -91,6 +83,16 @@ void write_masked(inout float4 dest, float4 src, uint mask)
         (mask & VSI_MASK_Z) ? src.z : dest.z,
         (mask & VSI_MASK_W) ? src.w : dest.w
     );
+}
+
+// ============================================================
+// Write result to a temporary register (r0-r11) or oPos (r12)
+// Indices > 12 are undefined on NV2A and silently ignored.
+// ============================================================
+void write_r(uint dest, inout float4 r[12], inout float4 oPos, float4 result, uint mask)
+{
+    if (dest == 12)     write_masked(oPos,    result, mask);
+    else if (dest < 12) write_masked(r[dest], result, mask);
 }
 
 // ============================================================
@@ -136,8 +138,8 @@ float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
         case VSI_MAC_DST: return float4(1.0, a.y * b.y, a.z, b.w);
         case VSI_MAC_MIN: return min(a, b);
         case VSI_MAC_MAX: return max(a, b);
-        case VSI_MAC_SLT: return float4(a.x < b.x ? 1 : 0, a.y < b.y ? 1 : 0, a.z < b.z ? 1 : 0, a.w < b.w ? 1 : 0);
-        case VSI_MAC_SGE: return float4(a.x >= b.x ? 1 : 0, a.y >= b.y ? 1 : 0, a.z >= b.z ? 1 : 0, a.w >= b.w ? 1 : 0);
+        case VSI_MAC_SLT: return 1.0 - step(b, a);  // 1 where a < b
+        case VSI_MAC_SGE: return step(b, a);           // 1 where a >= b
         case VSI_MAC_ARL: return a; // ARL result stored to a0 by caller
         default: return float4(0, 0, 0, 0);
     }
@@ -161,20 +163,13 @@ float4 exec_ilu(uint opcode, float4 c_in)
 
     switch (opcode) {
         case VSI_ILU_MOV: return c_in;
-        case VSI_ILU_RCP: {
-            // RCP with clamping (same as RCC per CxbxVertexShaderTemplate.hlsl)
-            float r = 1.0 / s;
-            r = (r >= 0)
-                ? clamp(r, 5.42101e-020, 1.84467e+019)
-                : clamp(r, -1.84467e+019, -5.42101e-020);
-            return float4(r, r, r, r);
-        }
+        case VSI_ILU_RCP:
         case VSI_ILU_RCC: {
-            float r = 1.0 / s;
-            r = (r >= 0)
-                ? clamp(r, 5.42101e-020, 1.84467e+019)
-                : clamp(r, -1.84467e+019, -5.42101e-020);
-            return float4(r, r, r, r);
+            float rv = 1.0 / s;
+            rv = (rv >= 0)
+                ? clamp(rv, 5.42101e-020f, 1.84467e+019f)
+                : clamp(rv, -1.84467e+019f, -5.42101e-020f);
+            return float4(rv, rv, rv, rv);
         }
         case VSI_ILU_RSQ: {
             float a = abs(s);
@@ -241,6 +236,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
     // ============================================================
     uint instCount = min(InstructionCount, VSI_MAX_SLOTS);
 
+    [loop]
     for (uint pc = 0; pc < instCount; pc++) {
         uint4 inst = Instructions[pc];
         // inst.x = SubToken 0 (unused by fields)
@@ -312,9 +308,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
         // Snapshot inputs before executing (prevents order-dependent behavior)
         // MAC uses inputs A, B, C; ILU uses input C (same parameters)
         // ============================================================
-        float4 in_a = float4(0,0,0,0);
-        float4 in_b = float4(0,0,0,0);
-        float4 in_c = float4(0,0,0,0);
+        float4 in_a, in_b, in_c;
 
         if (mac_op != VSI_MAC_NOP) {
             in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz_x, a_swz_y, a_swz_z, a_swz_w, a_neg, use_a0x, a0, r, oPos, v_regs);
@@ -339,14 +333,8 @@ VS_OUTPUT main(const VS_INPUT xIn)
             else {
                 // Write to R register (unless paired and R=1, which is reserved for ILU)
                 uint mac_r_dest = out_r_addr;
-                if (!(is_paired && mac_r_dest == 1) && out_mac_mask != 0) {
-                    if (mac_r_dest == 12) {
-                        write_masked(oPos, mac_result, out_mac_mask);
-                    }
-                    else if (mac_r_dest < 12) {
-                        write_masked(r[mac_r_dest], mac_result, out_mac_mask);
-                    }
-                }
+                if (!(is_paired && mac_r_dest == 1) && out_mac_mask != 0)
+                    write_r(mac_r_dest, r, oPos, mac_result, out_mac_mask);
 
                 // Write to output register (if MAC is the output source)
                 if (out_mux == 0 && out_o_mask != 0 && out_orb)
@@ -364,14 +352,8 @@ VS_OUTPUT main(const VS_INPUT xIn)
             // ILU writes to R register
             // When paired, ILU always writes to R1
             uint ilu_r_dest = is_paired ? 1 : out_r_addr;
-            if (out_ilu_mask != 0) {
-                if (ilu_r_dest == 12) {
-                    write_masked(oPos, ilu_result, out_ilu_mask);
-                }
-                else if (ilu_r_dest < 12) {
-                    write_masked(r[ilu_r_dest], ilu_result, out_ilu_mask);
-                }
-            }
+            if (out_ilu_mask != 0)
+                write_r(ilu_r_dest, r, oPos, ilu_result, out_ilu_mask);
 
             // Write to output register (if ILU is the output source)
             if (out_mux == 1 && out_o_mask != 0 && out_orb)
