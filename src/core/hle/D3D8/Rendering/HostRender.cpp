@@ -377,6 +377,14 @@ void CreateDefaultD3D9Device
 
 	// Create the zero-stride vertex defaults buffer for NV2A sticky attribute emulation
 	CxbxD3D11CreateVertexDefaultsBuffer();
+
+	// Initialize TEXCOORDINDEX remapping to identity (each stage reads its own texcoord set).
+	// This ensures c219 is valid before the first passthrough draw, even if
+	// CxbxUpdateHostTextureScaling() hasn't run yet.
+	{
+		float defaultTexCoordIndices[4] = { 0.0f, 1.0f, 2.0f, 3.0f };
+		CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_TEXCOORDINDEX, defaultTexCoordIndices, 1);
+	}
 #else
    	// IDirect3D9::CreateDevice must be called from the window message thread
    	// See https://docs.microsoft.com/en-us/windows/win32/direct3d9/multithreading-issues

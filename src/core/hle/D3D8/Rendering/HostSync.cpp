@@ -439,6 +439,12 @@ void CxbxUpdateNativeD3DResources()
    	}
 
 #ifdef CXBX_USE_D3D11
+	// Refresh the zero-stride vertex defaults buffer with current NV2A sticky
+	// attribute values before every draw, not just on vertex declaration changes.
+	// This ensures non-streamed attributes (e.g. texcoords not in the vertex
+	// declaration) always read the latest inline_value[] data.
+	CxbxD3D11UpdateVertexDefaultsBuffer();
+
 	// Apply any pending D3D11 state object changes before drawing
 	CxbxD3D11ApplyDirtyStates();
 #endif
