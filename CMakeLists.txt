@@ -153,7 +153,6 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxScreenspaceTransform.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderCommon.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexFetch.hlsli"
- "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexInputLoad.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexOutputFooter.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderTemplate.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderPassthrough.hlsl"

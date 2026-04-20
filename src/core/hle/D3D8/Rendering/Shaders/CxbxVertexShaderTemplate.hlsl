@@ -250,10 +250,25 @@ VS_OUTPUT main(const VS_INPUT xIn)
 	r0 = r1 = r2 = r3 = r4 = r5 = r6 = r7 = r8 = r9 = r10 = r11 = float4(0, 0, 0, 0);
 	#define r12 oPos // oPos and r12 are two ways of accessing the same register on Xbox
 
-	// Input registers
-	float4 v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
-
-#include "CxbxVertexInputLoad.hlsli"
+	// Fetch all 16 vertex input registers from ByteAddressBuffer
+	float4 v_arr[16];
+	FetchAllAttributes(ResolveVertexIndex(xIn.vertexId), v_arr);
+	#define v0  v_arr[0]
+	#define v1  v_arr[1]
+	#define v2  v_arr[2]
+	#define v3  v_arr[3]
+	#define v4  v_arr[4]
+	#define v5  v_arr[5]
+	#define v6  v_arr[6]
+	#define v7  v_arr[7]
+	#define v8  v_arr[8]
+	#define v9  v_arr[9]
+	#define v10 v_arr[10]
+	#define v11 v_arr[11]
+	#define v12 v_arr[12]
+	#define v13 v_arr[13]
+	#define v14 v_arr[14]
+	#define v15 v_arr[15]
 
 	// Temp variable for paired VS instruction
 	float4 temp;
