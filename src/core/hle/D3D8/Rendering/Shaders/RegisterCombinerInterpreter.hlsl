@@ -61,6 +61,10 @@
 #include "NV2APixelShaderConstants.hlsli"
 #include "RegisterCombinerInterpreterState.hlsli"
 
+// Shared pure-math pixel shader helpers (ApplyTexFmtFixup, PerformColorSign,
+// PerformColorKeyOp, PerformAlphaTest, CalculateFogFactor, etc.)
+#include "CxbxPixelShaderFunctions.hlsli"
+
 // ============================================================
 // Textures and samplers
 // Individual declarations per stage avoid DX11 error X4539
@@ -84,27 +88,7 @@ SamplerState Samp1     : register(s1);
 SamplerState Samp2     : register(s2);
 SamplerState Samp3     : register(s3);
 
-// ============================================================
-// Pixel shader input
-// Note: CxbxPixelShaderHelpers.hlsli has a cross-API version of this struct,
-// but we can't include it here because it also declares D3D9-style samplers
-// that conflict with our D3D11-style Texture2D/SamplerState declarations.
-// ============================================================
-struct PS_INPUT
-{
-    float4 iPos : SV_Position;
-    float4 iD0  : COLOR0;       // Diffuse  (front-facing)
-    float4 iD1  : COLOR1;       // Specular (front-facing)
-    float  iFog : FOG;
-    float  iPts : PSIZE;
-    float4 iB0  : TEXCOORD4;    // Diffuse  (back-facing)
-    float4 iB1  : TEXCOORD5;    // Specular (back-facing)
-    float4 iT0  : TEXCOORD0;
-    float4 iT1  : TEXCOORD1;
-    float4 iT2  : TEXCOORD2;
-    float4 iT3  : TEXCOORD3;
-    bool   iFF  : SV_IsFrontFace;
-};
+#include "CxbxPixelShaderInput.hlsli"
 
 // ============================================================
 // Step 2: register file
@@ -314,109 +298,20 @@ float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB,
 }
 
 // ============================================================
-// Color sign conversion (Xbox X_D3DTSS_COLORSIGN extension)
-// ============================================================
-
-float4 ApplyColorSign(float4 sign, float4 t)
-{
-    // Vectorized: sign > 0 → expand [0,1]→[-1,1]; sign < 0 → contract [-1,1]→[0,1]
-    float4 expand   = t * 2.0f - 1.0f;
-    float4 contract = t * 0.5f + 0.5f;
-    bool4  pos = sign > 0.0f;
-    bool4  neg = sign < 0.0f;
-    return pos ? expand : (neg ? contract : t);
-}
-
-// ============================================================
-// Texture format channel fixup (Xbox→D3D11 format differences)
-// fixup: 0=identity, 1=.gbar, 2=.abgr, 3=luminance, 4=alpha-luminance
-// ============================================================
-
-float4 ApplyTexFmtFixup(float4 t, float fixup)
-{
-    int f = (int)fixup;
-    [branch] if (f != 0) {
-        if (f == 1) return t.gbar;                       // B8G8R8A8 uploaded as R8G8B8A8
-        if (f == 2) return t.abgr;                       // R8G8B8A8 uploaded as R8G8B8A8
-        if (f == 3) return float4(t.r, t.r, t.r, t.a);   // Luminance: R→(R,R,R,A)
-        if (f == 4) return float4(t.r, t.r, t.r, t.g);   // Alpha-luminance: RG→(R,R,R,G)
-    }
-    return t;
-}
-
-// ============================================================
-// Color key operations
-// ============================================================
-
-float4 ApplyColorKeyOp(float4 colorKeyOp, float4 colorKeyColor, float4 t)
-{
-    int op = (int)colorKeyOp.x;
-    if (op == 0) return t; // DISABLE
-    if (any(t - colorKeyColor)) return t; // No match
-    if (op == 1) return float4(t.rgb, 0); // ALPHA
-    if (op == 2) return (float4)0;        // RGBA
-    if (op == 3) { clip(-1); return t; }  // KILL
-    return t;
-}
-
-// ============================================================
-// Alpha test (D3D11 has no fixed-function alpha test)
-// alphaTest: x=enable, y=ref [0..1], z=func [D3DCMPFUNC]
-// ============================================================
-
-void PerformAlphaTest(float3 alphaTest, float alpha)
-{
-    if (alphaTest.x) {
-        int alphaVal  = (int)round(saturate(alpha) * 255);
-        int alphaRefI = (int)round(saturate(alphaTest.y) * 255);
-        int alphaFunc = (int)alphaTest.z;
-        // D3DCMPFUNC: 1=NEVER,2=LESS,3=EQUAL,4=LESSEQUAL,5=GREATER,6=NOTEQUAL,7=GREATEREQUAL,8=ALWAYS
-        bool alphaPass = (alphaFunc == 8);
-        if (alphaFunc == 1) alphaPass = false;
-        if (alphaFunc == 2) alphaPass = (alphaVal < alphaRefI);
-        if (alphaFunc == 3) alphaPass = (alphaVal == alphaRefI);
-        if (alphaFunc == 4) alphaPass = (alphaVal <= alphaRefI);
-        if (alphaFunc == 5) alphaPass = (alphaVal > alphaRefI);
-        if (alphaFunc == 6) alphaPass = (alphaVal != alphaRefI);
-        if (alphaFunc == 7) alphaPass = (alphaVal >= alphaRefI);
-        if (!alphaPass) clip(-1);
-    }
-}
-
-// ============================================================
-// Fog table factor computation
-// fogTableMode: 0=NONE(vertex fog), 1=EXP, 2=EXP2, 3=LINEAR
-// ============================================================
-
-float CalculateFogFactor(uint fogEnable, float fogTableMode, float fogDensity,
-                         float fogStart, float fogEnd, float fogDepth)
-{
-    float fogFactor = 1.0f;
-    if (fogEnable != 0u) {
-        int mode = (int)fogTableMode;
-        if (mode == 0) fogFactor = fogDepth; // Vertex fog passthrough
-        else if (mode == 1) fogFactor = 1.0f / exp(fogDepth * fogDensity);
-        else if (mode == 2) fogFactor = 1.0f / exp(pow(fogDepth * fogDensity, 2));
-        else if (mode == 3) fogFactor = (fogEnd - fogDepth) / (fogEnd - fogStart);
-    }
-    return fogFactor;
-}
-
-// ============================================================
 // Post-process a sampled texel (matches compiled PS pipeline)
 // ============================================================
 
 float4 PostProcessTexel(uint stage, float4 t)
 {
     // 1. Channel swizzle / luminance fixup
-    float fixups[4] = { TexFmtFixup.x, TexFmtFixup.y, TexFmtFixup.z, TexFmtFixup.w };
+    int fixups[4] = { (int)TexFmtFixup.x, (int)TexFmtFixup.y, (int)TexFmtFixup.z, (int)TexFmtFixup.w };
     t = ApplyTexFmtFixup(t, fixups[stage]);
 
     // 2. Color sign conversion
-    t = ApplyColorSign(ColorSign[stage], t);
+    t = PerformColorSign(ColorSign[stage], t);
 
     // 3. Color key
-    t = ApplyColorKeyOp(ColorKeyOp[stage], ColorKeyColor[stage], t);
+    t = PerformColorKeyOp((int)ColorKeyOp[stage].x, ColorKeyColor[stage], t);
 
     return t;
 }

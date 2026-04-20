@@ -1,6 +1,16 @@
 #include "FixedFunctionPixelShader.hlsli"
 
-#include "CxbxPixelShaderHelpers.hlsli"
+#include "CxbxPixelShaderInput.hlsli"
+
+// Individual samplers for DX9-style intrinsics (tex2D, tex3D, texCUBE)
+sampler sampler_0 : register(s0);
+sampler sampler_1 : register(s1);
+sampler sampler_2 : register(s2);
+sampler sampler_3 : register(s3);
+
+static const float4 WarningColor = float4(0, 1, 1, 1); // Returned when unhandled scenario is encountered
+
+#include "CxbxPixelShaderFunctions.hlsli"
 
 uniform FixedFunctionPixelShaderState state : register(c0);
 
