@@ -39,6 +39,48 @@
 #include <thread>
 //#include <sstream>
 
+// Function pointer type matching D3DCompile's signature
+typedef HRESULT(WINAPI *PFN_D3DCOMPILE)(
+	LPCVOID pSrcData, SIZE_T SrcDataSize, LPCSTR pSourceName,
+	const D3D_SHADER_MACRO *pDefines, ID3DInclude *pInclude,
+	LPCSTR pEntrypoint, LPCSTR pTarget, UINT Flags1, UINT Flags2,
+	ID3DBlob **ppCode, ID3DBlob **ppErrorMsgs);
+
+// Dynamically resolve D3DCompile from a native d3dcompiler_47.dll placed
+// next to the executable. This bypasses Wine's builtin d3dcompiler which
+// cannot handle complex shaders like the VS/PS interpreter ubershaders.
+// Falls back to the linked D3DCompile if the native DLL is not found.
+static PFN_D3DCOMPILE GetD3DCompileFunc()
+{
+	static PFN_D3DCOMPILE s_func = nullptr;
+	static bool s_tried = false;
+	if (!s_tried) {
+		s_tried = true;
+		// Build an absolute path to d3dcompiler_47.dll next to our executable.
+		// Using an absolute path forces Wine to load the native DLL instead of
+		// its builtin, which cannot handle complex ubershaders.
+		char exePath[MAX_PATH] = {};
+		GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+		std::string dllPath(exePath);
+		auto lastSlash = dllPath.find_last_of("\\/");
+		if (lastSlash != std::string::npos)
+			dllPath = dllPath.substr(0, lastSlash + 1);
+		dllPath += "d3dcompiler_47.dll";
+		HMODULE hMod = LoadLibraryA(dllPath.c_str());
+		if (hMod) {
+			s_func = (PFN_D3DCOMPILE)GetProcAddress(hMod, "D3DCompile");
+			if (s_func) {
+				EmuLog(LOG_LEVEL::INFO, "Loaded native D3DCompile from %s", dllPath.c_str());
+			}
+		}
+		if (!s_func) {
+			// Fall back to linked version
+			s_func = &D3DCompile;
+		}
+	}
+	return s_func;
+}
+
 ShaderSources g_ShaderSources;
 
 std::string DebugPrependLineNumbers(std::string shaderString) {
@@ -88,7 +130,9 @@ extern HRESULT EmuCompileShader
 	// O1 compiles in seconds and produces correct code for both.
 	flags1 = (flags1 & ~D3DCOMPILE_OPTIMIZATION_LEVEL3) | D3DCOMPILE_OPTIMIZATION_LEVEL1;
 
-	hRet = D3DCompile(
+	auto pfnD3DCompile = GetD3DCompileFunc();
+
+	hRet = pfnD3DCompile(
 		hlsl_str.c_str(),
 		hlsl_str.length(),
 		pSourceName,
@@ -102,11 +146,18 @@ extern HRESULT EmuCompileShader
 		&pErrors
 	);
 	if (FAILED(hRet)) {
-		EmuLog(LOG_LEVEL::WARNING, "Shader compile failed. Recompiling in compatibility mode");
-		// Attempt to retry in compatibility mode, this allows some vertex-state shaders to compile
-		// Test Case: Spy vs Spy
-		flags1 |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY | D3DCOMPILE_AVOID_FLOW_CONTROL;
-		hRet = D3DCompile(
+		if (pErrors) {
+			EmuLog(LOG_LEVEL::WARNING, "Shader compile failed: %s", (char*)(pErrors->GetBufferPointer()));
+			pErrors->Release();
+			pErrors = nullptr;
+		} else {
+			EmuLog(LOG_LEVEL::WARNING, "Shader compile failed. Recompiling in compatibility mode");
+		}
+		// Retry at O0 with backwards compat. Avoid AVOID_FLOW_CONTROL — it flattens
+		// the VS/PS interpreter loops and produces wrong results.
+		// Test Case: Spy vs Spy (needs ENABLE_BACKWARDS_COMPATIBILITY)
+		flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL0 | D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
+		hRet = pfnD3DCompile(
 			hlsl_str.c_str(),
 			hlsl_str.length(),
 			pSourceName,
