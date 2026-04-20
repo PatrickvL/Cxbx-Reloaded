@@ -62,9 +62,11 @@
 #define CXBX_VTXFMT_SHORT3       19
 
 // Prim type constants (must match CXBX_PRIM_* in CxbxVertexFetch.hlsli)
-#define CXBX_PRIM_NORMAL  0
-#define CXBX_PRIM_QUAD    1
-#define CXBX_PRIM_FAN     2
+#define CXBX_PRIM_NORMAL    0
+#define CXBX_PRIM_QUAD      1
+#define CXBX_PRIM_FAN       2
+#define CXBX_PRIM_QUADSTRIP 3
+#define CXBX_PRIM_LINELOOP  4
 
 // ******************************************************************
 // * Persistent GPU resources for IA bypass
@@ -95,10 +97,15 @@ static UINT                      s_LastLayoutCBGeneration = UINT_MAX;
 // * Layout constant buffer structure (must match CxbxVertexLayoutCB in HLSL)
 // ******************************************************************
 struct IABypassLayoutCB {
-	UINT PrimType;        // 0=normal, 1=quad, 2=fan
+	// Header: 8 uints (32 bytes, matches HLSL CxbxVertexLayoutCB)
+	UINT PrimType;        // 0=normal, 1=quad, 2=fan, 3=quadstrip, 4=lineloop
 	UINT IndexedDraw;     // 0=non-indexed, 1=indexed 16-bit, 2=indexed 32-bit
 	UINT IndexOffset;     // Byte offset into index data
 	UINT NumAttribs;      // Number of active attributes
+	UINT NumVerts;        // Original Xbox vertex count (for lineloop wrap)
+	UINT Pad5;
+	UINT Pad6;
+	UINT Pad7;
 	UINT Attribs[16][4];  // Per-attribute: elemOffset, stride, format, streamBase
 };
 
@@ -139,7 +146,7 @@ void CxbxD3D11IABypassInit()
 {
 	HRESULT hr;
 
-	// Layout CB (b1) — 16 + 256 = 272 bytes
+	// Layout CB (b1) — 32 + 256 = 288 bytes
 	hr = CxbxD3D11CreateConstantBuffer(sizeof(IABypassLayoutCB), true, &s_pLayoutCB);
 	if (FAILED(hr))
 		EmuLog(LOG_LEVEL::WARNING, "IABypassInit: Failed to create layout CB");
@@ -256,6 +263,12 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		hostVertexCount = (DrawContext.dwVertexCount / 4) * 6;
 		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		break;
+	case xbox::X_D3DPT_QUADSTRIP:
+		primType = CXBX_PRIM_QUADSTRIP;
+		// Each pair of vertices adds a quad (2 triangles) after the first 2 vertices
+		hostVertexCount = (DrawContext.dwVertexCount >= 4) ? ((DrawContext.dwVertexCount - 2) / 2) * 6 : 0;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		break;
 	case xbox::X_D3DPT_TRIANGLEFAN:
 	case xbox::X_D3DPT_POLYGON:
 		primType = CXBX_PRIM_FAN;
@@ -281,6 +294,12 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	case xbox::X_D3DPT_POINTLIST:
 		primType = CXBX_PRIM_NORMAL;
 		hostTopology = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+		break;
+	case xbox::X_D3DPT_LINELOOP:
+		primType = CXBX_PRIM_LINELOOP;
+		// N vertices → N line segments → 2N host vertices as LINELIST
+		hostVertexCount = DrawContext.dwVertexCount * 2;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
 		break;
 	default:
 		// Unsupported topology — fall back to IA path
@@ -314,8 +333,10 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	// Determine the vertex range to upload
 	UINT vertexStart = DrawContext.dwStartVertex;
 	UINT numVertices = DrawContext.dwVertexCount;
-	if (DrawContext.pXboxIndexData) {
-		// For indexed draws, we need to upload the full range [LowIndex..HighIndex]
+	if (!bUsingMirror && DrawContext.pXboxIndexData) {
+		// For indexed draws in fallback path, we need the range [LowIndex..HighIndex]
+		// to know what subset of VB data to upload. (Mirror path doesn't need this —
+		// the entire 64 MiB is already available.)
 		if (DrawContext.HighIndex == 0) {
 			WalkIndexBuffer(DrawContext.LowIndex, DrawContext.HighIndex,
 				DrawContext.pXboxIndexData, DrawContext.dwVertexCount);
@@ -402,24 +423,39 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	} // end if (!bUsingMirror)
 
 	// ---------------------------------------------------------------
-	// Step 3: Upload index data (if indexed draw)
+	// Step 3: Resolve index data (if indexed draw)
 	// ---------------------------------------------------------------
 	UINT indexedDraw = 0;
 	UINT indexOffset = 0;
+	bool bIdxFromMirror = false; // true = index data served from the 64 MiB mirror (t0)
 
 	if (DrawContext.pXboxIndexData) {
 		indexedDraw = 1; // 16-bit indices
-		UINT idxDataSize = DrawContext.dwVertexCount * sizeof(INDEX16);
-		idxDataSize = (idxDataSize + 3) & ~3u;
 
-		EnsureIdxDataBuffer(idxDataSize);
-		if (!s_pIdxDataBuf || !s_pIdxDataSRV)
-			return false;
+		// Check if index data pointer is in contiguous memory (0x80000000 range).
+		// If so, we can read it directly from the mirror buffer — no upload needed.
+		uintptr_t idxAddr = (uintptr_t)DrawContext.pXboxIndexData;
+		if (bUsingMirror && idxAddr >= CONTIGUOUS_MEMORY_BASE
+			&& idxAddr < (CONTIGUOUS_MEMORY_BASE + XBOX_CONTIGUOUS_MEMORY_SIZE)) {
+			// Index data is in the mirror — just pass the byte offset.
+			// We bind the mirror SRV as t1 (g_IdxData); the shader reads at g_IndexOffset.
+			indexOffset = (UINT)(idxAddr - CONTIGUOUS_MEMORY_BASE);
+			bIdxFromMirror = true;
+		} else {
+			// Index data is NOT in contiguous memory (e.g., pushbuffer inline data).
+			// Upload to the per-draw index buffer as before.
+			UINT idxDataSize = DrawContext.dwVertexCount * sizeof(INDEX16);
+			idxDataSize = (idxDataSize + 3) & ~3u;
 
-		HRESULT hr = CxbxD3D11UpdateDynamicBuffer(s_pIdxDataBuf, DrawContext.pXboxIndexData, DrawContext.dwVertexCount * sizeof(INDEX16));
-		if (FAILED(hr)) return false;
+			EnsureIdxDataBuffer(idxDataSize);
+			if (!s_pIdxDataBuf || !s_pIdxDataSRV)
+				return false;
 
-		indexOffset = 0;
+			HRESULT hr = CxbxD3D11UpdateDynamicBuffer(s_pIdxDataBuf, DrawContext.pXboxIndexData, DrawContext.dwVertexCount * sizeof(INDEX16));
+			if (FAILED(hr)) return false;
+
+			indexOffset = 0;
+		}
 	}
 
 	// ---------------------------------------------------------------
@@ -430,13 +466,16 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	// for SetStreamSource / SetVertexShader changes.
 	{
 		// Build a local hash of fields that change per-draw but aren't covered by
-		// the external invalidation (prim type, indexed mode, vertex range)
+		// the external invalidation (prim type, indexed mode, vertex range, index offset)
 		UINT drawLocalKey = primType | (indexedDraw << 2) | (vertexStart << 8) | (numVertices << 20);
 		static UINT s_LastDrawLocalKey = UINT_MAX;
+		static UINT s_LastIndexOffset = UINT_MAX;
 		bool layoutDirty = (s_LayoutCBGeneration != s_LastLayoutCBGeneration)
-		                || (drawLocalKey != s_LastDrawLocalKey);
+		                || (drawLocalKey != s_LastDrawLocalKey)
+		                || (indexOffset != s_LastIndexOffset);
 		s_LastLayoutCBGeneration = s_LayoutCBGeneration;
 		s_LastDrawLocalKey = drawLocalKey;
+		s_LastIndexOffset = indexOffset;
 
 		if (!layoutDirty) goto skip_layout_upload;
 	}
@@ -452,12 +491,7 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		pCB->IndexedDraw = indexedDraw;
 		pCB->IndexOffset = indexOffset;
 		pCB->NumAttribs = 16; // Always provide all 16 attribute descriptors
-
-		// For indexed draws, the index values reference Xbox vertex indices,
-		// but we've uploaded starting from LowIndex. The shader needs to account
-		// for this offset in the vertex data buffer. We subtract LowIndex from
-		// the fetched index by adjusting the stream base offset.
-		INT baseVertexOffset = -(INT)vertexStart;
+		pCB->NumVerts = DrawContext.dwVertexCount; // Original vertex count (for lineloop)
 
 		// Fill per-attribute descriptors
 		// Walk the vertex declaration's stream info to find each attribute
@@ -568,12 +602,14 @@ skip_layout_upload:
 
 	// Bind SRVs to VS: t0 = vertex data, t1 = index data (skip if unchanged)
 	// When using the mirror, t0 is the 64 MiB mirror buffer; otherwise the per-draw upload.
+	// When index data is also in the mirror, t1 points to the same mirror SRV.
 	ID3D11ShaderResourceView* pActiveVtxSRV = bUsingMirror ? pMirrorSRV : s_pVtxDataSRV;
-	if (pActiveVtxSRV != s_pLastBoundVtxSRV || s_pIdxDataSRV != s_pLastBoundIdxSRV) {
-		ID3D11ShaderResourceView* vsSRVs[2] = { pActiveVtxSRV, s_pIdxDataSRV };
+	ID3D11ShaderResourceView* pActiveIdxSRV = bIdxFromMirror ? pMirrorSRV : s_pIdxDataSRV;
+	if (pActiveVtxSRV != s_pLastBoundVtxSRV || pActiveIdxSRV != s_pLastBoundIdxSRV) {
+		ID3D11ShaderResourceView* vsSRVs[2] = { pActiveVtxSRV, pActiveIdxSRV };
 		g_pD3DDeviceContext->VSSetShaderResources(0, 2, vsSRVs);
 		s_pLastBoundVtxSRV = pActiveVtxSRV;
-		s_pLastBoundIdxSRV = s_pIdxDataSRV;
+		s_pLastBoundIdxSRV = pActiveIdxSRV;
 	}
 
 	// Bind CBs to VS: b1 = layout, b2 = defaults (skip if unchanged)

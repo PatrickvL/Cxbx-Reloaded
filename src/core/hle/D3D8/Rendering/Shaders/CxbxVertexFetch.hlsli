@@ -28,11 +28,15 @@ ByteAddressBuffer g_IdxData : register(t1);
 // Per-attribute: up to 16 attribute descriptors
 cbuffer CxbxVertexLayoutCB : register(b1)
 {
-    // Header (4 uint = 16 bytes)
-    uint g_PrimType;        // 0=normal, 1=quad, 2=fan
+    // Header (8 uint = 32 bytes, 2 × uint4 for alignment)
+    uint g_PrimType;        // 0=normal, 1=quad, 2=fan, 3=quadstrip, 4=lineloop
     uint g_IndexedDraw;     // 0=non-indexed, 1=indexed 16-bit, 2=indexed 32-bit
     uint g_IndexOffset;     // Byte offset into g_IdxData for the index data start
     uint g_NumAttribs;      // Number of active vertex attributes (1..16)
+    uint g_NumVerts;        // Original Xbox vertex count (needed for lineloop wrap)
+    uint g_Pad5;
+    uint g_Pad6;
+    uint g_Pad7;
 
     // Per-attribute descriptors (16 × uint4 = 256 bytes)
     // x = byte offset from start of vertex in the stream
@@ -67,9 +71,11 @@ cbuffer CxbxVertexLayoutCB : register(b1)
 #define CXBX_VTXFMT_SHORT3       19 // 3 signed 16-bit unnormalized (Xbox: 6 bytes, W=1)
 
 // Primitive type constants for topology conversion
-#define CXBX_PRIM_NORMAL  0
-#define CXBX_PRIM_QUAD    1
-#define CXBX_PRIM_FAN     2
+#define CXBX_PRIM_NORMAL    0
+#define CXBX_PRIM_QUAD      1
+#define CXBX_PRIM_FAN       2
+#define CXBX_PRIM_QUADSTRIP 3
+#define CXBX_PRIM_LINELOOP  4
 
 // ---------------------------------------------------------------
 // Topology conversion: compute Xbox vertex index from SV_VertexID
@@ -94,6 +100,28 @@ uint FanVertexIndex(uint vertId)
     return local == 0u ? 0u : (tri + local);
 }
 
+// Quad strip: each quad uses vertices [2i, 2i+1, 2i+2, 2i+3]
+// Triangulated as [2i, 2i+1, 2i+2] and [2i+2, 2i+1, 2i+3]
+uint QuadStripVertexIndex(uint vertId)
+{
+    uint quad  = vertId / 6u;
+    uint local = vertId % 6u;
+    uint base  = quad * 2u;
+    // LUT: +0,+1,+2, +2,+1,+3
+    static const uint lut[6] = { 0u, 1u, 2u, 2u, 1u, 3u };
+    return base + lut[local];
+}
+
+// Line loop: N vertices → N line segments rendered as LINELIST (2N host vertices)
+// Segment i uses vertices [i, (i+1) % N]
+uint LineLoopVertexIndex(uint vertId, uint numVerts)
+{
+    uint seg   = vertId / 2u;
+    uint local = vertId % 2u;
+    // local 0 → seg, local 1 → (seg+1) % numVerts
+    return local == 0u ? seg : ((seg + 1u) % numVerts);
+}
+
 // Resolve the Xbox vertex index from the host SV_VertexID, applying
 // topology conversion and optional index buffer indirection.
 uint ResolveVertexIndex(uint hostVertId)
@@ -104,6 +132,10 @@ uint ResolveVertexIndex(uint hostVertId)
         logicalIdx = QuadVertexIndex(hostVertId);
     } else if (g_PrimType == CXBX_PRIM_FAN) {
         logicalIdx = FanVertexIndex(hostVertId);
+    } else if (g_PrimType == CXBX_PRIM_QUADSTRIP) {
+        logicalIdx = QuadStripVertexIndex(hostVertId);
+    } else if (g_PrimType == CXBX_PRIM_LINELOOP) {
+        logicalIdx = LineLoopVertexIndex(hostVertId, g_NumVerts);
     } else {
         logicalIdx = hostVertId;
     }
