@@ -106,26 +106,13 @@ static inline bool TestBit(const uint32_t* bitmap, uint32_t index)
 }
 
 // ******************************************************************
-// * VEH handler — GPU-dirty faults + tiled memory redirect
+// * Handle a fault (GPU-dirty pages or tiled redirect)
+// * Called by PageTrackerVEH below.
 // ******************************************************************
-static long WINAPI PageTrackerVEH(EXCEPTION_POINTERS* e)
-{
-	if (e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
-		return EXCEPTION_CONTINUE_SEARCH;
 
-	uintptr_t faultAddr = (uintptr_t)e->ExceptionRecord->ExceptionInformation[1];
-	bool isWrite = (e->ExceptionRecord->ExceptionInformation[0] == 1);
-
-	if (CxbxPageTrackerHandleFault((void*)faultAddr, isWrite))
-		return EXCEPTION_CONTINUE_EXECUTION;
-
-	return EXCEPTION_CONTINUE_SEARCH;
-}
-
-// ******************************************************************
-// * Public: Handle a fault (GPU-dirty pages or tiled redirect)
-// ******************************************************************
-bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
+// Try to handle an access violation in the contiguous or tiled region.
+// Returns true if the fault was handled (page committed/restored).
+static bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 {
 	uintptr_t addr = (uintptr_t)faultAddress;
 
@@ -170,6 +157,23 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 	}
 
 	return false;
+}
+
+// ******************************************************************
+// * VEH handler — GPU-dirty faults + tiled memory redirect
+// ******************************************************************
+static long WINAPI PageTrackerVEH(EXCEPTION_POINTERS* e)
+{
+	if (e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
+		return EXCEPTION_CONTINUE_SEARCH;
+
+	uintptr_t faultAddr = (uintptr_t)e->ExceptionRecord->ExceptionInformation[1];
+	bool isWrite = (e->ExceptionRecord->ExceptionInformation[0] == 1);
+
+	if (CxbxPageTrackerHandleFault((void*)faultAddr, isWrite))
+		return EXCEPTION_CONTINUE_EXECUTION;
+
+	return EXCEPTION_CONTINUE_SEARCH;
 }
 
 // ******************************************************************

@@ -103,14 +103,5 @@ void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size);
 struct ID3D11ShaderResourceView;
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV();
 
-// ******************************************************************
-// * VEH handler (called from exception chain)
-// ******************************************************************
-
-// Try to handle an access violation in the contiguous region.
-// Returns true if the fault was handled (page marked dirty, access restored).
-// Called from the VEH chain (lleException or a dedicated front-line handler).
-bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite);
-
 #endif // CXBX_USE_D3D11
 #endif // BACKEND_D3D11_PAGE_TRACKER_H
