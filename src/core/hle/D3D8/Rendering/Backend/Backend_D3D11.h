@@ -232,7 +232,7 @@ bool CxbxD3D11ConvertVertexBufferGPU(
 // ******************************************************************
 // * IA bypass — manual vertex fetch from ByteAddressBuffer via SV_VertexID
 // ******************************************************************
-struct CxbxDrawContext; // forward decl
+typedef struct _CxbxDrawContext CxbxDrawContext; // forward decl
 void CxbxD3D11IABypassInit();
 void CxbxD3D11IABypassRelease();
 bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext);
