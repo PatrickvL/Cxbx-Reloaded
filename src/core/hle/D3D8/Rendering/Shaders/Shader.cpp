@@ -98,6 +98,13 @@ extern HRESULT EmuCompileShader
 	// Use IA bypass defines for vertex shaders (vs_*) when the flag is set
 	bool isVertexShader = (shader_profile != nullptr && shader_profile[0] == 'v' && shader_profile[1] == 's');
 	D3D_SHADER_MACRO* defines = (isVertexShader && g_bD3D11IABypass) ? defines_ia_bypass : defines_ia_normal;
+
+	// IA bypass shaders include FetchAllAttributes() which unrolls a 20-format
+	// switch × 16 attributes.  At O3 the HLSL compiler spends exponential time
+	// optimising this; O1 compiles in seconds and produces correct code.
+	if (defines == defines_ia_bypass) {
+		flags1 = (flags1 & ~D3DCOMPILE_OPTIMIZATION_LEVEL3) | D3DCOMPILE_OPTIMIZATION_LEVEL1;
+	}
 #else
 	D3D_SHADER_MACRO* defines = nullptr;
 #endif

@@ -340,22 +340,10 @@ extern HRESULT EmuCompileVertexShader
 
 extern void EmuCompileFixedFunction(ID3DBlob** ppHostShader)
 {
-	// The fixed function shader combined with IA bypass vertex fetch
-	// (16 attrs × 20 format switch + full lighting engine) causes the
-	// HLSL compiler to hang.  Compile without IA bypass; the draw path
-	// falls back to normal IA for FixedFunction mode.
-	bool saved = g_bD3D11IABypass;
-	g_bD3D11IABypass = false;
 	EmuCompileShader(g_ShaderSources.fixedFunctionVertexShaderHlsl, g_vs_model, ppHostShader, g_ShaderSources.fixedFunctionVertexShaderPath.c_str());
-	g_bD3D11IABypass = saved;
 };
 
 extern void EmuCompileXboxPassthrough(ID3DBlob** ppHostShader)
 {
-	// Same issue as FixedFunction: 16 attrs × 20 format switch is very
-	// slow to compile at O3.  Use normal IA path for passthrough too.
-	bool saved = g_bD3D11IABypass;
-	g_bD3D11IABypass = false;
 	EmuCompileShader(g_ShaderSources.vertexShaderPassthroughHlsl, g_vs_model, ppHostShader, g_ShaderSources.vertexShaderPassthroughPath.c_str());
-	g_bD3D11IABypass = saved;
 }
