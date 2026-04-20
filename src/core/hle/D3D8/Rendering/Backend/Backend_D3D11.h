@@ -238,6 +238,20 @@ void CxbxD3D11IABypassRelease();
 bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext);
 void CxbxD3D11IABypassInvalidateLayout();  // Bump layout CB generation counter
 extern bool g_bD3D11IABypassDefaultsDirty; // Set true when vertex defaults change
+
+// ******************************************************************
+// * Page tracker — dirty page tracking for the 64 MiB contiguous memory mirror
+// ******************************************************************
+void CxbxPageTrackerInit();
+void CxbxPageTrackerShutdown();
+uint32_t CxbxPageTrackerFlushToGPU();
+bool CxbxPageTrackerHasDirtyPages();
+void CxbxPageTrackerMarkGPUDirty(uint32_t startOffset, uint32_t size);
+bool CxbxPageTrackerIsGPUDirty(uint32_t pageIndex);
+void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size);
+struct ID3D11ShaderResourceView;
+ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV();
+bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite);
 std::vector<D3D11_INPUT_ELEMENT_DESC> FilterInputElementsByShaderSignature(
 	const D3D11_INPUT_ELEMENT_DESC* pElements, UINT elementCount,
 	const void* bytecode, size_t bytecodeSize);

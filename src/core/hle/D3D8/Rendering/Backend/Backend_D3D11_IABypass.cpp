@@ -30,6 +30,8 @@
 #ifdef CXBX_USE_D3D11
 
 #include "Backend_D3D11_Internal.h"
+#include "Backend_D3D11_PageTracker.h"
+#include "common/AddressRanges.h"
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // HLE_get_NV2A_vertex_attribute_value_pointer
@@ -289,7 +291,21 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		return true; // Nothing to draw — handled
 
 	// ---------------------------------------------------------------
-	// Step 2: Upload vertex data from all active streams into a single buffer
+	// Step 2: Ensure GPU mirror has latest CPU writes (page tracker path)
+	// ---------------------------------------------------------------
+	// Flush any pages the game has written since last draw.
+	// After this, the 64 MiB mirror ByteAddressBuffer is up-to-date.
+	// The mirror path can only be used for VB draws (not UP draws where
+	// vertex data comes from an arbitrary user pointer on the stack/heap).
+	ID3D11ShaderResourceView* pMirrorSRV = CxbxPageTrackerGetMirrorSRV();
+	bool bUsingMirror = (pMirrorSRV != nullptr) && !DrawContext.pXboxVertexStreamZeroData;
+
+	if (bUsingMirror) {
+		CxbxPageTrackerFlushToGPU();
+	}
+
+	// ---------------------------------------------------------------
+	// Step 2b: Upload vertex data (fallback when mirror is not available)
 	// ---------------------------------------------------------------
 	// Calculate total data size needed across all streams
 	UINT streamOffsets[X_VSH_MAX_STREAMS] = {};  // byte offset of each stream within g_VtxData
@@ -308,68 +324,70 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		numVertices = DrawContext.HighIndex - DrawContext.LowIndex + 1;
 	}
 
-	for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
-		auto& streamInfo = pDecl->VertexStreams[s];
-		UINT streamIdx = streamInfo.XboxStreamIndex;
-		auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
-
-		if (!streamInput.VertexBuffer && !DrawContext.pXboxVertexStreamZeroData)
-			continue;
-
-		UINT stride = streamInput.Stride;
-		if (stride == 0) stride = streamInfo.HostVertexStride; // Fallback
-
-		UINT streamDataSize = numVertices * stride;
-		streamDataSize = (streamDataSize + 3) & ~3u; // Align to 4 bytes
-
-		streamOffsets[s] = totalVtxDataSize;
-		totalVtxDataSize += streamDataSize;
-	}
-
-	if (totalVtxDataSize == 0)
-		return false;
-
-	EnsureVtxDataBuffer(totalVtxDataSize);
-	if (!s_pVtxDataBuf || !s_pVtxDataSRV)
-		return false;
-
-	// Upload all stream data into the single buffer
-	{
-		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		HRESULT hr = g_pD3DDeviceContext->Map(s_pVtxDataBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (FAILED(hr)) return false;
-
-		uint8_t* pDst = (uint8_t*)mapped.pData;
-
+	if (!bUsingMirror) {
 		for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
 			auto& streamInfo = pDecl->VertexStreams[s];
 			UINT streamIdx = streamInfo.XboxStreamIndex;
 			auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
 
+			if (!streamInput.VertexBuffer && !DrawContext.pXboxVertexStreamZeroData)
+				continue;
+
 			UINT stride = streamInput.Stride;
-			if (stride == 0) stride = streamInfo.HostVertexStride;
+			if (stride == 0) stride = streamInfo.HostVertexStride; // Fallback
 
 			UINT streamDataSize = numVertices * stride;
-			const uint8_t* pSrc = nullptr;
+			streamDataSize = (streamDataSize + 3) & ~3u; // Align to 4 bytes
 
-			if (s == 0 && DrawContext.pXboxVertexStreamZeroData) {
-				// UP draw: vertex data from user pointer
-				pSrc = (const uint8_t*)DrawContext.pXboxVertexStreamZeroData
-					+ vertexStart * stride;
-			} else if (streamInput.VertexBuffer) {
-				// Regular stream: get raw Xbox pointer
-				pSrc = (const uint8_t*)GetDataFromXboxResource(streamInput.VertexBuffer)
-					+ streamInput.Offset
-					+ vertexStart * stride;
-			}
-
-			if (pSrc) {
-				memcpy(pDst + streamOffsets[s], pSrc, streamDataSize);
-			}
+			streamOffsets[s] = totalVtxDataSize;
+			totalVtxDataSize += streamDataSize;
 		}
 
-		g_pD3DDeviceContext->Unmap(s_pVtxDataBuf, 0);
-	}
+		if (totalVtxDataSize == 0)
+			return false;
+
+		EnsureVtxDataBuffer(totalVtxDataSize);
+		if (!s_pVtxDataBuf || !s_pVtxDataSRV)
+			return false;
+
+		// Upload all stream data into the single buffer
+		{
+			D3D11_MAPPED_SUBRESOURCE mapped = {};
+			HRESULT hr = g_pD3DDeviceContext->Map(s_pVtxDataBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+			if (FAILED(hr)) return false;
+
+			uint8_t* pDst = (uint8_t*)mapped.pData;
+
+			for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
+				auto& streamInfo = pDecl->VertexStreams[s];
+				UINT streamIdx = streamInfo.XboxStreamIndex;
+				auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
+
+				UINT stride = streamInput.Stride;
+				if (stride == 0) stride = streamInfo.HostVertexStride;
+
+				UINT streamDataSize = numVertices * stride;
+				const uint8_t* pSrc = nullptr;
+
+				if (s == 0 && DrawContext.pXboxVertexStreamZeroData) {
+					// UP draw: vertex data from user pointer
+					pSrc = (const uint8_t*)DrawContext.pXboxVertexStreamZeroData
+						+ vertexStart * stride;
+				} else if (streamInput.VertexBuffer) {
+					// Regular stream: get raw Xbox pointer
+					pSrc = (const uint8_t*)GetDataFromXboxResource(streamInput.VertexBuffer)
+						+ streamInput.Offset
+						+ vertexStart * stride;
+				}
+
+				if (pSrc) {
+					memcpy(pDst + streamOffsets[s], pSrc, streamDataSize);
+				}
+			}
+
+			g_pD3DDeviceContext->Unmap(s_pVtxDataBuf, 0);
+		}
+	} // end if (!bUsingMirror)
 
 	// ---------------------------------------------------------------
 	// Step 3: Upload index data (if indexed draw)
@@ -480,17 +498,20 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 				}
 
 				if (found && regIdx < 16) {
-					// The stream data starts at streamOffsets[s] in the vertex buffer,
-					// but indices reference the *original* Xbox vertex numbering.
-					// Since we uploaded starting from vertexStart, the shader's computed
-					// byteOff = streamBase + xboxVtxIdx * stride + elemOffset needs
-					// to produce the correct byte when xboxVtxIdx is the raw Xbox index.
-					// We store: streamBase such that index 0 in Xbox maps to byte 0 in buffer.
-					// After index indirection: xboxVtxIdx = rawIndex (from IB).
-					// Buffer starts at vertexStart, so xboxVtxIdx - vertexStart gives the
-					// local index. But the shader does: streamBase + xboxVtxIdx * stride.
-					// So we need: streamBase = streamOffsets[s] - vertexStart * stride.
-					INT streamBase = (INT)streamOffsets[s] - (INT)vertexStart * (INT)stride;
+					INT streamBase;
+					if (bUsingMirror && streamInput.VertexBuffer) {
+						// Mirror path: streamBase is the raw byte offset from CONTIGUOUS_MEMORY_BASE
+						// to the start of the VB data. The shader does:
+						//   byteOff = streamBase + vtxIdx * stride + elemOffset
+						// GetDataFromXboxResource returns a pointer in the 0x80000000 region;
+						// subtract CONTIGUOUS_MEMORY_BASE to get the 27-bit offset.
+						uintptr_t vbAddr = (uintptr_t)GetDataFromXboxResource(streamInput.VertexBuffer);
+						streamBase = (INT)(vbAddr - CONTIGUOUS_MEMORY_BASE) + (INT)streamInput.Offset;
+					} else {
+						// Fallback path: packed stream data uploaded to s_pVtxDataBuf.
+						// streamBase = streamOffsets[s] - vertexStart * stride.
+						streamBase = (INT)streamOffsets[s] - (INT)vertexStart * (INT)stride;
+					}
 
 					pCB->Attribs[regIdx][0] = elemOffset;
 					pCB->Attribs[regIdx][1] = stride;
@@ -529,10 +550,12 @@ skip_layout_upload:
 	g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
 
 	// Bind SRVs to VS: t0 = vertex data, t1 = index data (skip if unchanged)
-	if (s_pVtxDataSRV != s_pLastBoundVtxSRV || s_pIdxDataSRV != s_pLastBoundIdxSRV) {
-		ID3D11ShaderResourceView* vsSRVs[2] = { s_pVtxDataSRV, s_pIdxDataSRV };
+	// When using the mirror, t0 is the 64 MiB mirror buffer; otherwise the per-draw upload.
+	ID3D11ShaderResourceView* pActiveVtxSRV = bUsingMirror ? pMirrorSRV : s_pVtxDataSRV;
+	if (pActiveVtxSRV != s_pLastBoundVtxSRV || s_pIdxDataSRV != s_pLastBoundIdxSRV) {
+		ID3D11ShaderResourceView* vsSRVs[2] = { pActiveVtxSRV, s_pIdxDataSRV };
 		g_pD3DDeviceContext->VSSetShaderResources(0, 2, vsSRVs);
-		s_pLastBoundVtxSRV = s_pVtxDataSRV;
+		s_pLastBoundVtxSRV = pActiveVtxSRV;
 		s_pLastBoundIdxSRV = s_pIdxDataSRV;
 	}
 

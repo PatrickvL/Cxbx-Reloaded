@@ -61,6 +61,36 @@ bool ReserveMemoryRange(int index, blocks_reserved_t blocks_reserved)
 	std::printf("DEBUG: ReserveMemoryRange call begin\n");
 	std::printf("     : Comment = %s\n", XboxAddressRanges[index].Comment);
 #endif
+
+#ifdef CXBX_USE_D3D11
+	// Under D3D11, contiguous memory uses VirtualAlloc + MEM_WRITE_WATCH for
+	// zero-cost dirty page tracking. Tiled memory is a PAGE_NOACCESS reservation
+	// with VEH-based redirect to contiguous memory. This breaks the MapViewOfFileEx
+	// alias between 0x80000000 and 0xF0000000 (which is unnecessary under HLE).
+	if (Start == PHYSICAL_MAP1_BASE) {
+		LPVOID Result = VirtualAlloc(
+			(LPVOID)Start, Size,
+			MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH,
+			PAGE_EXECUTE_READWRITE);
+#ifdef DEBUG
+		std::printf("     : VirtualAlloc(MEM_WRITE_WATCH); Start = 0x%08X; Result = %p\n", Start, Result);
+#endif
+		if (Result == nullptr) {
+			HadAnyFailure = true;
+		}
+	} else if (Start == TILED_MEMORY_BASE) {
+		LPVOID Result = VirtualAlloc(
+			(LPVOID)Start, Size,
+			MEM_RESERVE,
+			PAGE_NOACCESS);
+#ifdef DEBUG
+		std::printf("     : VirtualAlloc(PAGE_NOACCESS); Start = 0x%08X; Result = %p\n", Start, Result);
+#endif
+		if (Result == nullptr) {
+			HadAnyFailure = true;
+		}
+	} else
+#endif // CXBX_USE_D3D11
 	switch (Start) {
 		case PHYSICAL_MAP1_BASE:
 			hFileMapping1 = CreateFileMapping(
@@ -171,6 +201,17 @@ void FreeMemoryRange(int index, blocks_reserved_t blocks_reserved)
 	std::printf("DEBUG: FreeMemoryRange call begin\n");
 	std::printf("     : Comment = %s\n", XboxAddressRanges[index].Comment);
 #endif
+
+#ifdef CXBX_USE_D3D11
+	// Under D3D11, contiguous and tiled memory were allocated with VirtualAlloc
+	// (not MapViewOfFileEx), so they must be freed with VirtualFree.
+	if (Start == PHYSICAL_MAP1_BASE || Start == TILED_MEMORY_BASE) {
+		(void)VirtualFree((LPVOID)Start, 0, MEM_RELEASE);
+#ifdef DEBUG
+		std::printf("     : VirtualFree; Start = 0x%08X\n", Start);
+#endif
+	} else
+#endif // CXBX_USE_D3D11
 	switch (Start) {
 		case PHYSICAL_MAP1_BASE:
 		case PHYSICAL_MAP2_BASE:
