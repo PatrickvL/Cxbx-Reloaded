@@ -47,13 +47,10 @@ float4 fetch_input(
     float4 raw;
 
     if (mux == VSI_MUX_R) {
-        // Temporary register r0-r11; r12 aliases oPos
-        if (r_idx == 12)
-            raw = oPos_reg;
-        else if (r_idx < 12)
-            raw = r[r_idx];
-        else
-            raw = float4(0, 0, 0, 0);
+        // Temporary register r0-r11; r12 aliases oPos; >12 is NV2A-undefined
+        raw = (r_idx == 12) ? oPos_reg
+            : (r_idx <  12) ? r[r_idx]
+            :                 float4(0, 0, 0, 0);
     }
     else if (mux == VSI_MUX_V) {
         // Vertex input register v0-v15
@@ -114,7 +111,6 @@ float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
         case VSI_MAC_MAX: return max(a, b);
         case VSI_MAC_SLT: return 1.0 - step(b, a);  // 1 where a < b
         case VSI_MAC_SGE: return step(b, a);           // 1 where a >= b
-        case VSI_MAC_ARL: return a; // ARL result stored to a0 by caller
         default: return float4(0, 0, 0, 0);
     }
 }
@@ -273,7 +269,8 @@ VS_OUTPUT main(const VS_INPUT xIn)
         bool use_a0x      = ((dw3 >> VSI_FLD_A0X_BIT3) & 1) != 0;
         bool is_final     = ((dw3 >> VSI_FLD_FINAL_BIT3) & 1) != 0;
 
-        bool is_paired = (mac_op != VSI_MAC_NOP) && (ilu_op != VSI_ILU_NOP);
+        bool is_paired = (mac_op != VSI_MAC_NOP) & (ilu_op != VSI_ILU_NOP);
+        bool do_out = (out_o_mask != 0) & out_orb;
 
         // ============================================================
         // Snapshot inputs before executing (prevents order-dependent behavior)
@@ -295,20 +292,19 @@ VS_OUTPUT main(const VS_INPUT xIn)
         // Execute MAC operation
         // ============================================================
         if (mac_op != VSI_MAC_NOP) {
-            float4 mac_result = exec_mac(mac_op, in_a, in_b, in_c);
-
-            // ARL writes to address register
             if (mac_op == VSI_MAC_ARL) {
-                a0 = (int)vsi_floor(mac_result.x);
+                // ARL: bypass exec_mac — only needs floor(in_a.x)
+                a0 = (int)vsi_floor(in_a.x);
             }
             else {
+                float4 mac_result = exec_mac(mac_op, in_a, in_b, in_c);
+
                 // Write to R register (unless paired and R=1, which is reserved for ILU)
-                uint mac_r_dest = out_r_addr;
-                if (!(is_paired && mac_r_dest == 1) && out_mac_mask != 0)
-                    write_r(mac_r_dest, r, oRegs[0], mac_result, out_mac_mask);
+                if (!(is_paired & (out_r_addr == 1)) && out_mac_mask != 0)
+                    write_r(out_r_addr, r, oRegs[0], mac_result, out_mac_mask);
 
                 // Write to output register (if MAC is the output source)
-                if (out_mux == 0 && out_o_mask != 0 && out_orb)
+                if (!out_mux & do_out)
                     write_masked(oRegs[out_address & 0xF], mac_result, out_o_mask);
             }
         }
@@ -319,14 +315,13 @@ VS_OUTPUT main(const VS_INPUT xIn)
         if (ilu_op != VSI_ILU_NOP) {
             float4 ilu_result = exec_ilu(ilu_op, in_c);
 
-            // ILU writes to R register
-            // When paired, ILU always writes to R1
+            // ILU writes to R register; when paired, always to R1
             uint ilu_r_dest = is_paired ? 1 : out_r_addr;
             if (out_ilu_mask != 0)
                 write_r(ilu_r_dest, r, oRegs[0], ilu_result, out_ilu_mask);
 
             // Write to output register (if ILU is the output source)
-            if (out_mux == 1 && out_o_mask != 0 && out_orb)
+            if (out_mux & do_out)
                 write_masked(oRegs[out_address & 0xF], ilu_result, out_o_mask);
         }
 
