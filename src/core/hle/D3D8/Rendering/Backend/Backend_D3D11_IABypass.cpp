@@ -597,6 +597,14 @@ skip_layout_upload:
 	}
 
 	// Issue the draw
+	{
+		static int drawCount = 0;
+		if (drawCount < 3) {
+			EmuLog(LOG_LEVEL::INFO, "IABypass draw #%d: %u verts, topology=%d, indexed=%u, UP=%d",
+				drawCount, hostVertexCount, (int)hostTopology, indexedDraw, (int)bIsUPDraw);
+			drawCount++;
+		}
+	}
 	g_pD3DDeviceContext->Draw(hostVertexCount, 0);
 
 	if (primType == CXBX_PRIM_NORMAL) {

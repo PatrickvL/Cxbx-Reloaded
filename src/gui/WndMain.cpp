@@ -42,7 +42,11 @@
 #include "DlgLoggingConfig.h"
 #include "common\xbe\XbePrinter.h" // For DumpInformation
 #include "EmuShared.h"
-#include "core\hle\D3D8\Rendering\RenderGlobals.h" // For DDPF_FOURCC
+#include "core\hle\D3D8\Rendering\RenderGlobals.h"
+
+#ifndef DDPF_FOURCC
+#define DDPF_FOURCC 0x00000004 // DirectDraw pixel format flag
+#endif
 #include "core\hle\D3D8\XbConvert.h" // For CxbxSetPixelContainerHeader, ConvertD3DTextureToARGB
 #include "common\Settings.hpp"
 #include "common/util/cliConfig.hpp"

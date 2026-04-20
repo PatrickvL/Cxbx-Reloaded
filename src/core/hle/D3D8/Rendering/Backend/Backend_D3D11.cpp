@@ -387,6 +387,7 @@ bool CxbxD3D11InitRCInterpreter()
 	}
 
 	// Compile
+	EmuLog(LOG_LEVEL::INFO, "Compiling RC Interpreter pixel shader (this may take a moment)...");
 	ID3DBlob* pBlob = nullptr;
 	HRESULT hr = EmuCompileShader(hlsl, "ps_5_0", &pBlob,
 		g_ShaderSources.registerCombinerInterpreterPath.c_str());

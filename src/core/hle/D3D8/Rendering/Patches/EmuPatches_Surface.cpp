@@ -428,6 +428,15 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	const auto height = g_XBVideo.bMaintainAspect ? g_AspectRatioScaleHeight * g_AspectRatioScale : g_HostBackBufferDesc.Height;
 
 		auto pXboxBackBufferHostSurface = GetHostSurface(g_pXbox_BackBufferSurface, D3DUSAGE_RENDERTARGET);
+		// Diagnostic: log draw count per frame (first few frames only)
+		{
+			static int frameCount = 0;
+			if (frameCount < 5) {
+				EmuLog(LOG_LEVEL::INFO, "Present [frame %d]: %u prims, backbuf=%p",
+					frameCount, g_dwPrimPerFrame, pXboxBackBufferHostSurface);
+				frameCount++;
+			}
+		}
 		if (pXboxBackBufferHostSurface) {
 			// Diagnostic: log actual DXGI formats of source and destination surfaces
 			{
