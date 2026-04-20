@@ -158,6 +158,7 @@ set(WINS_LIB
  delayimp
  dinput8
  dxguid
+ dxgi
  odbc32
  odbccp32
  Shlwapi
