@@ -166,7 +166,7 @@ float4 ApplyInputMapping(uint mapping, float4 v)
     switch (mapping) // caller already isolated bits [7:5]
     {
         case PS_INPUTMAPPING_UNSIGNED_IDENTITY: return max(0.0f, v);
-        case PS_INPUTMAPPING_UNSIGNED_INVERT:   return 1.0f - clamp(v, 0.0f, 1.0f);
+        case PS_INPUTMAPPING_UNSIGNED_INVERT:   return 1.0f - saturate(v);
         case PS_INPUTMAPPING_EXPAND_NORMAL:     return  2.0f * max(0.0f, v) - 1.0f;
         case PS_INPUTMAPPING_EXPAND_NEGATE:     return -2.0f * max(0.0f, v) + 1.0f;
         case PS_INPUTMAPPING_HALFBIAS_NORMAL:   return        max(0.0f, v) - 0.5f;
@@ -215,7 +215,7 @@ float DecodeOutputScale(uint flags)
 //   are valid only at stageIdx=9.
 // ============================================================
 
-float4 ResolveStageInput(float4 Regs[16], uint regByte, bool isAlpha, uint stage,
+float4 ResolveStageInput(float4 Regs[16], uint regByte, uint stage,
                          bool flagUniqueC0, bool flagUniqueC1)
 {
     uint regIdx    = regByte & 0x0Fu;
@@ -256,7 +256,7 @@ float4 ResolveStageInput(float4 Regs[16], uint regByte, bool isAlpha, uint stage
     return ApplyInputMapping(mapping, val);
 }
 
-float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isAlpha, bool isFinalAB,
+float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB,
                          bool flagUniqueC0, bool flagUniqueC1)
 {
     uint regIdx    = regByte & 0x0Fu;
@@ -411,7 +411,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
     case PS_TEXTUREMODES_DPNDNT_AR:
     {
         // Dependent lookup: use .a and .r from T[stage-1] as (u,v)
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
         val = Sample2D(stage, prev.ar);
         break;
     }
@@ -419,7 +419,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
     case PS_TEXTUREMODES_DPNDNT_GB:
     {
         // Dependent lookup: use .g and .b from T[stage-1] as (u,v)
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
         val = Sample2D(stage, prev.gb);
         break;
     }
@@ -428,7 +428,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
     {
         // Compute dot(tex_coords, T[stage-1].rgb); store scalar in .x
         // Subsequent DOT_ST / DOT_ZW / DOT_STR modes read T[stage].x
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
         float  d    = dot(coords.xyz, prev.xyz);
         val = float4(d, 0.0f, 0.0f, 1.0f);
         break;
@@ -437,8 +437,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
     case PS_TEXTUREMODES_DOT_ST:
     {
         // Use dot results from T[stage-2].x and T[stage-1].x as (s,t)
-        float s = RegRead(Regs, PS_REGISTER_T0 + (stage - 2u)).x;
-        float t = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u)).x;
+        float s = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
+        float t = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
         val = Sample2D(stage, float2(s, t));
         break;
     }
@@ -446,8 +446,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
     case PS_TEXTUREMODES_DOT_ZW:
     {
         // (stage-2 dot result, current dot result) stored as (z, w)
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
-        float  s    = RegRead(Regs, PS_REGISTER_T0 + (stage - 2u)).x;
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
+        float  s    = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
         float  t    = dot(coords.xyz, prev.xyz);
         val = float4(0.0f, 0.0f, s, t);
         break;
@@ -458,9 +458,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
         // Build a normal from three sequential DOTPRODUCT results; cubemap lookup.
         // Bug fix: normal is used directly as the cubemap direction.
         // There is no reflection computation for the DIFF mode (that is SPEC).
-        float  nx   = RegRead(Regs, PS_REGISTER_T0 + (stage - 2u)).x;
-        float  ny   = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u)).x;
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
+        float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
+        float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
         float  nz   = dot(coords.xyz, prev.xyz);
         val = SampleCube(stage, float3(nx, ny, nz));
         break;
@@ -471,14 +471,14 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
         // Build normal, compute specular reflection vector, cubemap lookup.
         // Eye vector is assembled from the .w component of T1, T2, T3
         // (NV2A hardcodes these indices).
-        float  nx   = RegRead(Regs, PS_REGISTER_T0 + (stage - 2u)).x;
-        float  ny   = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u)).x;
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
+        float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
+        float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
         float  nz   = dot(coords.xyz, prev.xyz);
         float3 N    = normalize(float3(nx, ny, nz));
-        float3 E    = normalize(float3(RegRead(Regs, PS_REGISTER_T1).w,
-                                       RegRead(Regs, PS_REGISTER_T2).w,
-                                       RegRead(Regs, PS_REGISTER_T3).w));
+        float3 E    = normalize(float3(Regs[PS_REGISTER_T1].w,
+                                       Regs[PS_REGISTER_T2].w,
+                                       Regs[PS_REGISTER_T3].w));
         float3 R    = 2.0f * dot(N, E) * N - E;
         val = SampleCube(stage, R);
         break;
@@ -486,9 +486,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
 
     case PS_TEXTUREMODES_DOT_STR_3D:
     {
-        float  s    = RegRead(Regs, PS_REGISTER_T0 + (stage - 2u)).x;
-        float  t    = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u)).x;
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
+        float  s    = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
+        float  t    = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
         float  r    = dot(coords.xyz, prev.xyz);
         val = Sample3D(stage, float3(s, t, r));
         break;
@@ -496,9 +496,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
 
     case PS_TEXTUREMODES_DOT_STR_CUBE:
     {
-        float  s    = RegRead(Regs, PS_REGISTER_T0 + (stage - 2u)).x;
-        float  t    = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u)).x;
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
+        float  s    = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
+        float  t    = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
         float  r    = dot(coords.xyz, prev.xyz);
         val = SampleCube(stage, float3(s, t, r));
         break;
@@ -508,9 +508,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
     {
         // Like DOT_RFLCT_SPEC but eye vector is a constant.
         // TODO: wire SetEyeVector() / D3DRS_PSINPUTTEXTURE to a cbuffer entry
-        float  nx   = RegRead(Regs, PS_REGISTER_T0 + (stage - 2u)).x;
-        float  ny   = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u)).x;
-        float4 prev = RegRead(Regs, PS_REGISTER_T0 + (stage - 1u));
+        float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
+        float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float4 prev = Regs[PS_REGISTER_T0 + (stage - 1u)];
         float  nz   = dot(coords.xyz, prev.xyz);
         float3 N    = normalize(float3(nx, ny, nz));
         float3 E    = float3(0.0f, 0.0f, 1.0f); // placeholder
@@ -532,7 +532,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
     // Apply COLORSIGN fixup, then write to the correct T register.
     // Bug fix: direct indexed write replaces the broken max() clamp
     // that always directed all four stages to write T3.
-    val = ApplyColorSign(ColorSign[stage], val);
+    [branch]
+    if (any(ColorSign[stage] != 0.0f))
+        val = ApplyColorSign(ColorSign[stage], val);
     RegWrite(Regs, PS_REGISTER_T0 + stage, val);
 }
 
@@ -580,14 +582,14 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
     uint aRegSum   = (aOut   >> PS_COMBINEROUTPUTS_MUX_SUM_SHIFT) & 0xFu;
 
     // --- Fetch all eight inputs in one block ---
-    float4 rgbA = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, false, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbB = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, false, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbC = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, false, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbD = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, false, stage, flagUniqueC0, flagUniqueC1);
-    float   aA  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, true,  stage, flagUniqueC0, flagUniqueC1).a;
-    float   aB  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, true,  stage, flagUniqueC0, flagUniqueC1).a;
-    float   aC  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, true,  stage, flagUniqueC0, flagUniqueC1).a;
-    float   aD  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, true,  stage, flagUniqueC0, flagUniqueC1).a;
+    float4 rgbA = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1);
+    float4 rgbB = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1);
+    float4 rgbC = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1);
+    float4 rgbD = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1);
+    float   aA  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1).a;
+    float   aB  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1).a;
+    float   aC  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1).a;
+    float   aD  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1).a;
 
     // --- Compute AB and CD products ---
     // Dot product applies to RGB only; alpha always multiplies scalars
@@ -601,9 +603,10 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
     bool muxSel = false;
     if (flagRGBMux || flagAMux) {
         float r0a = Regs[PS_REGISTER_R0].a;
+        uint r0aBits = (uint)(saturate(r0a) * 255.0f + 0.5f);
         muxSel = flagMuxMsb
             ? (r0a >= 0.5f)
-            : (((uint)(r0a * 255.0f + 0.5f) & 1u) != 0u);
+            : ((r0aBits & 1u) != 0u);
     }
 
     // Skip sum computation when the result won't be written
@@ -658,7 +661,7 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
     float4 R0 = RegRead(Regs, PS_REGISTER_R0);
 
     // If both ABCD and EFG are zero the final combiner is unused
-    if (PSFinalCombinerInputsABCD == 0u && PSFinalCombinerInputsEFG == 0u)
+    [branch] if (PSFinalCombinerInputsABCD == 0u && PSFinalCombinerInputsEFG == 0u)
         return R0;
 
     // PSFinalCombinerInputsEFG = PS_COMBINERINPUTS(E, F, G, settings)
@@ -671,9 +674,9 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
     uint gReg     = (efg >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu;
 
     // --- Resolve E, F (RGB) and G (alpha) — EFG phase (not ABCD) ---
-    float3 E = ResolveFinalInput(Regs, eReg, false, false, flagUniqueC0, flagUniqueC1).rgb;
-    float3 F = ResolveFinalInput(Regs, fReg, false, false, flagUniqueC0, flagUniqueC1).rgb;
-    float  G = ResolveFinalInput(Regs, gReg, true,  false, flagUniqueC0, flagUniqueC1).a;
+    float3 E = ResolveFinalInput(Regs, eReg, false, flagUniqueC0, flagUniqueC1).rgb;
+    float3 F = ResolveFinalInput(Regs, fReg, false, flagUniqueC0, flagUniqueC1).rgb;
+    float  G = ResolveFinalInput(Regs, gReg, false, flagUniqueC0, flagUniqueC1).a;
 
     // Compute E*F and store in EF_PROD for potential use by ABCD inputs
     RegWrite(Regs, PS_REGISTER_EF_PROD, float4(E * F, 1.0f));
@@ -693,15 +696,15 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
 
     // --- Resolve A, B, C, D — ABCD phase (V1R0_SUM / EF_PROD now valid) ---
     uint abcd = PSFinalCombinerInputsABCD;
-    float4 A = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, false, true, flagUniqueC0, flagUniqueC1);
-    float4 B = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, false, true, flagUniqueC0, flagUniqueC1);
-    float4 C = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, false, true, flagUniqueC0, flagUniqueC1);
-    float4 D = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, false, true, flagUniqueC0, flagUniqueC1);
+    float4 A = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, true, flagUniqueC0, flagUniqueC1);
+    float4 B = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, true, flagUniqueC0, flagUniqueC1);
+    float4 C = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, true, flagUniqueC0, flagUniqueC1);
+    float4 D = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, true, flagUniqueC0, flagUniqueC1);
 
     // Final RGB = A*B + (1-A)*C + D, clamped to [0,1]
     // Final alpha = G
     float4 result;
-    result.rgb = min(lerp(C.rgb, B.rgb, A.rgb) + D.rgb, 1.0f);
+    result.rgb = saturate(lerp(C.rgb, B.rgb, A.rgb) + D.rgb);
     result.a   = G;
     return result;
 }
@@ -742,10 +745,16 @@ float4 main(PS_INPUT input) : SV_Target
     // --- Texture stages (must run sequentially; later stages can read earlier T regs) ---
     // Manual unroll avoids intermediate array allocation for texCoords.
     // NUM_TEXTURE_STAGES specialization eliminates dead stage code.
-                             FetchTexture(Regs, 0u, input.iT0, texMode.x);
-    if (NUM_TEXTURE_STAGES > 1u) FetchTexture(Regs, 1u, input.iT1, texMode.y);
-    if (NUM_TEXTURE_STAGES > 2u) FetchTexture(Regs, 2u, input.iT2, texMode.z);
-    if (NUM_TEXTURE_STAGES > 3u) FetchTexture(Regs, 3u, input.iT3, texMode.w);
+    FetchTexture(Regs, 0u, input.iT0, texMode.x);
+#if NUM_TEXTURE_STAGES >= 2
+    FetchTexture(Regs, 1u, input.iT1, texMode.y);
+#endif
+#if NUM_TEXTURE_STAGES >= 3
+    FetchTexture(Regs, 2u, input.iT2, texMode.z);
+#endif
+#if NUM_TEXTURE_STAGES >= 4
+    FetchTexture(Regs, 3u, input.iT3, texMode.w);
+#endif
 
     // --- Set vertex-derived registers ---
     bool  isFront = input.iFF;
