@@ -57,9 +57,17 @@ static const uint reserved0 = 13;   // Has no X_D3DFVF_*     / X_D3DVSDE_*
 static const uint reserved1 = 14;   // Has no X_D3DFVF_*     / X_D3DVSDE_*
 static const uint reserved2 = 15;   // Has no X_D3DFVF_*     / X_D3DVSDE_*
 
+#ifdef CXBX_IA_BYPASS
+// In IA bypass mode, vertex attributes are fetched into this static array
+// since VS_INPUT only carries SV_VertexID (no .v member).
+static float4 g_FetchedAttribs[16];
+#endif
+
 float4 Get(const VS_INPUT xIn, const uint index)
 {
-#ifdef CXBX_USE_D3D11
+#ifdef CXBX_IA_BYPASS
+    return g_FetchedAttribs[index];
+#elif defined(CXBX_USE_D3D11)
     return xIn.v[index];
 #else
     // switch statements inexplicably don't work here
@@ -411,11 +419,13 @@ VS_INPUT InitializeInputRegisters(const VS_INPUT xInput)
 
 #ifdef CXBX_IA_BYPASS
     // IA bypass: fetch all attributes from ByteAddressBuffer using SV_VertexID
+    // Data is stored in g_FetchedAttribs; Get() reads from there.
+    xIn = xInput;
     {
         uint xboxVtxIdx = ResolveVertexIndex(xInput.vertexId);
         float4 vArr[16];
         FetchAllAttributes(xboxVtxIdx, vArr);
-        [unroll] for (uint i = 0; i < 16u; i++) xIn.v[i] = vArr[i];
+        [unroll] for (uint i = 0; i < 16u; i++) g_FetchedAttribs[i] = vArr[i];
     }
 #else
     // Initialize input registers from the vertex buffer data
