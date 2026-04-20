@@ -324,17 +324,24 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		numVertices = DrawContext.HighIndex - DrawContext.LowIndex + 1;
 	}
 
+	bool bIsUPDraw = (DrawContext.pXboxVertexStreamZeroData != nullptr);
+
 	if (!bUsingMirror) {
 		for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
 			auto& streamInfo = pDecl->VertexStreams[s];
 			UINT streamIdx = streamInfo.XboxStreamIndex;
 			auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
 
-			if (!streamInput.VertexBuffer && !DrawContext.pXboxVertexStreamZeroData)
+			if (!streamInput.VertexBuffer && !bIsUPDraw)
 				continue;
 
-			UINT stride = streamInput.Stride;
-			if (stride == 0) stride = streamInfo.HostVertexStride; // Fallback
+			UINT stride;
+			if (s == 0 && bIsUPDraw) {
+				stride = DrawContext.uiXboxVertexStreamZeroStride;
+			} else {
+				stride = streamInput.Stride;
+				if (stride == 0) stride = streamInfo.HostVertexStride; // Fallback
+			}
 
 			UINT streamDataSize = numVertices * stride;
 			streamDataSize = (streamDataSize + 3) & ~3u; // Align to 4 bytes
@@ -363,13 +370,18 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 				UINT streamIdx = streamInfo.XboxStreamIndex;
 				auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
 
-				UINT stride = streamInput.Stride;
-				if (stride == 0) stride = streamInfo.HostVertexStride;
+				UINT stride;
+				if (s == 0 && bIsUPDraw) {
+					stride = DrawContext.uiXboxVertexStreamZeroStride;
+				} else {
+					stride = streamInput.Stride;
+					if (stride == 0) stride = streamInfo.HostVertexStride;
+				}
 
 				UINT streamDataSize = numVertices * stride;
 				const uint8_t* pSrc = nullptr;
 
-				if (s == 0 && DrawContext.pXboxVertexStreamZeroData) {
+				if (s == 0 && bIsUPDraw) {
 					// UP draw: vertex data from user pointer
 					pSrc = (const uint8_t*)DrawContext.pXboxVertexStreamZeroData
 						+ vertexStart * stride;
@@ -462,8 +474,13 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 			UINT streamIdx = streamInfo.XboxStreamIndex;
 			auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
 
-			UINT stride = streamInput.Stride;
-			if (stride == 0) stride = streamInfo.HostVertexStride;
+			UINT stride;
+			if (s == 0 && bIsUPDraw) {
+				stride = DrawContext.uiXboxVertexStreamZeroStride;
+			} else {
+				stride = streamInput.Stride;
+				if (stride == 0) stride = streamInfo.HostVertexStride;
+			}
 
 			UINT elemOffset = 0;
 			for (UINT e = 0; e < streamInfo.NumberOfVertexElements; e++) {
@@ -583,6 +600,8 @@ skip_layout_upload:
 	// Unbind VS SRVs to avoid conflicts with other passes
 	ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
 	g_pD3DDeviceContext->VSSetShaderResources(0, 2, nullSRVs);
+	s_pLastBoundVtxSRV = nullptr;
+	s_pLastBoundIdxSRV = nullptr;
 
 	return true;
 }
