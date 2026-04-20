@@ -338,6 +338,14 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawVertices)
 		DrawContext.dwVertexCount = VertexCount;
 		DrawContext.dwStartVertex = StartVertex;
 
+#ifdef CXBX_USE_D3D11
+		// IA bypass: handle the entire draw (topology + vertex fetch) in the VS
+		if (g_bD3D11IABypass && CxbxD3D11IABypassDraw(DrawContext)) {
+			g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(PrimitiveType, VertexCount);
+			return;
+		}
+#endif
+
 		VertexBufferConverter.Apply(&DrawContext);
 		if (DrawContext.XboxPrimitiveType == X_D3DPT_QUADLIST) {
 			if (StartVertex == 0) {

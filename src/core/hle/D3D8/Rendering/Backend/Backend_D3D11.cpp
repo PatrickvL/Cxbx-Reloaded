@@ -1070,6 +1070,9 @@ void CxbxD3D11InitBlit()
 	if (FAILED(hr)) {
 		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11InitBlit: Failed to create vertex convert CB");
 	}
+
+	// Initialize IA bypass resources
+	CxbxD3D11IABypassInit();
 }
 
 // ******************************************************************

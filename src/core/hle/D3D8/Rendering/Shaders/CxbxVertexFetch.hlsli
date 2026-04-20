@@ -58,6 +58,13 @@ cbuffer CxbxVertexLayoutCB : register(b1)
 #define CXBX_VTXFMT_PBYTE4       10
 #define CXBX_VTXFMT_FLOAT2H      11 // Xbox "half" with W: x,y,0,w stored as 3 floats
 #define CXBX_VTXFMT_NONE         12 // Use default value (sticky register)
+#define CXBX_VTXFMT_SHORT1N      13 // 1 signed 16-bit normalized (Xbox: 2 bytes)
+#define CXBX_VTXFMT_SHORT3N      14 // 3 signed 16-bit normalized (Xbox: 6 bytes, W=1.0)
+#define CXBX_VTXFMT_PBYTE1       15 // 1 unsigned byte normalized (Xbox: 1 byte)
+#define CXBX_VTXFMT_PBYTE2       16 // 2 unsigned bytes normalized (Xbox: 2 bytes)
+#define CXBX_VTXFMT_PBYTE3       17 // 3 unsigned bytes normalized (Xbox: 3 bytes, A=1.0)
+#define CXBX_VTXFMT_SHORT1       18 // 1 signed 16-bit unnormalized (Xbox: 2 bytes)
+#define CXBX_VTXFMT_SHORT3       19 // 3 signed 16-bit unnormalized (Xbox: 6 bytes, W=1)
 
 // Primitive type constants for topology conversion
 #define CXBX_PRIM_NORMAL  0
@@ -270,6 +277,38 @@ float4 FetchAttribute(uint xboxVtxIdx, uint4 attribDesc, float4 defaultVal)
         return DecodePByte4(ReadU32(byteOff));
     case CXBX_VTXFMT_FLOAT2H:
         return DecodeFloat2H(byteOff);
+    case CXBX_VTXFMT_SHORT1N:
+        return float4((float)SignExtend(ReadU16(byteOff), 16u) / 32767.0f, 0.0f, 0.0f, 1.0f);
+    case CXBX_VTXFMT_SHORT3N:
+    {
+        float sx = (float)SignExtend(ReadU16(byteOff),      16u) / 32767.0f;
+        float sy = (float)SignExtend(ReadU16(byteOff + 2u), 16u) / 32767.0f;
+        float sz = (float)SignExtend(ReadU16(byteOff + 4u), 16u) / 32767.0f;
+        return float4(sx, sy, sz, 1.0f);
+    }
+    case CXBX_VTXFMT_PBYTE1:
+        return float4((float)(ReadU32(byteOff) & 0xFFu) / 255.0f, 0.0f, 0.0f, 1.0f);
+    case CXBX_VTXFMT_PBYTE2:
+    {
+        uint raw = ReadU16(byteOff);
+        return float4((float)(raw & 0xFFu) / 255.0f, (float)((raw >> 8u) & 0xFFu) / 255.0f, 0.0f, 1.0f);
+    }
+    case CXBX_VTXFMT_PBYTE3:
+    {
+        uint lo = ReadU16(byteOff);
+        uint hi = ReadU32(byteOff) >> 16u; // 3rd byte
+        return float4((float)(lo & 0xFFu) / 255.0f, (float)((lo >> 8u) & 0xFFu) / 255.0f,
+                      (float)(hi & 0xFFu) / 255.0f, 1.0f);
+    }
+    case CXBX_VTXFMT_SHORT1:
+        return float4((float)SignExtend(ReadU16(byteOff), 16u), 0.0f, 0.0f, 1.0f);
+    case CXBX_VTXFMT_SHORT3:
+    {
+        float sx = (float)SignExtend(ReadU16(byteOff),      16u);
+        float sy = (float)SignExtend(ReadU16(byteOff + 2u), 16u);
+        float sz = (float)SignExtend(ReadU16(byteOff + 4u), 16u);
+        return float4(sx, sy, sz, 1.0f);
+    }
     default:
         return defaultVal;
     }

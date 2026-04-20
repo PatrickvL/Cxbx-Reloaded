@@ -228,6 +228,14 @@ bool CxbxD3D11ConvertVertexBufferGPU(
 
 // Filter D3D11 input layout elements to only include semantics present in
 // the shader's input signature (parsed from the DXBC ISGN chunk).
+
+// ******************************************************************
+// * IA bypass — manual vertex fetch from ByteAddressBuffer via SV_VertexID
+// ******************************************************************
+struct CxbxDrawContext; // forward decl
+void CxbxD3D11IABypassInit();
+void CxbxD3D11IABypassRelease();
+bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext);
 std::vector<D3D11_INPUT_ELEMENT_DESC> FilterInputElementsByShaderSignature(
 	const D3D11_INPUT_ELEMENT_DESC* pElements, UINT elementCount,
 	const void* bytecode, size_t bytecodeSize);

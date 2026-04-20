@@ -290,6 +290,14 @@ void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 	assert(DrawContext.pXboxIndexData != nullptr);
 	assert(DrawContext.dwVertexCount > 0); // TODO : If this fails, make responsible callers do an early-exit
 
+#ifdef CXBX_USE_D3D11
+	// IA bypass: handle the entire draw (topology + vertex fetch) in the VS
+	if (g_bD3D11IABypass && CxbxD3D11IABypassDraw(DrawContext)) {
+		g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
+		return;
+	}
+#endif
+
 	bool bConvertQuadListToTriangleList = (DrawContext.XboxPrimitiveType == xbox::X_D3DPT_QUADLIST);
 #ifdef CXBX_USE_D3D11
 	bool bConvertTriFanToTriangleList = (DrawContext.XboxPrimitiveType == xbox::X_D3DPT_TRIANGLEFAN
@@ -413,6 +421,14 @@ void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 	assert(DrawContext.pXboxVertexStreamZeroData != xbox::zeroptr);
 	assert(DrawContext.uiXboxVertexStreamZeroStride > 0);
 	assert(DrawContext.dwBaseVertexIndex == 0); // No IndexBase under Draw*UP
+
+#ifdef CXBX_USE_D3D11
+	// IA bypass: handle the entire draw (topology + vertex fetch) in the VS
+	if (g_bD3D11IABypass && CxbxD3D11IABypassDraw(DrawContext)) {
+		g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
+		return;
+	}
+#endif
 
 	VertexBufferConverter.Apply(&DrawContext);
 

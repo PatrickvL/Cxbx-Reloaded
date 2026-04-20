@@ -41,6 +41,10 @@
 
 ShaderSources g_ShaderSources;
 
+#ifdef CXBX_USE_D3D11
+bool g_bD3D11IABypass = true; // Enable IA bypass by default on D3D11
+#endif
+
 std::string DebugPrependLineNumbers(std::string shaderString) {
 	std::stringstream shader(shaderString);
 	auto debugShader = std::stringstream();
@@ -82,10 +86,18 @@ extern HRESULT EmuCompileShader
 #endif
 
 #ifdef CXBX_USE_D3D11
-	D3D_SHADER_MACRO defines[] = {
+	D3D_SHADER_MACRO defines_ia_bypass[] = {
+		{ "CXBX_USE_D3D11", "1" },
+		{ "CXBX_IA_BYPASS", "1" },
+		{ nullptr, nullptr }
+	};
+	D3D_SHADER_MACRO defines_ia_normal[] = {
 		{ "CXBX_USE_D3D11", "1" },
 		{ nullptr, nullptr }
 	};
+	// Use IA bypass defines for vertex shaders (vs_*) when the flag is set
+	bool isVertexShader = (shader_profile != nullptr && shader_profile[0] == 'v' && shader_profile[1] == 's');
+	D3D_SHADER_MACRO* defines = (isVertexShader && g_bD3D11IABypass) ? defines_ia_bypass : defines_ia_normal;
 #else
 	D3D_SHADER_MACRO* defines = nullptr;
 #endif
