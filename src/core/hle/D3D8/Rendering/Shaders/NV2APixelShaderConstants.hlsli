@@ -14,10 +14,17 @@
 #include <cstdint>
 // C++: use uint32_t for constants; HLSL uses `uint` natively.
 #define NV2A_CONST static constexpr uint32_t
+// If XbPixelShader.h was already included, its enums define the same names.
+// Skip our definitions to avoid redefinition errors.
+#ifdef XBPIXELSHADER_H
+#define NV2A_PS_CONSTANTS_ALREADY_DEFINED
+#endif
 #else
 // HLSL: `static const uint` is the idiomatic constant form.
 #define NV2A_CONST static const uint
 #endif
+
+#ifndef NV2A_PS_CONSTANTS_ALREADY_DEFINED
 
 // ============================================================
 // PS_REGISTER — 4-bit register index (bits [3:0] of an input byte)
@@ -115,6 +122,8 @@ NV2A_CONST PS_COMBINEROUTPUT_AB_CD_MUX         = 0x04; // 3rd output = MUX(AB,CD
 NV2A_CONST PS_COMBINEROUTPUT_OUTPUTMAPPING_BIAS = 0x08; // subtract 0.5 before scaling
 NV2A_CONST PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA  = 0x40; // RGB only
 NV2A_CONST PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA  = 0x80; // RGB only
+
+#endif // NV2A_PS_CONSTANTS_ALREADY_DEFINED
 
 // ============================================================
 // Packing layout: PS_COMBINERINPUTS(a, b, c, d)
