@@ -342,9 +342,7 @@ void ApplyCompareMode(uint stage, float4 coords)
 
 float3 ApplyDotMapping(uint stage, float4 src)
 {
-    uint mapping = 0u;
-    if (stage >= 1u && stage <= 3u)
-        mapping = (PSDotMapping >> ((stage - 1u) * 4u)) & 0x7u;
+    uint mapping = (PSDotMapping >> ((stage - 1u) * 4u)) & 0x7u;
 
     // PS_DOTMAPPING values (from NV2A docs):
     // 0 = ZERO_TO_ONE        — identity
@@ -471,23 +469,18 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
     case PS_TEXTUREMODES_BUMPENVMAP:
     case PS_TEXTUREMODES_BUMPENVMAP_LUM:
     {
-        // BEM uses the raw sampled value for perturbation;
-        // PostProcessTexel runs at the function tail, after BEM perturbation is done.
-        val = Sample2D(stage, coords.xy);
-        // Apply BEM matrix perturbation to next stage's coordinates
-        if (stage < 3u) {
-            float4 nextCoords = Regs[PS_REGISTER_T0 + stage + 1u];
-            float4 bem = BEM[stage];
-            float u = nextCoords.x + bem.x * val.r + bem.z * val.g;
-            float v = nextCoords.y + bem.y * val.r + bem.w * val.g;
-            Regs[PS_REGISTER_T0 + stage + 1u] = float4(u, v, nextCoords.z, nextCoords.w);
-        }
+        // Bump source = source stage's already-computed texel (matches compiled PS
+        // BumpEnv() macro which reads src(ts), not the current stage's sample).
+        float4 bumpSrc = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
+        float4 bem = BEM[stage];
+        // Perturb THIS stage's own texcoords, then sample with the perturbed coords
+        float u = coords.x + bem.x * bumpSrc.r + bem.z * bumpSrc.g;
+        float v = coords.y + bem.y * bumpSrc.r + bem.w * bumpSrc.g;
+        val = Sample2D(stage, float2(u, v));
         // Apply luminance scaling for BUMPENVMAP_LUM
         if (mode == PS_TEXTUREMODES_BUMPENVMAP_LUM) {
             // LUM[stage].x = BumpEnvLScale, .y = BumpEnvLOffset
-            // Scale rgb by (scale * src.b + offset), matching compiled PS LSO() macro
-            float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-            float lumFactor = LUM[stage].x * src.b + LUM[stage].y;
+            float lumFactor = LUM[stage].x * bumpSrc.b + LUM[stage].y;
             val.rgb *= lumFactor;
         }
         break;
@@ -521,12 +514,13 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 
     case PS_TEXTUREMODES_DOT_ST:
     {
-        // Current stage dot + use two preceding dots as (s,t) for 2D lookup
+        // texm3x2tex: Normal2(ts) = (dot_[ts-1], dot_[ts])
+        // Compute current dot, then use (previous dot, current dot) as (s,t)
         float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm  = ApplyDotMapping(stage, src);
         float  d   = dot(coords.xyz, dm);
-        float  s   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
-        float  t   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float  s   = Regs[PS_REGISTER_T0 + (stage - 1u)].x; // dot_[ts-1]
+        float  t   = d;                                      // dot_[ts]
         val = Sample2D(stage, float2(s, t));
         break;
     }
@@ -546,15 +540,13 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 
     case PS_TEXTUREMODES_DOT_RFLCT_DIFF:
     {
-        // Build a normal from three sequential DOTPRODUCT results; cubemap lookup.
-        // Bug fix: normal is used directly as the cubemap direction.
-        // There is no reflection computation for the DIFF mode (that is SPEC).
-        float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
-        float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        // texm3x3diff: restricted to stage 2. Normal2(ts) = (dot_[ts-1], dot_[ts], 0).
+        // Normal is used directly as the cubemap direction (no reflection for DIFF).
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm   = ApplyDotMapping(stage, src);
-        float  nz   = dot(coords.xyz, dm);
-        val = SampleCube(stage, float3(nx, ny, nz));
+        float  nx   = Regs[PS_REGISTER_T0 + (stage - 1u)].x; // dot_[ts-1]
+        float  ny   = dot(coords.xyz, dm);                    // dot_[ts]
+        val = SampleCube(stage, float3(nx, ny, 0.0f));
         break;
     }
 
@@ -857,9 +849,7 @@ float4 main(PS_INPUT input) : SV_Target
     // --- Set vertex-derived registers ---
     // Use FRONTFACE_FACTOR to match compiled PS winding-order correction:
     // 0 = always front, +/-1 = two-sided with CW/CCW convention
-    bool isFront = (FrontFaceInfo.x == 0.0f)
-        ? true
-        : ((input.iFF ? 1.0f : -1.0f) * FrontFaceInfo.x >= 0.0f);
+    bool isFront = (input.iFF ? 1.0f : -1.0f) * FrontFaceInfo.x >= 0.0f;
     float4 diffuse  = isFront ? input.iD0 : input.iB0;
     float4 specular = isFront ? input.iD1 : input.iB1;
     RegWrite(Regs, PS_REGISTER_V0, diffuse);
