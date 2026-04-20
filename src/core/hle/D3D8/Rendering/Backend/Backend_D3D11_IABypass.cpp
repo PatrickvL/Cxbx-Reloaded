@@ -74,6 +74,8 @@
 static ID3D11Buffer*             s_pVtxDataBuf = nullptr;   // ByteAddressBuffer for vertex data
 static UINT                      s_VtxDataBufSize = 0;
 static ID3D11ShaderResourceView* s_pVtxDataSRV = nullptr;
+static ID3D11ShaderResourceView* s_pVtxDataSRV_SNORM16x2 = nullptr; // R16G16_SNORM typed view
+static ID3D11ShaderResourceView* s_pVtxDataSRV_UNORM8x4 = nullptr;  // R8G8B8A8_UNORM typed view
 
 static ID3D11Buffer*             s_pIdxDataBuf = nullptr;   // ByteAddressBuffer for index data
 static UINT                      s_IdxDataBufSize = 0;
@@ -85,6 +87,8 @@ static ID3D11Buffer*             s_pDefaultsCB = nullptr;   // Vertex defaults C
 // Optimization: cached last-bound GPU pointers to skip redundant API calls
 static ID3D11ShaderResourceView* s_pLastBoundVtxSRV = nullptr;
 static ID3D11ShaderResourceView* s_pLastBoundIdxSRV = nullptr;
+static ID3D11ShaderResourceView* s_pLastBoundSNormSRV = nullptr;
+static ID3D11ShaderResourceView* s_pLastBoundUNormSRV = nullptr;
 static ID3D11Buffer*             s_pLastBoundLayoutCB = nullptr;
 static ID3D11Buffer*             s_pLastBoundDefaultsCB = nullptr;
 static bool                      s_IAAlreadyNull = false;   // IA null-binding elimination
@@ -162,6 +166,8 @@ void CxbxD3D11IABypassInit()
 // ******************************************************************
 void CxbxD3D11IABypassRelease()
 {
+	if (s_pVtxDataSRV_UNORM8x4) { s_pVtxDataSRV_UNORM8x4->Release(); s_pVtxDataSRV_UNORM8x4 = nullptr; }
+	if (s_pVtxDataSRV_SNORM16x2) { s_pVtxDataSRV_SNORM16x2->Release(); s_pVtxDataSRV_SNORM16x2 = nullptr; }
 	if (s_pVtxDataSRV) { s_pVtxDataSRV->Release(); s_pVtxDataSRV = nullptr; }
 	if (s_pVtxDataBuf) { s_pVtxDataBuf->Release(); s_pVtxDataBuf = nullptr; }
 	s_VtxDataBufSize = 0;
@@ -175,6 +181,8 @@ void CxbxD3D11IABypassRelease()
 
 	s_pLastBoundVtxSRV = nullptr;
 	s_pLastBoundIdxSRV = nullptr;
+	s_pLastBoundSNormSRV = nullptr;
+	s_pLastBoundUNormSRV = nullptr;
 	s_pLastBoundLayoutCB = nullptr;
 	s_pLastBoundDefaultsCB = nullptr;
 	s_IAAlreadyNull = false;
@@ -193,9 +201,27 @@ void CxbxD3D11IABypassInvalidateLayout()
 // ******************************************************************
 static void EnsureVtxDataBuffer(UINT requiredSize)
 {
+	UINT oldSize = s_VtxDataBufSize;
 	CxbxD3D11EnsureRawStagingBuffer(requiredSize,
 		&s_pVtxDataBuf, &s_VtxDataBufSize,
 		&s_pVtxDataSRV, "IABypass_VtxData");
+
+	// If the buffer was (re)created, also create typed SRV views for hardware format decode
+	if (s_VtxDataBufSize != oldSize && s_pVtxDataBuf) {
+		if (s_pVtxDataSRV_SNORM16x2) { s_pVtxDataSRV_SNORM16x2->Release(); s_pVtxDataSRV_SNORM16x2 = nullptr; }
+		if (s_pVtxDataSRV_UNORM8x4)  { s_pVtxDataSRV_UNORM8x4->Release();  s_pVtxDataSRV_UNORM8x4 = nullptr; }
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC typedDesc = {};
+		typedDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		typedDesc.Buffer.FirstElement = 0;
+		typedDesc.Buffer.NumElements = s_VtxDataBufSize / 4;
+
+		typedDesc.Format = DXGI_FORMAT_R16G16_SNORM;
+		g_pD3DDevice->CreateShaderResourceView(s_pVtxDataBuf, &typedDesc, &s_pVtxDataSRV_SNORM16x2);
+
+		typedDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		g_pD3DDevice->CreateShaderResourceView(s_pVtxDataBuf, &typedDesc, &s_pVtxDataSRV_UNORM8x4);
+	}
 }
 
 // ******************************************************************
@@ -246,9 +272,10 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	if (!s_pLayoutCB || !s_pDefaultsCB)
 		return false;
 
-	// The fixed function shader is compiled without IA bypass (too complex
-	// for the HLSL compiler); fall back to the normal IA path.
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
+	// The fixed function and passthrough shaders are compiled without IA
+	// bypass (16 attrs × 20 format switch is too slow/hangs the HLSL
+	// compiler); fall back to the normal IA path for those modes.
+	if (g_Xbox_VertexShaderMode != VertexShaderMode::ShaderProgram) {
 		s_IAAlreadyNull = false; // normal path will reconfigure IA
 		return false;
 	}
@@ -607,16 +634,25 @@ skip_layout_upload:
 	}
 	g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
 
-	// Bind SRVs to VS: t0 = vertex data, t1 = index data (skip if unchanged)
-	// When using the mirror, t0 is the 64 MiB mirror buffer; otherwise the per-draw upload.
-	// When index data is also in the mirror, t1 points to the same mirror SRV.
+	// Bind SRVs to VS: t0 = vertex data (raw), t1 = index data,
+	// t2 = vertex data (R16G16_SNORM), t3 = vertex data (R8G8B8A8_UNORM)
+	// When using the mirror, all SRVs come from the page tracker's buffer views.
+	// Otherwise, use the per-draw fallback buffer's views.
 	ID3D11ShaderResourceView* pActiveVtxSRV = bUsingMirror ? pMirrorSRV : s_pVtxDataSRV;
 	ID3D11ShaderResourceView* pActiveIdxSRV = bIdxFromMirror ? pMirrorSRV : s_pIdxDataSRV;
-	if (pActiveVtxSRV != s_pLastBoundVtxSRV || pActiveIdxSRV != s_pLastBoundIdxSRV) {
-		ID3D11ShaderResourceView* vsSRVs[2] = { pActiveVtxSRV, pActiveIdxSRV };
-		g_pD3DDeviceContext->VSSetShaderResources(0, 2, vsSRVs);
+	ID3D11ShaderResourceView* pActiveSNormSRV = bUsingMirror
+		? CxbxPageTrackerGetMirrorSRV_SNORM16x2() : s_pVtxDataSRV_SNORM16x2;
+	ID3D11ShaderResourceView* pActiveUNormSRV = bUsingMirror
+		? CxbxPageTrackerGetMirrorSRV_UNORM8x4() : s_pVtxDataSRV_UNORM8x4;
+
+	if (pActiveVtxSRV != s_pLastBoundVtxSRV || pActiveIdxSRV != s_pLastBoundIdxSRV
+		|| pActiveSNormSRV != s_pLastBoundSNormSRV || pActiveUNormSRV != s_pLastBoundUNormSRV) {
+		ID3D11ShaderResourceView* vsSRVs[4] = { pActiveVtxSRV, pActiveIdxSRV, pActiveSNormSRV, pActiveUNormSRV };
+		g_pD3DDeviceContext->VSSetShaderResources(0, 4, vsSRVs);
 		s_pLastBoundVtxSRV = pActiveVtxSRV;
 		s_pLastBoundIdxSRV = pActiveIdxSRV;
+		s_pLastBoundSNormSRV = pActiveSNormSRV;
+		s_pLastBoundUNormSRV = pActiveUNormSRV;
 	}
 
 	// Bind CBs to VS: b1 = layout, b2 = defaults (skip if unchanged)
@@ -641,10 +677,12 @@ skip_layout_upload:
 	}
 
 	// Unbind VS SRVs to avoid conflicts with other passes
-	ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
-	g_pD3DDeviceContext->VSSetShaderResources(0, 2, nullSRVs);
+	ID3D11ShaderResourceView* nullSRVs[4] = { nullptr, nullptr, nullptr, nullptr };
+	g_pD3DDeviceContext->VSSetShaderResources(0, 4, nullSRVs);
 	s_pLastBoundVtxSRV = nullptr;
 	s_pLastBoundIdxSRV = nullptr;
+	s_pLastBoundSNormSRV = nullptr;
+	s_pLastBoundUNormSRV = nullptr;
 
 	return true;
 }

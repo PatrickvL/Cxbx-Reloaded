@@ -352,5 +352,10 @@ extern void EmuCompileFixedFunction(ID3DBlob** ppHostShader)
 
 extern void EmuCompileXboxPassthrough(ID3DBlob** ppHostShader)
 {
+	// Same issue as FixedFunction: 16 attrs × 20 format switch is very
+	// slow to compile at O3.  Use normal IA path for passthrough too.
+	bool saved = g_bD3D11IABypass;
+	g_bD3D11IABypass = false;
 	EmuCompileShader(g_ShaderSources.vertexShaderPassthroughHlsl, g_vs_model, ppHostShader, g_ShaderSources.vertexShaderPassthroughPath.c_str());
+	g_bD3D11IABypass = saved;
 }
