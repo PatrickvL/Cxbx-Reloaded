@@ -1,7 +1,6 @@
-// RegisterCombinerInterpreter_DX11.hlsl
+// RegisterCombinerInterpreter.hlsl
 //
-// DX11 / SM5 port of the Xbox NV2A register combiner interpreter.
-// Drop-in replacement for RegisterCombinerInterpreter.fx (SM3.0).
+// DX11 / SM5 Xbox NV2A register combiner interpreter ubershader.
 //
 // Optimizations applied (relative to the SM3.0 original):
 //   Step 2 – Register file is a flat float4[16] array; all switch-based
@@ -41,107 +40,11 @@
 #endif
 
 // ============================================================
-// NV2A constants
+// Shared constants and cbuffer layout (defined once in .hlsli headers,
+// shared with C++ backend code)
 // ============================================================
-
-static const uint PS_REGISTER_ZERO         = 0x00u;
-static const uint PS_REGISTER_DISCARD      = 0x00u; // write alias for ZERO
-static const uint PS_REGISTER_C0           = 0x01u;
-static const uint PS_REGISTER_C1           = 0x02u;
-static const uint PS_REGISTER_FOG          = 0x03u;
-static const uint PS_REGISTER_V0           = 0x04u;
-static const uint PS_REGISTER_V1           = 0x05u;
-// 0x06, 0x07 – reserved / unknown r/w state
-static const uint PS_REGISTER_T0           = 0x08u;
-static const uint PS_REGISTER_T1           = 0x09u;
-static const uint PS_REGISTER_T2           = 0x0au;
-static const uint PS_REGISTER_T3           = 0x0bu;
-static const uint PS_REGISTER_R0           = 0x0cu;
-static const uint PS_REGISTER_R1           = 0x0du;
-static const uint PS_REGISTER_V1R0_SUM     = 0x0eu;
-static const uint PS_REGISTER_EF_PROD      = 0x0fu;
-
-static const uint PS_CHANNEL_ALPHA         = 0x10u; // bit 4 of input byte
-
-// Input mappings (high 3 bits of input byte, i.e. bits [7:5])
-static const uint PS_INPUTMAPPING_UNSIGNED_IDENTITY = 0x00u;
-static const uint PS_INPUTMAPPING_UNSIGNED_INVERT   = 0x20u;
-static const uint PS_INPUTMAPPING_EXPAND_NORMAL     = 0x40u;
-static const uint PS_INPUTMAPPING_EXPAND_NEGATE     = 0x60u;
-static const uint PS_INPUTMAPPING_HALFBIAS_NORMAL   = 0x80u;
-static const uint PS_INPUTMAPPING_HALFBIAS_NEGATE   = 0xa0u;
-static const uint PS_INPUTMAPPING_SIGNED_IDENTITY   = 0xc0u;
-static const uint PS_INPUTMAPPING_SIGNED_NEGATE     = 0xe0u;
-
-// Texture modes (5-bit value per stage)
-static const uint PS_TEXTUREMODES_NONE               = 0x00u;
-static const uint PS_TEXTUREMODES_PROJECT2D          = 0x01u;
-static const uint PS_TEXTUREMODES_PROJECT3D          = 0x02u;
-static const uint PS_TEXTUREMODES_CUBEMAP            = 0x03u;
-static const uint PS_TEXTUREMODES_PASSTHRU           = 0x04u;
-static const uint PS_TEXTUREMODES_CLIPPLANE          = 0x05u;
-static const uint PS_TEXTUREMODES_BUMPENVMAP         = 0x06u;
-static const uint PS_TEXTUREMODES_BUMPENVMAP_LUM     = 0x07u;
-static const uint PS_TEXTUREMODES_BRDF               = 0x08u;
-static const uint PS_TEXTUREMODES_DOT_ST             = 0x09u;
-static const uint PS_TEXTUREMODES_DOT_ZW             = 0x0au;
-static const uint PS_TEXTUREMODES_DOT_RFLCT_DIFF     = 0x0bu;
-static const uint PS_TEXTUREMODES_DOT_RFLCT_SPEC     = 0x0cu;
-static const uint PS_TEXTUREMODES_DOT_STR_3D         = 0x0du;
-static const uint PS_TEXTUREMODES_DOT_STR_CUBE       = 0x0eu;
-static const uint PS_TEXTUREMODES_DPNDNT_AR          = 0x0fu;
-static const uint PS_TEXTUREMODES_DPNDNT_GB          = 0x10u;
-static const uint PS_TEXTUREMODES_DOTPRODUCT         = 0x11u;
-static const uint PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST = 0x12u;
-
-// PSFinalCombinerInputsEFG settings byte (LSB of that DWORD)
-static const uint PS_FC_CLAMP_SUM      = 0x80u; // bit 7: clamp V1+R0 to [0,1]
-static const uint PS_FC_COMPLEMENT_V1  = 0x40u; // bit 6: use 1-V1 in the sum
-static const uint PS_FC_COMPLEMENT_R0  = 0x20u; // bit 5: use 1-R0 in the sum
-
-// ============================================================
-// Constant buffer – Xbox pixel shader render state
-//
-// Packing convention (new in this port):
-//   All 32-bit Xbox DWORDs are stored as uint.
-//   Color constants remain float4 in [0..1].
-//
-// Input byte layout for PSRGBInputs / PSAlphaInputs:
-//   PS_COMBINERINPUTS(A,B,C,D) = (A<<24)|(B<<16)|(C<<8)|D
-//   Each byte: bits[3:0] = register, bit[4] = channel, bits[7:5] = mapping
-//
-// Output DWORD layout for PSRGBOutputs / PSAlphaOutputs:
-//   PS_COMBINEROUTPUTS(ab,cd,sum,flags) = (flags<<12)|(sum<<8)|(ab<<4)|cd
-//   bits[3:0]  = CD destination register
-//   bits[7:4]  = AB destination register
-//   bits[11:8] = AB+CD (sum/mux) destination register
-//   bit 12     = CD output is dot product (RGB only)
-//   bit 13     = AB output is dot product (RGB only)
-//   bit 14     = AB+CD output is MUX (vs SUM)
-//   bits[17:15]= output mapping: bit15=bias, bits[17:16]=scale
-//   bit 18     = CD blue-channel → alpha (RGB only)
-//   bit 19     = AB blue-channel → alpha (RGB only)
-// ============================================================
-
-cbuffer XboxPixelShaderState : register(b0)
-{
-    uint   PSAlphaInputs[8];               // Alpha combiner A..D input specs
-    uint   PSFinalCombinerInputsABCD;      // (A<<24)|(B<<16)|(C<<8)|D
-    uint   PSFinalCombinerInputsEFG;       // (E<<24)|(F<<16)|(G<<8)|settings
-    float4 PSConstant0[8];                 // Per-stage C0 color constant
-    float4 PSConstant1[8];                 // Per-stage C1 color constant
-    uint   PSAlphaOutputs[8];
-    uint   PSRGBInputs[8];                 // RGB combiner A..D input specs
-    uint   PSCompareMode;                  // Clip-plane comparison mode (TODO)
-    float4 PSFinalCombinerConstant[2];     // FC0, FC1
-    uint   PSRGBOutputs[8];
-    uint   PSCombinerCount;                // (flags<<8)|numStages
-    uint   PSTextureModes;                 // 4 x 5-bit modes; stage N at bits[N*5+4:N*5]
-    uint   PSDotMapping;                   // Dot-product normal mapping (TODO)
-    uint   PSInputTexture;                 // Input-texture for dependent modes (TODO)
-    float4 ColorSign[4];                   // Per-stage: 0=keep, >0=u→s, <0=s→u
-    float4 FogColor;                       // rgb=fog color constant; a=unused
-};
+#include "NV2APixelShaderConstants.hlsli"
+#include "RegisterCombinerInterpreterState.hlsli"
 
 // ============================================================
 // Textures and samplers
@@ -167,9 +70,11 @@ SamplerState Samp2     : register(s2);
 SamplerState Samp3     : register(s3);
 
 // ============================================================
-// Pixel shader input – matches VS_OUTPUT from CxbxVertexShaderTemplate.hlsl
+// Pixel shader input
+// Note: CxbxPixelShaderHelpers.hlsli has a cross-API version of this struct,
+// but we can't include it here because it also declares D3D9-style samplers
+// that conflict with our D3D11-style Texture2D/SamplerState declarations.
 // ============================================================
-
 struct PS_INPUT
 {
     float4 iPos : SV_Position;
@@ -185,14 +90,6 @@ struct PS_INPUT
     float4 iT3  : TEXCOORD3;
     bool   iFF  : SV_IsFrontFace;
 };
-
-// ============================================================
-// Bit extraction – trivial with SM5 native integers
-// ============================================================
-
-uint GetByte   (uint v, uint n) { return (v >> (n * 8u)) & 0xFFu; }
-uint GetNibble (uint v, uint n) { return (v >> (n * 4u)) & 0x0Fu; }
-bool GetBit    (uint v, uint n) { return ((v >> n) & 1u) != 0u; }
 
 // ============================================================
 // Step 2: register file
@@ -267,18 +164,17 @@ float4 ApplyInputMapping(uint mapping, float4 v)
 // ============================================================
 // Output mapping
 //
-// rawMapBits = bits[17:15] of the output DWORD, extracted as a 3-bit value:
-//   bit 0 (overall bit 15) = bias enable:  subtract 0.5 before scaling
-//   bit 1 (overall bit 16) = scale LSB:    x2 / x4 / /2 when combined with bit 2
-//   bit 2 (overall bit 17) = scale MSB
-//   scale encoding: 00=x1  01=x2  10=x4  11=/2
+// flags = PS_COMBINEROUTPUT flags field (rgbOut >> 12 or aOut >> 12).
+// Bits [5:3] encode the output mapping:
+//   bit 3 = PS_COMBINEROUTPUT_OUTPUTMAPPING_BIAS: subtract 0.5 before scaling
+//   bits [5:4] = scale: 00=x1  01=x2  10=x4  11=/2
 // ============================================================
 
-float4 ApplyOutputMapping(uint rawMapBits, float4 v)
+float4 ApplyOutputMapping(uint flags, float4 v)
 {
-    float bias  = GetBit(rawMapBits, 0u) ? -0.5f : 0.0f;
+    float bias  = (flags & PS_COMBINEROUTPUT_OUTPUTMAPPING_BIAS) ? -0.5f : 0.0f;
     float scale;
-    switch ((rawMapBits >> 1u) & 3u)
+    switch ((flags >> 4u) & 3u) // scale bits are [5:4] of flags
     {
         case 1u:  scale = 2.0f;  break;
         case 2u:  scale = 4.0f;  break;
@@ -617,35 +513,33 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
     uint aOut   = PSAlphaOutputs[stage];
 
     // --- Decode output control bits ---
-    bool flagCDDot  = GetBit(rgbOut, 12u); // CD produces dot product  (RGB only)
-    bool flagABDot  = GetBit(rgbOut, 13u); // AB produces dot product  (RGB only)
-    bool flagRGBMux = GetBit(rgbOut, 14u); // SUM vs MUX for RGB
-    bool flagAMux   = GetBit(aOut,   14u); // SUM vs MUX for alpha
-    bool cdBlue2A   = GetBit(rgbOut, 18u); // CD: copy .b to .a on write
-    bool abBlue2A   = GetBit(rgbOut, 19u); // AB: copy .b to .a on write
-
-    uint rgbMapBits = (rgbOut >> 15u) & 7u; // bits[17:15]: output scale+bias
-    uint aMapBits   = (aOut   >> 15u) & 7u;
+    uint rgbFlags = rgbOut >> PS_COMBINEROUTPUTS_FLAGS_SHIFT;
+    uint aFlags   = aOut   >> PS_COMBINEROUTPUTS_FLAGS_SHIFT;
+    bool flagCDDot  = (rgbFlags & PS_COMBINEROUTPUT_CD_DOT_PRODUCT)   != 0u;
+    bool flagABDot  = (rgbFlags & PS_COMBINEROUTPUT_AB_DOT_PRODUCT)   != 0u;
+    bool flagRGBMux = (rgbFlags & PS_COMBINEROUTPUT_AB_CD_MUX)        != 0u;
+    bool flagAMux   = (aFlags   & PS_COMBINEROUTPUT_AB_CD_MUX)        != 0u;
+    bool cdBlue2A   = (rgbFlags & PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA) != 0u;
+    bool abBlue2A   = (rgbFlags & PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA) != 0u;
 
     // Output destination registers (DISCARD == 0 == no-op write)
-    uint rgbRegCD  = GetNibble(rgbOut, 0u); // bits[3:0]
-    uint rgbRegAB  = GetNibble(rgbOut, 1u); // bits[7:4]
-    uint rgbRegSum = GetNibble(rgbOut, 2u); // bits[11:8]
-    uint aRegCD    = GetNibble(aOut,   0u);
-    uint aRegAB    = GetNibble(aOut,   1u);
-    uint aRegSum   = GetNibble(aOut,   2u);
+    uint rgbRegCD  = (rgbOut >> PS_COMBINEROUTPUTS_CD_SHIFT)      & 0xFu;
+    uint rgbRegAB  = (rgbOut >> PS_COMBINEROUTPUTS_AB_SHIFT)      & 0xFu;
+    uint rgbRegSum = (rgbOut >> PS_COMBINEROUTPUTS_MUX_SUM_SHIFT) & 0xFu;
+    uint aRegCD    = (aOut   >> PS_COMBINEROUTPUTS_CD_SHIFT)      & 0xFu;
+    uint aRegAB    = (aOut   >> PS_COMBINEROUTPUTS_AB_SHIFT)      & 0xFu;
+    uint aRegSum   = (aOut   >> PS_COMBINEROUTPUTS_MUX_SUM_SHIFT) & 0xFu;
 
     // --- Fetch all eight inputs in one block ---
-    // Input byte layout: A=byte3, B=byte2, C=byte1, D=byte0
-    // Grouping the reads here allows the compiler to schedule them together
-    float4 rgbA = ResolveInput(Regs, GetByte(rgbIn, 3u), false, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbB = ResolveInput(Regs, GetByte(rgbIn, 2u), false, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbC = ResolveInput(Regs, GetByte(rgbIn, 1u), false, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbD = ResolveInput(Regs, GetByte(rgbIn, 0u), false, stage, flagUniqueC0, flagUniqueC1);
-    float   aA  = ResolveInput(Regs, GetByte(aIn,   3u), true,  stage, flagUniqueC0, flagUniqueC1).a;
-    float   aB  = ResolveInput(Regs, GetByte(aIn,   2u), true,  stage, flagUniqueC0, flagUniqueC1).a;
-    float   aC  = ResolveInput(Regs, GetByte(aIn,   1u), true,  stage, flagUniqueC0, flagUniqueC1).a;
-    float   aD  = ResolveInput(Regs, GetByte(aIn,   0u), true,  stage, flagUniqueC0, flagUniqueC1).a;
+    // PS_COMBINERINPUTS(A, B, C, D) packing; grouping reads lets the compiler schedule together
+    float4 rgbA = ResolveInput(Regs, (rgbIn >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, false, stage, flagUniqueC0, flagUniqueC1);
+    float4 rgbB = ResolveInput(Regs, (rgbIn >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, false, stage, flagUniqueC0, flagUniqueC1);
+    float4 rgbC = ResolveInput(Regs, (rgbIn >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, false, stage, flagUniqueC0, flagUniqueC1);
+    float4 rgbD = ResolveInput(Regs, (rgbIn >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, false, stage, flagUniqueC0, flagUniqueC1);
+    float   aA  = ResolveInput(Regs, (aIn   >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, true,  stage, flagUniqueC0, flagUniqueC1).a;
+    float   aB  = ResolveInput(Regs, (aIn   >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, true,  stage, flagUniqueC0, flagUniqueC1).a;
+    float   aC  = ResolveInput(Regs, (aIn   >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, true,  stage, flagUniqueC0, flagUniqueC1).a;
+    float   aD  = ResolveInput(Regs, (aIn   >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, true,  stage, flagUniqueC0, flagUniqueC1).a;
 
     // --- Compute AB and CD products ---
     // Dot product applies to RGB only; alpha always multiplies scalars
@@ -665,12 +559,12 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
     float   aABCD  = flagAMux   ? (muxSel ? aCD   : aAB  ) : (aAB   + aCD  );
 
     // --- Apply output mapping to all six results ---
-    float3 outRGB_AB  = ApplyOutputMapping(rgbMapBits, float4(rgbAB,   0.0f)).rgb;
-    float3 outRGB_CD  = ApplyOutputMapping(rgbMapBits, float4(rgbCD,   0.0f)).rgb;
-    float3 outRGB_Sum = ApplyOutputMapping(rgbMapBits, float4(rgbABCD, 0.0f)).rgb;
-    float  outA_AB    = ApplyOutputMapping(aMapBits,   float4(0.0f, 0.0f, 0.0f, aAB  )).a;
-    float  outA_CD    = ApplyOutputMapping(aMapBits,   float4(0.0f, 0.0f, 0.0f, aCD  )).a;
-    float  outA_Sum   = ApplyOutputMapping(aMapBits,   float4(0.0f, 0.0f, 0.0f, aABCD)).a;
+    float3 outRGB_AB  = ApplyOutputMapping(rgbFlags, float4(rgbAB,   0.0f)).rgb;
+    float3 outRGB_CD  = ApplyOutputMapping(rgbFlags, float4(rgbCD,   0.0f)).rgb;
+    float3 outRGB_Sum = ApplyOutputMapping(rgbFlags, float4(rgbABCD, 0.0f)).rgb;
+    float  outA_AB    = ApplyOutputMapping(aFlags,   float4(0.0f, 0.0f, 0.0f, aAB  )).a;
+    float  outA_CD    = ApplyOutputMapping(aFlags,   float4(0.0f, 0.0f, 0.0f, aCD  )).a;
+    float  outA_Sum   = ApplyOutputMapping(aFlags,   float4(0.0f, 0.0f, 0.0f, aABCD)).a;
 
     // --- RGB writes ---
     // AB: write RGB; optionally propagate .b to .a (BlueToAlpha)
@@ -708,10 +602,11 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
     // PSFinalCombinerInputsEFG = PS_COMBINERINPUTS(E, F, G, settings)
     //   = (E<<24) | (F<<16) | (G<<8) | settings
     uint efg      = PSFinalCombinerInputsEFG;
-    uint settings = GetByte(efg, 0u); // LSB = settings byte
-    uint eReg     = GetByte(efg, 3u); // MSB = E input byte
-    uint fReg     = GetByte(efg, 2u);
-    uint gReg     = GetByte(efg, 1u);
+    // PS_COMBINERINPUTS(E, F, G, settings) for the final combiner
+    uint settings = (efg >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu;
+    uint eReg     = (efg >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu;
+    uint fReg     = (efg >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu;
+    uint gReg     = (efg >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu;
 
     // --- Resolve E, F (RGB) and G (alpha) — stageIdx 8 = final combiner EFG ---
     float3 E = ResolveInput(Regs, eReg, false, 8u, flagUniqueC0, flagUniqueC1).rgb;
@@ -725,11 +620,11 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
     // These modify the sum inputs, not the stored register values
     float3 v1 = RegRead(Regs, PS_REGISTER_V1).rgb;
     float3 r0 = R0.rgb;
-    if (GetBit(settings, 6u)) v1 = 1.0f - v1; // PS_FC_COMPLEMENT_V1
-    if (GetBit(settings, 5u)) r0 = 1.0f - r0; // PS_FC_COMPLEMENT_R0
+    if (settings & PS_FINALCOMBINERSETTING_COMPLEMENT_V1) v1 = 1.0f - v1;
+    if (settings & PS_FINALCOMBINERSETTING_COMPLEMENT_R0) r0 = 1.0f - r0;
 
     float3 v1r0sum = v1 + r0;
-    if (GetBit(settings, 7u)) v1r0sum = saturate(v1r0sum); // PS_FC_CLAMP_SUM
+    if (settings & PS_FINALCOMBINERSETTING_CLAMP_SUM) v1r0sum = saturate(v1r0sum);
 
     // Store V1+R0 sum for potential use by ABCD inputs
     RegWrite(Regs, PS_REGISTER_V1R0_SUM, float4(v1r0sum, 1.0f));
@@ -737,10 +632,10 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
     // --- Resolve A, B, C, D — stageIdx 9 = final combiner ABCD ---
     // V1R0_SUM and EF_PROD are now valid for reading at this stage
     uint abcd = PSFinalCombinerInputsABCD;
-    float4 A = ResolveInput(Regs, GetByte(abcd, 3u), false, 9u, flagUniqueC0, flagUniqueC1);
-    float4 B = ResolveInput(Regs, GetByte(abcd, 2u), false, 9u, flagUniqueC0, flagUniqueC1);
-    float4 C = ResolveInput(Regs, GetByte(abcd, 1u), false, 9u, flagUniqueC0, flagUniqueC1);
-    float4 D = ResolveInput(Regs, GetByte(abcd, 0u), false, 9u, flagUniqueC0, flagUniqueC1);
+    float4 A = ResolveInput(Regs, (abcd >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, false, 9u, flagUniqueC0, flagUniqueC1);
+    float4 B = ResolveInput(Regs, (abcd >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, false, 9u, flagUniqueC0, flagUniqueC1);
+    float4 C = ResolveInput(Regs, (abcd >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, false, 9u, flagUniqueC0, flagUniqueC1);
+    float4 D = ResolveInput(Regs, (abcd >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, false, 9u, flagUniqueC0, flagUniqueC1);
 
     // Final RGB = A*B + (1-A)*C + D, clamped to [0,1]
     // Final alpha = G
@@ -758,13 +653,11 @@ float4 main(PS_INPUT input) : SV_Target
 {
     // --- Decode PSCombinerCount ---
     // PSCombinerCount = PS_COMBINERCOUNT(count, flags) = (flags<<8) | count
-    uint ccByte0      = GetByte(PSCombinerCount, 0u); // bits[7:0]  = stage count
-    uint ccByte1      = GetByte(PSCombinerCount, 1u); // bits[15:8] = low flags
-    uint ccByte2      = GetByte(PSCombinerCount, 2u); // bits[23:16]= high flags
-    uint numStages    = clamp(ccByte0, 1u, 8u);
-    bool flagMuxMsb   = GetBit(ccByte1, 0u); // PS_COMBINERCOUNT_MUX_MSB
-    bool flagUniqueC0 = GetBit(ccByte1, 4u); // PS_COMBINERCOUNT_UNIQUE_C0
-    bool flagUniqueC1 = GetBit(ccByte2, 0u); // PS_COMBINERCOUNT_UNIQUE_C1
+    uint numStages    = clamp(PSCombinerCount & 0xFFu, 1u, 8u);
+    uint ccFlags      = PSCombinerCount >> 8u; // extract flags portion
+    bool flagMuxMsb   = (ccFlags & PS_COMBINERCOUNT_MUX_MSB)   != 0u;
+    bool flagUniqueC0 = (ccFlags & PS_COMBINERCOUNT_UNIQUE_C0) != 0u;
+    bool flagUniqueC1 = (ccFlags & PS_COMBINERCOUNT_UNIQUE_C1) != 0u;
 
     // --- Decode PSTextureModes ---
     // Four 5-bit fields packed sequentially; stage N occupies bits[N*5+4 : N*5]

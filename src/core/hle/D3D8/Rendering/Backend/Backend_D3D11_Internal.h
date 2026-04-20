@@ -119,43 +119,10 @@ extern ID3D11Buffer              *g_pD3D11FormatConvertCB;
 extern ID3D11PixelShader         *g_pD3D11RCInterpreterPS;
 extern ID3D11Buffer              *g_pD3D11RCInterpreterCB;
 
-// RC interpreter constant buffer layout — must match XboxPixelShaderState in
-// RegisterCombinerInterpreter.hlsl.  SM5 packs each scalar/uint array element
-// into its own 16-byte register.
-struct alignas(16) UintReg { uint32_t value; uint32_t _pad[3]; };
-struct alignas(16) Float4Reg { float x, y, z, w; };
-
-struct RCInterpreterCBLayout
-{
-	UintReg   PSAlphaInputs[8];                  // 128 B
-	UintReg   PSFinalCombinerInputsABCD;          // 16 B
-	UintReg   PSFinalCombinerInputsEFG;           // 16 B
-	Float4Reg PSConstant0[8];                     // 128 B
-	Float4Reg PSConstant1[8];                     // 128 B
-	UintReg   PSAlphaOutputs[8];                  // 128 B
-	UintReg   PSRGBInputs[8];                     // 128 B
-	UintReg   PSCompareMode;                      // 16 B
-	Float4Reg PSFinalCombinerConstant[2];         // 32 B
-	UintReg   PSRGBOutputs[8];                    // 128 B
-	UintReg   PSCombinerCount;                    // 16 B
-	UintReg   PSTextureModes;                     // 16 B
-	UintReg   PSDotMapping;                       // 16 B
-	UintReg   PSInputTexture;                     // 16 B
-	Float4Reg ColorSign[4];                       // 64 B
-	Float4Reg FogColor;                           // 16 B
-};
-static_assert(sizeof(RCInterpreterCBLayout) == 992, "RC cbuffer layout size mismatch");
-
-// Convert a packed DWORD ARGB color (0xAARRGGBB) to Float4Reg RGBA [0..1]
-inline Float4Reg DwordColorToFloat4(uint32_t color)
-{
-	Float4Reg f;
-	f.x = ((color >> 16) & 0xFF) / 255.0f; // R
-	f.y = ((color >> 8) & 0xFF) / 255.0f;  // G
-	f.z = (color & 0xFF) / 255.0f;         // B
-	f.w = ((color >> 24) & 0xFF) / 255.0f; // A
-	return f;
-}
+// RC interpreter constant buffer layout — shared with the HLSL cbuffer
+// definition in RegisterCombinerInterpreterState.hlsli.
+#include "../Shaders/NV2APixelShaderConstants.hlsli"
+#include "../Shaders/RegisterCombinerInterpreterState.hlsli"
 
 // ******************************************************************
 // * Compute shader resources — vertex convert
@@ -170,20 +137,7 @@ extern ID3D11ShaderResourceView  *g_pD3D11VertexConvertSrcSRV;
 // * Internal helper functions (shared across split files)
 // ******************************************************************
 
-// Index conversion mode constants
-#define CXBX_INDEX_CONVERT_QUAD_CW  0
-#define CXBX_INDEX_CONVERT_QUAD_CCW 1
-#define CXBX_INDEX_CONVERT_FAN      2
-
-// Vertex format conversion type constants
-#define CXBX_VTXCONV_COPY       0
-#define CXBX_VTXCONV_NORMSHORT3 1
-#define CXBX_VTXCONV_NORMPACKED3 2
-#define CXBX_VTXCONV_SHORT3     3
-#define CXBX_VTXCONV_PBYTE3     4
-#define CXBX_VTXCONV_FLOAT2H    5
-#define CXBX_VTXCONV_D3DCOLOR   6
-#define CXBX_VTXCONV_NONE       7
+// CXBX_INDEX_CONVERT_* and CXBX_VTXCONV_* are defined in Backend_D3D11.h
 
 HRESULT CxbxD3D11CreateConstantBuffer(UINT byteWidth, bool bDynamic, ID3D11Buffer** ppBuffer);
 HRESULT CxbxD3D11CreateRawBuffer(UINT byteWidth, bool bDynamic, UINT extraBindFlags, ID3D11Buffer** ppBuffer);

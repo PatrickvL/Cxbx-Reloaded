@@ -179,7 +179,7 @@ ID3D11Buffer              *g_pD3D11FormatConvertCB = nullptr; // constant buffer
 // ******************************************************************
 bool                       g_bUseRCInterpreter = true; // default on — ubershader path
 ID3D11PixelShader         *g_pD3D11RCInterpreterPS = nullptr;
-ID3D11Buffer              *g_pD3D11RCInterpreterCB = nullptr; // matches XboxPixelShaderState cbuffer
+ID3D11Buffer              *g_pD3D11RCInterpreterCB = nullptr; // matches RCInterpreterCBLayout cbuffer
 
 // ******************************************************************
 // * Compute shader vertex format conversion resources
@@ -189,21 +189,6 @@ ID3D11Buffer              *g_pD3D11VertexConvertCB = nullptr; // constant buffer
 ID3D11Buffer              *g_pD3D11VertexConvertSrcBuf = nullptr; // staging ByteAddressBuffer for source vertices
 UINT                       g_VertexConvertSrcBufSize = 0;
 ID3D11ShaderResourceView  *g_pD3D11VertexConvertSrcSRV = nullptr;
-
-// Index conversion mode constants
-#define CXBX_INDEX_CONVERT_QUAD_CW  0
-#define CXBX_INDEX_CONVERT_QUAD_CCW 1
-#define CXBX_INDEX_CONVERT_FAN      2
-
-// Vertex format conversion type constants
-#define CXBX_VTXCONV_COPY       0
-#define CXBX_VTXCONV_NORMSHORT3 1
-#define CXBX_VTXCONV_NORMPACKED3 2
-#define CXBX_VTXCONV_SHORT3     3
-#define CXBX_VTXCONV_PBYTE3     4
-#define CXBX_VTXCONV_FLOAT2H    5
-#define CXBX_VTXCONV_D3DCOLOR   6
-#define CXBX_VTXCONV_NONE       7
 
 // ******************************************************************
 // * D3D11 buffer/view creation helpers
