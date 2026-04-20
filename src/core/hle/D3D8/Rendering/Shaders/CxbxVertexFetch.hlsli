@@ -1,15 +1,13 @@
-// CxbxVertexFetch.hlsli — IA-bypass vertex fetch from ByteAddressBuffer
+// CxbxVertexFetch.hlsli — Vertex fetch from ByteAddressBuffer
 //
-// When CXBX_IA_BYPASS is defined, the vertex shader receives only
-// SV_VertexID. All vertex attribute data is fetched manually from
-// a ByteAddressBuffer containing the raw Xbox vertex stream data.
-// Topology conversion (quad→tri, fan→tri) and format decode
-// (including NORMPACKED3/CMP 11.11.10) are performed inline.
+// The vertex shader receives only SV_VertexID. All vertex attribute
+// data is fetched from a ByteAddressBuffer containing the raw Xbox
+// vertex stream data. Topology conversion (quad→tri, fan→tri) and
+// format decode (including NORMPACKED3/CMP 11.11.10) are performed
+// inline.
 
 #ifndef CXBX_VERTEX_FETCH_HLSLI
 #define CXBX_VERTEX_FETCH_HLSLI
-
-#ifdef CXBX_IA_BYPASS
 
 // ---------------------------------------------------------------
 // Vertex fetch SRV — raw Xbox vertex data
@@ -386,5 +384,4 @@ void FetchAllAttributes(uint xboxVtxIdx, out float4 v[16])
     }
 }
 
-#endif // CXBX_IA_BYPASS
 #endif // CXBX_VERTEX_FETCH_HLSLI

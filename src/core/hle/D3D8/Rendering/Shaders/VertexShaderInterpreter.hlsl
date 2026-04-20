@@ -15,9 +15,7 @@
 // Reference: nv2a_vsh_cpu (import/nv2a_vsh_cpu/src/nv2a_vsh_emulator.c)
 
 #include "CxbxVertexShaderCommon.hlsli"
-#ifdef CXBX_IA_BYPASS
 #include "CxbxVertexFetch.hlsli"
-#endif
 
 // Xbox constant registers (same as in CxbxVertexShaderTemplate.hlsl)
 #define X_D3DSCM_CORRECTION 96

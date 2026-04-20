@@ -1,9 +1,7 @@
 #include "FixedFunctionVertexShaderState.hlsli"
 
 #include "CxbxVertexShaderCommon.hlsli"
-#ifdef CXBX_IA_BYPASS
 #include "CxbxVertexFetch.hlsli"
-#endif
 
 // Whether each vertex register is present in the vertex declaration.
 // Used by DoMaterial to determine ColorVertex behavior.
@@ -33,19 +31,13 @@ static const uint reserved0 = 13;   // Has no X_D3DFVF_*     / X_D3DVSDE_*
 static const uint reserved1 = 14;   // Has no X_D3DFVF_*     / X_D3DVSDE_*
 static const uint reserved2 = 15;   // Has no X_D3DFVF_*     / X_D3DVSDE_*
 
-#ifdef CXBX_IA_BYPASS
-// In IA bypass mode, vertex attributes are fetched into this static array
-// since VS_INPUT only carries SV_VertexID (no .v member).
+// Vertex attributes fetched from ByteAddressBuffer into this static array;
+// VS_INPUT only carries SV_VertexID.
 static float4 g_FetchedAttribs[16];
-#endif
 
-float4 Get(const VS_INPUT xIn, const uint index)
+float4 Get(const uint index)
 {
-#ifdef CXBX_IA_BYPASS
     return g_FetchedAttribs[index];
-#else
-    return xIn.v[index];
-#endif
 }
 
 struct TransformInfo
@@ -191,7 +183,7 @@ TransformInfo DoTransform(const float4 position, const float3 normal, const floa
     return output;
 }
 
-Material DoMaterial(const uint index, const uint diffuseReg, const uint specularReg, const VS_INPUT xIn)
+Material DoMaterial(const uint index, const uint diffuseReg, const uint specularReg)
 {
     // Get the material from material state
     Material material = state.Materials[index];
@@ -207,7 +199,7 @@ Material DoMaterial(const uint index, const uint diffuseReg, const uint specular
         // Then use the vertex colour instead of the material
 
         if (!vRegisterDefaultFlags[diffuseReg]) {
-            const float4 diffuseVertexColour = Get(xIn, diffuseReg);
+            const float4 diffuseVertexColour = Get(diffuseReg);
             if (state.Modes.AmbientMaterialSource == D3DMCS_COLOR1) material.Ambient = diffuseVertexColour;
             if (state.Modes.DiffuseMaterialSource == D3DMCS_COLOR1) material.Diffuse = diffuseVertexColour;
             if (state.Modes.SpecularMaterialSource == D3DMCS_COLOR1) material.Specular = diffuseVertexColour;
@@ -215,7 +207,7 @@ Material DoMaterial(const uint index, const uint diffuseReg, const uint specular
         }
 
         if (!vRegisterDefaultFlags[specularReg]) {
-            const float4 specularVertexColour = Get(xIn, specularReg);
+            const float4 specularVertexColour = Get(specularReg);
             if (state.Modes.AmbientMaterialSource == D3DMCS_COLOR2) material.Ambient = specularVertexColour;
             if (state.Modes.DiffuseMaterialSource == D3DMCS_COLOR2) material.Diffuse = specularVertexColour;
             if (state.Modes.SpecularMaterialSource == D3DMCS_COLOR2) material.Specular = specularVertexColour;
@@ -226,7 +218,7 @@ Material DoMaterial(const uint index, const uint diffuseReg, const uint specular
     return material;
 }
 
-float DoFog(const VS_INPUT xIn)
+float DoFog()
 {
     if (!state.Fog.Enable)
         return 1; // No fog!
@@ -236,7 +228,7 @@ float DoFog(const VS_INPUT xIn)
     float fogDepth;
 
     if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_NONE)
-        fogDepth = Get(xIn, specular).a; // In fixed-function mode, fog is passed in the specular alpha
+        fogDepth = Get(specular).a; // In fixed-function mode, fog is passed in the specular alpha
     if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_RANGE)
         fogDepth = length(View.Position.xyz);
     if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_Z)
@@ -247,7 +239,7 @@ float DoFog(const VS_INPUT xIn)
     return fogDepth;
 }
 
-float4 DoTexCoord(const uint stage, const VS_INPUT xIn)
+float4 DoTexCoord(const uint stage)
 {
     // Texture transform flags
     // https://docs.microsoft.com/en-gb/windows/win32/direct3d9/d3dtexturetransformflags
@@ -281,7 +273,7 @@ float4 DoTexCoord(const uint stage, const VS_INPUT xIn)
     {
         // Get from vertex data
         const uint texCoordIndex = abs(tState.TexCoordIndex); // Note : abs() avoids error X3548 : in vs_3_0 uints can only be used with known - positive values, use int if possible
-        texCoord = Get(xIn, texcoord0+texCoordIndex);
+        texCoord = Get(texcoord0+texCoordIndex);
 
         // Make coordinates homogenous
         // For example, if a title supplies (u, v)
@@ -370,36 +362,6 @@ float DoPointSpriteSize()
     return clamp(pointSize, ps.PointSize_Min, ps.PointSize_Max) * ps.RenderUpscaleFactor;
 }
 
-VS_INPUT InitializeInputRegisters(const VS_INPUT xInput)
-{
-    VS_INPUT xIn;
-
-#ifdef CXBX_IA_BYPASS
-    // IA bypass: fetch all attributes from ByteAddressBuffer using SV_VertexID
-    // Data is stored in g_FetchedAttribs; Get() reads from there.
-    xIn = xInput;
-    {
-        uint xboxVtxIdx = ResolveVertexIndex(xInput.vertexId);
-        float4 vArr[16];
-        FetchAllAttributes(xboxVtxIdx, vArr);
-        [unroll] for (uint i = 0; i < 16u; i++) g_FetchedAttribs[i] = vArr[i];
-    }
-#else
-    // Initialize input registers from the vertex buffer data
-    // Or use the register's default value (which can be changed by the title)
-    for (uint i = 0; i < 16; i++)
-    {
-        // D3D11: The input assembler delivers correct values for all 16 attributes
-        // via the zero-stride defaults buffer, no lerp needed.
-        const float4 value = Get(xInput, i);
-        // D3D11: VS_INPUT uses a flat v[16] array, so init_v() addresses by index.
-        xIn.v[i] = value;
-    }
-#endif // CXBX_IA_BYPASS
-
-    return xIn; // Note : Untested setters are required to avoid "variable 'xIn' used without having been completely initialized" here
-}
-
 VS_OUTPUT main(const VS_INPUT xInput)
 {
     VS_OUTPUT xOut;
@@ -407,13 +369,16 @@ VS_OUTPUT main(const VS_INPUT xInput)
     // Unpack 16 bool flags from 4 float4 constant registers
     vRegisterDefaultFlags = (bool[16]) vRegisterDefaultFlagsPacked;
 
-    // TODO make sure this goes fast
-
-    // Map default values
-    VS_INPUT xIn = InitializeInputRegisters(xInput);
+    // Fetch all vertex attributes from ByteAddressBuffer using SV_VertexID
+    {
+        uint xboxVtxIdx = ResolveVertexIndex(xInput.vertexId);
+        float4 vArr[16];
+        FetchAllAttributes(xboxVtxIdx, vArr);
+        [unroll] for (uint i = 0; i < 16u; i++) g_FetchedAttribs[i] = vArr[i];
+    }
 
     // World + View transform with vertex blending
-    View = DoTransform(Get(xIn, position), Get(xIn, normal).xyz, Get(xIn, weight));
+    View = DoTransform(Get(position), Get(normal).xyz, Get(weight));
 
     // Optionally normalize camera-space normals
     if (state.Modes.NormalizeNormals)
@@ -427,17 +392,17 @@ VS_OUTPUT main(const VS_INPUT xInput)
     xOut.oPos = Projection.Position;
 
     // Diffuse and specular for when lighting is disabled
-    xOut.oD0 = Get(xIn, diffuse);
-    xOut.oD1 = Get(xIn, specular);
-    xOut.oB0 = Get(xIn, backDiffuse);
-    xOut.oB1 = Get(xIn, backSpecular);
+    xOut.oD0 = Get(diffuse);
+    xOut.oD1 = Get(specular);
+    xOut.oB0 = Get(backDiffuse);
+    xOut.oB1 = Get(backSpecular);
 
     // Vertex lighting
     if (state.Modes.Lighting) // TODO : Remove this check by incorporating this boolean into the variables used below (set DiffuseMaterialSource to D3DMCS_COLOR1, SpecularMaterialSource to D3DMCS_COLOR2, all other to D3DMCS_MATERIAL and their colors and TotalLightsAmbient to zero, etc)
     {
         // Materials
-        Material material = DoMaterial(0, diffuse, specular, xIn);
-        Material backMaterial = DoMaterial(1, backDiffuse, backSpecular, xIn);
+        Material material = DoMaterial(0, diffuse, specular);
+        Material backMaterial = DoMaterial(1, backDiffuse, backSpecular);
 
         // Compute each lighting component
         const float2 powers = float2(material.Power, backMaterial.Power);
@@ -468,16 +433,16 @@ VS_OUTPUT main(const VS_INPUT xInput)
     xOut.oB1 = saturate(xOut.oB1);
 
     // Fog
-    xOut.oFog = DoFog(xIn);
+    xOut.oFog = DoFog();
 
     // Point Sprite
     xOut.oPts = DoPointSpriteSize();
 
     // Texture coordinates
-    xOut.oT0 = DoTexCoord(0, xIn) / xboxTextureScale[0];
-    xOut.oT1 = DoTexCoord(1, xIn) / xboxTextureScale[1];
-    xOut.oT2 = DoTexCoord(2, xIn) / xboxTextureScale[2];
-    xOut.oT3 = DoTexCoord(3, xIn) / xboxTextureScale[3];
+    xOut.oT0 = DoTexCoord(0) / xboxTextureScale[0];
+    xOut.oT1 = DoTexCoord(1) / xboxTextureScale[1];
+    xOut.oT2 = DoTexCoord(2) / xboxTextureScale[2];
+    xOut.oT3 = DoTexCoord(3) / xboxTextureScale[3];
 
     return xOut;
 }

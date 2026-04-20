@@ -1,9 +1,7 @@
 // Xbox HLSL pretransformed vertex shader
 
 #include "CxbxVertexShaderCommon.hlsli"
-#ifdef CXBX_IA_BYPASS
 #include "CxbxVertexFetch.hlsli"
-#endif
 #include "CxbxScreenspaceTransform.hlsli"
 
 VS_OUTPUT main(const VS_INPUT xIn)

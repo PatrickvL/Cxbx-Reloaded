@@ -1,18 +1,12 @@
 #ifndef CXBX_VERTEX_SHADER_COMMON_HLSLI
 #define CXBX_VERTEX_SHADER_COMMON_HLSLI
 
-// Shared input layout: flat TEXCOORD array matching the NV2A model of
-// 16 generic vertex attribute registers. Used by all vertex shaders
-// under D3D11.
-// IA bypass mode: VS receives only SV_VertexID, all attributes are
-// fetched from a ByteAddressBuffer via CxbxVertexFetch.hlsli
+// Shared vertex shader input: VS receives only SV_VertexID; all 16 NV2A
+// vertex attributes are fetched from a ByteAddressBuffer in the shader
+// (see CxbxVertexFetch.hlsli).
 struct VS_INPUT
 {
-#ifdef CXBX_IA_BYPASS
 	uint vertexId : SV_VertexID;
-#else
-	float4 v[16] : TEXCOORD;
-#endif
 };
 
 // Output registers — declared identical to pixel shader input (see PS_INPUT)

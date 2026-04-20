@@ -79,19 +79,8 @@ extern HRESULT EmuCompileShader
 	// SM4.0+ requires backwards compatibility mode for DX9-style intrinsics (tex2D, texCUBE, etc.)
 	flags1 |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
 
-	D3D_SHADER_MACRO defines_ia_bypass[] = {
-		{ "CXBX_IA_BYPASS", "1" },
-		{ nullptr, nullptr }
-	};
-	D3D_SHADER_MACRO defines_ia_normal[] = {
-		{ nullptr, nullptr }
-	};
-	// Use IA bypass defines for vertex shaders (vs_*) when the flag is set
-	bool isVertexShader = (shader_profile != nullptr && shader_profile[0] == 'v' && shader_profile[1] == 's');
-	D3D_SHADER_MACRO* defines = isVertexShader ? defines_ia_bypass : defines_ia_normal;
-
 	// Use O1 for all Cxbx shaders:
-	// - IA bypass vertex shaders include FetchAllAttributes() which unrolls a
+	// - Vertex shaders include FetchAllAttributes() which unrolls a
 	//   20-format switch × 16 attributes; at O3 the HLSL compiler spends
 	//   exponential time optimising this.
 	// - The RC interpreter pixel shader (718 lines with dynamic loops/switches)
@@ -103,7 +92,7 @@ extern HRESULT EmuCompileShader
 		hlsl_str.c_str(),
 		hlsl_str.length(),
 		pSourceName,
-		defines, // pDefines - was nullptr
+		nullptr, // pDefines
 		D3D_COMPILE_STANDARD_FILE_INCLUDE,
 		"main",
 		shader_profile,
@@ -121,7 +110,7 @@ extern HRESULT EmuCompileShader
 			hlsl_str.c_str(),
 			hlsl_str.length(),
 			pSourceName,
-			defines, // pDefines
+			nullptr, // pDefines
 			D3D_COMPILE_STANDARD_FILE_INCLUDE, // pInclude // TODO precompile x_* HLSL functions?
 			"main", // shader entry poiint
 			shader_profile,
