@@ -26,27 +26,12 @@ uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 #include "VertexShaderInterpreterState.hlsli"
 
 // ============================================================
-// Swizzle helper: extract a component from a float4 by index
+// Swizzle helper: rearrange float4 components by index
 // ============================================================
-float swizzle_component(float4 v, uint idx)
-{
-    // idx: 0=x, 1=y, 2=z, 3=w
-    switch (idx) {
-        case 0: return v.x;
-        case 1: return v.y;
-        case 2: return v.z;
-        default: return v.w;
-    }
-}
-
 float4 apply_swizzle(float4 v, uint swz_x, uint swz_y, uint swz_z, uint swz_w)
 {
-    return float4(
-        swizzle_component(v, swz_x),
-        swizzle_component(v, swz_y),
-        swizzle_component(v, swz_z),
-        swizzle_component(v, swz_w)
-    );
+    float arr[4] = { v.x, v.y, v.z, v.w };
+    return float4(arr[swz_x & 3], arr[swz_y & 3], arr[swz_z & 3], arr[swz_w & 3]);
 }
 
 // ============================================================
@@ -98,12 +83,41 @@ float4 fetch_input(
 // ============================================================
 // Write result to register with writemask
 // ============================================================
-void write_masked(inout float4 dest, float4 result, uint mask)
+void write_masked(inout float4 dest, float4 src, uint mask)
 {
-    if (mask & VSI_MASK_X) dest.x = result.x;
-    if (mask & VSI_MASK_Y) dest.y = result.y;
-    if (mask & VSI_MASK_Z) dest.z = result.z;
-    if (mask & VSI_MASK_W) dest.w = result.w;
+    dest = float4(
+        (mask & VSI_MASK_X) ? src.x : dest.x,
+        (mask & VSI_MASK_Y) ? src.y : dest.y,
+        (mask & VSI_MASK_Z) ? src.z : dest.z,
+        (mask & VSI_MASK_W) ? src.w : dest.w
+    );
+}
+
+// ============================================================
+// Write result to an output register by address
+// Addresses 1 and 2 are unused on NV2A and fall through harmlessly.
+// ============================================================
+void write_output(
+    uint o_addr, float4 result, uint mask,
+    inout float4 oPos, inout float4 oD0, inout float4 oD1,
+    inout float4 oFog, inout float4 oPts,
+    inout float4 oB0,  inout float4 oB1,
+    inout float4 oT0,  inout float4 oT1,
+    inout float4 oT2,  inout float4 oT3)
+{
+    switch (o_addr & 0xF) {
+        case 0:  write_masked(oPos, result, mask); break;
+        case 3:  write_masked(oD0,  result, mask); break;
+        case 4:  write_masked(oD1,  result, mask); break;
+        case 5:  write_masked(oFog, result, mask); break;
+        case 6:  write_masked(oPts, result, mask); break;
+        case 7:  write_masked(oB0,  result, mask); break;
+        case 8:  write_masked(oB1,  result, mask); break;
+        case 9:  write_masked(oT0,  result, mask); break;
+        case 10: write_masked(oT1,  result, mask); break;
+        case 11: write_masked(oT2,  result, mask); break;
+        case 12: write_masked(oT3,  result, mask); break;
+    }
 }
 
 // ============================================================
@@ -242,6 +256,12 @@ VS_OUTPUT main(const VS_INPUT xIn)
         uint ilu_op = (dw1 >> VSI_FLD_ILU_SHIFT) & VSI_FLD_ILU_MASK;
         uint mac_op = (dw1 >> VSI_FLD_MAC_SHIFT) & VSI_FLD_MAC_MASK;
 
+        // Skip decode entirely when both units are idle (padding slots)
+        if (mac_op == VSI_MAC_NOP && ilu_op == VSI_ILU_NOP) {
+            if (((dw3 >> VSI_FLD_FINAL_BIT3) & 1) != 0) break;
+            continue;
+        }
+
         // Decode register indices
         uint const_idx = (dw1 >> VSI_FLD_CONST_SHIFT) & VSI_FLD_CONST_MASK;
         uint v_idx     = (dw1 >> VSI_FLD_V_SHIFT)     & VSI_FLD_V_MASK;
@@ -290,20 +310,20 @@ VS_OUTPUT main(const VS_INPUT xIn)
 
         // ============================================================
         // Snapshot inputs before executing (prevents order-dependent behavior)
-        // MAC uses inputs A, B, C; ILU uses input C
+        // MAC uses inputs A, B, C; ILU uses input C (same parameters)
         // ============================================================
         float4 in_a = float4(0,0,0,0);
         float4 in_b = float4(0,0,0,0);
         float4 in_c = float4(0,0,0,0);
-        float4 ilu_in = float4(0,0,0,0);
 
         if (mac_op != VSI_MAC_NOP) {
             in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz_x, a_swz_y, a_swz_z, a_swz_w, a_neg, use_a0x, a0, r, oPos, v_regs);
             in_b = fetch_input(b_mux, b_reg, v_idx, const_idx, b_swz_x, b_swz_y, b_swz_z, b_swz_w, b_neg, use_a0x, a0, r, oPos, v_regs);
             in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz_x, c_swz_y, c_swz_z, c_swz_w, c_neg, use_a0x, a0, r, oPos, v_regs);
         }
-        if (ilu_op != VSI_ILU_NOP) {
-            ilu_in = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz_x, c_swz_y, c_swz_z, c_swz_w, c_neg, use_a0x, a0, r, oPos, v_regs);
+        else if (ilu_op != VSI_ILU_NOP) {
+            // ILU-only: C-input not yet fetched
+            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz_x, c_swz_y, c_swz_z, c_swz_w, c_neg, use_a0x, a0, r, oPos, v_regs);
         }
 
         // ============================================================
@@ -329,26 +349,9 @@ VS_OUTPUT main(const VS_INPUT xIn)
                 }
 
                 // Write to output register (if MAC is the output source)
-                if (out_mux == 0 && out_o_mask != 0) {
-                    if (out_orb) {
-                        // Output register
-                        uint o_addr = out_address & 0xF;
-                        switch (o_addr) {
-                            case 0:  write_masked(oPos, mac_result, out_o_mask); break;
-                            case 3:  write_masked(oD0, mac_result, out_o_mask); break;
-                            case 4:  write_masked(oD1, mac_result, out_o_mask); break;
-                            case 5:  write_masked(oFog, mac_result, out_o_mask); break;
-                            case 6:  write_masked(oPts, mac_result, out_o_mask); break;
-                            case 7:  write_masked(oB0, mac_result, out_o_mask); break;
-                            case 8:  write_masked(oB1, mac_result, out_o_mask); break;
-                            case 9:  write_masked(oT0, mac_result, out_o_mask); break;
-                            case 10: write_masked(oT1, mac_result, out_o_mask); break;
-                            case 11: write_masked(oT2, mac_result, out_o_mask); break;
-                            case 12: write_masked(oT3, mac_result, out_o_mask); break;
-                        }
-                    }
-                    // else: context write (writing to C registers) — rare, vertex state shaders
-                }
+                if (out_mux == 0 && out_o_mask != 0 && out_orb)
+                    write_output(out_address, mac_result, out_o_mask, oPos, oD0, oD1, oFog, oPts, oB0, oB1, oT0, oT1, oT2, oT3);
+                // else if !out_orb: context write (C registers) — rare, vertex state shaders
             }
         }
 
@@ -356,7 +359,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
         // Execute ILU operation
         // ============================================================
         if (ilu_op != VSI_ILU_NOP) {
-            float4 ilu_result = exec_ilu(ilu_op, ilu_in);
+            float4 ilu_result = exec_ilu(ilu_op, in_c);
 
             // ILU writes to R register
             // When paired, ILU always writes to R1
@@ -371,24 +374,8 @@ VS_OUTPUT main(const VS_INPUT xIn)
             }
 
             // Write to output register (if ILU is the output source)
-            if (out_mux == 1 && out_o_mask != 0) {
-                if (out_orb) {
-                    uint o_addr = out_address & 0xF;
-                    switch (o_addr) {
-                        case 0:  write_masked(oPos, ilu_result, out_o_mask); break;
-                        case 3:  write_masked(oD0, ilu_result, out_o_mask); break;
-                        case 4:  write_masked(oD1, ilu_result, out_o_mask); break;
-                        case 5:  write_masked(oFog, ilu_result, out_o_mask); break;
-                        case 6:  write_masked(oPts, ilu_result, out_o_mask); break;
-                        case 7:  write_masked(oB0, ilu_result, out_o_mask); break;
-                        case 8:  write_masked(oB1, ilu_result, out_o_mask); break;
-                        case 9:  write_masked(oT0, ilu_result, out_o_mask); break;
-                        case 10: write_masked(oT1, ilu_result, out_o_mask); break;
-                        case 11: write_masked(oT2, ilu_result, out_o_mask); break;
-                        case 12: write_masked(oT3, ilu_result, out_o_mask); break;
-                    }
-                }
-            }
+            if (out_mux == 1 && out_o_mask != 0 && out_orb)
+                write_output(out_address, ilu_result, out_o_mask, oPos, oD0, oD1, oFog, oPts, oB0, oB1, oT0, oT1, oT2, oT3);
         }
 
         // Stop at the final instruction
