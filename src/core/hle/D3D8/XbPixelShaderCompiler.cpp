@@ -909,6 +909,51 @@ void CxbxD3D11UploadRCInterpreterState()
 	DWORD fogArgb = FogColor_ABGR_to_ARGB(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR));
 	cb.FogColor = DwordColorToFloat4(fogArgb);
 
+	// --- Post-processing state (matches compiled PS pipeline) ---
+
+	// Texture format channel fixup per stage
+	cb.TexFmtFixup = { CxbxGetTexFmtFixup(0), CxbxGetTexFmtFixup(1),
+	                    CxbxGetTexFmtFixup(2), CxbxGetTexFmtFixup(3) };
+
+	// Alpha test: x=enable, y=ref/255, z=PC cmpfunc
+	cb.AlphaTest = {
+		static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHATESTENABLE)),
+		static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHAREF)) / 255.0f,
+		static_cast<float>(EmuXB2PC_D3DCMPFUNC((xbox::X_D3DCMPFUNC)XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHAFUNC))),
+		0.0f
+	};
+
+	// Color key per stage
+	for (int i = 0; i < 4; i++) {
+		cb.ColorKeyOp[i] = { static_cast<float>(XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYOP)), 0.0f, 0.0f, 0.0f };
+		D3DXCOLOR ckc(XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYCOLOR));
+		cb.ColorKeyColor[i] = { ckc.r, ckc.g, ckc.b, ckc.a };
+	}
+
+	// Bump environment map matrix per stage
+	for (int i = 0; i < 4; i++) {
+		DWORD bemDwords[4];
+		CxbxGetBumpEnvMatrix(i, bemDwords);
+		cb.BEM[i] = { AsFloat(bemDwords[0]), AsFloat(bemDwords[1]),
+		              AsFloat(bemDwords[2]), AsFloat(bemDwords[3]) };
+	}
+
+	// Bump luminance scale/offset per stage
+	for (int i = 0; i < 4; i++) {
+		DWORD lumDwords[2];
+		CxbxGetBumpEnvLuminance(i, lumDwords);
+		cb.LUM[i] = { AsFloat(lumDwords[0]), AsFloat(lumDwords[1]), 0.0f, 0.0f };
+	}
+
+	// Fog info: x=tableMode, y=density, z=start, w=end
+	cb.FogInfo = {
+		static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE)),
+		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY),
+		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART),
+		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND)
+	};
+	cb.FogEnable.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1u : 0u;
+
 	// Upload and bind to b0
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterCB, &cb, sizeof(cb));
 	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterCB);

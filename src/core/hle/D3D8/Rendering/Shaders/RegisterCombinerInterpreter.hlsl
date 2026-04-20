@@ -328,6 +328,100 @@ float4 ApplyColorSign(float4 sign, float4 t)
 }
 
 // ============================================================
+// Texture format channel fixup (Xbox→D3D11 format differences)
+// fixup: 0=identity, 1=.gbar, 2=.abgr, 3=luminance, 4=alpha-luminance
+// ============================================================
+
+float4 ApplyTexFmtFixup(float4 t, float fixup)
+{
+    int f = (int)fixup;
+    [branch] if (f != 0) {
+        if (f == 1) return t.gbar;                       // B8G8R8A8 uploaded as R8G8B8A8
+        if (f == 2) return t.abgr;                       // R8G8B8A8 uploaded as R8G8B8A8
+        if (f == 3) return float4(t.r, t.r, t.r, t.a);   // Luminance: R→(R,R,R,A)
+        if (f == 4) return float4(t.r, t.r, t.r, t.g);   // Alpha-luminance: RG→(R,R,R,G)
+    }
+    return t;
+}
+
+// ============================================================
+// Color key operations
+// ============================================================
+
+float4 ApplyColorKeyOp(float4 colorKeyOp, float4 colorKeyColor, float4 t)
+{
+    int op = (int)colorKeyOp.x;
+    if (op == 0) return t; // DISABLE
+    if (any(t - colorKeyColor)) return t; // No match
+    if (op == 1) return float4(t.rgb, 0); // ALPHA
+    if (op == 2) return (float4)0;        // RGBA
+    if (op == 3) { clip(-1); return t; }  // KILL
+    return t;
+}
+
+// ============================================================
+// Alpha test (D3D11 has no fixed-function alpha test)
+// alphaTest: x=enable, y=ref [0..1], z=func [D3DCMPFUNC]
+// ============================================================
+
+void PerformAlphaTest(float3 alphaTest, float alpha)
+{
+    if (alphaTest.x) {
+        int alphaVal  = (int)round(saturate(alpha) * 255);
+        int alphaRefI = (int)round(saturate(alphaTest.y) * 255);
+        int alphaFunc = (int)alphaTest.z;
+        // D3DCMPFUNC: 1=NEVER,2=LESS,3=EQUAL,4=LESSEQUAL,5=GREATER,6=NOTEQUAL,7=GREATEREQUAL,8=ALWAYS
+        bool alphaPass = (alphaFunc == 8);
+        if (alphaFunc == 1) alphaPass = false;
+        if (alphaFunc == 2) alphaPass = (alphaVal < alphaRefI);
+        if (alphaFunc == 3) alphaPass = (alphaVal == alphaRefI);
+        if (alphaFunc == 4) alphaPass = (alphaVal <= alphaRefI);
+        if (alphaFunc == 5) alphaPass = (alphaVal > alphaRefI);
+        if (alphaFunc == 6) alphaPass = (alphaVal != alphaRefI);
+        if (alphaFunc == 7) alphaPass = (alphaVal >= alphaRefI);
+        if (!alphaPass) clip(-1);
+    }
+}
+
+// ============================================================
+// Fog table factor computation
+// fogTableMode: 0=NONE(vertex fog), 1=EXP, 2=EXP2, 3=LINEAR
+// ============================================================
+
+float CalculateFogFactor(uint fogEnable, float fogTableMode, float fogDensity,
+                         float fogStart, float fogEnd, float fogDepth)
+{
+    float fogFactor = 1.0f;
+    if (fogEnable != 0u) {
+        int mode = (int)fogTableMode;
+        if (mode == 0) fogFactor = fogDepth; // Vertex fog passthrough
+        else if (mode == 1) fogFactor = 1.0f / exp(fogDepth * fogDensity);
+        else if (mode == 2) fogFactor = 1.0f / exp(pow(fogDepth * fogDensity, 2));
+        else if (mode == 3) fogFactor = (fogEnd - fogDepth) / (fogEnd - fogStart);
+    }
+    return fogFactor;
+}
+
+// ============================================================
+// Post-process a sampled texel (matches compiled PS pipeline)
+// ============================================================
+
+float4 PostProcessTexel(uint stage, float4 t)
+{
+    // 1. Channel swizzle / luminance fixup
+    float fixups[4] = { TexFmtFixup.x, TexFmtFixup.y, TexFmtFixup.z, TexFmtFixup.w };
+    t = ApplyTexFmtFixup(t, fixups[stage]);
+
+    // 2. Color sign conversion
+    t = ApplyColorSign(ColorSign[stage], t);
+
+    // 3. Color key
+    t = ApplyColorKeyOp(ColorKeyOp[stage], ColorKeyColor[stage], t);
+
+    return t;
+}
+
+// ============================================================
 // Texture sampling helpers (individual to avoid X4539)
 // ============================================================
 
@@ -365,9 +459,13 @@ float4 SampleCube(uint s, float3 dir)
 // Texture stage fetch
 // ============================================================
 
-void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
+void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 {
     float4 val = float4(0.0f, 0.0f, 0.0f, 1.0f); // default: opaque black
+
+    // Read texture coordinates from T register (pre-loaded from VS output;
+    // may have been perturbed by a prior BUMPENVMAP stage).
+    float4 coords = Regs[PS_REGISTER_T0 + stage];
 
     switch (mode)
     {
@@ -376,11 +474,13 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
         return;
 
     case PS_TEXTUREMODES_PROJECT2D:
-        val = Sample2D(stage, coords.xy / coords.w);
+        // No explicit projective divide — the VS output already accounts for it.
+        // (The compiled PS also uses tex2D without /w.)
+        val = Sample2D(stage, coords.xy);
         break;
 
     case PS_TEXTUREMODES_PROJECT3D:
-        val = Sample3D(stage, coords.xyz / coords.w);
+        val = Sample3D(stage, coords.xyz);
         break;
 
     case PS_TEXTUREMODES_CUBEMAP:
@@ -402,11 +502,21 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
 
     case PS_TEXTUREMODES_BUMPENVMAP:
     case PS_TEXTUREMODES_BUMPENVMAP_LUM:
-        // Sample the bump source texture; perturbation of the next stage's
-        // coordinates is handled by vertex shader / texture coordinate routing
-        // (TODO: full perturbation pass)
+    {
+        // Sample the bump map, then perturb the next stage's tex coords
         val = Sample2D(stage, coords.xy);
+        // Apply BEM matrix perturbation to next stage's coordinates
+        if (stage < 3u) {
+            float4 nextCoords = Regs[PS_REGISTER_T0 + stage + 1u];
+            float4 bem = BEM[stage];
+            float u = nextCoords.x + bem.x * val.r + bem.z * val.g;
+            float v = nextCoords.y + bem.y * val.r + bem.w * val.g;
+            // Store perturbed coords for next stage to pick up
+            // (nextCoords is the texcoord that was pre-loaded into T[stage+1])
+            Regs[PS_REGISTER_T0 + stage + 1u] = float4(u, v, nextCoords.z, nextCoords.w);
+        }
         break;
+    }
 
     case PS_TEXTUREMODES_DPNDNT_AR:
     {
@@ -529,12 +639,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, float4 coords, uint mode)
         break;
     }
 
-    // Apply COLORSIGN fixup, then write to the correct T register.
-    // Bug fix: direct indexed write replaces the broken max() clamp
-    // that always directed all four stages to write T3.
-    [branch]
-    if (any(ColorSign[stage] != 0.0f))
-        val = ApplyColorSign(ColorSign[stage], val);
+    // Post-process: format fixup, color sign, color key (matches compiled PS pipeline)
+    val = PostProcessTexel(stage, val);
     RegWrite(Regs, PS_REGISTER_T0 + stage, val);
 }
 
@@ -734,26 +840,32 @@ float4 main(PS_INPUT input) : SV_Target
 
     // --- Initialise the register file ---
     // Zero-init sets ZERO (index 0) permanently to 0.
-    // T registers are explicitly set to (0,0,0,1) as the NV2A default.
     float4 Regs[16];
     [unroll] for (uint i = 0u; i < 16u; i++) Regs[i] = 0.0f;
-    Regs[PS_REGISTER_T0] = float4(0.0f, 0.0f, 0.0f, 1.0f);
-    Regs[PS_REGISTER_T1] = float4(0.0f, 0.0f, 0.0f, 1.0f);
-    Regs[PS_REGISTER_T2] = float4(0.0f, 0.0f, 0.0f, 1.0f);
-    Regs[PS_REGISTER_T3] = float4(0.0f, 0.0f, 0.0f, 1.0f);
 
     // --- Texture stages (must run sequentially; later stages can read earlier T regs) ---
-    // Manual unroll avoids intermediate array allocation for texCoords.
-    // NUM_TEXTURE_STAGES specialization eliminates dead stage code.
-    FetchTexture(Regs, 0u, input.iT0, texMode.x);
+    // Pre-load T registers with VS output tex coords. BUMPENVMAP stages
+    // may perturb a later T register before that stage samples.
+    Regs[PS_REGISTER_T0] = input.iT0;
 #if NUM_TEXTURE_STAGES >= 2
-    FetchTexture(Regs, 1u, input.iT1, texMode.y);
+    Regs[PS_REGISTER_T1] = input.iT1;
 #endif
 #if NUM_TEXTURE_STAGES >= 3
-    FetchTexture(Regs, 2u, input.iT2, texMode.z);
+    Regs[PS_REGISTER_T2] = input.iT2;
 #endif
 #if NUM_TEXTURE_STAGES >= 4
-    FetchTexture(Regs, 3u, input.iT3, texMode.w);
+    Regs[PS_REGISTER_T3] = input.iT3;
+#endif
+
+    FetchTexture(Regs, 0u, texMode.x);
+#if NUM_TEXTURE_STAGES >= 2
+    FetchTexture(Regs, 1u, texMode.y);
+#endif
+#if NUM_TEXTURE_STAGES >= 3
+    FetchTexture(Regs, 2u, texMode.z);
+#endif
+#if NUM_TEXTURE_STAGES >= 4
+    FetchTexture(Regs, 3u, texMode.w);
 #endif
 
     // --- Set vertex-derived registers ---
@@ -783,5 +895,18 @@ float4 main(PS_INPUT input) : SV_Target
             DoCombinerStage(Regs, stage, flagMuxMsb, flagUniqueC0, flagUniqueC1);
     }
 
-    return DoFinalCombiner(Regs, flagUniqueC0, flagUniqueC1);
+    float4 result = DoFinalCombiner(Regs, flagUniqueC0, flagUniqueC1);
+
+    // --- Alpha test ---
+    PerformAlphaTest(AlphaTest.xyz, result.a);
+
+    // --- Fog blending ---
+    // FogInfo: x=tableMode, y=density, z=start, w=end
+    if (FogEnable != 0u) {
+        float fogFactor = CalculateFogFactor(FogEnable, FogInfo.x, FogInfo.y,
+                                             FogInfo.z, FogInfo.w, input.iFog);
+        result.rgb = lerp(FogColor.rgb, result.rgb, saturate(fogFactor));
+    }
+
+    return result;
 }

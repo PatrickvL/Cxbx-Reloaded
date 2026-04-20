@@ -46,7 +46,7 @@ struct alignas(16) RCI_Float4 { float x, y, z, w; };
 #endif
 
 // ============================================================
-// Shared cbuffer / struct layout (62 registers = 992 bytes)
+// Shared cbuffer / struct layout
 //
 // Field order MUST match between HLSL and C++ — do not reorder.
 // ============================================================
@@ -67,6 +67,15 @@ RCI_BEGIN
     RCI_UINT(PSInputTexture);                   // Input-texture for dependent modes
     RCI_FLOAT4_ARRAY(ColorSign, 4);             // Per-stage: 0=keep, >0=u->s, <0=s->u
     RCI_FLOAT4(FogColor);                       // rgb=fog color constant; a=unused
+    // --- Post-processing state (matches compiled PS c23..c43) ---
+    RCI_FLOAT4(TexFmtFixup);                    // Per-stage fixup: 0=id,1=.gbar,2=.abgr,3=lum,4=alum
+    RCI_FLOAT4(AlphaTest);                      // x=enable, y=ref [0..1], z=func [D3DCMPFUNC]
+    RCI_FLOAT4_ARRAY(ColorKeyOp, 4);            // Per-stage color key operation
+    RCI_FLOAT4_ARRAY(ColorKeyColor, 4);         // Per-stage color key color
+    RCI_FLOAT4_ARRAY(BEM, 4);                   // Per-stage bump env material matrix
+    RCI_FLOAT4_ARRAY(LUM, 4);                   // Per-stage bump luminance (scale, offset)
+    RCI_FLOAT4(FogInfo);                        // x=tableMode, y=density, z=start, w=end
+    RCI_UINT(FogEnable);                        // Fog enable flag
 RCI_END
 
 // Clean up macros to avoid polluting the global namespace
@@ -78,7 +87,7 @@ RCI_END
 #undef RCI_FLOAT4_ARRAY
 
 #ifdef __cplusplus
-static_assert(sizeof(RCInterpreterCBLayout) == 992, "RC cbuffer layout size mismatch");
+static_assert(sizeof(RCInterpreterCBLayout) == 1312, "RC cbuffer layout size mismatch");
 
 // Convert a packed DWORD ARGB color (0xAARRGGBB) to RCI_Float4 RGBA [0..1]
 inline RCI_Float4 DwordColorToFloat4(uint32_t color)
