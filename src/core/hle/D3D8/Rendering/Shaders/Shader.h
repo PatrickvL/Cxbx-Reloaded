@@ -36,12 +36,6 @@ extern HRESULT EmuCompileShader
 	const char* pSourceName = nullptr
 );
 
-#ifdef CXBX_USE_D3D11
-// When true, vertex shaders are compiled with CXBX_IA_BYPASS defined,
-// enabling manual vertex fetch from ByteAddressBuffer via SV_VertexID.
-extern bool g_bD3D11IABypass;
-#endif
-
 struct ShaderSources {
 	// Pixel Shader
 	std::string pixelShaderTemplateHlsl[3];

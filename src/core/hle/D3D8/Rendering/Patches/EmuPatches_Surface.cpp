@@ -27,7 +27,7 @@
 static DWORD g_VBLastSwap = 0;
 
 // Forward declaration (defined in HostImGui.cpp)
-extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, IDirect3DSurface* renderTarget);
+extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget);
 
 
 xbox::X_D3DSurface* WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer2)
@@ -186,10 +186,10 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_Clear)
 
    	   	std::vector<D3DRECT> rects(Count);
    	   	for (DWORD i = 0; i < Count; i++) {
-   	   	   	rects[i]._9_11(x1, left) = static_cast<LONG>(pRects[i].x1 * Xscale);
-   	   	   	rects[i]._9_11(x2, right) = static_cast<LONG>(pRects[i].x2 * Xscale);
-   	   	   	rects[i]._9_11(y1, top) = static_cast<LONG>(pRects[i].y1 * Yscale);
-   	   	   	rects[i]._9_11(y2, bottom) = static_cast<LONG>(pRects[i].y2 * Yscale);
+   	   	   	rects[i].left = static_cast<LONG>(pRects[i].x1 * Xscale);
+   	   	   	rects[i].right = static_cast<LONG>(pRects[i].x2 * Xscale);
+   	   	   	rects[i].top = static_cast<LONG>(pRects[i].y1 * Yscale);
+   	   	   	rects[i].bottom = static_cast<LONG>(pRects[i].y2 * Yscale);
 		}
    	   	CxbxD3DClear(Count, rects.data(), HostFlags, Color, Z, Stencil);
    	} else {
@@ -231,7 +231,7 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_CopyRects)
    	   	return;
    	}
 
-	D3DSurfaceDesc hostSourceDesc, hostDestDesc;
+	D3D11_TEXTURE2D_DESC hostSourceDesc, hostDestDesc;
    	pHostSourceSurface->GetDesc(&hostSourceDesc);
    	pHostDestSurface->GetDesc(&hostDestDesc);
 
@@ -398,7 +398,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 	}
 
 	// Fetch the host backbuffer
-	IDirect3DSurface *pCurrentHostBackBuffer = nullptr;
+	ID3D11Texture2D *pCurrentHostBackBuffer = nullptr;
 	HRESULT hRet = CxbxGetBackBuffer(&pCurrentHostBackBuffer);
 
 	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->GetBackBuffer - Unable to get backbuffer surface!");
@@ -407,7 +407,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 
    	   	// Clear the backbuffer surface, this prevents artifacts when switching aspect-ratio
    	   	// Test-case: Dashboard
-   	   	IDirect3DSurface* pExistingRenderTarget = CxbxGetCurrentRenderTarget();
+   	   	ID3D11Texture2D* pExistingRenderTarget = CxbxGetCurrentRenderTarget();
    	   	if (pExistingRenderTarget) {
    	   	   	(void)CxbxSetRenderTarget(pCurrentHostBackBuffer);
    	   	   	CxbxD3DClear(
@@ -418,18 +418,10 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	   	   	/*Z=*/g_bHasDepth ? 1.0f : 0.0f,
    	   	   	   	/*Stencil=*/0);
    	   	   	(void)CxbxSetRenderTarget(pExistingRenderTarget);
-#ifndef CXBX_USE_D3D11
-   	   	   	pExistingRenderTarget->Release();
-#endif
    	   	}
    	   	
    	   	// TODO: Implement a hot-key to change the filter?
-   	   	// Note: LoadSurfaceFilter Must be D3DTEXF_NONE, D3DTEXF_POINT or D3DTEXF_LINEAR
-   	   	// Before StretchRects we used D3DX_FILTER_POINT here, but that gave jagged edges in Dashboard.
-   	   	// Dxbx note : D3DX_FILTER_LINEAR gives a smoother image, but 'bleeds' across borders
-   	   	// LoadOverlayFilter must be a D3DX filter DWORD value
    	   	const D3DTEXTUREFILTERTYPE LoadSurfaceFilter = D3DTEXF_LINEAR;
-   	   	const DWORD LoadOverlayFilter = D3DX_DEFAULT;
 
    	   	// Use backbuffer width/height since that may differ from the Window size
    	   	const auto width = g_XBVideo.bMaintainAspect ? g_AspectRatioScaleWidth * g_AspectRatioScale : g_HostBackBufferDesc.Width;
@@ -437,7 +429,6 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 
 		auto pXboxBackBufferHostSurface = GetHostSurface(g_pXbox_BackBufferSurface, D3DUSAGE_RENDERTARGET);
 		if (pXboxBackBufferHostSurface) {
-#ifdef CXBX_USE_D3D11
 			// Diagnostic: log actual DXGI formats of source and destination surfaces
 			{
 				D3D11_TEXTURE2D_DESC srcDesc = {}, dstDesc = {};
@@ -452,7 +443,6 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 					lastDstFmt = dstDesc.Format;
 				}
 			}
-#endif
    	   	   	// Calculate the centered rectangle
    	   	   	RECT dest{};
    	   	   	dest.top = (LONG)((g_HostBackBufferDesc.Height - height) / 2);
@@ -483,7 +473,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 
 			// Interpret the Xbox overlay data (depending the color space conversion render state)
 			// as either YUV or RGB format (note that either one must be a 3 bytes per pixel format)
-			EMUFORMAT PCFormat;
+			DXGI_FORMAT PCFormat;
 			// TODO : Before reading from pgraph, flush all pending push-buffer commands
 			switch (GET_MASK(HLE_read_NV2A_pgraph_register(NV_PGRAPH_CONTROL_0), NV_PGRAPH_CONTROL_0_CSCONVERT)) {
 			case 0:  // = pass-through
@@ -575,7 +565,6 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	   	// Create a temporary surface to hold the overlay
    	   	   	// This is faster than loading directly into the backbuffer because it offloads scaling to the GPU
    	   	   	// Without this, upscaling tanks the frame-rate!
-#ifdef CXBX_USE_D3D11
    	   	   	// D3D11 overlay: convert YUY2→ARGB, upload to a default texture, then blit to backbuffer
    	   	   	HRESULT hRet = E_FAIL;
    	   	   	{
@@ -631,62 +620,11 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	   	   	   	EmuLog(LOG_LEVEL::WARNING, "UpdateOverlay: D3D11 overlay rendering failed : %X", hRet);
    	   	   	   	}
    	   	   	}
-#else
-   	   	   	IDirect3DSurface* pTemporaryOverlaySurface;
-   	   	   	HRESULT hRet = g_pD3DDevice->CreateOffscreenPlainSurface(
-   	   	   	   	OverlayWidth,
-   	   	   	   	OverlayHeight,
-   	   	   	   	EMUFMT_A8R8G8B8,
-   	   	   	   	D3DPOOL_DEFAULT,
-   	   	   	   	&pTemporaryOverlaySurface,
-   	   	   	   	nullptr
-   	   	   	);
-
-   	   	   	if (FAILED(hRet)) {
-   	   	   	   	EmuLog(LOG_LEVEL::WARNING, "Couldn't create temporary overlay surface : %X", hRet);
-   	   	   	} else {
-   	   	   	   	RECT doNotScaleRect = { 0, 0, (LONG)OverlayWidth, (LONG)OverlayHeight };
-
-   	   	   	   	// Use D3DXLoadSurfaceFromMemory() to do conversion, we don't stretch at this moment in time
-   	   	   	   	// avoiding the need for YUY2toARGB() (might become relevant when porting to D3D9 or OpenGL)
-   	   	   	   	// see https://msdn.microsoft.com/en-us/library/windows/desktop/bb172902(v=vs.85).aspx
-   	   	   	   	hRet = D3DXLoadSurfaceFromMemory(
-   	   	   	   	   	/* pDestSurface = */ pTemporaryOverlaySurface,
-   	   	   	   	   	/* pDestPalette = */ nullptr,
-   	   	   	   	   	/* pDestRect = */ &doNotScaleRect,
-   	   	   	   	   	/* pSrcMemory = */ pOverlayData, // Source buffer
-   	   	   	   	   	/* SrcFormat = */ PCFormat,
-   	   	   	   	   	/* SrcPitch = */ OverlayRowPitch,
-   	   	   	   	   	/* pSrcPalette = */ nullptr,
-   	   	   	   	   	/* pSrcRect = */ &doNotScaleRect, // This parameter cannot be NULL
-   	   	   	   	   	/* Filter = */ LoadOverlayFilter,
-   	   	   	   	   	/* ColorKey = */ g_OverlayProxy.EnableColorKey ? g_OverlayProxy.ColorKey : 0);
-
-   	   	   	   	DEBUG_D3DRESULT(hRet, "D3DXLoadSurfaceFromMemory - UpdateOverlay could not convert buffer!\n");
-   	   	   	   	if (hRet != D3D_OK) {
-   	   	   	   	   	EmuLog(LOG_LEVEL::WARNING, "Couldn't load Xbox overlay to host surface : %X", hRet);
-   	   	   	   	} else {
-   	   	   	   	   	hRet = g_pD3DDevice->StretchRect(
-   	   	   	   	   	   	/* pSourceSurface = */ pTemporaryOverlaySurface,
-   	   	   	   	   	   	/* pSourceRect = */ &EmuSourRect,
-   	   	   	   	   	   	/* pDestSurface = */ pCurrentHostBackBuffer,
-   	   	   	   	   	   	/* pDestRect = */ &EmuDestRect,
-   	   	   	   	   	   	/* Filter = */ LoadSurfaceFilter
-   	   	   	   	   	);
-
-   	   	   	   	   	if (hRet != D3D_OK) {
-   	   	   	   	   	   	EmuLog(LOG_LEVEL::WARNING, "Couldn't load Xbox overlay to host back buffer : %X", hRet);
-   	   	   	   	   	}
-   	   	   	   	}
-
-   	   	   	   	pTemporaryOverlaySurface->Release();
-   	   	   	}
-#endif
 		}
 
 		// Render ImGui
 		if (g_renderbase) {
-			static std::function<void(ImGuiUI*, IDirect3DSurface*)> internal_render = &CxbxImGui_RenderD3D;
+			static std::function<void(ImGuiUI*, ID3D11Texture2D*)> internal_render = &CxbxImGui_RenderD3D;
 			g_renderbase->Render(internal_render, pCurrentHostBackBuffer);
 		}
 

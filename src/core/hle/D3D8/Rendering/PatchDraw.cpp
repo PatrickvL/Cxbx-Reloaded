@@ -53,7 +53,6 @@
 
 #include "PatchDraw.h"
 
-#ifdef CXBX_USE_D3D11
 
 #define LOG_PREFIX CXBXR_MODULE::D3D8
 
@@ -821,4 +820,3 @@ HRESULT CxbxDrawTriPatchD3D11(
 	return DrawTessellatedMesh(tessellated);
 }
 
-#endif // CXBX_USE_D3D11

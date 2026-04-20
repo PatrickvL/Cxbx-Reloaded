@@ -114,9 +114,9 @@ ShaderKey VertexShaderCache::CreateShader(const xbox::dword_xt* pXboxFunction, D
 	return key;
 }
 
-IDirect3DVertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const char *shader_category)
+ID3D11VertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const char *shader_category)
 {
-	IDirect3DVertexShader* pHostVertexShader = nullptr;
+	ID3D11VertexShader* pHostVertexShader = nullptr;
 
 	// If there's no D3DDevice set, return nullptr
 	if (g_pD3DDevice == nullptr) {
@@ -126,19 +126,12 @@ IDirect3DVertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const c
 		assert(pCompiledShader);
 
 		HRESULT hRet;
-#ifdef CXBX_USE_D3D11
 		hRet = g_pD3DDevice->CreateVertexShader(
 			(const void*)pCompiledShader->GetBufferPointer(),
 			pCompiledShader->GetBufferSize(), // BytecodeLength
 			nullptr, // pClassLinkage
 			&pHostVertexShader
 		);
-#else
-		hRet = g_pD3DDevice->CreateVertexShader(
-			(DWORD *)pCompiledShader->GetBufferPointer(),
-			&pHostVertexShader
-		);
-#endif
 		if (FAILED(hRet)) CxbxrAbort("Failed to create %s vertex shader", shader_category);
 
 		// TODO DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateVertexShader");
@@ -154,7 +147,7 @@ IDirect3DVertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const c
 }
 
 // Get a shader using the given key
-IDirect3DVertexShader* VertexShaderCache::GetShader(ShaderKey key)
+ID3D11VertexShader* VertexShaderCache::GetShader(ShaderKey key)
 {
 	LazyVertexShader* pLazyShader = nullptr;
 
@@ -191,13 +184,9 @@ IDirect3DVertexShader* VertexShaderCache::GetShader(ShaderKey key)
 	}
 
 	if (pCompiledShader) {
-#ifdef CXBX_USE_D3D11
 		// Keep the bytecode alive for input layout creation
 		pLazyShader->pBytecode = pCompiledShader;
 		// Don't release it yet - it's kept in pBytecode
-#else
-		pCompiledShader->Release();
-#endif
 
 		// TODO compile the shader at a higher optimization level in a background thread?
 	}
@@ -208,7 +197,6 @@ IDirect3DVertexShader* VertexShaderCache::GetShader(ShaderKey key)
 	return pLazyShader->pHostVertexShader;
 }
 
-#ifdef CXBX_USE_D3D11
 ID3DBlob* VertexShaderCache::GetShaderBytecode(ShaderKey key)
 {
 	LazyVertexShader* pLazyShader = nullptr;
@@ -217,7 +205,6 @@ ID3DBlob* VertexShaderCache::GetShaderBytecode(ShaderKey key)
 	}
 	return nullptr;
 }
-#endif
 
 // Release a shader. Doesn't actually release any resources for now
 void VertexShaderCache::ReleaseShader(ShaderKey key)
@@ -252,12 +239,10 @@ void VertexShaderCache::Clear()
 		else if(x.second.pHostVertexShader) {
 			x.second.pHostVertexShader->Release();
 		}
-#ifdef CXBX_USE_D3D11
 		if (x.second.pBytecode) {
 			x.second.pBytecode->Release();
 			x.second.pBytecode = nullptr;
 		}
-#endif
 	}
 	cache.clear();
 }

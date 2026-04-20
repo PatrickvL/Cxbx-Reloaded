@@ -21,10 +21,7 @@
 // *
 // ******************************************************************
 
-#ifdef CXBX_USE_D3D11
-
 #include "Backend_D3D11_Internal.h"
-
 
 // ******************************************************************
 // * D3D11 device globals — definitions
@@ -40,9 +37,9 @@ ID3D11RenderTargetView             *g_pD3DCurrentRTV = nullptr;
 // D3D11 depth/stencil buffer texture
 ID3D11Texture2D                    *g_pD3DDepthStencilBuffer = nullptr;
 // D3D11 back buffer texture (used as fallback for dimension queries)
-IDirect3DSurface                   *g_pD3DBackBufferSurface = nullptr;
+ID3D11Texture2D                    *g_pD3DBackBufferSurface = nullptr;
 // D3D11 current host render target surface (used for dimension queries)
-IDirect3DSurface                   *g_pD3DCurrentHostRenderTarget = nullptr;
+ID3D11Texture2D                    *g_pD3DCurrentHostRenderTarget = nullptr;
 
 // ******************************************************************
 // * D3D11 state descriptors — definitions
@@ -1258,4 +1255,3 @@ void CxbxD3D11ReleaseBackendResources()
 	ClearRTVCache();
 }
 
-#endif // CXBX_USE_D3D11

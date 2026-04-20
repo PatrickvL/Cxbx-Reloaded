@@ -304,7 +304,6 @@ void XboxTextureStateConverter::Apply()
             }
 
             if (CxbxTextureStateInfo[State].IsSamplerState) {
-#ifdef CXBX_USE_D3D11
 				// Per-stage sampler state descriptors and filter tracking
 				// TODO: Cache sampler states per stage (keyed by descriptor) to avoid
 				// redundant CreateSamplerState calls. D3D11 deduplicates internally,
@@ -384,11 +383,7 @@ void XboxTextureStateConverter::Apply()
 					// Desc unchanged — just re-bind the cached sampler
 					g_pD3DDeviceContext->PSSetSamplers(HostStage, 1, &s_CachedSamplerStates[HostStage]);
 				}
-#else
-                g_pD3DDevice->SetSamplerState(HostStage, (D3DSAMPLERSTATETYPE)CxbxTextureStateInfo[State].PC, PcValue);
-#endif
             } else {
-#ifdef CXBX_USE_D3D11
 				switch (State) {
 				case xbox::X_D3DTSS_COLORKEYOP: break;
 				case xbox::X_D3DTSS_COLORSIGN: break;
@@ -414,9 +409,6 @@ void XboxTextureStateConverter::Apply()
 				// These texture stage states don't map to D3D11 state objects;
 				// they are fixed-function pipeline concepts handled by the FF shader
 				// which reads them from the Xbox texture state table directly
-#else
-                g_pD3DDevice->SetTextureStageState(HostStage, (D3DTEXTURESTAGESTATETYPE)CxbxTextureStateInfo[State].PC, PcValue);
-#endif
             }
 
             // Record we set a state
@@ -432,26 +424,12 @@ void XboxTextureStateConverter::Apply()
 
     if (pointSpritesEnabled) {
         // set the point sprites texture
-#ifdef CXBX_USE_D3D11
    	   	// Copy the SRV from stage 3 to stage 0 for point sprite rendering
    	   	ID3D11ShaderResourceView* pSRV = nullptr;
    	   	g_pD3DDeviceContext->PSGetShaderResources(3, 1, &pSRV);
    	   	g_pD3DDeviceContext->PSSetShaderResources(0, 1, &pSRV);
    	   	if (pSRV != nullptr)
    	   	   	pSRV->Release(); // Release the reference added by PSGetShaderResources
-#else
-   	   	IDirect3DBaseTexture* pTexture;
-        g_pD3DDevice->GetTexture(3, &pTexture);
-   	   	g_pD3DDevice->SetTexture(0, pTexture); // ID3D11Device::CreateShaderResourceView(), ::PSSetShaderResources()
-
-        // Avoid a dangling reference that would lead to a memory leak
-        if (pTexture != nullptr)
-            pTexture->Release();
-
-        // disable all other stages
-        g_pD3DDevice->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
-        g_pD3DDevice->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-#endif
 
         // no need to actually copy here, since it was handled in the loop above
     }

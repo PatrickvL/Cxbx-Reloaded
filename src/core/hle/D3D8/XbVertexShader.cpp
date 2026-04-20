@@ -39,9 +39,7 @@
 #include "core\hle\D3D8\XbVertexBuffer.h" // For CxbxImpl_SetVertexData4f
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A, HLE_get_NV2A_vertex_constant_float4_ptr
-#ifdef CXBX_USE_D3D11
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
-#endif
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
 #include "devices\xbox.h"
 #include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST, NV2A_VP_UPLOAD_CONST_ID, NV2A_VP_UPLOAD_CONST
@@ -85,14 +83,12 @@ static xbox::X_D3DVertexShader g_Xbox_VertexShader_ForFVF = {};
 static uint32_t                g_X_VERTEXSHADER_FLAG_PROGRAM; // X_VERTEXSHADER_FLAG_PROGRAM flag varies per XDK, so it is set on runtime
 static uint32_t                g_X_VERTEXSHADER_FLAG_VALID_MASK; // For a test case
 
-#ifdef CXBX_USE_D3D11
 // Track the current active vertex shader key (used to retrieve bytecode for input layout creation)
 static ShaderKey g_D3D11ActiveVertexShaderKey = 0;
 static bool g_D3D11HasActiveShaderKey = false;
 // Retained bytecode for FixedFunction and Passthrough vertex shaders (needed for input layout creation)
 static ID3DBlob* g_pD3D11FixedFunctionBytecode = nullptr;
 static ID3DBlob* g_pD3D11PassthroughBytecode = nullptr;
-#endif
 
 void CxbxVertexShaderSetFlags()
 {
@@ -403,7 +399,7 @@ xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned XboxStreamNumber)
 
 
 // Defined in XbVertexShaderDecoder.cpp
-extern D3DVERTEXELEMENT *EmuRecompileVshDeclaration(
+extern D3D11_INPUT_ELEMENT_DESC *EmuRecompileVshDeclaration(
 	xbox::X_VERTEXATTRIBUTEFORMAT* pXboxDeclaration,
 	bool bIsFixedFunction,
 	CxbxVertexDeclaration *pCxbxVertexDeclaration
@@ -418,12 +414,10 @@ static bool FreeCxbxVertexDeclaration(CxbxVertexDeclaration *pCxbxVertexDeclarat
 			HRESULT hRet = pCxbxVertexDeclaration->pHostVertexDeclaration->Release();
 			DEBUG_D3DRESULT(hRet, "pHostVertexDeclaration->Release()");
 		}
-#ifdef CXBX_USE_D3D11
 		if (pCxbxVertexDeclaration->pD3D11InputElements) {
 			free(pCxbxVertexDeclaration->pD3D11InputElements);
 			pCxbxVertexDeclaration->pD3D11InputElements = nullptr;
 		}
-#endif
 		free(pCxbxVertexDeclaration);
 		return true;
 	}
@@ -474,28 +468,20 @@ CxbxVertexDeclaration* FetchCachedCxbxVertexDeclaration(VertexDeclarationKey Cac
 	return nullptr;
 }
 
-extern IDirect3DVertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const char *shader_category); // Implemented in VertexShaderCache.cpp
+extern ID3D11VertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const char *shader_category); // Implemented in VertexShaderCache.cpp
 
-#ifdef CXBX_USE_D3D11
-IDirect3DVertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* label, ID3DBlob** ppRetainedBytecode = nullptr) {
-#else
-IDirect3DVertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* label) {
-#endif
-	IDirect3DVertexShader* shader = nullptr;
+ID3D11VertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* label, ID3DBlob** ppRetainedBytecode = nullptr) {
+	ID3D11VertexShader* shader = nullptr;
 
 	ID3DBlob* pBlob = nullptr;
 	compileFunc(&pBlob);
 	if (pBlob) {
 		shader = CxbxCreateVertexShader(pBlob, label);
-#ifdef CXBX_USE_D3D11
 		if (ppRetainedBytecode) {
 			*ppRetainedBytecode = pBlob; // Caller takes ownership
 		} else {
 			pBlob->Release();
 		}
-#else
-		pBlob->Release();
-#endif
 	}
 
 	return shader;
@@ -504,9 +490,9 @@ IDirect3DVertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* l
 void CxbxUpdateHostVertexShader()
 {
 	extern bool g_bUsePassthroughHLSL; // TMP glue
-	// TODO: move d3d9 state to VertexShader.cpp
-	static IDirect3DVertexShader* fixedFunctionShader = nullptr; // TODO: move to shader cache
-	static IDirect3DVertexShader* passthroughShader = nullptr;
+	// TODO: move render state to VertexShader.cpp
+	static ID3D11VertexShader* fixedFunctionShader = nullptr; // TODO: move to shader cache
+	static ID3D11VertexShader* passthroughShader = nullptr;
 	static int vertexShaderVersion = -1;
 
 	int shaderVersion = g_ShaderSources.Update();
@@ -522,23 +508,15 @@ void CxbxUpdateHostVertexShader()
 			fixedFunctionShader->Release();
 			fixedFunctionShader = nullptr;
 		}
-#ifdef CXBX_USE_D3D11
 		if (g_pD3D11FixedFunctionBytecode) { g_pD3D11FixedFunctionBytecode->Release(); g_pD3D11FixedFunctionBytecode = nullptr; }
 		fixedFunctionShader = InitShader(EmuCompileFixedFunction, "Fixed Function Vertex Shader", &g_pD3D11FixedFunctionBytecode);
-#else
-		fixedFunctionShader = InitShader(EmuCompileFixedFunction, "Fixed Function Vertex Shader");
-#endif
 
 		if (passthroughShader) {
 			passthroughShader->Release();
 			passthroughShader = nullptr;
 		}
-#ifdef CXBX_USE_D3D11
 		if (g_pD3D11PassthroughBytecode) { g_pD3D11PassthroughBytecode->Release(); g_pD3D11PassthroughBytecode = nullptr; }
 		passthroughShader = InitShader(EmuCompileXboxPassthrough, "Passthrough Vertex Shader", &g_pD3D11PassthroughBytecode);
-#else
-		passthroughShader = InitShader(EmuCompileXboxPassthrough, "Passthrough Vertex Shader");
-#endif
 	}
 
 	// TODO Call this when state is dirty
@@ -549,20 +527,14 @@ void CxbxUpdateHostVertexShader()
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
 		HRESULT hRet = CxbxSetVertexShader(fixedFunctionShader);
 		if (FAILED(hRet)) CxbxrAbort("Failed to set fixed-function shader");
-#ifdef CXBX_USE_D3D11
 		g_D3D11HasActiveShaderKey = false; // Prevent stale programmable shader key from being used for input layout
-#endif
 	}
 	else if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL
-#ifdef CXBX_USE_D3D11
 		&& false // D3D11: passthrough goes through the shader cache (NV2A binary → template)
-#endif
 	) {
 		HRESULT hRet = CxbxSetVertexShader(passthroughShader);
 		if (FAILED(hRet)) CxbxrAbort("Failed to set passthrough shader");
-#ifdef CXBX_USE_D3D11
 		g_D3D11HasActiveShaderKey = false; // Prevent stale programmable shader key from being used for input layout
-#endif
 	}
 	else {
 		auto pTokens = GetCxbxVertexShaderSlotPtr(g_Xbox_VertexShader_FunctionSlots_StartAddress);
@@ -570,12 +542,10 @@ void CxbxUpdateHostVertexShader()
 		// Create a vertex shader from the tokens
 		DWORD shaderSize;
 		auto VertexShaderKey = g_VertexShaderCache.CreateShader(pTokens, &shaderSize);
-		IDirect3DVertexShader* pHostVertexShader = g_VertexShaderCache.GetShader(VertexShaderKey);
-#ifdef CXBX_USE_D3D11
+		ID3D11VertexShader* pHostVertexShader = g_VertexShaderCache.GetShader(VertexShaderKey);
 		// Track the active shader key so CxbxUpdateHostVertexDeclaration can create the input layout
 		g_D3D11ActiveVertexShaderKey = VertexShaderKey;
 		g_D3D11HasActiveShaderKey = true;
-#endif
 		HRESULT hRet = CxbxSetVertexShader(pHostVertexShader);
 		DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(pHostVertexShader)");
 	}
@@ -668,15 +638,13 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 	CxbxVertexDeclaration* pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(XboxVertexAttributesKey);
 	if (pCxbxVertexDeclaration == nullptr) {
 		pCxbxVertexDeclaration = (CxbxVertexDeclaration*)calloc(1, sizeof(CxbxVertexDeclaration));
-#ifdef CXBX_USE_D3D11
 		// calloc zero-initializes, but tessellation registers use -1 as "not present"
 		pCxbxVertexDeclaration->autoNormalRegister = -1;
 		pCxbxVertexDeclaration->autoNormalSourceRegister = -1;
 		pCxbxVertexDeclaration->autoTexcoordRegister = -1;
-#endif
 
 		// Convert Xbox vertex attributes towards host Direct3D vertex element
-		D3DVERTEXELEMENT* pRecompiledVertexElements = EmuRecompileVshDeclaration(
+		D3D11_INPUT_ELEMENT_DESC* pRecompiledVertexElements = EmuRecompileVshDeclaration(
 			pXboxVertexAttributeFormat,
 			g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction,
 			pCxbxVertexDeclaration);
@@ -684,7 +652,6 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 		// Create the vertex declaration
 		pCxbxVertexDeclaration->pHostVertexDeclaration = CxbxCreateHostVertexDeclaration(pRecompiledVertexElements);
 
-#ifdef CXBX_USE_D3D11
 		// For D3D11, store a copy of the vertex elements for lazy input layout creation
 		// Count the elements (terminated by an element with SemanticName==nullptr in D3D11)
 		UINT elementCount = 0;
@@ -694,11 +661,10 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 			}
 		}
 		if (elementCount > 0) {
-			pCxbxVertexDeclaration->pD3D11InputElements = (D3DVERTEXELEMENT*)malloc(elementCount * sizeof(D3DVERTEXELEMENT));
-			memcpy(pCxbxVertexDeclaration->pD3D11InputElements, pRecompiledVertexElements, elementCount * sizeof(D3DVERTEXELEMENT));
+			pCxbxVertexDeclaration->pD3D11InputElements = (D3D11_INPUT_ELEMENT_DESC*)malloc(elementCount * sizeof(D3D11_INPUT_ELEMENT_DESC));
+			memcpy(pCxbxVertexDeclaration->pD3D11InputElements, pRecompiledVertexElements, elementCount * sizeof(D3D11_INPUT_ELEMENT_DESC));
 		}
 		pCxbxVertexDeclaration->D3D11InputElementCount = elementCount;
-#endif
 
 		free(pRecompiledVertexElements);
 
@@ -710,7 +676,6 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 	return pCxbxVertexDeclaration;
 }
 
-#ifdef CXBX_USE_D3D11
 ID3DBlob* CxbxGetActiveVertexShaderBytecode()
 {
 	if (g_D3D11HasActiveShaderKey)
@@ -726,7 +691,6 @@ ID3DBlob* CxbxGetFixedFunctionVertexShaderBytecode()
 {
 	return g_pD3D11FixedFunctionBytecode;
 }
-#endif
 
 void CxbxUpdateHostVertexDeclaration()
 {
@@ -917,9 +881,7 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
-#ifdef CXBX_USE_D3D11
 	CxbxD3D11IABypassInvalidateLayout();
-#endif
 
 	// Checks if the Handle has bit 0 set - if not, it's a FVF
 	// which is converted to a global Xbox Vertex Shader struct

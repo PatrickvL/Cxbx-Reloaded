@@ -42,7 +42,6 @@ void EmuD3DInit()
 
 	// Initialise CreateDevice Proxy Data struct
 	{
-#ifdef CXBX_USE_D3D11
 		g_EmuCDPD.Adapter = nullptr; // Will be set below if user selected a non-default adapter
 		g_EmuCDPD.DeviceType = (g_XBVideo.direct3DDevice == 0) ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_REFERENCE;
 		// Enumerate DXGI adapters to select the one matching g_XBVideo.adapter index
@@ -58,27 +57,7 @@ void EmuD3DInit()
 				pFactory->Release();
 			}
 		}
-#else
-		g_EmuCDPD.Adapter = g_XBVideo.adapter;
-		g_EmuCDPD.DeviceType = (g_XBVideo.direct3DDevice == 0) ? D3DDEVTYPE_HAL : D3DDEVTYPE_REF;
-#endif
 	}
-
-#ifndef CXBX_USE_D3D11 // Based on : https://docs.microsoft.com/en-us/windows/uwp/gaming/simple-port-from-direct3d-9-to-11-1-part-1--initializing-direct3d
-	// create Direct3D8 and retrieve caps
-   	{
-   	   	// xbox Direct3DCreate8 returns "1" always, so we need our own ptr
-   	   	if(FAILED(Direct3DCreate9Ex(D3D_SDK_VERSION, &g_pDirect3D)))
-   	   	   	CxbxrAbort("Could not initialize Direct3D8!");
-
-   	   	g_pDirect3D->GetDeviceCaps(g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType, &g_D3DCaps);
-
-		// Dump Host D3DCaps to log unconditionally
-		std::cout << "----------------------------------------\n";
-		std::cout << "Host D3DCaps : " << g_D3DCaps << "\n";
-		std::cout << "----------------------------------------\n";
-	}
-#endif
 }
 
 // cleanup Direct3D
@@ -549,16 +528,15 @@ void hle_vblank()
 	g_Xbox_SwapData.TimeBetweenSwapVBlanks = 0;
 }
 
-void UpdateDepthStencilFlags(IDirect3DSurface *pDepthStencilSurface)
+void UpdateDepthStencilFlags(ID3D11Texture2D *pDepthStencilSurface)
 {
 	g_bHasDepth = false;
 	g_bHasStencil = false;
 	if (pDepthStencilSurface != nullptr) {
-		D3DSurfaceDesc Desc;
+		D3D11_TEXTURE2D_DESC Desc;
 		pDepthStencilSurface->GetDesc(&Desc);
 
 		switch (Desc.Format) {
-#ifdef CXBX_USE_D3D11
 		// Under D3D11, multiple D3D9 depth formats map to the same DXGI format,
 		// so we switch on the unique DXGI values only :
 		case DXGI_FORMAT_D16_UNORM: // Covers D16, D15S1 (stencil bit lost), D16_LOCKABLE
@@ -571,29 +549,6 @@ void UpdateDepthStencilFlags(IDirect3DSurface *pDepthStencilSurface)
 		case DXGI_FORMAT_D32_FLOAT: // Covers D32
 			g_bHasDepth = true;
 			break;
-#else
-		case EMUFMT_D16:
-			g_bHasDepth = true;
-			break;
-		case EMUFMT_D15S1:
-			g_bHasDepth = true;
-			g_bHasStencil = true;
-			break;
-		case EMUFMT_D24X8:
-			g_bHasDepth = true;
-			break;
-		case EMUFMT_D24S8:
-			g_bHasDepth = true;
-			g_bHasStencil = true;
-			break;
-		case EMUFMT_D24X4S4:
-			g_bHasDepth = true;
-			g_bHasStencil = true;
-			break;
-		case EMUFMT_D32:
-			g_bHasDepth = true;
-			break;
-#endif
 		}
 	}
 }
@@ -607,32 +562,7 @@ void SetupPresentationParameters
 
    	params.Windowed = !g_XBVideo.bFullScreen;
 
-#ifndef CXBX_USE_D3D11
-   	// TODO: Investigate the best option for this
-   	params.SwapEffect = D3DSWAPEFFECT_COPY;
-
-   	// Any backbuffer format should do, since we render to a separate xbox backbuffer
-   	// We need to specify something to support fullscreen exclusive mode
-   	// Take the current displaymode format
-   	D3DDISPLAYMODE D3DDisplayMode;
-   	g_pDirect3D->GetAdapterDisplayMode(g_EmuCDPD.Adapter, &D3DDisplayMode);
-   	params.BackBufferFormat = D3DDisplayMode.Format;
-
-   	params.PresentationInterval = g_XBVideo.bVSync ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
-#endif
    	g_Xbox_PresentationInterval_Default = pXboxPresentationParameters->FullScreen_PresentationInterval;
-
-#ifndef CXBX_USE_D3D11
-   	// We only want *one* backbuffer on the host, triple buffering, etc should be handled by our Present/Swap impl
-   	params.BackBufferCount = 1;
-
-   	// We don't want multisampling on the host backbuffer, it should be applied to Xbox surfaces if required
-   	params.MultiSampleType = D3DMULTISAMPLE_NONE;
-   	params.MultiSampleQuality = 0;
-
-   	// We want a lockable backbuffer for swapping/blitting purposes
-   	params.Flags = D3DPRESENTFLAG_LOCKABLE_BACKBUFFER;
-#endif
 
    	// retrieve resolution from configuration
    	char szBackBufferFormat[16] = {};
@@ -670,13 +600,12 @@ void DetermineSupportedD3DFormats
    	memset(g_bSupportsFormatCubeTexture, false, sizeof(g_bSupportsFormatCubeTexture));
    	for (int X_Format = xbox::X_D3DFMT_FIRST; X_Format <= xbox::X_D3DFMT_LAST; X_Format++) {
    	   	// Only process Xbox formats that are directly mappable to host
-		EMUFORMAT PCFormat;
+		DXGI_FORMAT PCFormat;
    	   	if (!EmuXBFormatRequiresConversion((xbox::X_D3DFORMAT)X_Format, /*&*/PCFormat)) {
    	   	   	// Convert the Xbox format into host format (without warning, thanks to the above restriction)
    	   	   	PCFormat = EmuXB2PC_D3DFormat((xbox::X_D3DFORMAT)X_Format);
    	   	   	if (PCFormat != EMUFMT_UNKNOWN) {
    	   	   	   	// Index with Xbox D3DFormat, because host FourCC codes are too big to be used as indices
-#ifdef CXBX_USE_D3D11
    	   	   	   	UINT FormatSupport = 0;
 				g_pD3DDevice->CheckFormatSupport(PCFormat, &FormatSupport);
 
@@ -690,47 +619,6 @@ void DetermineSupportedD3DFormats
 
    	   	   	   	g_bSupportsFormatVolumeTexture[X_Format] = FormatSupport & D3D11_FORMAT_SUPPORT_TEXTURE3D;
    	   	   	   	g_bSupportsFormatCubeTexture[X_Format] = FormatSupport & D3D11_FORMAT_SUPPORT_TEXTURECUBE;
-#else
-   	   	   	   	g_bSupportsFormatSurface[X_Format] = SUCCEEDED(g_pDirect3D->CheckDeviceFormat(
-   	   	   	   	   	   	g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType,
-   	   	   	   	   	   	g_EmuCDPD.HostPresentationParameters.BackBufferFormat, 0,
-   	   	   	   	   	   	D3DRTYPE_SURFACE, PCFormat));
-
-   	   	   	   	g_bSupportsFormatSurfaceRenderTarget[X_Format] = SUCCEEDED(g_pDirect3D->CheckDeviceFormat(
-   	   	   	   	   	   	g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType,
-   	   	   	   	   	   	g_EmuCDPD.HostPresentationParameters.BackBufferFormat, D3DUSAGE_RENDERTARGET,
-   	   	   	   	   	   	D3DRTYPE_SURFACE, PCFormat));
-
-   	   	   	   	g_bSupportsFormatSurfaceDepthStencil[X_Format] = SUCCEEDED(g_pDirect3D->CheckDeviceFormat(
-   	   	   	   	   	   	g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType,
-   	   	   	   	   	   	g_EmuCDPD.HostPresentationParameters.BackBufferFormat, D3DUSAGE_DEPTHSTENCIL,
-   	   	   	   	   	   	D3DRTYPE_SURFACE, PCFormat));
-
-   	   	   	   	g_bSupportsFormatTexture[X_Format] = SUCCEEDED(g_pDirect3D->CheckDeviceFormat(
-   	   	   	   	   	   	g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType,
-   	   	   	   	   	   	g_EmuCDPD.HostPresentationParameters.BackBufferFormat, 0,
-   	   	   	   	   	   	D3DRTYPE_TEXTURE, PCFormat));
-
-   	   	   	   	g_bSupportsFormatTextureRenderTarget[X_Format] = SUCCEEDED(g_pDirect3D->CheckDeviceFormat(
-   	   	   	   	   	   	g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType,
-   	   	   	   	   	   	g_EmuCDPD.HostPresentationParameters.BackBufferFormat, D3DUSAGE_RENDERTARGET,
-   	   	   	   	   	   	D3DRTYPE_TEXTURE, PCFormat));
-
-   	   	   	   	g_bSupportsFormatTextureDepthStencil[X_Format] = SUCCEEDED(g_pDirect3D->CheckDeviceFormat(
-   	   	   	   	   	   	g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType,
-   	   	   	   	   	   	g_EmuCDPD.HostPresentationParameters.BackBufferFormat, D3DUSAGE_DEPTHSTENCIL,
-   	   	   	   	   	   	D3DRTYPE_TEXTURE, PCFormat));
-
-   	   	   	   	g_bSupportsFormatVolumeTexture[X_Format] = SUCCEEDED(g_pDirect3D->CheckDeviceFormat(
-   	   	   	   	   	   	g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType,
-   	   	   	   	   	   	g_EmuCDPD.HostPresentationParameters.BackBufferFormat, 0,
-   	   	   	   	   	   	D3DRTYPE_VOLUMETEXTURE, PCFormat));
-
-   	   	   	   	g_bSupportsFormatCubeTexture[X_Format] = SUCCEEDED(g_pDirect3D->CheckDeviceFormat(
-   	   	   	   	   	   	g_EmuCDPD.Adapter, g_EmuCDPD.DeviceType,
-   	   	   	   	   	   	g_EmuCDPD.HostPresentationParameters.BackBufferFormat, 0,
-   	   	   	   	   	   	D3DRTYPE_CUBETEXTURE, PCFormat));
-#endif
    	   	   	}
    	   	}
    	}
@@ -738,22 +626,14 @@ void DetermineSupportedD3DFormats
 
 void UpdateHostBackBufferDesc()
 {
-   	IDirect3DSurface *pCurrentHostBackBuffer = nullptr;
+   	ID3D11Texture2D *pCurrentHostBackBuffer = nullptr;
 
    	HRESULT hRet = CxbxGetBackBuffer(&pCurrentHostBackBuffer);
    	if (hRet != D3D_OK) {
    	   	CxbxrAbort("Unable to get host backbuffer surface");
    	}
 
-#ifdef CXBX_USE_D3D11
    	pCurrentHostBackBuffer->GetDesc(&g_HostBackBufferDesc);
-#else
-   	hRet = pCurrentHostBackBuffer->GetDesc(&g_HostBackBufferDesc);
-   	if (hRet != D3D_OK) {
-   	   	pCurrentHostBackBuffer->Release();
-   	   	CxbxrAbort("Unable to determine host backbuffer dimensions");
-   	}
-#endif
 
    	pCurrentHostBackBuffer->Release();
 }

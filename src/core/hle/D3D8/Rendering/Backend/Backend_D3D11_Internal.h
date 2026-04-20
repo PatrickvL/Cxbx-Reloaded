@@ -26,8 +26,6 @@
 #ifndef BACKEND_D3D11_INTERNAL_H
 #define BACKEND_D3D11_INTERNAL_H
 
-#ifdef CXBX_USE_D3D11
-
 #define LOG_PREFIX CXBXR_MODULE::D3D8
 
 #include "Backend_D3D11.h"
@@ -148,10 +146,10 @@ void CxbxD3D11DispatchCS(ID3D11ComputeShader* pShader, ID3D11Buffer* pCB, UINT n
 HRESULT CxbxD3D11UpdateDynamicBuffer(ID3D11Buffer* pBuffer, const void* pData, size_t dataSize);
 
 // RTV cache helpers
-using RTVCacheKey = std::pair<IDirect3DSurface*, UINT>;
+using RTVCacheKey = std::pair<ID3D11Texture2D*, UINT>;
 struct RTVCacheKeyHash {
 	size_t operator()(const RTVCacheKey& k) const {
-		return std::hash<IDirect3DSurface*>()(k.first) ^ (static_cast<size_t>(k.second) << 16);
+		return std::hash<ID3D11Texture2D*>()(k.first) ^ (static_cast<size_t>(k.second) << 16);
 	}
 };
 void ClearRTVCache();
@@ -161,5 +159,4 @@ extern std::unordered_map<RTVCacheKey, ID3D11RenderTargetView*, RTVCacheKeyHash>
 extern void CxbxBeginScene();
 extern void CxbxEndScene();
 
-#endif // CXBX_USE_D3D11
 #endif // BACKEND_D3D11_INTERNAL_H

@@ -332,141 +332,14 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawVertices)
 
 	CxbxUpdateNativeD3DResources();
 
-		CxbxDrawContext DrawContext = {};
+	CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = PrimitiveType;
-		DrawContext.dwVertexCount = VertexCount;
-		DrawContext.dwStartVertex = StartVertex;
+	DrawContext.XboxPrimitiveType = PrimitiveType;
+	DrawContext.dwVertexCount = VertexCount;
+	DrawContext.dwStartVertex = StartVertex;
 
-#ifdef CXBX_USE_D3D11
-		// IA bypass: handle the entire draw (topology + vertex fetch) in the VS
-		if (g_bD3D11IABypass && CxbxD3D11IABypassDraw(DrawContext)) {
-			g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(PrimitiveType, VertexCount);
-			return;
-		}
-#endif
-
-		VertexBufferConverter.Apply(&DrawContext);
-		if (DrawContext.XboxPrimitiveType == X_D3DPT_QUADLIST) {
-			if (StartVertex == 0) {
-				//LOG_TEST_CASE("X_D3DPT_QUADLIST (StartVertex == 0)"); // disabled, hit too often
-				// test-case : ?X-Marbles
-				// test-case XDK Samples : AlphaFog, AntiAlias, BackBufferScale, BeginPush, Cartoon, TrueTypeFont (?maybe PlayField?)
-			} else {
-				LOG_TEST_CASE("X_D3DPT_QUADLIST (StartVertex > 0)");
-				// https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/issues/1156
-				// test-case : All - Star Baseball '03
-				// test-case : Army Men Major Malfunction
-				// test-case : Big Mutha Truckers
-				// test-case : BLiNX: the time sweeper
-				// test-case : Blood Wake
-				// test-case : Call of Duty: Finest Hour
-				// test-case : Flight academy
-				// test-case : FIFA World Cup 2002
-				// test-case : GENMA ONIMUSHA 
-				// test-case : Halo - Combat Evolved
-				// test-case : Harry Potter and the Sorcerer's Stone
-				// test-case : Heroes of the Pacific
-				// test-case : Hummer Badlands
-				// test-case : Knights Of The Temple 2
-				// test-case : LakeMasters Bass fishing
-				// test-case : MetalDungeon
-				// test-case : NFL Fever 2003 Demo - main menu
-				// test-case : Night Caster 2
-				// test-case : Pinball Hall of Fame
-				// test-case : Robotech : Battlecry
-				// test-case : SpiderMan 2
-				// test-case : Splinter Cell Demo
-				// test-case : Stubbs the Zombie
-				// test-case : Tony Hawk's Pro Skater 2X (main menu entries)
-				// test-case : Worms 3D Special Edition
-				// test-case : XDK sample Lensflare (4, for 10 flare-out quads that use a linear texture; rendered incorrectly: https://youtu.be/idwlxHl9nAA?t=439)
-				DrawContext.dwStartVertex = StartVertex; // Breakpoint location for testing.
-			}
-
-			// Draw quadlists using a single 'quad-to-triangle mapping' index buffer :
-			UINT primCount = DrawContext.dwHostPrimitiveCount * TRIANGLES_PER_QUAD;
-			UINT IndexCount = primCount * 3;
-#ifdef CXBX_USE_D3D11
-			{
-				int mode = CxbxGetClockWiseWindingOrder() ? CXBX_INDEX_CONVERT_QUAD_CW : CXBX_INDEX_CONVERT_QUAD_CCW;
-				if (!CxbxD3D11ConvertIndexBufferGPU(nullptr, DrawContext.dwVertexCount, IndexCount, mode)) {
-					// Fallback: CPU conversion
-					CxbxAssureQuadListD3DIndexBuffer(/*NrOfQuadIndices=*/DrawContext.dwVertexCount);
-				}
-			}
-#else
-			// Assure & activate that special index buffer :
-			CxbxAssureQuadListD3DIndexBuffer(/*NrOfQuadIndices=*/DrawContext.dwVertexCount);
-#endif
-			UINT NumVertices = QuadToTriangleVertexCount(DrawContext.dwVertexCount);
-			// Emulate drawing quads by drawing each quad with two indexed triangles :
-			HRESULT hRet = CxbxDrawIndexedPrimitive(
-				/*XboxPrimitiveType=*/(xbox::X_D3DPRIMITIVETYPE)xbox::X_D3DPT_TRIANGLELIST,
-				/*IndexCount=*/IndexCount,
-				/*BaseVertexIndex=*/0, // Base vertex index has been accounted for in the stream conversion
-				/*StartIndex=*/0,
-				/*MinIndex=*/0,
-				NumVertices,
-				primCount
-			);
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitive(X_D3DPT_QUADLIST)");
-
-			g_dwPrimPerFrame += primCount;
-		}
-#ifdef CXBX_USE_D3D11
-		else if (DrawContext.XboxPrimitiveType == X_D3DPT_TRIANGLEFAN
-			|| DrawContext.XboxPrimitiveType == xbox::X_D3DPT_POLYGON) {
-			// D3D11 doesn't support triangle fan topology — convert to indexed triangle list
-			UINT NrOfTriangleIndices = FanToTriangleVertexCount(DrawContext.dwVertexCount);
-			if (NrOfTriangleIndices > 0) {
-				UINT primCount = DrawContext.dwVertexCount - 2;
-				bool bReady = CxbxD3D11ConvertIndexBufferGPU(nullptr, DrawContext.dwVertexCount, NrOfTriangleIndices, CXBX_INDEX_CONVERT_FAN);
-
-				if (!bReady) {
-					// Fallback: CPU conversion
-					INDEX16* pFanIndices = CxbxCreateTriFanToTriangleListIndexData(nullptr, DrawContext.dwVertexCount);
-					static CxbxDynBuffer s_FanIB = { nullptr, 0, D3D11_BIND_INDEX_BUFFER };
-					ID3D11Buffer* pIB = s_FanIB.Update(pFanIndices, NrOfTriangleIndices * sizeof(INDEX16));
-					free(pFanIndices);
-					if (pIB != nullptr) {
-						g_pD3DDeviceContext->IASetIndexBuffer(pIB, DXGI_FORMAT_R16_UINT, 0);
-						bReady = true;
-					}
-				}
-
-				if (bReady) {
-					g_pD3DDeviceContext->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-					g_pD3DDeviceContext->DrawIndexed(NrOfTriangleIndices, 0, 0);
-				}
-
-				g_dwPrimPerFrame += primCount;
-			}
-		}
-#endif
-		else {
-			// if (StartVertex > 0) LOG_TEST_CASE("StartVertex > 0 (non-quad)"); // Verified test case : XDK Sample (PlayField)
-			HRESULT hRet = CxbxDrawPrimitive(
-				DrawContext.XboxPrimitiveType,
-				DrawContext.dwVertexCount,
-				/*StartVertex=*/0, // Start vertex has been accounted for in the stream conversion
-				DrawContext.dwHostPrimitiveCount
-			);
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawPrimitive");
-
-			g_dwPrimPerFrame += DrawContext.dwHostPrimitiveCount;
-			if (DrawContext.XboxPrimitiveType == X_D3DPT_LINELOOP) {
-				// Close line-loops using a final single line, drawn from the end to the start vertex
-				LOG_TEST_CASE("X_D3DPT_LINELOOP"); // TODO : Text-cases needed
-
-				assert(DrawContext.dwBaseVertexIndex == 0); // if this fails, it needs to be added to LowIndex and HighIndex :
-				INDEX16 LowIndex = 0;
-				INDEX16 HighIndex = (INDEX16)(DrawContext.dwHostPrimitiveCount);
-				// Draw the closing line using a helper function (which will SetIndices)
-				CxbxDrawIndexedClosingLine(LowIndex, HighIndex);
-				// NOTE : We don't restore the previously active index buffer
-			}
-		}
+	CxbxD3D11IABypassDraw(DrawContext);
+	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(PrimitiveType, VertexCount);
 
 	CxbxHandleXboxCallbacks();
 }
@@ -625,12 +498,8 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 		UINT PrimitiveCount = DrawContext.dwHostPrimitiveCount;
 
 		bool bConvertQuadListToTriangleList = (DrawContext.XboxPrimitiveType == X_D3DPT_QUADLIST);
-#ifdef CXBX_USE_D3D11
 		bool bConvertTriFanToTriangleList = (DrawContext.XboxPrimitiveType == X_D3DPT_TRIANGLEFAN
 			|| DrawContext.XboxPrimitiveType == xbox::X_D3DPT_POLYGON);
-#else
-		bool bConvertTriFanToTriangleList = false;
-#endif
 		bool bConvertedPrimitive = bConvertQuadListToTriangleList || bConvertTriFanToTriangleList;
 		if (bConvertQuadListToTriangleList) {
 			LOG_TEST_CASE("X_D3DPT_QUADLIST");
@@ -650,7 +519,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 		}
 
 		HRESULT hRet;
-#ifdef CXBX_USE_D3D11
 		// D3D11 has no DrawIndexedPrimitiveUP - use reusable dynamic buffers
 		UINT vertexDataSize = DrawContext.dwVertexCount * DrawContext.uiHostVertexStreamZeroStride;
 
@@ -692,18 +560,7 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawIndexedVerticesUP)
 			CxbxUnbindThickLineGS(DrawContext.XboxPrimitiveType);
 			hRet = S_OK;
 		}
-#else
-		hRet = g_pD3DDevice->DrawIndexedPrimitiveUP(
-			/*PrimitiveType=*/EmuXB2PC_D3DPrimitiveType(DrawContext.XboxPrimitiveType),
-			/*MinVertexIndex=*/DrawContext.LowIndex,
-			/*NumVertexIndices=*/(DrawContext.HighIndex - DrawContext.LowIndex) + 1,
-			PrimitiveCount,
-			pHostIndexData,
-			/*IndexDataFormat=*/EMUFMT_INDEX16,
-			DrawContext.pHostVertexStreamZeroData,
-			DrawContext.uiHostVertexStreamZeroStride
-		);
-#endif
+
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawIndexedPrimitiveUP");
 
 		if (bConvertQuadListToTriangleList) {
@@ -881,14 +738,9 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawRectPatch)
 
 	CxbxUpdateNativeD3DResources();
 
-#ifdef CXBX_USE_D3D11
 	// D3D11 has no DrawRectPatch - use CPU tessellation
 	HRESULT hRet = CxbxDrawRectPatchD3D11(Handle, pNumSegs, pRectPatchInfo);
 	DEBUG_D3DRESULT(hRet, "CxbxDrawRectPatchD3D11");
-#else
-	HRESULT hRet = g_pD3DDevice->DrawRectPatch( Handle, pNumSegs, pRectPatchInfo );
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawRectPatch");
-#endif
 
 	return hRet;
 }
@@ -911,14 +763,9 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawTriPatch)
 
 	CxbxUpdateNativeD3DResources();
 
-#ifdef CXBX_USE_D3D11
 	// D3D11 has no DrawTriPatch - use CPU tessellation
 	HRESULT hRet = CxbxDrawTriPatchD3D11(Handle, pNumSegs, pTriPatchInfo);
 	DEBUG_D3DRESULT(hRet, "CxbxDrawTriPatchD3D11");
-#else
-	HRESULT hRet = g_pD3DDevice->DrawTriPatch(Handle, pNumSegs, pTriPatchInfo);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->DrawTriPatch");
-#endif
 
 	return hRet;
 }

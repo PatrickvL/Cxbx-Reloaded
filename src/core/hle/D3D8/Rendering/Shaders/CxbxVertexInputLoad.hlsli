@@ -16,18 +16,9 @@
         v8=vArr[8]; v9=vArr[9]; v10=vArr[10]; v11=vArr[11];
         v12=vArr[12]; v13=vArr[13]; v14=vArr[14]; v15=vArr[15];
     }
-#elif defined(CXBX_USE_D3D11)
+#else
     // D3D11: The input assembler delivers correct values for all 16 attributes.
     #define init_v(i) v##i = xIn.v[i];
-    init_v( 0); init_v( 1); init_v( 2); init_v( 3);
-    init_v( 4); init_v( 5); init_v( 6); init_v( 7);
-    init_v( 8); init_v( 9); init_v(10); init_v(11);
-    init_v(12); init_v(13); init_v(14); init_v(15);
-    #undef init_v
-#else
-    // D3D9: Lerp between vertex data and constant buffer defaults
-    float vRegisterDefaultFlags[16] = (float[16])vRegisterDefaultFlagsPacked;
-    #define init_v(i) v##i = lerp(xIn.v[i], vRegisterDefaultValues[i], vRegisterDefaultFlags[i]);
     init_v( 0); init_v( 1); init_v( 2); init_v( 3);
     init_v( 4); init_v( 5); init_v( 6); init_v( 7);
     init_v( 8); init_v( 9); init_v(10); init_v(11);

@@ -580,22 +580,11 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVertexShaderConstant)
 	// The host does not support negative, so we adjust to 0..191
 	Register += X_D3DSCM_CORRECTION;
 
-#ifdef CXBX_USE_D3D11
 	// For D3D11, read from our local shadow of the constants
 	if (Register >= 0 && (UINT)Register < CXBX_D3D11_VS_CB_COUNT && pConstantData != nullptr) {
 		UINT copyCount = std::min((UINT)ConstantCount, CXBX_D3D11_VS_CB_COUNT - (UINT)Register);
 		CxbxGetVertexShaderConstants((UINT)Register, (float*)pConstantData, copyCount);
 	}
-#else
-	HRESULT hRet = g_pD3DDevice->GetVertexShaderConstantF
-   	(
-   	   	Register,
-   	   	(float*)pConstantData, // TODO : Validate this work correctly under D3D9
-   	   	ConstantCount
-   	);
-
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->GetVertexShaderConstant");
-#endif
 }
 
 // ******************************************************************

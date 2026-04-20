@@ -37,17 +37,13 @@
 #include "core\hle\D3D8\XbPushBuffer.h" // For CxbxDrawPrimitiveUP
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
-#ifdef CXBX_USE_D3D11
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
-#endif
 
 #include <imgui.h>
 
 #include <ctime>
 #include <chrono>
 #include <algorithm>
-
-#define MAX_STREAM_NOT_USED_TIME (2 * CLOCKS_PER_SEC) // TODO: Trim the not used time
 
 CxbxVertexBufferConverter VertexBufferConverter = {};
 
@@ -62,7 +58,7 @@ UINT                          g_InlineVertexBuffer_TableOffset = 0;
 // Copy of active Xbox D3D Vertex Streams (and strides), set by [D3DDevice|CxbxImpl]_SetStreamSource*
 xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS] = { 0 }; // Note : .Offset member is never set (so always 0)
 
-// CxbxSetStreamSource moved to Backend_D3D9.cpp / Backend_D3D11.cpp
+// CxbxSetStreamSource is in Backend_D3D11_Draw.cpp
 
 void CxbxPatchedStream::Activate(CxbxDrawContext *pDrawContext, UINT HostStreamNumber) const
 {
@@ -149,16 +145,6 @@ inline FLOAT PackedIntToFloat(const int value, const FLOAT PosFactor, const FLOA
 	}
 }
 
-inline FLOAT NormShortToFloat(const SHORT value)
-{
-	return PackedIntToFloat((int)value, 32767.0f, 32768.0f);
-}
-
-inline FLOAT ByteToFloat(const BYTE value)
-{
-	return ((FLOAT)value) / 255.0f;
-}
-
 CxbxPatchedStream& CxbxVertexBufferConverter::GetPatchedStream(uint64_t dataKey, uint64_t streamInfoKey)
 {
     // First, attempt to fetch an existing patched stream
@@ -212,9 +198,6 @@ void CxbxVertexBufferConverter::ConvertStream
     UINT             uiStream
 )
 {
-#ifndef CXBX_USE_D3D11
-	extern D3DCAPS g_D3DCaps;
-#endif
 	//X_D3DBaseTexture *pLinearBaseTexture[xbox::X_D3DTS_STAGECOUNT];
 
 	CxbxVertexShaderStreamInfo *pVertexShaderStreamInfo = nullptr;
@@ -237,7 +220,7 @@ void CxbxVertexBufferConverter::ConvertStream
 	UINT uiXboxVertexStride = 0;
 	UINT uiHostVertexStride = 0;
 	uint8_t *pHostVertexData = nullptr;
-	IDirect3DVertexBuffer *pNewHostVertexBuffer = nullptr;
+	ID3D11Buffer *pNewHostVertexBuffer = nullptr;
 
     if (pDrawContext->pXboxVertexStreamZeroData != xbox::zeroptr) {
 		// There should only be one stream (stream zero) in this case
@@ -341,7 +324,6 @@ void CxbxVertexBufferConverter::ConvertStream
 		return;
 	}
 
-#ifdef CXBX_USE_D3D11
 	// Try GPU vertex conversion via compute shader (non-UP, patching case only)
 	if (bNeedVertexPatching && pDrawContext->pXboxVertexStreamZeroData == xbox::zeroptr) {
 		// Check if all host element sizes are multiples of 4 (required for RWBuffer<uint> writes)
@@ -379,7 +361,7 @@ void CxbxVertexBufferConverter::ConvertStream
 			}
 		}
 		if (canUseCS) {
-			IDirect3DVertexBuffer* pGPUVB = nullptr;
+			ID3D11Buffer* pGPUVB = nullptr;
 			if (CxbxD3D11ConvertVertexBufferGPU(
 					pXboxVertexData, xboxVertexDataSize, uiVertexCount,
 					uiXboxVertexStride, uiHostVertexStride,
@@ -399,7 +381,6 @@ void CxbxVertexBufferConverter::ConvertStream
 			}
 		}
 	}
-#endif
 
     // Allocate new buffers
     if (pDrawContext->pXboxVertexStreamZeroData != xbox::zeroptr) {
@@ -438,81 +419,14 @@ void CxbxVertexBufferConverter::ConvertStream
 				// Dxbx note : The following code handles only the D3DVSDT enums that need conversion;
 				// All other cases are catched by the memcpy in the default-block.
 				switch (pVertexShaderStreamInfo->VertexElements[uiElement].XboxType) {
-#ifndef CXBX_USE_D3D11 // D3D11 supports DXGI_FORMAT_R16_SNORM
-				case xbox::X_D3DVSDT_NORMSHORT1: { // 0x11:
-					if (g_D3DCaps.DeclTypes & D3DDTCAPS_SHORT2N) {
-						// Make it SHORT2N
-						pHostVertexAsShort[0] = pXboxVertexAsShort[0];
-						pHostVertexAsShort[1] = 0;
-					} else {
-						// Make it FLOAT1
-						pHostVertexAsFloat[0] = NormShortToFloat(pXboxVertexAsShort[0]);
-						//pHostVertexAsFloat[1] = 0.0f; // Would be needed for FLOAT2
-					}
-					break;
-				}
-#endif
-#ifndef CXBX_USE_D3D11 // D3D11 supports DXGI_FORMAT_R16G16_SNORM
-				case xbox::X_D3DVSDT_NORMSHORT2: { // 0x21:
-					if (g_D3DCaps.DeclTypes & D3DDTCAPS_SHORT2N) {
-						// No need for patching when D3D9 supports D3DDECLTYPE_SHORT2N
-						// TODO : goto default; // ??
-						//memcpy(pHostVertexAsByte, pXboxVertexAsByte, XboxElementByteSize);
-						// Make it SHORT2N
-						pHostVertexAsShort[0] = pXboxVertexAsShort[0];
-						pHostVertexAsShort[1] = pXboxVertexAsShort[1];
-					} else {
-						// Make it FLOAT2
-						pHostVertexAsFloat[0] = NormShortToFloat(pXboxVertexAsShort[0]);
-						pHostVertexAsFloat[1] = NormShortToFloat(pXboxVertexAsShort[1]);
-					}
-					break;
-				}
-#endif
 				case xbox::X_D3DVSDT_NORMSHORT3: { // 0x31:
-#ifdef CXBX_USE_D3D11 // D3D11 uses DXGI_FORMAT_R16G16B16A16_SNORM
 					// Make it SHORT4N
 					pHostVertexAsShort[0] = pXboxVertexAsShort[0];
 					pHostVertexAsShort[1] = pXboxVertexAsShort[1];
 					pHostVertexAsShort[2] = pXboxVertexAsShort[2];
 					pHostVertexAsShort[3] = 32767; // TODO : verify
-#else
-					if (g_D3DCaps.DeclTypes & D3DDTCAPS_SHORT4N) {
-						// Make it SHORT4N
-						pHostVertexAsShort[0] = pXboxVertexAsShort[0];
-						pHostVertexAsShort[1] = pXboxVertexAsShort[1];
-						pHostVertexAsShort[2] = pXboxVertexAsShort[2];
-						pHostVertexAsShort[3] = 32767; // TODO : verify
-					} else {
-						// Make it FLOAT3
-						pHostVertexAsFloat[0] = NormShortToFloat(pXboxVertexAsShort[0]);
-						pHostVertexAsFloat[1] = NormShortToFloat(pXboxVertexAsShort[1]);
-						pHostVertexAsFloat[2] = NormShortToFloat(pXboxVertexAsShort[2]);
-					}
-#endif
 					break;
 				}
-#ifndef CXBX_USE_D3D11 // D3D11 supports DXGI_FORMAT_R16G16B16A16_SNORM
-				case xbox::X_D3DVSDT_NORMSHORT4: { // 0x41:
-					if (g_D3DCaps.DeclTypes & D3DDTCAPS_SHORT4N) {
-						// No need for patching when D3D9 supports D3DDECLTYPE_SHORT4N
-						// TODO : goto default; // ??
-						//memcpy(pHostVertexAsByte, pXboxVertexAsByte, XboxElementByteSize);
-						// Make it SHORT4N
-						pHostVertexAsShort[0] = pXboxVertexAsShort[0];
-						pHostVertexAsShort[1] = pXboxVertexAsShort[1];
-						pHostVertexAsShort[2] = pXboxVertexAsShort[2];
-						pHostVertexAsShort[3] = pXboxVertexAsShort[3];
-					} else {
-						// Make it FLOAT4
-						pHostVertexAsFloat[0] = NormShortToFloat(pXboxVertexAsShort[0]);
-						pHostVertexAsFloat[1] = NormShortToFloat(pXboxVertexAsShort[1]);
-						pHostVertexAsFloat[2] = NormShortToFloat(pXboxVertexAsShort[2]);
-						pHostVertexAsFloat[3] = NormShortToFloat(pXboxVertexAsShort[3]);
-					}
-					break;
-				}
-#endif
 				case xbox::X_D3DVSDT_NORMPACKED3: { // 0x16:
 					// Make it FLOAT3
 					union {
@@ -531,14 +445,6 @@ void CxbxVertexBufferConverter::ConvertStream
 					pHostVertexAsFloat[2] = PackedIntToFloat(NormPacked3.z, 511.0f, 512.f);
 					break;
 				}
-#ifndef CXBX_USE_D3D11 // D3D11 supports DXGI_FORMAT_R16_SINT
-				case xbox::X_D3DVSDT_SHORT1: { // 0x15:
-					// Make it SHORT2 and set the second short to 0
-					pHostVertexAsShort[0] = pXboxVertexAsShort[0];
-					pHostVertexAsShort[1] = 0;
-					break;
-				}
-#endif
 				case xbox::X_D3DVSDT_SHORT3: { // 0x35:
 					// Make it a SHORT4 and set the fourth short to 1
 					pHostVertexAsShort[0] = pXboxVertexAsShort[0];
@@ -547,81 +453,14 @@ void CxbxVertexBufferConverter::ConvertStream
 					pHostVertexAsShort[3] = 1; // Turok verified (character disappears when this is 32767)
 					break;
 				}
-#ifndef CXBX_USE_D3D11 // D3D11 supports DXGI_FORMAT_R8_UNORM
-				case xbox::X_D3DVSDT_PBYTE1: { // 0x14:
-					if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
-						// Make it UBYTE4N
-						pHostVertexAsByte[0] = pXboxVertexAsByte[0];
-						pHostVertexAsByte[1] = 0;
-						pHostVertexAsByte[2] = 0;
-						pHostVertexAsByte[3] = 255; // TODO : Verify
-					} else {
-						// Make it FLOAT1
-						pHostVertexAsFloat[0] = ByteToFloat(pXboxVertexAsByte[0]);
-					}
-					break;
-				}
-#endif
-#ifndef CXBX_USE_D3D11 // D3D11 supports DXGI_FORMAT_R8G8_UNORM
-				case xbox::X_D3DVSDT_PBYTE2: { // 0x24:
-					if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
-						// Make it UBYTE4N
-						pHostVertexAsByte[0] = pXboxVertexAsByte[0];
-						pHostVertexAsByte[1] = pXboxVertexAsByte[1];
-						pHostVertexAsByte[2] = 0;
-						pHostVertexAsByte[3] = 255; // TODO : Verify
-					} else {
-						// Make it FLOAT2
-						pHostVertexAsFloat[0] = ByteToFloat(pXboxVertexAsByte[0]);
-						pHostVertexAsFloat[1] = ByteToFloat(pXboxVertexAsByte[1]);
-					}
-					break;
-				}
-#endif
 				case xbox::X_D3DVSDT_PBYTE3: { // 0x34:
-#ifdef CXBX_USE_D3D11 // D3D11 uses DXGI_FORMAT_R8G8B8A8_UNORM
 					// Make it UBYTE4N
 					pHostVertexAsByte[0] = pXboxVertexAsByte[0];
 					pHostVertexAsByte[1] = pXboxVertexAsByte[1];
 					pHostVertexAsByte[2] = pXboxVertexAsByte[2];
 					pHostVertexAsByte[3] = 255; // TODO : Verify
-#else
-					if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
-						// Make it UBYTE4N
-						pHostVertexAsByte[0] = pXboxVertexAsByte[0];
-						pHostVertexAsByte[1] = pXboxVertexAsByte[1];
-						pHostVertexAsByte[2] = pXboxVertexAsByte[2];
-						pHostVertexAsByte[3] = 255; // TODO : Verify
-					} else {
-						// Make it FLOAT3
-						pHostVertexAsFloat[0] = ByteToFloat(pXboxVertexAsByte[0]);
-						pHostVertexAsFloat[1] = ByteToFloat(pXboxVertexAsByte[1]);
-						pHostVertexAsFloat[2] = ByteToFloat(pXboxVertexAsByte[2]);
-					}
-#endif
 					break;
 				}
-#ifndef CXBX_USE_D3D11 // D3D11 supports DXGI_FORMAT_R8G8B8A8_UNORM
-				case xbox::X_D3DVSDT_PBYTE4: { // 0x44:
-					if (g_D3DCaps.DeclTypes & D3DDTCAPS_UBYTE4N) {
-						// No need for patching when D3D9 supports D3DDECLTYPE_UBYTE4N
-						// TODO : goto default; // ??
-						//memcpy(pHostVertexAsByte, pXboxVertexAsByte, XboxElementByteSize);
-						// Make it UBYTE4N
-						pHostVertexAsByte[0] = pXboxVertexAsByte[0];
-						pHostVertexAsByte[1] = pXboxVertexAsByte[1];
-						pHostVertexAsByte[2] = pXboxVertexAsByte[2];
-						pHostVertexAsByte[3] = pXboxVertexAsByte[3];
-					} else {
-						// Make it FLOAT4
-						pHostVertexAsFloat[0] = ByteToFloat(pXboxVertexAsByte[0]);
-						pHostVertexAsFloat[1] = ByteToFloat(pXboxVertexAsByte[1]);
-						pHostVertexAsFloat[2] = ByteToFloat(pXboxVertexAsByte[2]);
-						pHostVertexAsFloat[3] = ByteToFloat(pXboxVertexAsByte[3]);
-					}
-					break;
-				}
-#endif
 				case xbox::X_D3DVSDT_FLOAT2H: { // 0x72:
 					// Make it FLOAT4 and set the third float to 0.0
 					pHostVertexAsFloat[0] = pXboxVertexAsFloat[0];
@@ -637,7 +476,6 @@ void CxbxVertexBufferConverter::ConvertStream
 					// No host element data (but Xbox size can be above zero, when used for X_D3DVSD_MASK_SKIP*
 					break;
 				}
-#ifdef CXBX_USE_D3D11
 				case xbox::X_D3DVSDT_D3DCOLOR: { // 0x40: DXGI_FORMAT_R8G8B8A8_UNORM
 					// D3DCOLOR is stored as [B,G,R,A] in memory. We use DXGI_FORMAT_R8G8B8A8_UNORM
 					// which reads bytes as [R,G,B,A], so swap bytes 0 (B) and 2 (R) to get correct RGBA.
@@ -647,14 +485,10 @@ void CxbxVertexBufferConverter::ConvertStream
 					pHostVertexAsByte[3] = pXboxVertexAsByte[3]; // A
 					break;
 				}
-#else
-				case xbox::X_D3DVSDT_D3DCOLOR: [[fallthrough]]; // 0x40: D3DDECLTYPE_D3DCOLOR (BGRA→RGBA handled by hardware)
-#endif
 				case xbox::X_D3DVSDT_FLOAT1: [[fallthrough]]; // 0x12: DXGI_FORMAT_R32_FLOAT
 				case xbox::X_D3DVSDT_FLOAT2: [[fallthrough]]; // 0x22: DXGI_FORMAT_R32G32_FLOAT
 				case xbox::X_D3DVSDT_FLOAT3: [[fallthrough]]; // 0x32: DXGI_FORMAT_R32G32B32_FLOAT
 				case xbox::X_D3DVSDT_FLOAT4: [[fallthrough]]; // 0x42: DXGI_FORMAT_R32G32B32A32_FLOAT
-#ifdef CXBX_USE_D3D11
 				case xbox::X_D3DVSDT_NORMSHORT1: [[fallthrough]]; // 0x11: DXGI_FORMAT_R16_SNORM
 				case xbox::X_D3DVSDT_NORMSHORT2: [[fallthrough]]; // 0x21: DXGI_FORMAT_R16G16_SNORM
 				case xbox::X_D3DVSDT_NORMSHORT4: [[fallthrough]]; // 0x41: DXGI_FORMAT_R16G16B16A16_SNORM
@@ -662,7 +496,6 @@ void CxbxVertexBufferConverter::ConvertStream
 				case xbox::X_D3DVSDT_PBYTE2: [[fallthrough]]; // 0x24: DXGI_FORMAT_R8G8_UNORM
 				case xbox::X_D3DVSDT_PBYTE4: [[fallthrough]]; // 0x44: DXGI_FORMAT_R8G8B8A8_UNORM
 				case xbox::X_D3DVSDT_SHORT1: [[fallthrough]]; // 0x15: DXGI_FORMAT_R16_SINT
-#endif
 				case xbox::X_D3DVSDT_SHORT2: [[fallthrough]]; // 0x25: DXGI_FORMAT_R16G16_SINT
 				case xbox::X_D3DVSDT_SHORT4: [[fallthrough]]; // 0x45: DXGI_FORMAT_R16G16B16A16_SINT
 				default: {
@@ -784,17 +617,8 @@ void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	attribute_floats[2] = c;
 	attribute_floats[3] = d;
 
-#ifdef CXBX_USE_D3D11
 	g_bD3D11IABypassDefaultsDirty = true;
-#endif
 
-#ifndef CXBX_USE_D3D11
-	// D3D9: Write the given register value to a matching host vertex shader constant.
-	// This allows us to implement Xbox functionality where SetVertexData4f can be used to specify attributes
-	// not present in the vertex declaration.
-	// We use range 193 and up to store these values, as Xbox shaders stop at c192!
-	CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_BASE + Register, attribute_floats, 1);
-#endif
 	// D3D11: The zero-stride vertex defaults buffer reads inline_value[] directly,
 	// so no constant buffer upload is needed for attribute defaults.
 }
@@ -926,7 +750,5 @@ void CxbxImpl_SetStreamSource(UINT StreamNumber, xbox::X_D3DVertexBuffer* pStrea
 	g_Xbox_SetStreamSource[StreamNumber].VertexBuffer = pStreamData;
 	g_Xbox_SetStreamSource[StreamNumber].Stride = Stride;
 
-#ifdef CXBX_USE_D3D11
 	CxbxD3D11IABypassInvalidateLayout();
-#endif
 }

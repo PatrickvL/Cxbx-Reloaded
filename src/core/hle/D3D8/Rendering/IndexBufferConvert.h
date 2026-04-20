@@ -38,17 +38,10 @@ UINT QuadToTriangleVertexCount(UINT NrOfQuadVertices);
 void CxbxConvertQuadListToTriangleListIndices(INDEX16* pXboxQuadIndexData, unsigned uNrOfTriangleIndices, INDEX16* pTriangleIndexData);
 INDEX16* CxbxCreateQuadListToTriangleListIndexData(INDEX16* pXboxQuadIndexData, unsigned QuadVertexCount);
 
-// Quad list index data cache (grown on demand)
-INDEX16 *CxbxAssureQuadListIndexData(UINT NrOfQuadIndices);
-
 // Release helpers
 void CxbxReleaseQuadListToTriangleListIndexData(void* pHostIndexData);
 
-// Quad-to-triangle D3D index buffer management
-void CxbxAssureQuadListD3DIndexBuffer(UINT NrOfQuadIndices);
-
-// Line loop closing-line helpers
-void CxbxDrawIndexedClosingLine(INDEX16 LowIndex, INDEX16 HighIndex);
+// Line loop closing-line helper (UP draw path)
 void CxbxDrawIndexedClosingLineUP(INDEX16 LowIndex, INDEX16 HighIndex, void *pHostVertexStreamZeroData, UINT uiHostVertexStreamZeroStride);
 
 #endif // INDEXBUFFERCONVERT_H

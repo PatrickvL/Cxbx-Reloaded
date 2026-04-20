@@ -193,14 +193,9 @@ static HRESULT CxbxrImpl_LightEnable(xbox::dword_xt Index, xbox::bool_xt bEnable
 
 	d3d8LightState.EnableLight(Index, bEnable);
 
-#ifdef CXBX_USE_D3D11
 	// Under D3D11, LightEnable relies on our fixed function shader
-#else
-	HRESULT hRet = g_pD3DDevice->LightEnable(Index, bEnable);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->LightEnable");
-#endif
 
-	return _9_11(hRet, S_OK);
+	return S_OK;
 }
 
 // ******************************************************************
@@ -284,8 +279,8 @@ void CxbxImpl_SetRenderTarget
 {
 	LOG_INIT;
 
-	IDirect3DSurface *pHostRenderTarget = nullptr;
-	IDirect3DSurface *pHostDepthStencil = nullptr;
+	ID3D11Texture2D *pHostRenderTarget = nullptr;
+	ID3D11Texture2D *pHostDepthStencil = nullptr;
 	// In Xbox titles, CreateDevice calls SetRenderTarget for the back buffer
 	// We can use this to determine the Xbox backbuffer surface for later use!
 	if (g_pXbox_BackBufferSurface == xbox::zeroptr) {
@@ -332,14 +327,12 @@ void CxbxImpl_SetRenderTarget
 
 	// Determine mip level for surfaces that are children of a texture
 	UINT mipSlice = 0;
-#ifdef CXBX_USE_D3D11
 	if (pRenderTarget != xbox::zeroptr) {
 		xbox::X_D3DBaseTexture* pParent = ((xbox::X_D3DSurface*)pRenderTarget)->Parent;
 		if (pParent != xbox::zeroptr && pRenderTarget->Format == pParent->Format) {
 			GetSurfaceFaceAndLevelWithinTexture((xbox::X_D3DSurface*)pRenderTarget, pParent, mipSlice);
 		}
 	}
-#endif
 
 	// The currenct depth stencil is always replaced by whats passed in here (even a null)
 	g_pXbox_DepthStencil = pNewZStencil;

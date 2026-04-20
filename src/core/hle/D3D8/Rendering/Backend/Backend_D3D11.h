@@ -23,8 +23,6 @@
 #ifndef BACKEND_D3D11_H
 #define BACKEND_D3D11_H
 
-#ifdef CXBX_USE_D3D11
-
 #include "core\hle\D3D8\XbD3D8Types.h"
 #include <vector>
 
@@ -40,8 +38,8 @@ extern ID3D11RenderTargetView      *g_pD3DBackBufferView;
 extern ID3D11DepthStencilView      *g_pD3DDepthStencilView;
 extern ID3D11RenderTargetView      *g_pD3DCurrentRTV;
 extern ID3D11Texture2D             *g_pD3DDepthStencilBuffer;
-extern IDirect3DSurface            *g_pD3DBackBufferSurface;
-extern IDirect3DSurface            *g_pD3DCurrentHostRenderTarget;
+extern ID3D11Texture2D             *g_pD3DBackBufferSurface;
+extern ID3D11Texture2D             *g_pD3DCurrentHostRenderTarget;
 
 // ******************************************************************
 // * Constant buffer sizing
@@ -241,7 +239,7 @@ bool CxbxD3D11ConvertVertexBufferGPU(
 	UINT numElements,
 	const UINT* pElementDescriptors,
 	UINT dstBufferSize,
-	IDirect3DVertexBuffer** ppOutputVB);
+	ID3D11Buffer** ppOutputVB);
 
 // Filter D3D11 input layout elements to only include semantics present in
 // the shader's input signature (parsed from the DXBC ISGN chunk).
@@ -252,7 +250,7 @@ bool CxbxD3D11ConvertVertexBufferGPU(
 typedef struct _CxbxDrawContext CxbxDrawContext; // forward decl
 void CxbxD3D11IABypassInit();
 void CxbxD3D11IABypassRelease();
-bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext);
+void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext);
 void CxbxD3D11IABypassInvalidateLayout();  // Bump layout CB generation counter
 extern bool g_bD3D11IABypassDefaultsDirty; // Set true when vertex defaults change
 
@@ -282,7 +280,5 @@ void CxbxD3D11UpdateVertexDefaultsBuffer();
 // created) and bind it via IASetInputLayout.  Encapsulates all device access
 // so callers outside the Rendering folder never touch g_pD3DDevice directly.
 void CxbxD3D11SetVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration);
-
-#endif // CXBX_USE_D3D11
 
 #endif // BACKEND_D3D11_H

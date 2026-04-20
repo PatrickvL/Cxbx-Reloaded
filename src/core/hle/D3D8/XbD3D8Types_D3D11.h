@@ -21,14 +21,13 @@
 // *
 // *  All rights reserved
 
-#ifndef XBD3D8TYPES_D3D9COMPAT_H
-#define XBD3D8TYPES_D3D9COMPAT_H
+#ifndef XBD3D8TYPES_D3D11_H
+#define XBD3D8TYPES_D3D11_H
 
-#undef UNICODE // make sure dxerr.h DXGetErrorString is aliassed to *A, not *W
+#undef UNICODE
 
 #include "xbox_types.h"
 
-#ifdef CXBX_USE_D3D11
 // include direct3d 11 headers
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
@@ -70,9 +69,7 @@ typedef DWORD D3DBACKBUFFER_TYPE;
 #define D3DBACKBUFFER_TYPE_MONO 0
 
 typedef DWORD D3DDEVTYPE;
-typedef DWORD D3DFORMAT; // Unused in D3D11 mode (EMUFORMAT maps to DXGI_FORMAT)
 typedef DWORD D3DMULTISAMPLE_TYPE;
-typedef DWORD D3DSWAPEFFECT;
 
 typedef enum _D3DCUBEMAP_FACES {
 	D3DCUBEMAP_FACE_POSITIVE_X = 0,
@@ -363,7 +360,7 @@ typedef DWORD D3DRENDERSTATETYPE;
 #define D3DRS_SOFTWAREVERTEXPROCESSING  153
 #define D3DRS_SEPARATEDESTALPHAENABLE   210 // Non-standard, used by Cxbx
 
-// Resource types
+// Resource types (D3D9 compat — used in intermediate conversion code)
 typedef enum _D3DRESOURCETYPE {
 	D3DRTYPE_SURFACE       = 1,
 	D3DRTYPE_VOLUME        = 2,
@@ -390,35 +387,6 @@ typedef enum _D3DPOOL {
 #define D3DLOCK_READONLY  0x00000010
 #define D3DLOCK_DISCARD   0x00002000
 #define D3DLOCK_NOOVERWRITE 0x00001000
-#define D3DLOCK_NOSYSLOCK 0x00000800
-
-// Display mode (for DlgVideoConfig)
-typedef struct _D3DDISPLAYMODE {
-	UINT Width;
-	UINT Height;
-	UINT RefreshRate;
-	DXGI_FORMAT Format;
-} D3DDISPLAYMODE;
-
-// Adapter identifier (stub for DlgVideoConfig)
-typedef struct _D3DADAPTER_IDENTIFIER9 {
-	char Driver[512];
-	char Description[512];
-	char DeviceName[32];
-	LARGE_INTEGER DriverVersion;
-	DWORD VendorId;
-	DWORD DeviceId;
-	DWORD SubSysId;
-	DWORD Revision;
-	GUID DeviceIdentifier;
-	DWORD WHQLLevel;
-} D3DADAPTER_IDENTIFIER;
-
-// Device caps (stub for DlgVideoConfig)
-typedef struct _D3DCAPS9 {
-	DWORD Caps;
-	// Only the fields needed - add more as required
-} D3DCAPS;
 
 // Texture filter types
 #define D3DTEXF_NONE           0
@@ -438,12 +406,7 @@ typedef struct _D3DCAPS9 {
 // Texture coordinate index flags
 #define D3DTSS_TCI_SPHEREMAP   0x00040000
 
-// Device type constants (for DlgVideoConfig)
-#define D3DDEVTYPE_HAL  1
-#define D3DDEVTYPE_REF  2
-
-// D3D_OK and D3D error codes
-#define D3D_OK S_OK
+// D3D_OK and D3D error codes\n#define D3D_OK S_OK
 #define _FACD3D 0x876
 #define MAKE_D3DHRESULT(code) MAKE_HRESULT(1, _FACD3D, code)
 #define D3DERR_INVALIDCALL              MAKE_D3DHRESULT(2156)
@@ -561,9 +524,6 @@ typedef struct _D3DBOX {
 #define D3DCREATE_SOFTWARE_VERTEXPROCESSING  0x00000020
 #define D3DCREATE_HARDWARE_VERTEXPROCESSING  0x00000040
 
-// D3DX constants
-#define D3DX_DEFAULT ((UINT)-1)
-
 // D3DX math compatibility types and functions
 // These reproduce enough of the <d3dx9math.h> API to compile existing code.
 // Implemented using DirectXMath internally.
@@ -662,118 +622,51 @@ inline D3DXVECTOR3* D3DXVec3Normalize(D3DXVECTOR3* pOut, const D3DXVECTOR3* pV) 
 	return pOut;
 }
 
-#else
-// include direct3d 9x headers
-#define DIRECT3D_VERSION 0x0900
-#include <d3d9.h>
-//implies #include <d3d9types.h> // for D3DFORMAT, D3DLIGHT9, etc
-//implies #include <d3d9caps.h>
-#include <d3dx9math.h> // for D3DXVECTOR4, etc
-#include <d3dx9tex.h>
-
-#include <dxerr9.h>
-//#pragma comment(lib, "dxerr.lib") // See https://blogs.msdn.microsoft.com/chuckw/2012/04/24/wheres-dxerr-lib/
-#endif
-
-// If the above doesn't compile, install the June 2010 DirectX SDK
-// from https://www.microsoft.com/en-us/download/details.aspx?id=6812
-// and select the Direct3D 9 include & library path (TODO : how?)
-
-// We're going to use the approach detailed in :
-// https://blogs.msdn.microsoft.com/chuckw/2015/03/23/the-zombie-directx-sdk/
-
-
-// For transforming code that's written for Direct3D 8 into Direct3D 9,
-// See "Converting to Direct3D 9" https://msdn.microsoft.com/en-us/library/windows/desktop/bb204851(v=vs.85).aspx
-
-// For transforming code that's written for Direct3D 9 into Direct3D 11,
-// See "DirectX 9 to DirectX 11" https://docs.microsoft.com/en-us/windows/uwp/gaming/porting-considerations
-
-// See https://msdn.microsoft.com/en-us/library/windows/desktop/bb204851(v=vs.85).aspx#D3DENUM_NO_WHQL_LEVEL_Changes
-#define D3DENUM_NO_WHQL_LEVEL 0 // default in Direct3D 9
-
-#ifdef CXBX_USE_D3D11
-#define _9_11(_9, _11) _11
-#else
-#define _9_11(_9, _11) _9
-#endif
-
-// Alias all host Direct3D symbols to generic symbols
-#ifndef CXBX_USE_D3D11
-// D3D9-only aliases for error reporting and capability types
-#define DXGetErrorString                DXGetErrorString9A
-#define DXGetErrorDescription           DXGetErrorDescription9A
-#define D3DLockData                     void
-#define D3DADAPTER_IDENTIFIER           D3DADAPTER_IDENTIFIER9
-#define D3DCAPS                         D3DCAPS9
-#else
 // D3D11 replacements for error reporting (dxerr9 is not available)
 inline const char* DXGetErrorString(HRESULT hr) { (void)hr; return "D3D11_ERROR"; }
 inline const char* DXGetErrorDescription(HRESULT hr) { (void)hr; return ""; }
-#define D3DLockData                     D3D11_MAPPED_SUBRESOURCE
-#endif
-#define EMUFORMAT                      _9_11(D3DFORMAT,                   DXGI_FORMAT)
-#define D3DVERTEXELEMENT                _9_11(D3DVERTEXELEMENT9,           D3D11_INPUT_ELEMENT_DESC)
-#define D3DVIEWPORT                     _9_11(D3DVIEWPORT9,                D3D11_VIEWPORT)
-#define D3DSurfaceDesc                  _9_11(D3DSURFACE_DESC,             D3D11_TEXTURE2D_DESC)
-
-#define IDirect3DDevice                 _9_11(IDirect3DDevice9Ex,          ID3D11Device)
-#define IDirect3DVertexDeclaration      _9_11(IDirect3DVertexDeclaration9, ID3D11InputLayout)
-#define IDirect3DVertexShader           _9_11(IDirect3DVertexShader9,      ID3D11VertexShader)
-#define IDirect3DPixelShader            _9_11(IDirect3DPixelShader9,       ID3D11PixelShader)
-#define IDirect3DResource               _9_11(IDirect3DResource9,          ID3D11Resource)
-#define IDirect3DBaseTexture            _9_11(IDirect3DBaseTexture9,       ID3D11Resource)
-#define IDirect3DTexture                _9_11(IDirect3DTexture9,           ID3D11Texture2D)
-#define IDirect3DVolumeTexture          _9_11(IDirect3DVolumeTexture9,     ID3D11Texture3D)
-#define IDirect3DCubeTexture            _9_11(IDirect3DCubeTexture9,       ID3D11Texture2D) // array of six 2D textures (one for each face)
-#define IDirect3DVertexBuffer           _9_11(IDirect3DVertexBuffer9,      ID3D11Buffer)
-#define IDirect3DIndexBuffer            _9_11(IDirect3DIndexBuffer9,       ID3D11Buffer) // or ID3D11ShaderResourceView ?
-#define IDirect3DSurface                _9_11(IDirect3DSurface9,           ID3D11Texture2D)
-#define IDirect3DVolume                 _9_11(IDirect3DVolume9,            ID3D11Texture3D)
-#define IDirect3DQuery                  _9_11(IDirect3DQuery9,             ID3D11Query)
-
 
 // D3D9 D3FFORMAT to D3D11 DXGI_FORMAT mapping : https://docs.microsoft.com/en-us/windows/win32/direct3d10/d3d10-graphics-programming-guide-resources-legacy-formats
-#define EMUFMT_A1R5G5B5                _9_11(D3DFMT_A1R5G5B5,             DXGI_FORMAT_B5G5R5A1_UNORM) // Note : EMUFMT_X1R5G5B5 maps to same DXGI_FORMAT_B5G5R5A1_UNORM
-#define EMUFMT_A4R4G4B4                _9_11(D3DFMT_A4R4G4B4,             DXGI_FORMAT_B4G4R4A4_UNORM)
-#define EMUFMT_A8                      _9_11(D3DFMT_A8,                   DXGI_FORMAT_A8_UNORM)
-#define EMUFMT_A8B8G8R8                _9_11(D3DFMT_A8B8G8R8,             DXGI_FORMAT_R8G8B8A8_UNORM)
-#define EMUFMT_A8L8                    _9_11(D3DFMT_A8L8,                 DXGI_FORMAT_R8G8_UNORM)
-#define EMUFMT_A8R8G8B8                _9_11(D3DFMT_A8R8G8B8,             DXGI_FORMAT_B8G8R8A8_UNORM)
-#define EMUFMT_D16                     _9_11(D3DFMT_D16,                  DXGI_FORMAT_D16_UNORM)
-#define EMUFMT_D24FS8                  _9_11(D3DFMT_D24FS8,               DXGI_FORMAT_R24G8_TYPELESS)
-#define EMUFMT_D24S8                   _9_11(D3DFMT_D24S8,                DXGI_FORMAT_D24_UNORM_S8_UINT)
-#define EMUFMT_DXT1                    _9_11(D3DFMT_DXT1,                 DXGI_FORMAT_BC1_UNORM)
-#define EMUFMT_DXT3                    _9_11(D3DFMT_DXT3,                 DXGI_FORMAT_BC2_UNORM)
-#define EMUFMT_DXT5                    _9_11(D3DFMT_DXT5,                 DXGI_FORMAT_BC3_UNORM)
-#define EMUFMT_L16                     _9_11(D3DFMT_L16,                  DXGI_FORMAT_R16_UNORM)
-#define EMUFMT_L8                      _9_11(D3DFMT_L8,                   DXGI_FORMAT_R8_UNORM)
-#define EMUFMT_P8                      _9_11(D3DFMT_P8,                   DXGI_FORMAT_R8_UINT)
-#define EMUFMT_Q8W8V8U8                _9_11(D3DFMT_Q8W8V8U8,             DXGI_FORMAT_R8G8B8A8_SNORM)
-#define EMUFMT_R16F                    _9_11(D3DFMT_R16F,                 DXGI_FORMAT_R16_FLOAT)
-#define EMUFMT_R5G6B5                  _9_11(D3DFMT_R5G6B5,               DXGI_FORMAT_B5G6R5_UNORM)
-#define EMUFMT_UNKNOWN                 _9_11(D3DFMT_UNKNOWN,              DXGI_FORMAT_UNKNOWN) // Note : Used when format is unknown (duh)
-#define EMUFMT_V16U16                  _9_11(D3DFMT_V16U16,               DXGI_FORMAT_R16G16_SNORM)
-#define EMUFMT_V8U8                    _9_11(D3DFMT_V8U8,                 DXGI_FORMAT_R8G8_SNORM)
-#define EMUFMT_X1R5G5B5                _9_11(D3DFMT_X1R5G5B5,             DXGI_FORMAT_B5G5R5A1_UNORM) // Note : EMUFMT_A1R5G5B5 maps to same DXGI_FORMAT_B5G5R5A1_UNORM
-#define EMUFMT_X8R8G8B8                _9_11(D3DFMT_X8R8G8B8,             DXGI_FORMAT_B8G8R8A8_UNORM) // Note : B8G8R8X8_UNORM has optional SRV support; A8 variant is universally supported
-#define EMUFMT_YUY2                    _9_11(D3DFMT_YUY2,                 DXGI_FORMAT_YUY2)
+#define EMUFMT_A1R5G5B5                DXGI_FORMAT_B5G5R5A1_UNORM // Note : EMUFMT_X1R5G5B5 maps to same DXGI_FORMAT_B5G5R5A1_UNORM
+#define EMUFMT_A4R4G4B4                DXGI_FORMAT_B4G4R4A4_UNORM
+#define EMUFMT_A8                      DXGI_FORMAT_A8_UNORM
+#define EMUFMT_A8B8G8R8                DXGI_FORMAT_R8G8B8A8_UNORM
+#define EMUFMT_A8L8                    DXGI_FORMAT_R8G8_UNORM
+#define EMUFMT_A8R8G8B8                DXGI_FORMAT_B8G8R8A8_UNORM
+#define EMUFMT_D16                     DXGI_FORMAT_D16_UNORM
+#define EMUFMT_D24FS8                  DXGI_FORMAT_R24G8_TYPELESS
+#define EMUFMT_D24S8                   DXGI_FORMAT_D24_UNORM_S8_UINT
+#define EMUFMT_DXT1                    DXGI_FORMAT_BC1_UNORM
+#define EMUFMT_DXT3                    DXGI_FORMAT_BC2_UNORM
+#define EMUFMT_DXT5                    DXGI_FORMAT_BC3_UNORM
+#define EMUFMT_L16                     DXGI_FORMAT_R16_UNORM
+#define EMUFMT_L8                      DXGI_FORMAT_R8_UNORM
+#define EMUFMT_P8                      DXGI_FORMAT_R8_UINT
+#define EMUFMT_Q8W8V8U8                DXGI_FORMAT_R8G8B8A8_SNORM
+#define EMUFMT_R16F                    DXGI_FORMAT_R16_FLOAT
+#define EMUFMT_R5G6B5                  DXGI_FORMAT_B5G6R5_UNORM
+#define EMUFMT_UNKNOWN                 DXGI_FORMAT_UNKNOWN // Note : Used when format is unknown (duh)
+#define EMUFMT_V16U16                  DXGI_FORMAT_R16G16_SNORM
+#define EMUFMT_V8U8                    DXGI_FORMAT_R8G8_SNORM
+#define EMUFMT_X1R5G5B5                DXGI_FORMAT_B5G5R5A1_UNORM // Note : EMUFMT_A1R5G5B5 maps to same DXGI_FORMAT_B5G5R5A1_UNORM
+#define EMUFMT_X8R8G8B8                DXGI_FORMAT_B8G8R8A8_UNORM // Note : B8G8R8X8_UNORM has optional SRV support; A8 variant is universally supported
+#define EMUFMT_YUY2                    DXGI_FORMAT_YUY2
 
 #define	DXGI_FORMAT_NOT_AVAILABLE       DXGI_FORMAT_UNKNOWN // Used for formats with no suitable DXGI equivalent
 // Direct3D 9 format to Direct3D 11 best-effort mappings :
-#define EMUFMT_D15S1                   _9_11(D3DFMT_D15S1,                DXGI_FORMAT_D16_UNORM) // Closest; stencil bit is lost
-#define EMUFMT_D16_LOCKABLE            _9_11(D3DFMT_D16_LOCKABLE,         DXGI_FORMAT_D16_UNORM) // D3D11 uses staging textures for readback
-#define EMUFMT_D24X4S4                 _9_11(D3DFMT_D24X4S4,              DXGI_FORMAT_D24_UNORM_S8_UINT) // Superset; 8-bit stencil instead of 4
-#define EMUFMT_D24X8                   _9_11(D3DFMT_D24X8,                DXGI_FORMAT_D24_UNORM_S8_UINT) // Superset; stencil channel unused
-#define EMUFMT_D32                     _9_11(D3DFMT_D32,                  DXGI_FORMAT_D32_FLOAT) // Integer-to-float precision change
-#define EMUFMT_DXT2                    _9_11(D3DFMT_DXT2,                 DXGI_FORMAT_BC2_UNORM) // Same block compression as DXT3; premultiplied alpha is a convention
-#define EMUFMT_DXT4                    _9_11(D3DFMT_DXT4,                 DXGI_FORMAT_BC3_UNORM) // Same block compression as DXT5; premultiplied alpha is a convention
-#define EMUFMT_INDEX16                 _9_11(D3DFMT_INDEX16,              DXGI_FORMAT_R16_UINT) // Index buffer format
-#define EMUFMT_L6V5U5                  _9_11(D3DFMT_L6V5U5,               DXGI_FORMAT_NOT_AVAILABLE) // No DXGI equivalent; requires software conversion to ARGB
-#define EMUFMT_UYVY                    _9_11(D3DFMT_UYVY,                 DXGI_FORMAT_NOT_AVAILABLE) // No DXGI equivalent; requires software conversion
-#define EMUFMT_X8L8V8U8                _9_11(D3DFMT_X8L8V8U8,             DXGI_FORMAT_R8G8B8A8_SNORM) // Approximate; L channel is unsigned in D3D9 but signed in DXGI
-#define EMUFMT_VERTEXDATA              _9_11(D3DFMT_VERTEXDATA,           DXGI_FORMAT_NOT_AVAILABLE) // Not a texture format; used in vertex declarations only
+#define EMUFMT_D15S1                   DXGI_FORMAT_D16_UNORM // Closest; stencil bit is lost
+#define EMUFMT_D16_LOCKABLE            DXGI_FORMAT_D16_UNORM // D3D11 uses staging textures for readback
+#define EMUFMT_D24X4S4                 DXGI_FORMAT_D24_UNORM_S8_UINT // Superset; 8-bit stencil instead of 4
+#define EMUFMT_D24X8                   DXGI_FORMAT_D24_UNORM_S8_UINT // Superset; stencil channel unused
+#define EMUFMT_D32                     DXGI_FORMAT_D32_FLOAT // Integer-to-float precision change
+#define EMUFMT_DXT2                    DXGI_FORMAT_BC2_UNORM // Same block compression as DXT3; premultiplied alpha is a convention
+#define EMUFMT_DXT4                    DXGI_FORMAT_BC3_UNORM // Same block compression as DXT5; premultiplied alpha is a convention
+#define EMUFMT_INDEX16                 DXGI_FORMAT_R16_UINT // Index buffer format
+#define EMUFMT_L6V5U5                  DXGI_FORMAT_NOT_AVAILABLE // No DXGI equivalent; requires software conversion to ARGB
+#define EMUFMT_UYVY                    DXGI_FORMAT_NOT_AVAILABLE // No DXGI equivalent; requires software conversion
+#define EMUFMT_X8L8V8U8                DXGI_FORMAT_R8G8B8A8_SNORM // Approximate; L channel is unsigned in D3D9 but signed in DXGI
+#define EMUFMT_VERTEXDATA              DXGI_FORMAT_NOT_AVAILABLE // Not a texture format; used in vertex declarations only
 
 typedef xbox::word_xt INDEX16; // TODO: Move INDEX16 into xbox namespace
 
-#endif // XBD3D8TYPES_D3D9COMPAT_H
+#endif // XBD3D8TYPES_D3D11_H

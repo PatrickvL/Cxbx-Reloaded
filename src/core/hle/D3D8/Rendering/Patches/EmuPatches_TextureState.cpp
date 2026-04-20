@@ -57,7 +57,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetGammaRamp)
 		LOG_FUNC_ARG(pRamp)
 		LOG_FUNC_END;
 
-#ifdef CXBX_USE_D3D11
 	// Use IDXGIOutput::SetGammaControl for D3D11
 	if (g_pSwapChain) {
 		IDXGIOutput* pOutput = nullptr;
@@ -87,22 +86,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetGammaRamp)
 			pOutput->Release();
 		}
 	}
-#elif 0 // TODO : Why is this disabled?
-   	// remove D3DSGR_IMMEDIATE
-   	DWORD dwPCFlags = dwFlags & (~0x00000002);
-   	D3DGAMMARAMP PCRamp;
-
-   	for(int v=0;v<255;v++)
-   	{
-   	   	PCRamp.red[v]   = pRamp->red[v];
-   	   	PCRamp.green[v] = pRamp->green[v];
-   	   	PCRamp.blue[v]  = pRamp->blue[v];
-   	}
-
-	g_pD3DDevice->SetGammaRamp(
-		0, // iSwapChain
-		dwPCFlags, &PCRamp);
-#endif
 }
 
 // ******************************************************************
@@ -115,7 +98,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetGammaRamp)
 {
 	LOG_FUNC_ONE_ARG(pRamp);
 
-#ifdef CXBX_USE_D3D11
    	// Use IDXGIOutput::GetGammaControl to retrieve the current gamma ramp
    	bool gotGamma = false;
    	if (g_pSwapChain) {
@@ -143,26 +125,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetGammaRamp)
    	   	   	pRamp->blue[v]  = (BYTE)v;
    	   	}
    	}
-#else
-   	D3DGAMMARAMP *pGammaRamp = (D3DGAMMARAMP *)malloc(sizeof(D3DGAMMARAMP));
-
-   	g_pD3DDevice->GetGammaRamp(
-		0, // iSwapChain
-		pGammaRamp);
-
-   	for(int v=0;v<256;v++)
-   	{
-   	   	pRamp->red[v] = (BYTE)pGammaRamp->red[v];
-   	   	pRamp->green[v] = (BYTE)pGammaRamp->green[v];
-   	   	pRamp->blue[v] = (BYTE)pGammaRamp->blue[v];
-   	}
-
-	free(pGammaRamp);
-#endif
 }
 
 
-#define COPY_BACKBUFFER_TO_XBOX_SURFACE // Uncomment to enable writing Host Backbuffers back to Xbox surfaces
 xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2
 (
    	xbox::int_xt BackBuffer
@@ -170,73 +135,6 @@ xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2
 {
 	xbox::X_D3DSurface* pXboxBackBuffer = nullptr;
 
-
-#ifndef COPY_BACKBUFFER_TO_XBOX_SURFACE
-	/** unsafe, somehow
-	HRESULT hRet = D3D_OK;
-
-	X_D3DSurface *pXboxBackBuffer = EmuNewD3DSurface();
-
-	if(BackBuffer == -1) {
-		static IDirect3DSurface *pCachedPrimarySurface = nullptr;
-
-		EMUFORMAT PCFormat = EMUFMT_A8R8G8B8;
-		if(pCachedPrimarySurface == nullptr) {
-			// create a buffer to return
-			// TODO: Verify the surface is always 640x480
-			hRet = g_pD3DDevice->CreateOffscreenPlainSurface(640, 480, EMUFMT_A8R8G8B8, /*D3DPool=* /0, &pCachedPrimarySurface, nullptr);
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateOffscreenPlainSurface");
-		}
-
-		int iTextureStage = -1; // No iTextureStage!
-		SetHostResource(pXboxBackBuffer, (IDirect3DResource*)pCachedPrimarySurface, iTextureStage, 0, PCFormat);
-
-
-		hRet = g_pD3DDevice->GetFrontBuffer(pCachedPrimarySurface);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->GetFrontBuffer");
-
-		if (FAILED(hRet)) {
-			EmuLog(LOG_LEVEL::WARNING, "Could not retrieve primary surface, using backbuffer");
-			SetHostResource(pXboxBackBuffer, nullptr); // No iTextureStage!
-			pCachedPrimarySurface->Release();
-			pCachedPrimarySurface = nullptr;
-			BackBuffer = 0;
-		}
-
-		// Debug: Save this image temporarily
-		//D3DXSaveSurfaceToFile("C:\\Aaron\\Textures\\FrontBuffer.bmp", D3DXIFF_BMP, GetHostSurface(pXboxBackBuffer), nullptr, nullptr);
-	}
-
-	if(BackBuffer != -1) {
-		hRet = g_pD3DDevice->GetBackBuffer(
-			0, // iSwapChain
-			BackBuffer, D3DBACKBUFFER_TYPE_MONO, &pCachedPrimarySurface);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->GetBackBuffer");
-	}
-	//*/
-
-	static X_D3DSurface *pXboxBackBuffer = EmuNewD3DSurface();
-	IDirect3DSurface *pCurrentHostBackBuffer = nullptr;
-
-	 if (BackBuffer == -1) {
-		 BackBuffer = 0;
-	 }
-
-	HRESULT hRet = g_pD3DDevice->GetBackBuffer(
-		0, // iSwapChain
-		BackBuffer, D3DBACKBUFFER_TYPE_MONO, &pCurrentHostBackBuffer);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->GetBackBuffer");
-
-	if (FAILED(hRet))
-		CxbxrAbort("Unable to retrieve back buffer");
-
-	SetHostResource(pXboxBackBuffer, (IDirect3DResource*)pCurrentHostBackBuffer); // No iTextureStage! TODO : Pass in D3DUsage, PCFormat
-
-	// Increment reference count
-	pXboxBackBuffer->Common++; // EMUPATCH(D3DResource_AddRef)(pXboxBackBuffer);
-
-	return pXboxBackBuffer;
-#else // COPY_BACKBUFFER_TO_XBOX_SURFACE
 	// Rather than create a new surface, we should forward to the Xbox version of GetBackBuffer,
 	// This gives us the correct Xbox surface to update.
 	// We get signatures for both backbuffer functions as it changed in later XDKs
@@ -270,45 +168,7 @@ xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2
 		CxbxrAbort("D3DDevice_GetBackBuffer2: Could not get Xbox backbuffer");
 	}
 
-
-   	// HACK: Disabled: Enabling this breaks DOA3 at native res/without hacks+
-   	// Also likely to effect Other games, but it has no known benefit at this point in time
-   	// There are currently no known games that depend on backbuffer readback on the CPU!
-#if 0
-	// TODO: Downscale the host surface to the same size as the Xbox surface during copy
-	// Otherwise, we will overflow memory and crash
-	// HACK: For now, when using a non-zero scale factor, we can just skip the copy to prevent a crash
-	if (g_RenderScaleFactor == 1) {
-		auto pCopySrcSurface = GetHostSurface(pXboxBackBuffer, D3DUSAGE_RENDERTARGET);
-		if (pCopySrcSurface == nullptr) {
-			EmuLog(LOG_LEVEL::WARNING, "Failed to get Host Resource for Xbox Back Buffer");
-			return pXboxBackBuffer;
-		}
-
-		D3DLOCKED_RECT copyLockedRect;
-		HRESULT hRet = pCopySrcSurface->LockRect(&copyLockedRect, NULL, D3DLOCK_READONLY);
-		if (hRet != D3D_OK) {
-			EmuLog(LOG_LEVEL::WARNING, "Could not lock Host Resource for Xbox Back Buffer");
-			return pXboxBackBuffer;
-		}
-
-		D3DSurfaceDesc copySurfaceDesc;
-		hRet = pCopySrcSurface->GetDesc(&copySurfaceDesc);
-		if (hRet != D3D_OK) {
-			EmuLog(LOG_LEVEL::WARNING, "Could not get Xbox Back Buffer Host Surface Desc");
-		}
-		else {
-			DWORD Size = copyLockedRect.Pitch * copySurfaceDesc.Height; // TODO : What about mipmap levels? (Backbuffer does not support mipmap)
-			// Finally, do the copy from the converted host resource to the xbox resource
-			memcpy((void*)GetDataFromXboxResource(pXboxBackBuffer), copyLockedRect.pBits, Size);
-		}
-
-		pCopySrcSurface->UnlockRect();
-	}
-#endif
-
 	return pXboxBackBuffer;
-#endif // COPY_BACKBUFFER_TO_XBOX_SURFACE
 }
 
 // ******************************************************************

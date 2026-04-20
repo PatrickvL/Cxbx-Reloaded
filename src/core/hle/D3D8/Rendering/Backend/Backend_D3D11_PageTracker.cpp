@@ -42,8 +42,6 @@
 // The GPU mirror is a 64 MiB ByteAddressBuffer (DYNAMIC, SRV). The shader
 // addresses it with: byteOffset = xboxPhysAddr & 0x07FFFFFF.
 
-#ifdef CXBX_USE_D3D11
-
 #include "Backend_D3D11_Internal.h"
 #include "Backend_D3D11_PageTracker.h"
 #include "common/AddressRanges.h"
@@ -583,4 +581,3 @@ void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size)
 	}
 }
 
-#endif // CXBX_USE_D3D11

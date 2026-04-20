@@ -2,20 +2,12 @@
 #ifdef  __cplusplus
 #pragma once
 
-#ifdef CXBX_USE_D3D11
 #include <DirectXMath.h> // for XMFLOAT2, XMFLOAT3, XMFLOAT4, XMMATRIX
 using namespace DirectX;
 #define float2 XMFLOAT2
 #define float3 xbox::X_D3DVECTOR // XMFLOAT3
 #define float4 XMFLOAT4
 #define float4x4 XMMATRIX
-#else
-#include <d3dx9math.h> // for D3DXVECTOR2, D3DVECTOR, D3DXVECTOR4, D3DMATRIX
-#define float2 D3DXVECTOR2
-#define float3 D3DVECTOR
-#define float4 D3DXVECTOR4
-#define float4x4 D3DMATRIX
-#endif
 
 #include <array> // for std::array<>
 #define arr(name, type, length) std::array<type, length> name
@@ -25,13 +17,8 @@ using namespace DirectX;
 // A float3 that occupies a full 16-byte constant register (matching Xbox register layout)
 #define PADDED_FLOAT3(name) alignas(16) float3 name
 // An integer steering value that occupies a full 16-byte constant register
-#ifdef CXBX_USE_D3D11
 #define PADDED_INT(name) alignas(16) int32_t name
 #define CXBX_STEERING_INT int32_t
-#else
-#define PADDED_INT(name) alignas(16) float name
-#define CXBX_STEERING_INT float
-#endif
 
 #else
 // HLSL
@@ -43,13 +30,8 @@ using namespace DirectX;
 // matching the C++ alignas(16) layout for raw Xbox register data upload.
 #define PADDED_FLOAT(name) float name; float3 _pad_##name
 #define PADDED_FLOAT3(name) float3 name; float _pad_##name
-#ifdef CXBX_USE_D3D11
 #define PADDED_INT(name) int name; int3 _pad_##name
 #define CXBX_STEERING_INT int
-#else
-#define PADDED_INT(name) float name; float3 _pad_##name
-#define CXBX_STEERING_INT float
-#endif
 
 #endif //  __cplusplus
 

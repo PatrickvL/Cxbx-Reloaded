@@ -27,7 +27,6 @@
 
 #include "core\hle\XAPI\Xapi.h" // For EMUPATCH
 
-// NOTE: this is necessary or else d3dx9mesh.h fails to compile because of undefined VOID macros
 #ifndef VOID
 #define VOID void
 #endif
@@ -42,10 +41,7 @@
 #include <unordered_map>
 #include <wrl/client.h>
 
-#define DIRECTDRAW_VERSION 0x0700
-#include <ddraw.h>
-
-extern IDirect3DDevice *g_pD3DDevice;
+extern ID3D11Device *g_pD3DDevice;
 
 // Xbox state globals (defined in RenderGlobals.cpp)
 class XboxRenderStateConverter;
@@ -110,18 +106,14 @@ struct OverlayProxy {
 // information passed to the create device proxy thread
 struct EmuD3D8CreateDeviceProxyData
 {
-	_9_11(xbox::uint_xt, IDXGIAdapter*)  Adapter;
-	_9_11(D3DDEVTYPE, D3D_DRIVER_TYPE)   DeviceType;
-#ifdef CXBX_USE_D3D11
+	IDXGIAdapter*  Adapter;
+	D3D_DRIVER_TYPE   DeviceType;
 	struct {
 		UINT BackBufferWidth;
 		UINT BackBufferHeight;
 		UINT FullScreen_RefreshRateInHz;
 		BOOL Windowed;
 	} HostPresentationParameters;
-#else
-	D3DPRESENT_PARAMETERS            HostPresentationParameters;
-#endif
 };
 
 // LTCG prologue/epilogue macros for __declspec(naked) patches
@@ -140,7 +132,6 @@ struct EmuD3D8CreateDeviceProxyData
 		__asm mov  esp, ebp \
 		__asm pop  ebp
 
-constexpr size_t INDEX_BUFFER_CACHE_SIZE = 10000;
 constexpr UINT WM_CXBXR_RUN_ON_MESSAGE_THREAD = WM_USER+0;
 
 // Shared global variables (defined in RenderGlobals.cpp)
@@ -164,13 +155,13 @@ extern DWORD                         g_dwPrimPerFrame;
 extern float                         g_AspectRatioScale;
 extern UINT                          g_AspectRatioScaleWidth;
 extern UINT                          g_AspectRatioScaleHeight;
-extern D3DSurfaceDesc                g_HostBackBufferDesc;
+extern D3D11_TEXTURE2D_DESC                g_HostBackBufferDesc;
 extern Settings::s_video             g_XBVideo;
 extern bool                          g_bEnableHostQueryVisibilityTest;
 extern OverlayProxy                  g_OverlayProxy;
 extern bool                          g_bHack_DisableHostGPUQueries;
-extern IDirect3DQuery               *g_pHostQueryWaitForIdle;
-extern IDirect3DQuery               *g_pHostQueryCallbackEvent;
+extern ID3D11Query               *g_pHostQueryWaitForIdle;
+extern ID3D11Query               *g_pHostQueryCallbackEvent;
 extern int                           g_RenderUpscaleFactor;
 extern xbox::dword_xt                g_Xbox_PresentationInterval_Default;
 extern xbox::dword_xt                g_Xbox_PresentationInterval_Override;
@@ -195,40 +186,34 @@ extern void CxbxInitWindow();
 
 void CxbxUpdateNativeD3DResources();
 
-// Unified shader constant helpers (dispatch to D3D9 or D3D11 internally)
+// Shader constant helpers
 void CxbxSetVertexShaderConstantF(UINT startRegister, const float* pConstantData, UINT Vector4fCount);
 void CxbxSetPixelShaderConstantF(UINT startRegister, const float* pConstantData, UINT Vector4fCount);
 
-// Rendering helpers (implemented per-backend in Backend_D3D9.cpp / Backend_D3D11.cpp)
-HRESULT CxbxSetRenderTarget(IDirect3DSurface* pHostRenderTarget, UINT mipSlice = 0);
+// Rendering helpers (implemented in Backend_D3D11*.cpp)
+HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice = 0);
 void    CxbxD3DClear(DWORD Count, CONST D3DRECT* pRects, DWORD Flags, D3DCOLOR Color, float Z, DWORD Stencil);
-void    CxbxSetViewport(D3DVIEWPORT *pHostViewport);
+void    CxbxSetViewport(D3D11_VIEWPORT *pHostViewport);
 void    CxbxSetScissorRect(CONST RECT *pHostViewportRect);
-void    CxbxSetIndices(IDirect3DIndexBuffer* pHostIndexBuffer);
-INDEX16* CxbxLockIndexBuffer(IDirect3DIndexBuffer* pHostIndexBuffer);
-void    CxbxUnlockIndexBuffer(IDirect3DIndexBuffer* pHostIndexBuffer);
-HRESULT CxbxDrawIndexedPrimitive(xbox::X_D3DPRIMITIVETYPE XboxPrimitiveType, UINT IndexCount, INT BaseVertexIndex, UINT StartIndex, UINT MinIndex, UINT NumVertices, UINT PrimCount);
-HRESULT CxbxDrawPrimitive(xbox::X_D3DPRIMITIVETYPE XboxPrimitiveType, UINT VertexCount, UINT StartVertex, UINT PrimCount);
-HRESULT CxbxBltSurface(IDirect3DSurface* pSrc, const RECT* pSrcRect, IDirect3DSurface* pDst, const RECT* pDstRect, D3DTEXTUREFILTERTYPE Filter);
+HRESULT CxbxBltSurface(ID3D11Texture2D* pSrc, const RECT* pSrcRect, ID3D11Texture2D* pDst, const RECT* pDstRect, D3DTEXTUREFILTERTYPE Filter);
 HRESULT CxbxPresent();
-void    CxbxSetDepthStencilSurface(IDirect3DSurface* pHostDepthStencil);
-IDirect3DSurface* CxbxGetCurrentRenderTarget(); // Returns current RT (caller owns ref in D3D9, not in D3D11)
-HRESULT CxbxGetBackBuffer(IDirect3DSurface** ppBackBuffer); // Returns back buffer (caller owns ref)
-HRESULT CxbxSetStreamSource(UINT HostStreamNumber, IDirect3DVertexBuffer* pHostVertexBuffer, UINT VertexStride);
-HRESULT CxbxCreateVertexBuffer(UINT Length, IDirect3DVertexBuffer** ppVertexBuffer);
-void*   CxbxLockVertexBuffer(IDirect3DVertexBuffer* pVertexBuffer); // Returns mapped pointer, or nullptr on failure
-void    CxbxUnlockVertexBuffer(IDirect3DVertexBuffer* pVertexBuffer);
-HRESULT CxbxCreatePixelShader(const void* pFunction, SIZE_T FunctionSize, IDirect3DPixelShader** ppShader);
-void    CxbxRawSetPixelShader(IDirect3DPixelShader* pPixelShader);
-HRESULT CxbxSetVertexShader(IDirect3DVertexShader* pHostVertexShader);
-IDirect3DVertexDeclaration* CxbxCreateHostVertexDeclaration(D3DVERTEXELEMENT *pDeclaration);
+void    CxbxSetDepthStencilSurface(ID3D11Texture2D* pHostDepthStencil);
+ID3D11Texture2D* CxbxGetCurrentRenderTarget(); // Returns current RT (non-owning pointer)
+HRESULT CxbxGetBackBuffer(ID3D11Texture2D** ppBackBuffer); // Returns back buffer (caller owns ref)
+HRESULT CxbxSetStreamSource(UINT HostStreamNumber, ID3D11Buffer* pHostVertexBuffer, UINT VertexStride);
+HRESULT CxbxCreateVertexBuffer(UINT Length, ID3D11Buffer** ppVertexBuffer);
+void*   CxbxLockVertexBuffer(ID3D11Buffer* pVertexBuffer); // Returns mapped pointer, or nullptr on failure
+void    CxbxUnlockVertexBuffer(ID3D11Buffer* pVertexBuffer);
+HRESULT CxbxCreatePixelShader(const void* pFunction, SIZE_T FunctionSize, ID3D11PixelShader** ppShader);
+void    CxbxRawSetPixelShader(ID3D11PixelShader* pPixelShader);
+HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader);
+ID3D11InputLayout* CxbxCreateHostVertexDeclaration(D3D11_INPUT_ELEMENT_DESC *pDeclaration);
 struct _CxbxVertexDeclaration;
 void    CxbxSetHostVertexDeclaration(struct _CxbxVertexDeclaration* pCxbxVertexDeclaration);
 void    CxbxSetFogColor(uint32_t fog_color);
 void    CxbxGetBumpEnvMatrix(int stage, DWORD value[4]);
 void    CxbxGetBumpEnvLuminance(int stage, DWORD value[2]);
 
-#ifdef CXBX_USE_D3D11
 // Reusable grow-to-fit dynamic buffer for D3D11.
 // Avoids per-draw CreateBuffer/Release overhead for temporary vertex/index buffers.
 struct CxbxDynBuffer {
@@ -242,54 +227,33 @@ struct CxbxDynBuffer {
 	void Release();
 	~CxbxDynBuffer() { Release(); }
 };
-#endif
 
 // BeginScene/EndScene: no-ops in D3D11
 inline void CxbxBeginScene()
 {
-#ifndef CXBX_USE_D3D11
-	g_pD3DDevice->BeginScene();
-#endif
 }
 
 inline void CxbxEndScene()
 {
-#ifndef CXBX_USE_D3D11
-	g_pD3DDevice->EndScene();
-#endif
 }
 
 // D3D11 device context (declared in Backend_D3D11.h, needed by query helpers below)
-#ifdef CXBX_USE_D3D11
 extern ID3D11DeviceContext *g_pD3DDeviceContext;
-#endif
 
-// Query helpers: dispatch Issue/GetData calls to D3D9 or D3D11 patterns
-inline void CxbxQueryIssueBegin(IDirect3DQuery* pQuery)
+// Query helpers
+inline void CxbxQueryIssueBegin(ID3D11Query* pQuery)
 {
-#ifdef CXBX_USE_D3D11
 	g_pD3DDeviceContext->Begin(pQuery);
-#else
-	pQuery->Issue(D3DISSUE_BEGIN);
-#endif
 }
 
-inline void CxbxQueryIssueEnd(IDirect3DQuery* pQuery)
+inline void CxbxQueryIssueEnd(ID3D11Query* pQuery)
 {
-#ifdef CXBX_USE_D3D11
 	g_pD3DDeviceContext->End(pQuery);
-#else
-	pQuery->Issue(D3DISSUE_END);
-#endif
 }
 
-inline HRESULT CxbxQueryGetData(IDirect3DQuery* pQuery, void* pData, DWORD dwSize, DWORD dwGetDataFlags)
+inline HRESULT CxbxQueryGetData(ID3D11Query* pQuery, void* pData, DWORD dwSize, DWORD dwGetDataFlags)
 {
-#ifdef CXBX_USE_D3D11
 	return g_pD3DDeviceContext->GetData(pQuery, pData, dwSize, dwGetDataFlags);
-#else
-	return pQuery->GetData(pData, dwSize, dwGetDataFlags);
-#endif
 }
 
 void CxbxImpl_SetRenderTarget(xbox::X_D3DSurface* pRenderTarget, xbox::X_D3DSurface* pNewZStencil);
@@ -326,7 +290,7 @@ extern xbox::dword_xt g_Xbox_VertexShader_Handle;
 
 extern xbox::X_PixelShader *g_pXbox_PixelShader;
 
-extern EMUFORMAT g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT];
+extern DXGI_FORMAT g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT];
 
 extern xbox::X_D3DBaseTexture *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT];
 
@@ -340,8 +304,8 @@ extern xbox::X_D3DBaseTexture *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT];
 constexpr DWORD D3DUSAGE_INVALID = 0xFFFFFFFF;
 
 typedef struct _resource_info_t {
-	Microsoft::WRL::ComPtr<IDirect3DResource> pHostResource;
-	EMUFORMAT HostFormat = EMUFMT_UNKNOWN;
+	Microsoft::WRL::ComPtr<ID3D11Resource> pHostResource;
+	DXGI_FORMAT HostFormat = EMUFMT_UNKNOWN;
 	DWORD HostUsage = D3DUSAGE_INVALID;
 	DWORD dwXboxResourceType = 0;
 	void* pXboxData = xbox::zeroptr;
@@ -359,7 +323,7 @@ void GetMultiSampleScaleRaw(float& xScale, float& yScale);
 void GetScreenScaleFactors(float& scaleX, float& scaleY);
 void GetRenderTargetBaseDimensions(float& x, float& y);
 void GetBackBufferPixelDimensions(float& x, float& y);
-void UpdateDepthStencilFlags(IDirect3DSurface *pDepthStencilSurface);
+void UpdateDepthStencilFlags(ID3D11Texture2D *pDepthStencilSurface);
 void SetupPresentationParameters(const xbox::X_D3DPRESENT_PARAMETERS *pXboxPresentationParameters);
 void DetermineSupportedD3DFormats();
 
@@ -369,24 +333,23 @@ void SetXboxMultiSampleType(xbox::X_D3DMULTISAMPLE_TYPE value);
 // HostDraw.cpp
 void Direct3D_CreateDevice_Start(const xbox::X_D3DPRESENT_PARAMETERS* pPresentationParameters);
 void Direct3D_CreateDevice_End(const xbox::X_D3DPRESENT_PARAMETERS* pPresentationParameters);
-IDirect3DIndexBuffer* CxbxCreateIndexBuffer(unsigned IndexCount);
-void CreateDefaultD3D9Device(const xbox::X_D3DPRESENT_PARAMETERS* pPresentationParameters);
-IDirect3DBaseTexture* CxbxConvertXboxSurfaceToHostTexture(xbox::X_D3DBaseTexture* pBaseTexture);
+void CreateDefaultDevice(const xbox::X_D3DPRESENT_PARAMETERS* pPresentationParameters);
+ID3D11Resource* CxbxConvertXboxSurfaceToHostTexture(xbox::X_D3DBaseTexture* pBaseTexture);
 
 // HostResource.cpp
 xbox::X_D3DRESOURCETYPE GetXboxD3DResourceType(const xbox::X_D3DResource* pXboxResource);
 void* GetDataFromXboxResource(xbox::X_D3DResource* pXboxResource);
 resource_key_t GetHostResourceKey(xbox::X_D3DResource* pXboxResource, int iTextureStage = -1);
-void SetHostResource(xbox::X_D3DResource* pXboxResource, IDirect3DResource* pHostResource, int iTextureStage = -1, DWORD D3DUsage = 0xFFFFFFFFu, EMUFORMAT PCFormat = EMUFMT_UNKNOWN);
+void SetHostResource(xbox::X_D3DResource* pXboxResource, ID3D11Resource* pHostResource, int iTextureStage = -1, DWORD D3DUsage = 0xFFFFFFFFu, DXGI_FORMAT PCFormat = EMUFMT_UNKNOWN);
 void FreeHostResource(resource_key_t key);
-IDirect3DSurface* GetHostSurface(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage = 0);
-IDirect3DBaseTexture* GetHostBaseTexture(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage = 0, int iTextureStage = 0);
-IDirect3DVolumeTexture* GetHostVolumeTexture(xbox::X_D3DResource* pXboxResource, int iTextureStage = 0);
+ID3D11Texture2D* GetHostSurface(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage = 0);
+ID3D11Resource* GetHostBaseTexture(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage = 0, int iTextureStage = 0);
+ID3D11Texture3D* GetHostVolumeTexture(xbox::X_D3DResource* pXboxResource, int iTextureStage = 0);
 void ClearAllResourceCaches();
 uint32_t GetPixelContainerWidth(xbox::X_D3DPixelContainer *pPixelContainer);
 uint32_t GetPixelContainerHeight(xbox::X_D3DPixelContainer *pPixelContainer);
 unsigned int CxbxGetPixelContainerMipMapLevels(xbox::X_D3DPixelContainer *pPixelContainer);
-void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D3DBaseTexture* pTexture, UINT& Level, _9_11(D3DCUBEMAP_FACES, int)& Face);
+void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D3DBaseTexture* pTexture, UINT& Level, int& Face);
 void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D3DBaseTexture* pBaseTexture, UINT& Level);
 resource_cache_t& GetResourceCache(resource_key_t& key);
 void PrunePaletizedTexturesCache();
@@ -396,34 +359,34 @@ int XboxD3DPaletteSizeToBytes(const xbox::X_D3DPALETTESIZE Size);
 xbox::X_D3DPALETTESIZE GetXboxPaletteSize(const xbox::X_D3DPalette *pPalette);
 
 // Inline resource setters
-inline void SetHostSurface(xbox::X_D3DResource* pXboxResource, IDirect3DSurface* pHostSurface, int iTextureStage = -1)
+inline void SetHostSurface(xbox::X_D3DResource* pXboxResource, ID3D11Texture2D* pHostSurface, int iTextureStage = -1)
 {
-	SetHostResource(pXboxResource, (IDirect3DResource*)pHostSurface, iTextureStage);
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostSurface, iTextureStage);
 }
 
-inline void SetHostVolume(xbox::X_D3DResource* pXboxResource, IDirect3DVolume* pHostVolume, int iTextureStage = -1)
+inline void SetHostVolume(xbox::X_D3DResource* pXboxResource, ID3D11Texture3D* pHostVolume, int iTextureStage = -1)
 {
-	SetHostResource(pXboxResource, (IDirect3DResource*)pHostVolume, iTextureStage);
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostVolume, iTextureStage);
 }
 
-inline void SetHostTexture(xbox::X_D3DResource* pXboxResource, IDirect3DTexture* pHostTexture, int iTextureStage = -1)
+inline void SetHostTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture2D* pHostTexture, int iTextureStage = -1)
 {
-	SetHostResource(pXboxResource, (IDirect3DResource*)pHostTexture, iTextureStage);
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostTexture, iTextureStage);
 }
 
-inline void SetHostVolumeTexture(xbox::X_D3DResource* pXboxResource, IDirect3DVolumeTexture* pHostVolumeTexture, int iTextureStage = -1)
+inline void SetHostVolumeTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture3D* pHostVolumeTexture, int iTextureStage = -1)
 {
-	SetHostResource(pXboxResource, (IDirect3DResource*)pHostVolumeTexture, iTextureStage);
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostVolumeTexture, iTextureStage);
 }
 
-inline void SetHostCubeTexture(xbox::X_D3DResource* pXboxResource, IDirect3DCubeTexture* pHostCubeTexture, int iTextureStage = -1)
+inline void SetHostCubeTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture2D* pHostCubeTexture, int iTextureStage = -1)
 {
-	SetHostResource(pXboxResource, (IDirect3DResource*)pHostCubeTexture, iTextureStage);
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostCubeTexture, iTextureStage);
 }
 
 // HostRender.cpp
 float GetZScaleForPixelContainer(xbox::X_D3DPixelContainer* pSurface);
-bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, IDirect3DSurface* pHostRenderTarget = nullptr);
+bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, ID3D11Texture2D* pHostRenderTarget = nullptr);
 void ValidateRenderTargetDimensions(DWORD HostRenderTarget_Width, DWORD HostRenderTarget_Height, DWORD XboxRenderTarget_Width, DWORD XboxRenderTarget_Height);
 void UpdateFixedFunctionVertexShaderState();
 void CxbxUpdateHostViewPortOffsetAndScaleConstants();

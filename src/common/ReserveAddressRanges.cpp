@@ -62,7 +62,6 @@ bool ReserveMemoryRange(int index, blocks_reserved_t blocks_reserved)
 	std::printf("     : Comment = %s\n", XboxAddressRanges[index].Comment);
 #endif
 
-#ifdef CXBX_USE_D3D11
 	// Under D3D11, contiguous memory uses VirtualAlloc + MEM_WRITE_WATCH for
 	// zero-cost dirty page tracking. Tiled memory is a PAGE_NOACCESS reservation
 	// with VEH-based redirect to contiguous memory. This breaks the MapViewOfFileEx
@@ -90,7 +89,6 @@ bool ReserveMemoryRange(int index, blocks_reserved_t blocks_reserved)
 			HadAnyFailure = true;
 		}
 	} else
-#endif // CXBX_USE_D3D11
 	switch (Start) {
 		case PHYSICAL_MAP1_BASE:
 			hFileMapping1 = CreateFileMapping(
@@ -202,7 +200,6 @@ void FreeMemoryRange(int index, blocks_reserved_t blocks_reserved)
 	std::printf("     : Comment = %s\n", XboxAddressRanges[index].Comment);
 #endif
 
-#ifdef CXBX_USE_D3D11
 	// Under D3D11, contiguous and tiled memory were allocated with VirtualAlloc
 	// (not MapViewOfFileEx), so they must be freed with VirtualFree.
 	if (Start == PHYSICAL_MAP1_BASE || Start == TILED_MEMORY_BASE) {
@@ -211,7 +208,7 @@ void FreeMemoryRange(int index, blocks_reserved_t blocks_reserved)
 		std::printf("     : VirtualFree; Start = 0x%08X\n", Start);
 #endif
 	} else
-#endif // CXBX_USE_D3D11
+
 	switch (Start) {
 		case PHYSICAL_MAP1_BASE:
 		case PHYSICAL_MAP2_BASE:

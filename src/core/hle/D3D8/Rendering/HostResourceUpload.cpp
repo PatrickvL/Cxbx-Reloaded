@@ -89,30 +89,19 @@ void UploadPixelContainerMips(
 	const char* ResourceTypeName,
 	VAddr VirtualAddr,
 	int iTextureStage,
-	xbox::X_D3DFORMAT X_Format, EMUFORMAT PCFormat, UINT dwBPP,
+	xbox::X_D3DFORMAT X_Format, DXGI_FORMAT PCFormat, UINT dwBPP,
 	UINT xboxWidth, UINT xboxHeight,
 	DWORD dwDepth, DWORD dwRowPitch, DWORD dwSlicePitch,
 	UINT dwMipMapLevels,
 	bool bCubemap, bool bSwizzled, bool bCompressed, bool bConvertTextureFormat,
-#ifdef CXBX_USE_D3D11
 	ComPtr<ID3D11Resource>& pNewHostResource,
 	bool bHostIsDynamic
-#else
-	ComPtr<IDirect3DSurface>& pNewHostSurface,
-	ComPtr<IDirect3DVolume>& pNewHostVolume,
-	ComPtr<IDirect3DTexture>& pNewHostTexture,
-	ComPtr<IDirect3DTexture>& pIntermediateHostTexture,
-	ComPtr<IDirect3DVolumeTexture>& pNewHostVolumeTexture,
-	ComPtr<IDirect3DVolumeTexture>& pIntermediateHostVolumeTexture,
-	ComPtr<IDirect3DCubeTexture>& pNewHostCubeTexture,
-	ComPtr<IDirect3DCubeTexture>& pIntermediateHostCubeTexture
-#endif
 )
 {
 	HRESULT hRet = D3D_OK;
 
 	DWORD dwCubeFaceOffset = 0;
-	_9_11(D3DCUBEMAP_FACES, int) last_face = (bCubemap) ? _9_11(D3DCUBEMAP_FACE_NEGATIVE_Z, 5) : _9_11(D3DCUBEMAP_FACE_POSITIVE_X, 0);
+	int last_face = (bCubemap) ? 5 : 0;
 
 	// Block size only applies to compressed DXT formats
 	// DXT1 block size is 8 bytes
@@ -123,7 +112,7 @@ void UploadPixelContainerMips(
 	}
 
 	DWORD actualSlicePitch = dwSlicePitch;
-	for (int face = _9_11(D3DCUBEMAP_FACE_POSITIVE_X, 0); face <= last_face; face++) {
+	for (int face = 0; face <= last_face; face++) {
 		// As we iterate through mipmap levels, we'll adjust the source resource offset
 		DWORD dwMipOffset = 0;
 		DWORD pxMipWidth = xboxWidth; // the current mip width in pixels
@@ -149,7 +138,6 @@ void UploadPixelContainerMips(
 			DWORD mip2dSize = dwMipRowPitch * numRows; // the size of one layer of the mip slice
 			DWORD mipSlicePitch = mip2dSize * pxMipDepth; // the total size of the mip slice (depth is only > 1 for volume textures)
 
-#ifdef CXBX_USE_D3D11
 			// Map the host resource (for DYNAMIC textures) or prepare a staging buffer (for DEFAULT textures)
 			UINT Subresource = (face * dwMipMapLevels) + mipmap_level;
 			// See https://docs.microsoft.com/en-us/windows/win32/direct3d11/overviews-direct3d-11-resources-subresources
@@ -250,32 +238,6 @@ void UploadPixelContainerMips(
 				MappedResource.DepthPitch = stagingRowPitch * numRows;
 				hRet = D3D_OK;
 			}
-#else
-			// Lock the host resource
-			D3DLOCKED_RECT LockedRect = {};
-			D3DLOCKED_BOX LockedBox = {};
-			DWORD D3DLockFlags = D3DLOCK_NOSYSLOCK;
-
-			switch (XboxResourceType) {
-			case xbox::X_D3DRTYPE_SURFACE:
-				hRet = pNewHostSurface->LockRect(&LockedRect, nullptr, D3DLockFlags);
-				break;
-			case xbox::X_D3DRTYPE_VOLUME:
-				hRet = pNewHostVolume->LockBox(&LockedBox, nullptr, D3DLockFlags);
-				break;
-			case xbox::X_D3DRTYPE_TEXTURE:
-				hRet = pIntermediateHostTexture->LockRect(mipmap_level, &LockedRect, nullptr, D3DLockFlags);
-				break;
-			case xbox::X_D3DRTYPE_VOLUMETEXTURE:
-				hRet = pIntermediateHostVolumeTexture->LockBox(mipmap_level, &LockedBox, nullptr, D3DLockFlags);
-				break;
-			case xbox::X_D3DRTYPE_CUBETEXTURE:
-				hRet = pIntermediateHostCubeTexture->LockRect((D3DCUBEMAP_FACES)face, mipmap_level, &LockedRect, nullptr, D3DLockFlags);
-				break;
-			default:
-				assert(false);
-			} // switch XboxResourceType
-#endif
 
 			if (hRet != D3D_OK) {
 				EmuLog(LOG_LEVEL::WARNING, "Locking host %s failed!", ResourceTypeName);
@@ -287,24 +249,9 @@ void UploadPixelContainerMips(
 			DWORD dwDstRowPitch;
 			DWORD dwDstSlicePitch;
 
-#ifdef CXBX_USE_D3D11
 			pDst = (uint8_t *)MappedResource.pData;
 			dwDstRowPitch = MappedResource.RowPitch;
 			dwDstSlicePitch = MappedResource.DepthPitch;
-#else
-			switch (XboxResourceType) {
-			case xbox::X_D3DRTYPE_VOLUME:
-			case xbox::X_D3DRTYPE_VOLUMETEXTURE:
-				pDst = (uint8_t *)LockedBox.pBits;
-				dwDstRowPitch = LockedBox.RowPitch;
-				dwDstSlicePitch = LockedBox.SlicePitch;
-				break;
-			default:
-				pDst = (uint8_t *)LockedRect.pBits;
-				dwDstRowPitch = LockedRect.Pitch;
-				dwDstSlicePitch = 0;
-			}
-#endif
 			uint8_t *pSrc = (uint8_t *)VirtualAddr + dwCubeFaceOffset + dwMipOffset;
 
 			// If this is the final mip of the first cube face, set the cube face size
@@ -319,7 +266,6 @@ void UploadPixelContainerMips(
 				bConvertTextureFormat, bSwizzled, bCompressed, iTextureStage);
 
 
-#ifdef CXBX_USE_D3D11
 			if (bHostIsDynamic) {
 				// Unmap the host resource (DYNAMIC textures)
 				g_pD3DDeviceContext->Unmap(pNewHostResource.Get(), Subresource);
@@ -330,32 +276,6 @@ void UploadPixelContainerMips(
 					pStagingBuffer, MappedResource.RowPitch, MappedResource.DepthPitch);
 				free(pStagingBuffer);
 			}
-#else
-			// Unlock the host resource
-			switch (XboxResourceType) {
-			case xbox::X_D3DRTYPE_SURFACE:
-				hRet = pNewHostSurface->UnlockRect();
-				break;
-			case xbox::X_D3DRTYPE_VOLUME:
-				hRet = pNewHostVolume->UnlockBox();
-				break;
-			case xbox::X_D3DRTYPE_TEXTURE:
-				hRet = pIntermediateHostTexture->UnlockRect(mipmap_level);
-				break;
-			case xbox::X_D3DRTYPE_VOLUMETEXTURE:
-				hRet = pIntermediateHostVolumeTexture->UnlockBox(mipmap_level);
-				break;
-			case xbox::X_D3DRTYPE_CUBETEXTURE:
-				hRet = pIntermediateHostCubeTexture->UnlockRect((D3DCUBEMAP_FACES)face, mipmap_level);
-				break;
-			default:
-				assert(false);
-			}
-
-			if (hRet != D3D_OK) {
-				EmuLog(LOG_LEVEL::WARNING, "Unlocking host %s failed!", ResourceTypeName);
-			}
-#endif
 
 			// Calculate the next mipmap level dimensions
 			dwMipOffset += mipSlicePitch;
@@ -383,31 +303,5 @@ void UploadPixelContainerMips(
 		dwCubeFaceOffset += actualSlicePitch;
 	} // for cube faces
 
-#ifndef CXBX_USE_D3D11
-   	// Copy from the intermediate resource to the final host resource
-   	// This is necessary because CopyRects/StretchRects only works on resources in the DEFAULT pool
-   	// But resources in this pool are not lockable: We must use UpdateSurface/UpdateTexture instead!
-   	switch (XboxResourceType) {
-   	case xbox::X_D3DRTYPE_SURFACE:
-   	case xbox::X_D3DRTYPE_VOLUME:
-   	   	// We didn't use a copy for Surfaces or Volumes
-   	   	break;
-   	case xbox::X_D3DRTYPE_TEXTURE:
-   	   	g_pD3DDevice->UpdateTexture(pIntermediateHostTexture.Get(), pNewHostTexture.Get());
-   	   	break;
-   	case xbox::X_D3DRTYPE_VOLUMETEXTURE:
-   	   	g_pD3DDevice->UpdateTexture(pIntermediateHostVolumeTexture.Get(), pNewHostVolumeTexture.Get());
-   	   	break;
-   	case xbox::X_D3DRTYPE_CUBETEXTURE:
-   	   	g_pD3DDevice->UpdateTexture(pIntermediateHostCubeTexture.Get(), pNewHostCubeTexture.Get());
-   	   	break;
-   	default:
-   	   	assert(false);
-   	}
-
-   	if (hRet != D3D_OK) {
-   	   	EmuLog(LOG_LEVEL::WARNING, "Updating host %s failed!", ResourceTypeName);
-   	}
-#endif
 }
 

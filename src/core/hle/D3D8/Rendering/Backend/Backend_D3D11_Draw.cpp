@@ -21,8 +21,6 @@
 // *
 // ******************************************************************
 
-#ifdef CXBX_USE_D3D11
-
 #include "Backend_D3D11_Internal.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // HLE_get_NV2A_vertex_attribute_value_pointer
 
@@ -30,7 +28,7 @@
 // * Rendering helpers (D3D11 implementations)
 // ******************************************************************
 
-HRESULT CxbxSetRenderTarget(IDirect3DSurface* pHostRenderTarget, UINT mipSlice)
+HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice)
 {
 	LOG_INIT;
 	HRESULT hRet;
@@ -122,7 +120,7 @@ void CxbxD3DClear(DWORD Count, CONST D3DRECT* pRects, DWORD Flags, D3DCOLOR Colo
 	}
 }
 
-void CxbxSetViewport(D3DVIEWPORT *pHostViewport)
+void CxbxSetViewport(D3D11_VIEWPORT *pHostViewport)
 {
 	g_pD3DDeviceContext->RSSetViewports(1, pHostViewport);
 }
@@ -132,47 +130,7 @@ void CxbxSetScissorRect(CONST RECT *pHostViewportRect)
 	g_pD3DDeviceContext->RSSetScissorRects(1, pHostViewportRect);
 }
 
-void CxbxSetIndices(IDirect3DIndexBuffer* pHostIndexBuffer)
-{
-	g_pD3DDeviceContext->IASetIndexBuffer(pHostIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
-}
-
-INDEX16* CxbxLockIndexBuffer(IDirect3DIndexBuffer* pHostIndexBuffer)
-{
-	LOG_INIT;
-	INDEX16* pData = nullptr;
-	D3D11_MAPPED_SUBRESOURCE mapped = {};
-	HRESULT hRet = g_pD3DDeviceContext->Map(pHostIndexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-	DEBUG_D3DRESULT(hRet, "CxbxLockIndexBuffer: Map");
-	if (SUCCEEDED(hRet))
-		pData = (INDEX16*)mapped.pData;
-	return pData;
-}
-
-void CxbxUnlockIndexBuffer(IDirect3DIndexBuffer* pHostIndexBuffer)
-{
-	g_pD3DDeviceContext->Unmap(pHostIndexBuffer, 0);
-}
-
-HRESULT CxbxDrawIndexedPrimitive(xbox::X_D3DPRIMITIVETYPE XboxPrimitiveType, UINT IndexCount, INT BaseVertexIndex, UINT StartIndex, UINT MinIndex, UINT NumVertices, UINT PrimCount)
-{
-	CxbxBindThickLineGS(XboxPrimitiveType);
-	g_pD3DDeviceContext->IASetPrimitiveTopology(EmuXB2PC_D3D11PrimitiveTopology(XboxPrimitiveType));
-	g_pD3DDeviceContext->DrawIndexed(IndexCount, StartIndex, BaseVertexIndex);
-	CxbxUnbindThickLineGS(XboxPrimitiveType);
-	return S_OK;
-}
-
-HRESULT CxbxDrawPrimitive(xbox::X_D3DPRIMITIVETYPE XboxPrimitiveType, UINT VertexCount, UINT StartVertex, UINT PrimCount)
-{
-	CxbxBindThickLineGS(XboxPrimitiveType);
-	g_pD3DDeviceContext->IASetPrimitiveTopology(EmuXB2PC_D3D11PrimitiveTopology(XboxPrimitiveType));
-	g_pD3DDeviceContext->Draw(VertexCount, StartVertex);
-	CxbxUnbindThickLineGS(XboxPrimitiveType);
-	return S_OK;
-}
-
-HRESULT CxbxBltSurface(IDirect3DSurface* pSrc, const RECT* pSrcRect, IDirect3DSurface* pDst, const RECT* pDstRect, D3DTEXTUREFILTERTYPE Filter)
+HRESULT CxbxBltSurface(ID3D11Texture2D* pSrc, const RECT* pSrcRect, ID3D11Texture2D* pDst, const RECT* pDstRect, D3DTEXTUREFILTERTYPE Filter)
 {
 	return CxbxD3D11Blt(pSrc, pSrcRect, pDst, pDstRect, Filter);
 }
@@ -187,7 +145,7 @@ HRESULT CxbxPresent()
 	return hRet;
 }
 
-void CxbxSetDepthStencilSurface(IDirect3DSurface* pHostDepthStencil)
+void CxbxSetDepthStencilSurface(ID3D11Texture2D* pHostDepthStencil)
 {
 	ID3D11DepthStencilView* pDSV = nullptr;
 	if (pHostDepthStencil != nullptr) {
@@ -204,17 +162,17 @@ void CxbxSetDepthStencilSurface(IDirect3DSurface* pHostDepthStencil)
 	g_pD3DDeviceContext->OMSetRenderTargets(1, &g_pD3DCurrentRTV, g_pD3DDepthStencilView);
 }
 
-IDirect3DSurface* CxbxGetCurrentRenderTarget()
+ID3D11Texture2D* CxbxGetCurrentRenderTarget()
 {
 	return g_pD3DCurrentHostRenderTarget;
 }
 
-HRESULT CxbxGetBackBuffer(IDirect3DSurface** ppBackBuffer)
+HRESULT CxbxGetBackBuffer(ID3D11Texture2D** ppBackBuffer)
 {
-	return g_pSwapChain->GetBuffer(0, __uuidof(IDirect3DSurface), reinterpret_cast<void**>(ppBackBuffer));
+	return g_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(ppBackBuffer));
 }
 
-HRESULT CxbxSetStreamSource(UINT HostStreamNumber, IDirect3DVertexBuffer* pHostVertexBuffer, UINT VertexStride)
+HRESULT CxbxSetStreamSource(UINT HostStreamNumber, ID3D11Buffer* pHostVertexBuffer, UINT VertexStride)
 {
 	UINT offset = 0;
 	g_pD3DDeviceContext->IASetVertexBuffers(HostStreamNumber, 1, &pHostVertexBuffer, &VertexStride, &offset);
@@ -297,7 +255,7 @@ void CxbxD3D11UpdateVertexDefaultsBuffer()
 		&g_pD3D11VertexDefaultsBuffer, &stride, &offset);
 }
 
-HRESULT CxbxCreateVertexBuffer(UINT Length, IDirect3DVertexBuffer** ppVertexBuffer)
+HRESULT CxbxCreateVertexBuffer(UINT Length, ID3D11Buffer** ppVertexBuffer)
 {
 	D3D11_BUFFER_DESC bufDesc = {};
 	bufDesc.ByteWidth = Length;
@@ -307,7 +265,7 @@ HRESULT CxbxCreateVertexBuffer(UINT Length, IDirect3DVertexBuffer** ppVertexBuff
 	return g_pD3DDevice->CreateBuffer(&bufDesc, nullptr, ppVertexBuffer);
 }
 
-void* CxbxLockVertexBuffer(IDirect3DVertexBuffer* pVertexBuffer)
+void* CxbxLockVertexBuffer(ID3D11Buffer* pVertexBuffer)
 {
 	D3D11_MAPPED_SUBRESOURCE mappedResource = {};
 	if (FAILED(g_pD3DDeviceContext->Map(pVertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource))) {
@@ -316,7 +274,7 @@ void* CxbxLockVertexBuffer(IDirect3DVertexBuffer* pVertexBuffer)
 	return mappedResource.pData;
 }
 
-void CxbxUnlockVertexBuffer(IDirect3DVertexBuffer* pVertexBuffer)
+void CxbxUnlockVertexBuffer(ID3D11Buffer* pVertexBuffer)
 {
 	g_pD3DDeviceContext->Unmap(pVertexBuffer, 0);
 }
@@ -361,12 +319,12 @@ void CxbxDynBuffer::Release()
 	capacity = 0;
 }
 
-HRESULT CxbxCreatePixelShader(const void* pFunction, SIZE_T FunctionSize, IDirect3DPixelShader** ppShader)
+HRESULT CxbxCreatePixelShader(const void* pFunction, SIZE_T FunctionSize, ID3D11PixelShader** ppShader)
 {
 	return g_pD3DDevice->CreatePixelShader(pFunction, FunctionSize, nullptr, ppShader);
 }
 
-void CxbxRawSetPixelShader(IDirect3DPixelShader* pPixelShader)
+void CxbxRawSetPixelShader(ID3D11PixelShader* pPixelShader)
 {
 	g_pD3DDeviceContext->PSSetShader(pPixelShader, nullptr, 0);
 }
@@ -591,13 +549,13 @@ void CxbxD3D11SetVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration
 // * Dual-backend wrappers — D3D11 implementations
 // ******************************************************************
 
-HRESULT CxbxSetVertexShader(IDirect3DVertexShader* pHostVertexShader)
+HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader)
 {
 	g_pD3DDeviceContext->VSSetShader(pHostVertexShader, nullptr, 0);
 	return S_OK;
 }
 
-IDirect3DVertexDeclaration* CxbxCreateHostVertexDeclaration(D3DVERTEXELEMENT *pDeclaration)
+ID3D11InputLayout* CxbxCreateHostVertexDeclaration(D3D11_INPUT_ELEMENT_DESC *pDeclaration)
 {
 	// For D3D11, we cannot create an input layout without compiled shader bytecode.
 	// Return nullptr here; the actual ID3D11InputLayout will be created lazily
@@ -632,4 +590,3 @@ void CxbxGetBumpEnvLuminance(int stage, DWORD value[2])
 	value[1] = XboxTextureStates.Get(stage, xbox::X_D3DTSS_BUMPENVLOFFSET);
 }
 
-#endif // CXBX_USE_D3D11

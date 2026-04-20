@@ -71,7 +71,7 @@ public:
     bool                    bCacheIsStreamZeroDrawUP = false;
     void                   *pCachedHostVertexStreamZeroData = nullptr;
     bool                    bCachedHostVertexStreamZeroDataIsAllocated = false;
-    IDirect3DVertexBuffer  *pCachedHostVertexBuffer = nullptr;
+    ID3D11Buffer  *pCachedHostVertexBuffer = nullptr;
 };
 
 class CxbxVertexBufferConverter
@@ -131,8 +131,6 @@ typedef struct _D3DIVB
 extern std::vector<D3DIVB> g_InlineVertexBuffer_Table;
 extern UINT g_InlineVertexBuffer_TableLength;
 extern UINT g_InlineVertexBuffer_TableOffset;
-
-extern void EmuUpdateActiveTexture();
 
 extern void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d);
 

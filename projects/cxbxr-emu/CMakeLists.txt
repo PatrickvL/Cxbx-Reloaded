@@ -1,8 +1,6 @@
 cmake_minimum_required (VERSION 3.12)
 project(cxbxr-emu)
 
-option(CXBX_USE_D3D11 "Enable Direct3D 11 rendering path (instead of D3D9)" ON)
-
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 20)
 
@@ -64,10 +62,6 @@ add_compile_definitions(
  CXBXR_EMU
  CXBXR_EMU_EXPORTS
 )
-
-if(CXBX_USE_D3D11)
- add_compile_definitions(CXBX_USE_D3D11)
-endif()
 
 file (GLOB RESOURCES
  "${CXBXR_ROOT_DIR}/CONTRIBUTORS"
@@ -169,11 +163,7 @@ set(WINS_LIB
  wpcap
 )
 
-if(CXBX_USE_D3D11)
- list(APPEND WINS_LIB d3d11 dxgi d3dcompiler)
-else()
- list(APPEND WINS_LIB d3d9 d3dx9 d3dcompiler)
-endif()
+list(APPEND WINS_LIB d3d11 dxgi d3dcompiler)
 
 target_link_libraries(${PROJECT_NAME}
  PUBLIC libXbSymbolDatabase

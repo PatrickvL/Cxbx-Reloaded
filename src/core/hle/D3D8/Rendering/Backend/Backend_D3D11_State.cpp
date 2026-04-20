@@ -21,8 +21,6 @@
 // *
 // ******************************************************************
 
-#ifdef CXBX_USE_D3D11
-
 #include "Backend_D3D11_Internal.h"
 
 // ******************************************************************
@@ -319,4 +317,3 @@ void CxbxUnbindThickLineGS(xbox::X_D3DPRIMITIVETYPE type)
 	}
 }
 
-#endif // CXBX_USE_D3D11

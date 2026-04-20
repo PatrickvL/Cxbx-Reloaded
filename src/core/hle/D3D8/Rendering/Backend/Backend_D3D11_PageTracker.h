@@ -23,8 +23,6 @@
 #ifndef BACKEND_D3D11_PAGE_TRACKER_H
 #define BACKEND_D3D11_PAGE_TRACKER_H
 
-#ifdef CXBX_USE_D3D11
-
 // Backend_D3D11_PageTracker — Dirty page tracking for the 64 MiB contiguous memory mirror.
 //
 // Design:
@@ -127,5 +125,4 @@ bool CxbxPageTrackerIsTextureDirty(uint32_t offset, uint32_t size);
 // re-created / re-uploaded from the current Xbox memory contents.
 void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size);
 
-#endif // CXBX_USE_D3D11
 #endif // BACKEND_D3D11_PAGE_TRACKER_H

@@ -53,7 +53,7 @@ static void DrawInitialBlackScreen
 	CxbxPresent();
 }
 
-void CreateDefaultD3D9Device
+void CreateDefaultDevice
 (
    	const xbox::X_D3DPRESENT_PARAMETERS     *pPresentationParameters
 )
@@ -62,7 +62,7 @@ void CreateDefaultD3D9Device
 
    	// only one device should be created at once
    	if (g_pD3DDevice != nullptr) {
-   	   	EmuLog(LOG_LEVEL::DEBUG, "CreateDefaultD3D9Device releasing old Device.");
+   	   	EmuLog(LOG_LEVEL::DEBUG, "CreateDefaultDevice releasing old Device.");
 
 		CxbxEndScene();
 
@@ -84,42 +84,6 @@ void CreateDefaultD3D9Device
    	// Setup the HostPresentationParameters
    	SetupPresentationParameters(pPresentationParameters);
 
-#ifndef CXBX_USE_D3D11
-   	// detect vertex processing capabilities
-   	DWORD BehaviorFlags;
-   	if((g_D3DCaps.DevCaps & D3DDEVCAPS_HWTRANSFORMANDLIGHT) && g_EmuCDPD.DeviceType == D3DDEVTYPE_HAL)
-   	{
-   	   	EmuLog(LOG_LEVEL::DEBUG, "Using hardware vertex processing");
-
-   	   	BehaviorFlags = D3DCREATE_HARDWARE_VERTEXPROCESSING;
-   	}
-   	else
-   	{
-   	   	EmuLog(LOG_LEVEL::DEBUG, "Using software vertex processing");
-
-   	   	BehaviorFlags = D3DCREATE_SOFTWARE_VERTEXPROCESSING;
-   	}
-
-   	// Dxbx addition : Prevent Direct3D from changing the FPU Control word :
-   	BehaviorFlags |= D3DCREATE_FPU_PRESERVE;
-
-   	// Direct3D8: (WARN) :Device that was created without D3DCREATE_MULTITHREADED is being used by a thread other than the creation thread.
-   	BehaviorFlags |= D3DCREATE_MULTITHREADED;
-
-   	// We never want auto-depth stencil on the host, Xbox D3D will handle this for us
-   	g_EmuCDPD.HostPresentationParameters.EnableAutoDepthStencil = FALSE;
-
-	D3DDISPLAYMODEEX displayMode { sizeof(displayMode) };
-	{
-		const auto& presentParameters = g_EmuCDPD.HostPresentationParameters;
-		displayMode.Width = presentParameters.BackBufferWidth;
-		displayMode.Height = presentParameters.BackBufferHeight;
-		displayMode.RefreshRate = presentParameters.FullScreen_RefreshRateInHz;
-		displayMode.Format = presentParameters.BackBufferFormat;
-		displayMode.ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
-	}
-#endif
-#ifdef CXBX_USE_D3D11
 	// This flag adds support for surfaces with a different color channel 
 	// ordering than the API default. It is required for compatibility with
 	// Direct2D.
@@ -130,9 +94,7 @@ void CreateDefaultD3D9Device
 #endif
 	// only use feature level 10.0
 	D3D_FEATURE_LEVEL featureLevels[] = {
-#ifdef CXBX_USE_D3D11
 		D3D_FEATURE_LEVEL_11_0, // Required for cs_5_0, typed UAV access, ByteAddressBuffer
-#endif
 		D3D_FEATURE_LEVEL_10_0,
 	};
 
@@ -385,44 +347,23 @@ void CreateDefaultD3D9Device
 		float defaultTexCoordIndices[4] = { 0.0f, 1.0f, 2.0f, 3.0f };
 		CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_TEXCOORDINDEX, defaultTexCoordIndices, 1);
 	}
-#else
-   	// IDirect3D9::CreateDevice must be called from the window message thread
-   	// See https://docs.microsoft.com/en-us/windows/win32/direct3d9/multithreading-issues
-   	HRESULT hr;
-   	RunOnWndMsgThread([&hr, BehaviorFlags, &displayMode] {
-   	   	hr = g_pDirect3D->CreateDeviceEx(
-   	   	   	g_EmuCDPD.Adapter,
-   	   	   	g_EmuCDPD.DeviceType,
-   	   	   	g_hEmuWindow,
-   	   	   	BehaviorFlags,
-   	   	   	&g_EmuCDPD.HostPresentationParameters,
-			g_EmuCDPD.HostPresentationParameters.Windowed ? nullptr : &displayMode,
-   	   	   	&g_pD3DDevice);
-   	});
-   	DEBUG_D3DRESULT(hr, "IDirect3D::CreateDeviceEx");
-
-   	if(FAILED(hr))
-   	   	CxbxrAbort("IDirect3D::CreateDeviceEx failed");
-#endif
 
    	// Which texture formats does this device support?
    	DetermineSupportedD3DFormats();
 
-#ifdef CXBX_USE_D3D11
 	D3D11_QUERY_DESC QueryDesc;
 	QueryDesc.Query = D3D11_QUERY_EVENT;
 	QueryDesc.MiscFlags = 0;
-#endif
    	// Can host driver create event queries?
-   	if (SUCCEEDED(g_pD3DDevice->CreateQuery(_9_11(D3DQUERYTYPE_EVENT, &QueryDesc), nullptr))) {
+   	if (SUCCEEDED(g_pD3DDevice->CreateQuery(&QueryDesc, nullptr))) {
    	   	// Is host GPU query creation enabled?
    	   	if (!g_bHack_DisableHostGPUQueries) {
    	   	   	// Create a D3D event query to handle "wait-for-idle" with
-   	   	   	hr = g_pD3DDevice->CreateQuery(_9_11(D3DQUERYTYPE_EVENT, &QueryDesc), &g_pHostQueryWaitForIdle);
+   	   	   	hr = g_pD3DDevice->CreateQuery(&QueryDesc, &g_pHostQueryWaitForIdle);
    	   	   	DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateQuery (wait for idle)");
 
    	   	   	// Create a D3D event query to handle "callback events" with
-   	   	   	hr = g_pD3DDevice->CreateQuery(_9_11(D3DQUERYTYPE_EVENT, &QueryDesc), &g_pHostQueryCallbackEvent);
+   	   	   	hr = g_pD3DDevice->CreateQuery(&QueryDesc, &g_pHostQueryCallbackEvent);
    	   	   	DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateQuery (callback event)");
    	   	}
    	} else {
@@ -430,11 +371,9 @@ void CreateDefaultD3D9Device
    	}
 
    	// Can host driver create occlusion queries?
-#ifdef CXBX_USE_D3D11
 	QueryDesc.Query = D3D11_QUERY_OCCLUSION;
-#endif
    	g_bEnableHostQueryVisibilityTest = false;
-   	if (SUCCEEDED(g_pD3DDevice->CreateQuery(_9_11(D3DQUERYTYPE_OCCLUSION, &QueryDesc), nullptr))) {
+   	if (SUCCEEDED(g_pD3DDevice->CreateQuery(&QueryDesc, nullptr))) {
    	   	// Is host GPU query creation enabled?
    	   	if (!g_bHack_DisableHostGPUQueries) {
    	   	   	g_bEnableHostQueryVisibilityTest = true;
@@ -448,7 +387,6 @@ void CreateDefaultD3D9Device
    	DrawInitialBlackScreen();
 
    	// Set up ImGui's render backend
-#ifdef CXBX_USE_D3D11
 	ImGui_ImplDX11_Init(g_pD3DDevice, g_pD3DDeviceContext);
 	CxbxD3D11InitBlit();
    	g_renderbase->SetDeviceRelease([] {
@@ -465,27 +403,14 @@ void CreateDefaultD3D9Device
    	   	if (g_pD3DDeviceContext) { g_pD3DDeviceContext->Release(); g_pD3DDeviceContext = nullptr; }
    	   	g_pD3DDevice->Release();
    	});
-#else
-   	ImGui_ImplDX9_Init(g_pD3DDevice);
-   	g_renderbase->SetDeviceRelease([] {
-   	   	ImGui_ImplDX9_Shutdown();
-   	   	g_pD3DDevice->Release();
-   	});
-#endif
 }
 
 
 // check if a resource has been registered yet (if not, register it)
-bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, IDirect3DSurface* pHostRenderTarget)
+bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, ID3D11Texture2D* pHostRenderTarget)
 {
-	bool shouldRelease = false;
 	if (pHostRenderTarget == nullptr) {
 		pHostRenderTarget = CxbxGetCurrentRenderTarget();
-		// D3D9's GetRenderTarget AddRef's the surface, so we need to release it
-		// D3D11's CxbxGetCurrentRenderTarget returns a non-owning pointer
-#ifndef CXBX_USE_D3D11
-		shouldRelease = true;
-#endif
 	}
 
 	// The following can only work if we could retrieve a host render target
@@ -494,12 +419,8 @@ bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, IDirec
 	}
 
 	// Get current host render target dimensions
-	D3DSurfaceDesc HostRenderTarget_Desc;
+	D3D11_TEXTURE2D_DESC HostRenderTarget_Desc;
 	pHostRenderTarget->GetDesc(&HostRenderTarget_Desc);
-
-	if (shouldRelease) {
-		pHostRenderTarget->Release();
-	}
 
 	*pHostWidth = HostRenderTarget_Desc.Width;
 	*pHostHeight = HostRenderTarget_Desc.Height;
@@ -581,9 +502,8 @@ void GetXboxViewportOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
 	float scaledWidth = g_Xbox_Viewport.Width * aaScaleX;
 	float scaledHeight = g_Xbox_Viewport.Height * aaScaleY;
 
-	// D3D9 viewport info
-	// https://docs.microsoft.com/en-us/windows/win32/direct3d9/viewports-and-clipping
-	// Unlike D3D9, Xbox should scale by the z buffer scale
+	// Xbox viewport offset/scale
+	// Unlike D3D9, Xbox scales by the z buffer scale
 	// Test case: GTA III
 
 	auto zRange = g_Xbox_Viewport.MaxZ - g_Xbox_Viewport.MinZ;
@@ -619,13 +539,8 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	GetScreenScaleFactors(screenScaleX, screenScaleY);
 	GetMultiSampleOffset(aaOffsetX, aaOffsetY);
 
-	// Add D3D9 half-pixel offset (-0.5 given this offset is subtracted)
-	// D3D11 doesn't have the half-pixel offset issue
+	// No half-pixel offset needed (D3D11 has pixel-center-at-0.5 natively)
 	// https://aras-p.info/blog/2016/04/08/solving-dx9-half-pixel-offset/
-#ifndef CXBX_USE_D3D11
-	aaOffsetX -= 0.5f;
-	aaOffsetY -= 0.5f;
-#endif
 
 	float xboxScreenspaceWidth = xboxRenderTargetWidth * screenScaleX;
 	float xboxScreenspaceHeight = xboxRenderTargetHeight * screenScaleY;
@@ -868,7 +783,5 @@ void UpdateFixedFunctionVertexShaderState()
 	const int slotSize = 16;
 	const int fixedFunctionStateSize = (sizeof(FixedFunctionVertexShaderState) + slotSize - 1) / slotSize;
 	CxbxSetVertexShaderConstantF(0, (float*)&ffShaderState, fixedFunctionStateSize);
-
-	// TODO: Error handling for D3D9 path only (SetVertexShaderConstantF returns HRESULT there)
 }
 

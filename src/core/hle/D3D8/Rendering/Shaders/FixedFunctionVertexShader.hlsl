@@ -1,13 +1,5 @@
 #include "FixedFunctionVertexShaderState.hlsli"
 
-#ifdef CXBX_USE_D3D11
-// D3D11: VS_INPUT uses a flat v[16] array, so init_v() addresses by index.
-#define CXBX_ALL_TEXCOORD_INPUTS
-#else
-// D3D9: FixedFunction uses a semantic-based VS_INPUT layout.
-// Suppress the TEXCOORD-array VS_INPUT from the common header.
-#define CXBX_VS_CUSTOM_INPUT
-#endif
 #include "CxbxVertexShaderCommon.hlsli"
 #ifdef CXBX_IA_BYPASS
 #include "CxbxVertexFetch.hlsli"
@@ -18,22 +10,6 @@
 static  bool  vRegisterDefaultFlags[16];
 
 uniform FixedFunctionVertexShaderState state : register(c0);
-
-#ifndef CXBX_USE_D3D11
-// D3D9: semantic-based input layout for fixed function vertex shader
-struct VS_INPUT
-{
-    float4 pos : POSITION;
-    float4 bw : BLENDWEIGHT;
-	float4 normal : NORMAL;
-	float4 color[2] : COLOR;
-	float1 fogCoord : FOG;
-	float1 pointSize : PSIZE;
-    float4 backColor[2] : TEXCOORD4;
-    float4 texcoord[4] : TEXCOORD;
-	float4 reserved[3] : TEXCOORD6;
-};
-#endif
 
 // Input register indices (also known as attributes, as given in VS_INPUT.v array)
 // TODO : Convert FVF codes on CPU to a vertex declaration with these standardized register indices:
@@ -67,27 +43,8 @@ float4 Get(const VS_INPUT xIn, const uint index)
 {
 #ifdef CXBX_IA_BYPASS
     return g_FetchedAttribs[index];
-#elif defined(CXBX_USE_D3D11)
-    return xIn.v[index];
 #else
-    // switch statements inexplicably don't work here
-    if(index == position) return xIn.pos;
-    if(index == weight) return xIn.bw;
-    if(index == normal) return xIn.normal;
-    if(index == diffuse) return xIn.color[0];
-    if(index == specular) return xIn.color[1];
-    if(index == fogCoord) return xIn.fogCoord;
-    if(index == pointSize) return xIn.pointSize;
-    if(index == backDiffuse) return xIn.backColor[0];
-    if(index == backSpecular) return xIn.backColor[1];
-    if(index == texcoord0) return xIn.texcoord[0];
-    if(index == texcoord1) return xIn.texcoord[1];
-    if(index == texcoord2) return xIn.texcoord[2];
-    if(index == texcoord3) return xIn.texcoord[3];
-    if(index == reserved0) return xIn.reserved[0];
-    if(index == reserved1) return xIn.reserved[1];
-    if(index == reserved2) return xIn.reserved[2];
-    return 1;
+    return xIn.v[index];
 #endif
 }
 
@@ -432,34 +389,11 @@ VS_INPUT InitializeInputRegisters(const VS_INPUT xInput)
     // Or use the register's default value (which can be changed by the title)
     for (uint i = 0; i < 16; i++)
     {
-#ifdef CXBX_USE_D3D11
         // D3D11: The input assembler delivers correct values for all 16 attributes
         // via the zero-stride defaults buffer, no lerp needed.
         const float4 value = Get(xInput, i);
-#else
-        const float4 value = lerp(Get(xInput, i), vRegisterDefaultValues[i], vRegisterDefaultFlags[i]);
-#endif
-        #ifdef CXBX_ALL_TEXCOORD_INPUTS
-            xIn.v[i] = value;
-        #else
-            // switch statements inexplicably don't work here
-            if(i == position) xIn.pos = value;
-            if(i == weight) xIn.bw = value;
-            if(i == normal) xIn.normal = value;
-            if(i == diffuse) xIn.color[0] = value;
-            if(i == specular) xIn.color[1] = value;
-            if(i == fogCoord) xIn.fogCoord = value.x; // Note : Untested
-            if(i == pointSize) xIn.pointSize = value.x; // Note : Untested
-            if(i == backDiffuse) xIn.backColor[0] = value;
-            if(i == backSpecular) xIn.backColor[1] = value;
-            if(i == texcoord0) xIn.texcoord[0] = value;
-            if(i == texcoord1) xIn.texcoord[1] = value;
-            if(i == texcoord2) xIn.texcoord[2] = value;
-            if(i == texcoord3) xIn.texcoord[3] = value;
-            if(i == reserved0) xIn.reserved[0] = value; // Note : Untested
-            if(i == reserved1) xIn.reserved[1] = value; // Note : Untested
-            if(i == reserved2) xIn.reserved[2] = value; // Note : Untested
-        #endif
+        // D3D11: VS_INPUT uses a flat v[16] array, so init_v() addresses by index.
+        xIn.v[i] = value;
     }
 #endif // CXBX_IA_BYPASS
 

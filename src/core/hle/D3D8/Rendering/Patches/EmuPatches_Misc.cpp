@@ -26,22 +26,20 @@
 
 // Variables only used in EmuPatches_Misc.cpp
 static DWORD g_OverlaySwap = 0; // Set in D3DDevice_UpdateOverlay
-static std::stack<IDirect3DQuery*> g_HostQueryVisibilityTests;
-static std::map<int, IDirect3DQuery*> g_HostVisibilityTestMap;
+static std::stack<ID3D11Query*> g_HostQueryVisibilityTests;
+static std::map<int, ID3D11Query*> g_HostVisibilityTestMap;
 
 xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginVisibilityTest)()
 {
 	LOG_FUNC();
 
 	if (g_bEnableHostQueryVisibilityTest) {
-#ifdef CXBX_USE_D3D11
 		D3D11_QUERY_DESC QueryDesc;
 		QueryDesc.Query = D3D11_QUERY_OCCLUSION;
 		QueryDesc.MiscFlags = 0;
-#endif
 		// Create a D3D occlusion query to handle "visibility test" with
-		IDirect3DQuery* pHostQueryVisibilityTest = nullptr;
-		HRESULT hRet = g_pD3DDevice->CreateQuery(_9_11(D3DQUERYTYPE_OCCLUSION, &QueryDesc), &pHostQueryVisibilityTest);
+		ID3D11Query* pHostQueryVisibilityTest = nullptr;
+		HRESULT hRet = g_pD3DDevice->CreateQuery(&QueryDesc, &pHostQueryVisibilityTest);
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateQuery (visibility test)");
 		if (pHostQueryVisibilityTest != nullptr) {
 			CxbxQueryIssueBegin(pHostQueryVisibilityTest);
@@ -99,7 +97,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_EndVisibilityTest)
 			return 2088; // visibility test incomplete (a prior BeginVisibilityTest call is needed)
 		}
 
-		IDirect3DQuery* pHostQueryVisibilityTest = g_HostQueryVisibilityTests.top();
+		ID3D11Query* pHostQueryVisibilityTest = g_HostQueryVisibilityTests.top();
 		g_HostQueryVisibilityTests.pop();
 		assert(pHostQueryVisibilityTest != nullptr);
 
@@ -130,7 +128,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult)
 		LOG_FUNC_END;
 
 	if (g_bEnableHostQueryVisibilityTest) {
-		IDirect3DQuery* pHostQueryVisibilityTest = g_HostVisibilityTestMap[Index];
+		ID3D11Query* pHostQueryVisibilityTest = g_HostVisibilityTestMap[Index];
 		if (pHostQueryVisibilityTest == nullptr) {
 			return E_OUTOFMEMORY;
 		}
@@ -140,7 +138,6 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult)
 		// such a situation occurs, and break out of the loop as a result.
 		// Note: By Cxbx's design, we cannot do drawing within this while loop in order
 		// to further prevent any other endless loop situations.
-#ifdef CXBX_USE_D3D11
 		UINT64 occlusionData = 0;
 		HRESULT hRet;
 		while ((hRet = CxbxQueryGetData(pHostQueryVisibilityTest, &occlusionData, sizeof(occlusionData), 0)) == S_FALSE) {
@@ -151,9 +148,6 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult)
 		}
 		if (pResult != xbox::zeroptr)
 			*pResult = (uint_xt)occlusionData;
-#else
-		while (S_FALSE == CxbxQueryGetData(pHostQueryVisibilityTest, pResult, sizeof(DWORD), D3DGETDATA_FLUSH));
-#endif
 
 		g_HostVisibilityTestMap[Index] = nullptr;
 		pHostQueryVisibilityTest->Release();
@@ -419,28 +413,16 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetProjectionViewportMatrix)
 
 	HRESULT hRet;
 	D3DXMATRIX Out, mtxProjection, mtxViewport;
-	D3DVIEWPORT Viewport;
+	D3D11_VIEWPORT Viewport;
 
-#ifdef CXBX_USE_D3D11
 	// Get current viewport from D3D11 state
 	UINT numViewports = 1;
 	g_pD3DDeviceContext->RSGetViewports(&numViewports, &Viewport);
 	hRet = S_OK;
-#else
-	// Get current viewport
-	hRet = g_pD3DDevice->GetViewport(&Viewport);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->GetViewport - Unable to get viewport!");
-#endif
 
-#ifdef CXBX_USE_D3D11
 	// D3D11 doesn't have GetTransform - use our tracked transform state
 	mtxProjection = (D3DXMATRIX)d3d8TransformState.Transforms[xbox::X_D3DTS_PROJECTION];
 	hRet = S_OK;
-#else
-	// Get current projection matrix
-	hRet = g_pD3DDevice->GetTransform(D3DTS_PROJECTION, &mtxProjection);
-	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->GetTransform - Unable to get projection matrix!");
-#endif
 
 	// Clear the destination matrix
 	::ZeroMemory(&Out, sizeof(Out));
@@ -454,13 +436,8 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetProjectionViewportMatrix)
 	float ClipHeight = 2.0f;
 	float ClipX = -1.0f;
 	float ClipY = 1.0f;
-#ifdef CXBX_USE_D3D11
 	float Width = Viewport.Width;
 	float Height = Viewport.Height;
-#else
-	float Width = DWtoF(Viewport.Width);
-	float Height = DWtoF(Viewport.Height);
-#endif
 
 	D3DXMatrixIdentity(&mtxViewport);
 	mtxViewport._11 = Width / ClipWidth;

@@ -21,8 +21,6 @@
 // *
 // ******************************************************************
 
-#ifdef CXBX_USE_D3D11
-
 #include "Backend_D3D11_Internal.h"
 
 // ******************************************************************
@@ -262,7 +260,7 @@ bool CxbxD3D11ConvertVertexBufferGPU(
 	UINT numElements,
 	const UINT* pElementDescriptors, // 4 UINTs per element: srcOffset, dstOffset, convType, copyDwords
 	UINT dstBufferSize,
-	IDirect3DVertexBuffer** ppOutputVB)
+	ID3D11Buffer** ppOutputVB)
 {
 	if (!g_pD3D11VertexConvertCS || !g_pD3D11VertexConvertCB || vertexCount == 0)
 		return false;
@@ -444,4 +442,3 @@ bool CxbxD3D11ConvertIndexBufferGPU(
 	return true;
 }
 
-#endif // CXBX_USE_D3D11

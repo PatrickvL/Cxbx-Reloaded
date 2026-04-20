@@ -23,11 +23,9 @@
 
 // Backend_D3D11_IABypass.cpp — Input Assembler bypass draw path.
 //
-// When g_bD3D11IABypass is true, this module handles vertex data upload
+// This module handles vertex data upload
 // and draw calls using SV_VertexID-based vertex fetch in the shader.
 // The Input Assembler is not used for vertex/index buffer binding.
-
-#ifdef CXBX_USE_D3D11
 
 #include "Backend_D3D11_Internal.h"
 #include "Backend_D3D11_PageTracker.h"
@@ -269,18 +267,17 @@ static void UploadVertexDefaults()
 // * Core draw function for IA bypass
 // * Returns true if the draw was handled, false to fall back to IA path.
 // ******************************************************************
-bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
+void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 {
 	// When all vertex shaders are compiled with IA bypass, the normal IA
 	// fallback path cannot work (shader expects SV_VertexID, not TEXCOORD
-	// inputs).  Return true ("handled") to skip the incompatible fallback
-	// even if we can't actually draw.
+	// inputs).
 	if (!s_pLayoutCB || !s_pDefaultsCB)
-		return true;
+		return;
 
 	CxbxVertexDeclaration* pDecl = CxbxGetVertexDeclaration();
 	if (!pDecl || pDecl->NumberOfVertexStreams == 0)
-		return true;
+		return;
 
 	// ---------------------------------------------------------------
 	// Step 1: Determine topology and host vertex count
@@ -335,11 +332,11 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		break;
 	default:
 		// Unsupported topology — skip draw (can't fall back, shader expects SV_VertexID)
-		return true;
+		return;
 	}
 
 	if (hostVertexCount == 0)
-		return true; // Nothing to draw — handled
+		return; // Nothing to draw — handled
 
 	// ---------------------------------------------------------------
 	// Step 2: Determine data source — mirror (VB draws) or staging (UP draws)
@@ -365,11 +362,11 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 
 		EnsureUPVtxDataBuffer(vtxDataSize);
 		if (!s_pUPVtxDataBuf || !s_pUPVtxDataSRV)
-			return true;
+			return;
 
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pUPVtxDataBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (FAILED(hr)) return true;
+		if (FAILED(hr)) return;
 
 		memcpy(mapped.pData,
 			(const uint8_t*)DrawContext.pXboxVertexStreamZeroData
@@ -409,10 +406,10 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 
 			EnsureIdxDataBuffer(idxDataSize);
 			if (!s_pIdxDataBuf || !s_pIdxDataSRV)
-				return true;
+				return;
 
 			HRESULT hr = CxbxD3D11UpdateDynamicBuffer(s_pIdxDataBuf, DrawContext.pXboxIndexData, DrawContext.dwVertexCount * sizeof(INDEX16));
-			if (FAILED(hr)) return true;
+			if (FAILED(hr)) return;
 
 			indexOffset = 0;
 		}
@@ -442,7 +439,7 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (FAILED(hr)) return true;
+		if (FAILED(hr)) return;
 
 		IABypassLayoutCB* pCB = (IABypassLayoutCB*)mapped.pData;
 		memset(pCB, 0, sizeof(IABypassLayoutCB));
@@ -614,7 +611,6 @@ skip_layout_upload:
 	s_pLastBoundSNormSRV = nullptr;
 	s_pLastBoundUNormSRV = nullptr;
 
-	return true;
+	return;
 }
 
-#endif // CXBX_USE_D3D11

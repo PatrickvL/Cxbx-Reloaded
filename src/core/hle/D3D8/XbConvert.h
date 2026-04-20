@@ -78,9 +78,9 @@ extern void ____YUY2ToARGBRow_C(const uint8_t* src_yuy2, uint8_t* rgb_buf, int w
 extern const FormatToARGBRow ComponentConverters[];
 extern const FormatToARGBRow EmuXBFormatComponentConverter(xbox::X_D3DFORMAT Format);
 
-bool EmuXBFormatCanBeConverted(xbox::X_D3DFORMAT Format, EMUFORMAT &PCFormat);
+bool EmuXBFormatCanBeConverted(xbox::X_D3DFORMAT Format, DXGI_FORMAT &PCFormat);
 
-bool EmuXBFormatRequiresConversion(xbox::X_D3DFORMAT Format, EMUFORMAT &PCFormat);
+bool EmuXBFormatRequiresConversion(xbox::X_D3DFORMAT Format, DXGI_FORMAT &PCFormat);
 
 // how many bits does this format use per pixel?
 extern DWORD EmuXBFormatBitsPerPixel(xbox::X_D3DFORMAT Format);
@@ -104,17 +104,7 @@ extern BOOL EmuXBFormatIsRenderTarget(xbox::X_D3DFORMAT Format);
 extern BOOL EmuXBFormatIsDepthBuffer(xbox::X_D3DFORMAT Format);
 
 // convert from xbox to pc color formats
-extern EMUFORMAT EmuXB2PC_D3DFormat(xbox::X_D3DFORMAT Format);
-
-// convert from xbox to pc d3d lock flags
-#ifndef CXBX_USE_D3D11
-extern DWORD EmuXB2PC_D3DLock(DWORD Flags);
-#endif
-
-// convert from xbox to pc multisample formats
-#ifndef CXBX_USE_D3D11
-extern D3DMULTISAMPLE_TYPE EmuXB2PC_D3DMultiSampleFormat(DWORD Type);
-#endif
+extern DXGI_FORMAT EmuXB2PC_D3DFormat(xbox::X_D3DFORMAT Format);
 
 /**
 // convert from pc to xbox texture transform state types (unnecessary so far)
@@ -265,21 +255,6 @@ inline unsigned ConvertXboxVertexCountToPrimitiveCount(xbox::X_D3DPRIMITIVETYPE 
 	return (VertexCount - g_XboxPrimitiveTypeInfo[XboxPrimitiveType][0]) / g_XboxPrimitiveTypeInfo[XboxPrimitiveType][1];
 }
 
-// conversion table for xbox->pc primitive types
-extern const D3DPRIMITIVETYPE g_XboxPrimitiveTypeToHost[];
-
-// convert xbox->pc primitive type
-inline D3DPRIMITIVETYPE EmuXB2PC_D3DPrimitiveType(xbox::X_D3DPRIMITIVETYPE XboxPrimitiveType)
-{
-	if (XboxPrimitiveType >= xbox::X_D3DPT_MAX) {
-		LOG_TEST_CASE("XboxPrimitiveType too large");
-		return D3DPT_FORCE_DWORD;
-	}
-
-    return g_XboxPrimitiveTypeToHost[XboxPrimitiveType];
-}
-
-#ifdef CXBX_USE_D3D11
 extern const D3D_PRIMITIVE_TOPOLOGY g_XboxPrimitiveTypeToD3D11Topology[];
 
 // convert xbox primitive type to D3D11 primitive topology
@@ -292,7 +267,6 @@ inline D3D_PRIMITIVE_TOPOLOGY EmuXB2PC_D3D11PrimitiveTopology(xbox::X_D3DPRIMITI
 
 	return g_XboxPrimitiveTypeToD3D11Topology[XboxPrimitiveType];
 }
-#endif
 
 extern void EmuUnswizzleBox
 (
@@ -355,7 +329,7 @@ typedef struct _RenderStateInfo {
 	WORD V;    // The XDK version since which a render state was introduced (using the 5911 declarations as a base).
 	TXBType T = xt_Unknown; // The Xbox data type. Defaults to xt_Unknown.
 	xbox::NV2AMETHOD M; // The related push buffer method. Not always a 1-to-1 mapping. Needs push-buffer interpretation & conversion code.
-	D3DRENDERSTATETYPE PC = (D3DRENDERSTATETYPE)0; // Map XBox to D3D9 render state
+	D3DRENDERSTATETYPE PC = (D3DRENDERSTATETYPE)0; // Map Xbox to host render state
 	const char *N;   // XDK notes. Defaults to ''.
 	WORD R; // The XDK version since which a render state was removed
 }

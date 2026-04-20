@@ -41,10 +41,6 @@
 
 ShaderSources g_ShaderSources;
 
-#ifdef CXBX_USE_D3D11
-bool g_bD3D11IABypass = true; // Enable IA bypass by default on D3D11
-#endif
-
 std::string DebugPrependLineNumbers(std::string shaderString) {
 	std::stringstream shader(shaderString);
 	auto debugShader = std::stringstream();
@@ -80,24 +76,19 @@ extern HRESULT EmuCompileShader
 
 	UINT flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL3;
 
-#ifdef CXBX_USE_D3D11
 	// SM4.0+ requires backwards compatibility mode for DX9-style intrinsics (tex2D, texCUBE, etc.)
 	flags1 |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
-#endif
 
-#ifdef CXBX_USE_D3D11
 	D3D_SHADER_MACRO defines_ia_bypass[] = {
-		{ "CXBX_USE_D3D11", "1" },
 		{ "CXBX_IA_BYPASS", "1" },
 		{ nullptr, nullptr }
 	};
 	D3D_SHADER_MACRO defines_ia_normal[] = {
-		{ "CXBX_USE_D3D11", "1" },
 		{ nullptr, nullptr }
 	};
 	// Use IA bypass defines for vertex shaders (vs_*) when the flag is set
 	bool isVertexShader = (shader_profile != nullptr && shader_profile[0] == 'v' && shader_profile[1] == 's');
-	D3D_SHADER_MACRO* defines = (isVertexShader && g_bD3D11IABypass) ? defines_ia_bypass : defines_ia_normal;
+	D3D_SHADER_MACRO* defines = isVertexShader ? defines_ia_bypass : defines_ia_normal;
 
 	// IA bypass shaders include FetchAllAttributes() which unrolls a 20-format
 	// switch × 16 attributes.  At O3 the HLSL compiler spends exponential time
@@ -105,9 +96,6 @@ extern HRESULT EmuCompileShader
 	if (defines == defines_ia_bypass) {
 		flags1 = (flags1 & ~D3DCOMPILE_OPTIMIZATION_LEVEL3) | D3DCOMPILE_OPTIMIZATION_LEVEL1;
 	}
-#else
-	D3D_SHADER_MACRO* defines = nullptr;
-#endif
 
 	hRet = D3DCompile(
 		hlsl_str.c_str(),

@@ -48,10 +48,8 @@
 #include "Rendering\TextureStates.h"
 #include <wrl/client.h>
 #include <cstring> // For std::memcpy
-#ifdef CXBX_USE_D3D11
 #include "Rendering\Backend\Backend_D3D11.h"
 #include "Rendering\Backend\Backend_D3D11_Internal.h"
-#endif
 
 // The Xbox kernel's SetRenderState_FogColor swaps R↔B before calling
 // SetRenderState_Simple, so D3D__RenderState stores the fog color in NV2A
@@ -329,7 +327,7 @@ CxbxPSDef;
 
 typedef struct _PSH_RECOMPILED_SHADER {
 	CxbxPSDef CompletePSDef;
-	IDirect3DPixelShader* ConvertedPixelShader;
+	ID3D11PixelShader* ConvertedPixelShader;
 } PSH_RECOMPILED_SHADER;
 
 PSH_RECOMPILED_SHADER CxbxRecompilePixelShader(CxbxPSDef &CompletePSDef)
@@ -476,12 +474,12 @@ std::string GetD3DTASumString(int d3dta, bool allowModifier = true) {
 
 // TODO we have to create and cache shaders over and over and over and over
 // Deduplicate this resource management
-IDirect3DPixelShader* GetFixedFunctionShader()
+ID3D11PixelShader* GetFixedFunctionShader()
 {
 	using namespace FixedFunctionPixelShader;
 
 	// TODO move this cache elsewhere - and flush it when the device is released!
-	static std::unordered_map<uint64_t, IDirect3DPixelShader*> ffPsCache = {};
+	static std::unordered_map<uint64_t, ID3D11PixelShader*> ffPsCache = {};
 
 	// Support hotloading hlsl
 	static int pixelShaderVersion = -1;
@@ -649,9 +647,9 @@ IDirect3DPixelShader* GetFixedFunctionShader()
 
 	auto pseudoFileName = "FixedFunctionPixelShader-" + std::to_string(key) + ".hlsl";
 	auto pseudoSourceFile = hlslDir.append(pseudoFileName).string();
-	EmuCompileShader(finalShader, _9_11("ps_3_0", "ps_5_0"), &pShaderBlob, pseudoSourceFile.c_str());
+	EmuCompileShader(finalShader, "ps_5_0", &pShaderBlob, pseudoSourceFile.c_str());
 
-	IDirect3DPixelShader* pShader = nullptr;
+	ID3D11PixelShader* pShader = nullptr;
 	if (pShaderBlob) {
 		// Create shader object for the device
 		auto hRet = CxbxCreatePixelShader(pShaderBlob->GetBufferPointer(), pShaderBlob->GetBufferSize(), &pShader);
@@ -691,7 +689,6 @@ float CxbxGetTexFmtFixup(int stage_nr)
 {
 	using namespace FixedFunctionPixelShader;
 
-#ifdef CXBX_USE_D3D11
 	auto pXboxTex = g_pXbox_SetTexture[stage_nr];
 	if (pXboxTex == xbox::zeroptr)
 		return TEXFMTFIXUP_IDENTITY;
@@ -733,7 +730,6 @@ float CxbxGetTexFmtFixup(int stage_nr)
 	default:
 		break;
 	}
-#endif
 	return TEXFMTFIXUP_IDENTITY;
 }
 
@@ -758,7 +754,7 @@ D3DXCOLOR CxbxCalcColorSign(int stage_nr)
 
 #endif
 	// Host D3DFMT's with one or more signed components : D3DFMT_V8U8, D3DFMT_Q8W8V8U8, D3DFMT_V16U16, D3DFMT_Q16W16V16U16, D3DFMT_CxV8U8
-	EMUFORMAT H/*ostTextureFormat*/ = g_HostTextureFormats[stage_nr];
+	DXGI_FORMAT H/*ostTextureFormat*/ = g_HostTextureFormats[stage_nr];
 	// Guard: if the host format is unknown (stage not yet populated), skip all signed checks.
 	// In D3D11, EMUFMT_L6V5U5 == DXGI_FORMAT_NOT_AVAILABLE == DXGI_FORMAT_UNKNOWN == 0,
 	// so without this guard, uninitialized stages falsely match L6V5U5 signed detection.
@@ -847,9 +843,9 @@ void UpdateFixedFunctionPixelShaderState()
 	CxbxSetPixelShaderConstantF(0, (float*)&ffPsState, size);
 }
 
-static IDirect3DPixelShader* g_pActivePixelShader = nullptr; // TODO : Reset when device resets!
+static ID3D11PixelShader* g_pActivePixelShader = nullptr; // TODO : Reset when device resets!
 
-void CxbxSetPixelShader(IDirect3DPixelShader* pPixelShader)
+void CxbxSetPixelShader(ID3D11PixelShader* pPixelShader)
 {
 	// Here no call to (PS)GetPixelShader, but our own state tracking; See https://gamedev.stackexchange.com/a/88117
 	if (g_pActivePixelShader == pPixelShader)
@@ -863,7 +859,6 @@ void CxbxSetPixelShader(IDirect3DPixelShader* pPixelShader)
 
 bool g_UseFixedFunctionPixelShader = true;
 
-#ifdef CXBX_USE_D3D11
 // Upload Xbox register combiner state to the RC interpreter constant buffer.
 // Reads directly from Xbox render state and texture state.
 void CxbxD3D11UploadRCInterpreterState()
@@ -918,7 +913,7 @@ void CxbxD3D11UploadRCInterpreterState()
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterCB, &cb, sizeof(cb));
 	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterCB);
 }
-#endif // CXBX_USE_D3D11
+
 void CxbxUpdateActivePixelShader() // NOPATCH
 {
   // The first RenderState is PSAlpha,
@@ -935,22 +930,19 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 
   const xbox::X_D3DPIXELSHADERDEF *pPSDef = g_pXbox_PixelShader != nullptr ? (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
   if (pPSDef == nullptr) {
-	IDirect3DPixelShader* pShader = nullptr;
+	ID3D11PixelShader* pShader = nullptr;
 	if (g_UseFixedFunctionPixelShader) {
 		pShader = GetFixedFunctionShader();
 		UpdateFixedFunctionPixelShaderState();
 	}
 
 	CxbxSetPixelShader(pShader);
-#ifdef CXBX_USE_D3D11
 	// When switching away from the RC interpreter, rebind the normal PS cbuffer
 	if (g_bUseRCInterpreter && g_pD3D11PSConstantBuffer)
 		g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
-#endif
    	return;
   }
 
-#ifdef CXBX_USE_D3D11
   // --- RC interpreter ubershader path ---
   if (g_bUseRCInterpreter) {
 	// Lazy init: compile ubershader on first use
@@ -971,7 +963,6 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 	return;
   }
   recompile_path:
-#endif
 
   // Create a copy of the pixel shader definition, as it is residing in render state register slots :
   CxbxPSDef CompletePSDef;

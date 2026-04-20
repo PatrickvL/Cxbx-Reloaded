@@ -3,31 +3,22 @@
 
 // Shared input layout: flat TEXCOORD array matching the NV2A model of
 // 16 generic vertex attribute registers. Used by all vertex shaders
-// under D3D11; under D3D9, FixedFunctionVertexShader overrides this
-// with a semantic-based layout by defining CXBX_VS_CUSTOM_INPUT before
-// including this header.
-#ifdef CXBX_IA_BYPASS
+// under D3D11.
 // IA bypass mode: VS receives only SV_VertexID, all attributes are
 // fetched from a ByteAddressBuffer via CxbxVertexFetch.hlsli
 struct VS_INPUT
 {
+#ifdef CXBX_IA_BYPASS
 	uint vertexId : SV_VertexID;
-};
-#elif !defined(CXBX_VS_CUSTOM_INPUT)
-struct VS_INPUT
-{
+#else
 	float4 v[16] : TEXCOORD;
-};
 #endif
+};
 
 // Output registers — declared identical to pixel shader input (see PS_INPUT)
 struct VS_OUTPUT
 {
-#if defined(CXBX_USE_D3D11) || __HLSL_VERSION >= 4
 	float4 oPos : SV_Position;  // Homogeneous clip space position (SM4.0+)
-#else
-	float4 oPos : POSITION;  // Homogeneous clip space position
-#endif
 	float4 oD0  : COLOR0;    // Primary color (front-facing)
 	float4 oD1  : COLOR1;    // Secondary color (front-facing)
 	float  oFog : FOG;       // Fog coordinate
@@ -39,12 +30,6 @@ struct VS_OUTPUT
 	float4 oT2  : TEXCOORD2; // Texture coordinate set 2
 	float4 oT3  : TEXCOORD3; // Texture coordinate set 3
 };
-
-#ifndef CXBX_USE_D3D11
-// Default values for vertex registers, and whether to use them
-// D3D9 path: init_v() lerps between vertex data and these defaults
-uniform float4 vRegisterDefaultValues[16]  : register(c192);
-#endif
 
 // Whether each vertex register is present in the vertex declaration
 uniform float4 vRegisterDefaultFlagsPacked[4]  : register(c208);

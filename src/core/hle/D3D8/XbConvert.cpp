@@ -60,7 +60,7 @@ typedef struct _FormatInfo {
 	uint8_t bits_per_pixel;
 	_FormatStorage stored;
 	_ComponentEncoding components;
-	EMUFORMAT pc;
+	DXGI_FORMAT pc;
 	_FormatUsage usage;
 	const char *warning;
 } FormatInfo;
@@ -101,13 +101,13 @@ static const FormatInfo FormatInfos[] = {
 	/* 0x16 X_D3DFMT_LIN_R8B8     */ { 16, Linear, ____R8B8, EMUFMT_A8L8     , Texture, "X_D3DFMT_LIN_R8B8 -> EMUFMT_R5G6B5" },
 	/* 0x17 X_D3DFMT_LIN_G8B8     */ { 16, Linear, ____G8B8, EMUFMT_A8L8     , RenderTarget, "X_D3DFMT_LIN_G8B8 -> EMUFMT_R5G6B5" }, // Alias : X_D3DFMT_LIN_V8U8
 	/* 0x18 undefined             */ {},
-	/* 0x19 X_D3DFMT_A8           */ {  8, Swzzld, ______A8, EMUFMT_A8       , Texture, "X_D3DFMT_A8 -> EMUFMT_A8R8G8B8" },  // D3D9 sets RGB = 0 instead of 1
+	/* 0x19 X_D3DFMT_A8           */ {  8, Swzzld, ______A8, EMUFMT_A8       , Texture, "X_D3DFMT_A8 -> EMUFMT_A8R8G8B8" },  // DXGI_FORMAT_A8_UNORM sets RGB = 0 instead of 1
 	/* 0x1A X_D3DFMT_A8L8         */ { 16, Swzzld, ____A8L8, EMUFMT_A8L8     },
 	/* 0x1B X_D3DFMT_LIN_AL8      */ {  8, Linear, _____AL8, EMUFMT_L8       , Texture, "X_D3DFMT_LIN_AL8 -> EMUFMT_L8" },
 	/* 0x1C X_D3DFMT_LIN_X1R5G5B5 */ { 16, Linear, X1R5G5B5, EMUFMT_X1R5G5B5 , RenderTarget }, // D3D11 NOTE : DXGI_FORMAT_B5G5R5A1_UNORM has variable alpha; pixel shader should force alpha=1 when sampling this format
 	/* 0x1D X_D3DFMT_LIN_A4R4G4B4 */ { 16, Linear, A4R4G4B4, EMUFMT_A4R4G4B4 },
 	/* 0x1E X_D3DFMT_LIN_X8R8G8B8 */ { 32, Linear, X8R8G8B8, EMUFMT_X8R8G8B8 , RenderTarget }, // Alias : X_D3DFMT_LIN_X8L8V8U8
-	/* 0x1F X_D3DFMT_LIN_A8       */ {  8, Linear, ______A8, EMUFMT_A8       , Texture, "X_D3DFMT_LIN_A8 -> EMUFMT_A8R8G8B8" }, // D3D9 sets RGB = 0 instead of 1
+	/* 0x1F X_D3DFMT_LIN_A8       */ {  8, Linear, ______A8, EMUFMT_A8       , Texture, "X_D3DFMT_LIN_A8 -> EMUFMT_A8R8G8B8" }, // DXGI_FORMAT_A8_UNORM sets RGB = 0 instead of 1
 	/* 0x20 X_D3DFMT_LIN_A8L8     */ { 16, Linear, ____A8L8, EMUFMT_A8L8     },
 	/* 0x21 undefined             */ {},
 	/* 0x22 undefined             */ {},
@@ -153,11 +153,6 @@ const FormatToARGBRow EmuXBFormatComponentConverter(xbox::X_D3DFORMAT Format)
 {
 	if (Format <= xbox::X_D3DFMT_LAST) {
 		const _ComponentEncoding components = FormatInfos[Format].components;
-#ifndef CXBX_USE_D3D11
-		if (components == __L6V5U5) {
-			return __L6V5U5ToX8L8V8U8Row_C; // D3D9: X8L8V8U8 has native mixed signedness (V/U signed, L unsigned)
-		}
-#endif
 		if (components != NoCmpnts) {
 			return ComponentConverters[components];
 		}
@@ -166,17 +161,13 @@ const FormatToARGBRow EmuXBFormatComponentConverter(xbox::X_D3DFORMAT Format)
 }
 
 // Is there a converter available from the supplied format? (PCFormat will receive host target format)
-bool EmuXBFormatCanBeConverted(xbox::X_D3DFORMAT Format, EMUFORMAT &PCFormat)
+bool EmuXBFormatCanBeConverted(xbox::X_D3DFORMAT Format, DXGI_FORMAT &PCFormat)
 {
 	const FormatToARGBRow info = EmuXBFormatComponentConverter(Format);
 	if (info != nullptr) {
-#ifdef CXBX_USE_D3D11
 		// D3D11: DXGI has no mixed-signedness format like D3D9's X8L8V8U8,
 		// so always convert to ARGB; colorsign handles signed channels in shader
 		/*&*/PCFormat = EMUFMT_A8R8G8B8;
-#else
-		/*&*/PCFormat = (FormatInfos[Format].components == __L6V5U5) ? EMUFMT_X8L8V8U8 : EMUFMT_A8R8G8B8;
-#endif
 		return true;
 	}
 	return false;
@@ -185,7 +176,7 @@ bool EmuXBFormatCanBeConverted(xbox::X_D3DFORMAT Format, EMUFORMAT &PCFormat)
 // Returns if conversion is required. This is the case when
 // the format has a warning message and there's a converter present.
 // When conversion is required, the host target format is set in PCFormat.
-bool EmuXBFormatRequiresConversion(xbox::X_D3DFORMAT Format, EMUFORMAT &PCFormat)
+bool EmuXBFormatRequiresConversion(xbox::X_D3DFORMAT Format, DXGI_FORMAT &PCFormat)
 {
 	if (FormatInfos[Format].warning != nullptr) {
 		if (EmuXBFormatCanBeConverted(Format, /*&*/PCFormat)) {
@@ -250,7 +241,7 @@ BOOL EmuXBFormatIsDepthBuffer(xbox::X_D3DFORMAT Format)
 	return false;
 }
 
-EMUFORMAT EmuXB2PC_D3DFormat(xbox::X_D3DFORMAT Format)
+DXGI_FORMAT EmuXB2PC_D3DFormat(xbox::X_D3DFORMAT Format)
 {
 	if (Format <= xbox::X_D3DFMT_LAST && Format != -1 /*xbox::X_D3DFMT_UNKNOWN*/) // The last bit prevents crashing (Metal Slug 3)
 	{
@@ -264,11 +255,7 @@ EMUFORMAT EmuXB2PC_D3DFormat(xbox::X_D3DFORMAT Format)
 
 	switch (Format) {
 	case xbox::X_D3DFMT_VERTEXDATA:
-#ifdef CXBX_USE_D3D11
 		[[fallthrough]]; // This case is unlikely to ever get passed in here anyway
-#else
-		return EMUFMT_VERTEXDATA;
-#endif
 	case xbox::X_D3DFMT_UNKNOWN: [[fallthrough]]; // Test-case : Metal Slug 3?
 	case ((xbox::X_D3DFORMAT)0xffffffff):
 		return EMUFMT_UNKNOWN; // TODO -oCXBX: Not sure if this counts as swizzled or not...
@@ -279,59 +266,6 @@ EMUFORMAT EmuXB2PC_D3DFormat(xbox::X_D3DFORMAT Format)
 	return EMUFMT_UNKNOWN;
 }
 
-#ifndef CXBX_USE_D3D11
-DWORD EmuXB2PC_D3DLock(DWORD Flags)
-{
-	DWORD NewFlags = 0;
-
-	// Need to convert the flags, TODO: fix the xbox extensions
-//	if(Flags & X_D3DLOCK_NOFLUSH)
-//		NewFlags ^= 0;
-
-	if(Flags & X_D3DLOCK_NOOVERWRITE)
-		NewFlags |= D3DLOCK_NOOVERWRITE;
-
-//	if(Flags & X_D3DLOCK_TILED)
-//		NewFlags ^= 0;
-
-	if(Flags & X_D3DLOCK_READONLY)
-		NewFlags |= D3DLOCK_READONLY;
-
-	return NewFlags;
-}
-
-// convert from xbox to pc multisample formats
-D3DMULTISAMPLE_TYPE EmuXB2PC_D3DMultiSampleFormat(DWORD Type)
-{
-	D3DMULTISAMPLE_TYPE result;
-	switch (Type & 0xFFFF)
-	{
-	case xbox::X_D3DMULTISAMPLE_NONE:
-		result = D3DMULTISAMPLE_NONE;
-		break;
-	case xbox::X_D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_LINEAR: 
-	case xbox::X_D3DMULTISAMPLE_2_SAMPLES_MULTISAMPLE_QUINCUNX: 
-	case xbox::X_D3DMULTISAMPLE_2_SAMPLES_SUPERSAMPLE_HORIZONTAL_LINEAR: 
-	case xbox::X_D3DMULTISAMPLE_2_SAMPLES_SUPERSAMPLE_VERTICAL_LINEAR:
-		result = D3DMULTISAMPLE_2_SAMPLES;
-		break;
-	case xbox::X_D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_LINEAR: 
-	case xbox::X_D3DMULTISAMPLE_4_SAMPLES_MULTISAMPLE_GAUSSIAN: 
-	case xbox::X_D3DMULTISAMPLE_4_SAMPLES_SUPERSAMPLE_LINEAR: 
-	case xbox::X_D3DMULTISAMPLE_4_SAMPLES_SUPERSAMPLE_GAUSSIAN:
-		result = D3DMULTISAMPLE_4_SAMPLES;
-		break;
-	case xbox::X_D3DMULTISAMPLE_9_SAMPLES_MULTISAMPLE_GAUSSIAN: 
-	case xbox::X_D3DMULTISAMPLE_9_SAMPLES_SUPERSAMPLE_GAUSSIAN:
-		result = D3DMULTISAMPLE_9_SAMPLES;
-		break;
-	default:
-		EmuLog(LOG_LEVEL::WARNING, "Unknown Multisample Type (0x%X)!\x0d\x0a.", Type);
-		result = D3DMULTISAMPLE_NONE;
-	}
-	return result;
-}
-#endif // !CXBX_USE_D3D11
 
 // lookup table for converting vertex count to primitive count
 const unsigned g_XboxPrimitiveTypeInfo[11][2] =
@@ -353,24 +287,6 @@ const unsigned g_XboxPrimitiveTypeInfo[11][2] =
 	{0, 1}, // X_D3DPT_POLYGON
 };
 
-// conversion table for xbox->pc primitive types
-const D3DPRIMITIVETYPE g_XboxPrimitiveTypeToHost[] =
-{
-	/* NULL                   = 0         */ (D3DPRIMITIVETYPE)0,
-	/* X_D3DPT_POINTLIST      = 1,        */ D3DPT_POINTLIST,
-	/* X_D3DPT_LINELIST       = 2,        */ D3DPT_LINELIST,
-	/* X_D3DPT_LINELOOP       = 3,  Xbox  */ D3DPT_LINESTRIP,
-	/* X_D3DPT_LINESTRIP      = 4,        */ D3DPT_LINESTRIP,
-	/* X_D3DPT_TRIANGLELIST   = 5,        */ D3DPT_TRIANGLELIST,
-	/* X_D3DPT_TRIANGLESTRIP  = 6,        */ D3DPT_TRIANGLESTRIP,
-	/* X_D3DPT_TRIANGLEFAN    = 7,        */ D3DPT_TRIANGLEFAN,
-	/* X_D3DPT_QUADLIST       = 8,  Xbox  */ D3DPT_TRIANGLELIST,
-	/* X_D3DPT_QUADSTRIP      = 9,  Xbox  */ D3DPT_TRIANGLESTRIP,
-	/* X_D3DPT_POLYGON        = 10, Xbox  */ D3DPT_TRIANGLEFAN,
-	/* X_D3DPT_MAX            = 11,       */ (D3DPRIMITIVETYPE)11
-};
-
-#ifdef CXBX_USE_D3D11
 // D3D11 primitive topology table for Xbox primitive types
 // Note: D3D11 does not support TriangleFan - those must be converted to TriangleList
 const D3D_PRIMITIVE_TOPOLOGY g_XboxPrimitiveTypeToD3D11Topology[] =
@@ -388,7 +304,6 @@ const D3D_PRIMITIVE_TOPOLOGY g_XboxPrimitiveTypeToD3D11Topology[] =
    	/* X_D3DPT_POLYGON        = 10, Xbox  */ D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, // Convert polygon to list
    	/* X_D3DPT_MAX            = 11,       */ D3D_PRIMITIVE_TOPOLOGY_UNDEFINED
 };
-#endif
 
 void EmuUnswizzleBox
 (

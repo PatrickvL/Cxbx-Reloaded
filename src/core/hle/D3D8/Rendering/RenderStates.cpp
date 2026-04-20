@@ -255,11 +255,7 @@ void XboxRenderStateConverter::ApplySimpleRenderState(uint32_t State, uint32_t V
         return;
     }
 
-#ifdef CXBX_USE_D3D11
    	CxbxD3D11SetRenderState(State, Value);
-#else
-    g_pD3DDevice->SetRenderState((D3DRENDERSTATETYPE)(RenderStateInfo.PC), Value);
-#endif
 }
 
 void XboxRenderStateConverter::ApplyDeferredRenderState(uint32_t State, uint32_t Value)
@@ -270,22 +266,6 @@ void XboxRenderStateConverter::ApplyDeferredRenderState(uint32_t State, uint32_t
     switch (State) {
         case xbox::X_D3DRS_FOGSTART:
         case xbox::X_D3DRS_FOGEND: {
-#ifndef CXBX_USE_D3D11
-            // HACK: If the fog start/fog-end are negative, make them positive
-            // This fixes Smashing Drive on non-nvidia hardware
-            // Cause appears to be non-nvidia drivers clamping values < 0 to 0
-            // Resulting in the fog formula becoming (0 - d) / 0, which breaks rendering
-            // This prevents that scenario for screen-space fog, *hopefully* without breaking eye-based fog also
-   	   	   	// NOTE: D3D11 computes fog in its own pixel shader, so negative values pass through
-   	   	   	// correctly. D3D9 passes these to the driver's fixed-function fog pipeline where
-   	   	   	// some non-nvidia drivers clamp them to 0, hence the abs hack is D3D9-only.
-   	   	   	float fogValue; std::memcpy(&fogValue, &Value, sizeof(fogValue));
-            if (fogValue < 0.0f) {
-                LOG_TEST_CASE("FOGSTART/FOGEND below 0");
-                fogValue = std::abs(fogValue);
-   	   	   	   	std::memcpy(&Value, &fogValue, sizeof(Value));
-            }
-#endif
         } break;
         case xbox::X_D3DRS_FOGENABLE:
         case xbox::X_D3DRS_FOGTABLEMODE:
@@ -352,15 +332,11 @@ void XboxRenderStateConverter::ApplyDeferredRenderState(uint32_t State, uint32_t
         return;
     }
 
-#ifdef CXBX_USE_D3D11
    	// Deferred render states affect fog/lighting - these are handled in the vertex shader
    	// Most deferred render states don't map to D3D11 state objects, they are passed as shader constants instead
    	// (fog settings are handled in CxbxUpdateHostVertexShaderConstants)
    	// For now, just ignore direct D3D9 calls
    	(void)Value; // silence unused warning
-#else
-    g_pD3DDevice->SetRenderState(RenderStateInfo.PC, Value);
-#endif
 }
 
 void XboxRenderStateConverter::ApplyComplexRenderState(uint32_t State, uint32_t Value)
@@ -420,18 +396,14 @@ void XboxRenderStateConverter::ApplyComplexRenderState(uint32_t State, uint32_t 
             SetXboxMultiSampleType(Value);
             break;
    	   	case xbox::X_D3DRS_FRONTFACE:
-#ifdef CXBX_USE_D3D11
    	   	   	// Xbox FRONTFACE is an NV2A value (0x900 = CW, 0x901 = CCW)
    	   	   	// Map directly to D3D11 rasterizer state
    	   	   	CxbxD3D11SetRenderState(State, Value);
-#endif
    	   	   	return; // No D3D9 counterpart
    	   	case xbox::X_D3DRS_LINEWIDTH:
-#ifdef CXBX_USE_D3D11
    	   	   	// Xbox extension — float-encoded DWORD, no D3D9 counterpart
    	   	   	// Route to D3D11 backend for thick line GS
    	   	   	CxbxD3D11SetRenderState(State, Value);
-#endif
    	   	   	return; // No D3D9 counterpart
         default:
    	   	   	// Only log missing state if it has a D3D counterpart
@@ -446,9 +418,5 @@ void XboxRenderStateConverter::ApplyComplexRenderState(uint32_t State, uint32_t 
         return;
     }
 
-#ifdef CXBX_USE_D3D11
    	CxbxD3D11SetRenderState(State, Value);
-#else
-    g_pD3DDevice->SetRenderState(RenderStateInfo.PC, Value);
-#endif
 }

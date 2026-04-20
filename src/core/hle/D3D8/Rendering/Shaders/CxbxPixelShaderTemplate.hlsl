@@ -1,10 +1,6 @@
 struct PS_OUTPUT
 {
-#if defined(CXBX_USE_D3D11) || __HLSL_VERSION >= 4
 	float4 oR0 : SV_Target;
-#else
-    float4 oR0 : COLOR;
-#endif
 };
 
 // Source register modifier macro's, based on enum PS_INPUTMAPPING :
@@ -374,11 +370,7 @@ PS_OUTPUT main(const PS_INPUT xIn)
 	float4 v;              // Texture value (temporary)
 
 	// Determine if this is a front face or backface
-#if defined(CXBX_USE_D3D11) || __HLSL_VERSION >= 4
 	bool isFrontFace = (xIn.iFF ? 1.0f : -1.0f) * FRONTFACE_FACTOR >= 0;
-#else
-    bool isFrontFace = (xIn.iFF * FRONTFACE_FACTOR) >= 0;
-#endif
 
 	// Initialize variables
 	r0 = r1 = black; // Note : r0.a/r1.a will be overwritten by t0.a/t1.a (opaque_black will be retained for PS_TEXTUREMODES_NONE)

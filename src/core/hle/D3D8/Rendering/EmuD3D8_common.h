@@ -48,7 +48,6 @@
 #include "..\FixedFunctionState.h"
 #include "core\hle\D3D8\ResourceTracker.h"
 #include "core\hle\D3D8\Rendering\RenderGlobals.h"
-#include "core\hle\D3D8\Rendering\Backend\Backend_D3D9.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
 #include "core\hle\D3D8\Rendering\Shaders\Shader.h"
 #include "core\hle\D3D8\XbVertexBuffer.h"
@@ -76,11 +75,7 @@
 #include "Timer.h"
 
 #include <imgui.h>
-#ifdef CXBX_USE_D3D11
 #include <backends/imgui_impl_dx11.h>
-#else
-#include <backends/imgui_impl_dx9.h>
-#endif
 #include <backends/imgui_impl_win32.h>
 #include "core/common/video/RenderBase.hpp"
 

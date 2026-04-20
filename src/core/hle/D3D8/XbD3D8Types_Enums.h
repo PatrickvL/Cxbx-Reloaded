@@ -24,7 +24,7 @@
 #ifndef XBD3D8TYPES_ENUMS_H
 #define XBD3D8TYPES_ENUMS_H
 
-#include "XbD3D8Types_D3D9Compat.h"
+#include "XbD3D8Types_D3D11.h"
 
 namespace xbox {
 
@@ -52,11 +52,7 @@ typedef enum _X_D3DBASISTYPE { // Based on Direct3D 9 TODO : verify on Xbox
 	D3DBASIS_FORCE_DWORD = 0x7fffffff
 } X_D3DBASISTYPE, *LPX_D3DBASISTYPE;
 
-#ifdef CXBX_USE_D3D11
 typedef DWORD X_D3DCOLOR;
-#else
-typedef D3DCOLOR X_D3DCOLOR;
-#endif
 
 /* CubeMap Face identifiers */
 typedef enum _X_D3DCUBEMAP_FACES
@@ -99,18 +95,13 @@ typedef struct _X_D3DDEVICE_CREATION_PARAMETERS
 	DWORD           BehaviorFlags;
 } X_D3DDEVICE_CREATION_PARAMETERS;
 
-#ifdef CXBX_USE_D3D11
 typedef struct _X_D3DVECTOR {
 	float x;
 	float y;
 	float z;
 	_X_D3DVECTOR& operator=(const ::D3DXVECTOR3& rhs) { x = rhs.x; y = rhs.y; z = rhs.z; return *this; }
 } X_D3DVECTOR;
-#else
-typedef D3DVECTOR X_D3DVECTOR;
-#endif
 
-#ifdef CXBX_USE_D3D11
 typedef struct _X_D3DBOX {
 	UINT Left;
 	UINT Top;
@@ -119,54 +110,32 @@ typedef struct _X_D3DBOX {
 	UINT Front;
 	UINT Back;
 } X_D3DBOX;
-#else
-typedef D3DBOX X_D3DBOX;
-#endif
 
-#ifdef CXBX_USE_D3D11
 typedef struct _X_D3DLOCKED_BOX {
 	int  RowPitch;
 	int  SlicePitch;
 	void* pBits;
 } X_D3DLOCKED_BOX;
-#else
-typedef D3DLOCKED_BOX X_D3DLOCKED_BOX;
-#endif
 
-#ifdef CXBX_USE_D3D11
 typedef struct _X_D3DLOCKED_RECT {
 	INT   Pitch;
 	void* pBits;
 } X_D3DLOCKED_RECT;
-#else
-typedef D3DLOCKED_RECT X_D3DLOCKED_RECT;
-#endif
 
 // Host-type aliases for D3D11 mode (used in trampoline function signatures)
-#ifdef CXBX_USE_D3D11
 typedef X_D3DLOCKED_RECT D3DLOCKED_RECT;
 typedef X_D3DLOCKED_BOX D3DLOCKED_BOX;
 typedef X_D3DBOX D3DBOX;
-#endif
 
-#ifdef CXBX_USE_D3D11
 typedef XMMATRIX X_D3DMATRIX; // XMMATRIX is the storage type; CXMMATRIX is only for parameter passing
-#else
-typedef D3DXMATRIX X_D3DMATRIX; // TODO : Or D3DMATRIX?
-#endif
 
-#ifdef CXBX_USE_D3D11
 typedef struct _X_D3DRECT {
 	LONG x1;
 	LONG y1;
 	LONG x2;
 	LONG y2;
 } X_D3DRECT;
-#else
-typedef D3DRECT X_D3DRECT;
-#endif
 
-#ifdef CXBX_USE_D3D11
 typedef struct _X_D3DRECTPATCH_INFO { // Based on Direct3D 9 TODO : verify on Xbox
 	UINT          StartVertexOffsetWidth;
 	UINT          StartVertexOffsetHeight;
@@ -176,20 +145,13 @@ typedef struct _X_D3DRECTPATCH_INFO { // Based on Direct3D 9 TODO : verify on Xb
 	X_D3DBASISTYPE  Basis;
 	X_D3DDEGREETYPE Degree;
 } X_D3DRECTPATCH_INFO, *LPX_D3DRECTPATCH_INFO;
-#else
-typedef D3DRECTPATCH_INFO X_D3DRECTPATCH_INFO;
-#endif
 
-#ifdef CXBX_USE_D3D11
 typedef struct _X_D3DTRIPATCH_INFO { // Based on Direct3D 9 TODO : verify on Xbox
 	UINT          StartVertexOffset;
 	UINT          NumVertices;
 	X_D3DBASISTYPE  Basis;
 	X_D3DDEGREETYPE Degree;
 } X_D3DTRIPATCH_INFO, *LPX_D3DTRIPATCH_INFO;
-#else
-typedef D3DTRIPATCH_INFO X_D3DTRIPATCH_INFO;
-#endif
 
 typedef struct _X_D3DCOLORVALUE {
 	float r;
@@ -258,11 +220,7 @@ typedef enum _X_D3DSWAPEFFECT
 
 
 // TODO: fill out these enumeration tables for convienance
-#ifdef CXBX_USE_D3D11
 typedef XMVECTORF32 X_D3DXVECTOR4;
-#else
-typedef D3DXVECTOR4 X_D3DXVECTOR4;
-#endif
 typedef DWORD X_D3DBLENDOP;
 typedef DWORD X_D3DBLEND;
 typedef DWORD X_D3DCMPFUNC;

@@ -27,9 +27,6 @@ add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/import/mio" EXCLUDE_FROM_ALL)
 # Cxbx-Reloaded projects
 set(CXBXR_ROOT_DIR ${CMAKE_CURRENT_LIST_DIR})
 
-# D3D11 option must be set here before imgui backend selection below
-option(CXBX_USE_D3D11 "Enable Direct3D 11 rendering path (instead of D3D9)" ON)
-
 add_custom_target(misc-batch
   ${CMAKE_COMMAND} -DTargetRunTimeDir=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>
   -P ${CXBXR_ROOT_DIR}/projects/misc/batch.cmake
@@ -101,7 +98,7 @@ file (GLOB CXBXR_HEADER_COMMON
  "${CXBXR_ROOT_DIR}/src/common/xdvdfs-tools/xdvdfs.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbConvert.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbD3D8Types.h"
- "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbD3D8Types_D3D9Compat.h"
+ "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbD3D8Types_D3D11.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbD3D8Types_Enums.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbD3D8Types_Resources.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/XAPI/Xapi.h"
@@ -132,13 +129,8 @@ file (GLOB CXBXR_HEADER_GUIv1
 )
 
 # Emulator (module)
-if(CXBX_USE_D3D11)
- set(IMGUI_GFX_HEADER "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_dx11.h")
- set(IMGUI_GFX_SOURCE "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_dx11.cpp")
-else()
- set(IMGUI_GFX_HEADER "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_dx9.h")
- set(IMGUI_GFX_SOURCE "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_dx9.cpp")
-endif()
+set(IMGUI_GFX_HEADER "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_dx11.h")
+set(IMGUI_GFX_SOURCE "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_dx11.cpp")
 file (GLOB CXBXR_HEADER_EMU_IMPORT
  "${IMGUI_GFX_HEADER}"
  "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_opengl3.h"
@@ -181,7 +173,6 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/RegisterCombinerInterpreterState.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/FixedFunctionVertexShader.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/FixedFunctionVertexShaderState.hlsli"
- "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D9.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_Internal.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/PatchDraw.h"
@@ -378,7 +369,6 @@ file (GLOB CXBXR_SOURCE_EMU
  "${CXBXR_ROOT_DIR}/src/core/common/imgui/ui.cpp"
  "${CXBXR_ROOT_DIR}/src/core/common/imgui/video.cpp"
  "${CXBXR_ROOT_DIR}/src/core/common/video/RenderBase.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D9.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_State.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_Compute.cpp"

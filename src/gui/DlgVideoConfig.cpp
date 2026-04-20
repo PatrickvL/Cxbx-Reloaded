@@ -37,9 +37,7 @@
 
 #include "core\hle\D3D8\Rendering\RenderGlobals.h" // For IDirect3D
 
-#ifdef CXBX_USE_D3D11
 #include <dxgi.h>
-#endif
 
 /*! windows dialog procedure */
 static INT_PTR CALLBACK DlgVideoConfigProc(HWND hWndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -51,11 +49,7 @@ static void RefreshDirect3DDevice();
 static void RefreshRenderResolution();
 
 /*! direct3d/dxgi instance */
-#ifdef CXBX_USE_D3D11
 static IDXGIFactory1 *g_pDXGIFactory = nullptr;
-#else
-static IDirect3D9Ex *g_pDirect3D = nullptr;
-#endif
 /*! video configuration */
 static Settings::s_video g_XBVideo;
 /*! changes flag */
@@ -81,7 +75,6 @@ void ShowVideoConfig(HWND hwnd)
 
    	/*! initialize direct3d/dxgi */
     {
-#ifdef CXBX_USE_D3D11
    	   	if(FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&g_pDXGIFactory)))) { goto cleanup; }
 
    	   	g_dwAdapterCount = 0;
@@ -90,11 +83,6 @@ void ShowVideoConfig(HWND hwnd)
    	   	   	pAdapter->Release();
    	   	   	g_dwAdapterCount++;
    	   	}
-#else
-        if(FAILED(Direct3DCreate9Ex(D3D_SDK_VERSION, &g_pDirect3D))) { goto cleanup; }
-
-        g_dwAdapterCount = g_pDirect3D->GetAdapterCount();
-#endif
     }
 
     /*! show dialog box */
@@ -104,19 +92,11 @@ cleanup:
 
    	/*! cleanup direct3d/dxgi */
     {
-#ifdef CXBX_USE_D3D11
    	   	if(g_pDXGIFactory != 0)
    	   	{
    	   	   	g_pDXGIFactory->Release();
    	   	   	g_pDXGIFactory = 0;
    	   	}
-#else
-        if(g_pDirect3D != 0)
-        {
-            g_pDirect3D->Release();
-            g_pDirect3D = 0;
-        }
-#endif
     }
 }
 
@@ -140,7 +120,6 @@ INT_PTR CALLBACK DlgVideoConfigProc(HWND hWndDlg, UINT uMsg, WPARAM wParam, LPAR
 
                 for(uint32_t v=0;v<g_dwAdapterCount;v++)
                 {
-#ifdef CXBX_USE_D3D11
    	   	   	   	   	IDXGIAdapter1 *pAdapter;
    	   	   	   	   	if(SUCCEEDED(g_pDXGIFactory->EnumAdapters1(v, &pAdapter))) {
    	   	   	   	   	   	DXGI_ADAPTER_DESC1 desc;
@@ -150,12 +129,6 @@ INT_PTR CALLBACK DlgVideoConfigProc(HWND hWndDlg, UINT uMsg, WPARAM wParam, LPAR
    	   	   	   	   	   	SendMessage(g_hDisplayAdapter, CB_ADDSTRING, 0, (LPARAM)szDescription);
    	   	   	   	   	   	pAdapter->Release();
    	   	   	   	   	}
-#else
-                    D3DADAPTER_IDENTIFIER adapterIdentifier;
-
-                    g_pDirect3D->GetAdapterIdentifier(v, D3DENUM_NO_WHQL_LEVEL, &adapterIdentifier);
-					SendMessage(g_hDisplayAdapter, CB_ADDSTRING, 0, (LPARAM)adapterIdentifier.Description);
-#endif
                 }
             }
 
@@ -328,33 +301,9 @@ void RefreshDisplayAdapter()
 
     /*! generate list of device types */
     {
-#ifdef CXBX_USE_D3D11
    	   	// D3D11 always uses hardware acceleration - no HAL/REF distinction
    	   	SendMessage(g_hDirect3DDevice, CB_RESETCONTENT, 0, 0);
    	   	SendMessage(g_hDirect3DDevice, CB_ADDSTRING, 0, (LPARAM)"Direct3D HAL (Hardware Accelerated)");
-#else
-        /*! device types */
-        static const D3DDEVTYPE devType[2] = { D3DDEVTYPE_HAL, D3DDEVTYPE_REF };
-
-        /*! human readable device types */
-        static const char *szDevType[2] = { "Direct3D HAL (Hardware Accelerated)", "Direct3D REF (Software)" };
-
-        /*! clear device listbox */
-        SendMessage(g_hDirect3DDevice, CB_RESETCONTENT, 0, 0);
-
-        /*! step through devices types */
-        for(uint32_t d=0;d<2;d++)
-        {
-            D3DCAPS Caps;
-
-            /*! verify device is available */
-            if(g_pDirect3D->GetDeviceCaps(g_XBVideo.adapter, devType[d], &Caps) == D3D_OK)
-            {
-                /*! add device to list */
-                SendMessage(g_hDirect3DDevice, CB_ADDSTRING, 0, (LPARAM)szDevType[d]);
-            }
-        }
-#endif
     }
 
     /*! activate configured device */
@@ -393,7 +342,6 @@ void RefreshDirect3DDevice()
         {
    	   	   	SendMessage(g_hVideoResolution, CB_ADDSTRING, 0, (LPARAM)"Automatic (Xbox Default)");
 
-#ifdef CXBX_USE_D3D11
    	   	   	IDXGIAdapter1 *pAdapter;
    	   	   	if(SUCCEEDED(g_pDXGIFactory->EnumAdapters1(g_XBVideo.adapter, &pAdapter))) {
    	   	   	   	IDXGIOutput *pOutput;
@@ -433,68 +381,6 @@ void RefreshDirect3DDevice()
    	   	   	   	}
    	   	   	   	pAdapter->Release();
    	   	   	}
-#else
-            uint32_t dwAdapterModeCount = g_pDirect3D->GetAdapterModeCount(
-                g_XBVideo.adapter
-				, EMUFMT_X8R8G8B8
-			);
-
-            /*! enumerate through available adapter modes */
-            for(uint32_t v=0;v<dwAdapterModeCount;v++)
-            {
-                const char *szFormat = "<unknown>";
-
-                D3DDISPLAYMODE displayMode;
-
-                g_pDirect3D->EnumAdapterModes(
-					g_XBVideo.adapter,
-					EMUFMT_X8R8G8B8,
-					v,
-					&displayMode
-				);
-
-                switch(displayMode.Format)
-                {
-   	   	   	   	   	case EMUFMT_X1R5G5B5:
-                        szFormat = "16bit x1r5g5b5";
-                        break;
-   	   	   	   	   	case EMUFMT_R5G6B5:
-                        szFormat = "16bit r5g6r5";
-                        break;
-   	   	   	   	   	case EMUFMT_X8R8G8B8:
-                        szFormat = "32bit x8r8g8b8";
-                        break;
-   	   	   	   	   	case EMUFMT_A8R8G8B8:
-                        szFormat = "32bit a8r8g8b8";
-                        break;
-                    default:
-                        szFormat = "Unknown";
-                        break;
-                };
-
-                /*! add display mode to list */
-                {
-                    char szBuffer[260];
-
-                    if(displayMode.RefreshRate == 0)
-                    {
-                        sprintf(szBuffer, "%d x %d %s", displayMode.Width, displayMode.Height, szFormat);
-                    }
-                    else
-                    {
-                        sprintf(szBuffer, "%d x %d %s (%d hz)", displayMode.Width, displayMode.Height, szFormat, displayMode.RefreshRate);
-                    }
-
-                    /*! if current mode is the configured video resolution, activate it in the list */
-                    if(strcmp(szBuffer, g_XBVideo.szVideoResolution) == 0)
-                    {
-                        dwVideoResolution = v+1;
-                    }
-
-                    SendMessage(g_hVideoResolution, CB_ADDSTRING, 0, (LPARAM)szBuffer);
-                }
-            }
-#endif
         }
 
 

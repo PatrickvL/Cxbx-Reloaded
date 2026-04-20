@@ -29,7 +29,6 @@
 #ifndef PATCHDRAW_H
 #define PATCHDRAW_H
 
-#ifdef CXBX_USE_D3D11
 
 #include "core\hle\D3D8\XbD3D8Types.h"
 
@@ -47,6 +46,5 @@ HRESULT CxbxDrawTriPatchD3D11(
 	const xbox::X_D3DTRIPATCH_INFO *pTriPatchInfo
 );
 
-#endif // CXBX_USE_D3D11
 
 #endif // PATCHDRAW_H

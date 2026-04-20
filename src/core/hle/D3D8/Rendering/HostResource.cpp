@@ -239,7 +239,7 @@ void PrunePaletizedTexturesCache()
 // Forward declaration (defined later in this file)
 static void EmuVerifyResourceIsRegistered(xbox::X_D3DResource *pResource, DWORD D3DUsage, int iTextureStage, DWORD dwSize);
 
-IDirect3DResource *GetHostResource(xbox::X_D3DResource *pXboxResource, DWORD D3DUsage = 0, int iTextureStage = -1)
+ID3D11Resource *GetHostResource(xbox::X_D3DResource *pXboxResource, DWORD D3DUsage = 0, int iTextureStage = -1)
 {
 	if (pXboxResource == xbox::zeroptr || pXboxResource->Data == xbox::zero)
 		return nullptr;
@@ -341,7 +341,7 @@ bool HostResourceRequiresUpdate(resource_key_t key, xbox::X_D3DResource* pXboxRe
 	return true;
 }
 
-void SetHostResource(xbox::X_D3DResource* pXboxResource, IDirect3DResource* pHostResource, int iTextureStage, DWORD D3DUsage, EMUFORMAT PCFormat)
+void SetHostResource(xbox::X_D3DResource* pXboxResource, ID3D11Resource* pHostResource, int iTextureStage, DWORD D3DUsage, DXGI_FORMAT PCFormat)
 {
 	auto key = GetHostResourceKey(pXboxResource, iTextureStage);
 	auto& ResourceCache = GetResourceCache(key);
@@ -379,7 +379,7 @@ void SetHostResource(xbox::X_D3DResource* pXboxResource, IDirect3DResource* pHos
 
 // Inline Set* functions are now in RenderGlobals.h
 
-IDirect3DSurface *GetHostSurface(xbox::X_D3DResource *pXboxResource, DWORD D3DUsage)
+ID3D11Texture2D *GetHostSurface(xbox::X_D3DResource *pXboxResource, DWORD D3DUsage)
 {
 	if (pXboxResource == xbox::zeroptr)
 		return nullptr;
@@ -387,10 +387,10 @@ IDirect3DSurface *GetHostSurface(xbox::X_D3DResource *pXboxResource, DWORD D3DUs
 	if (GetXboxCommonResourceType(pXboxResource) != X_D3DCOMMON_TYPE_SURFACE) // Allows breakpoint below
 		assert(GetXboxCommonResourceType(pXboxResource) == X_D3DCOMMON_TYPE_SURFACE);
 
-	return (IDirect3DSurface*) GetHostResource(pXboxResource, D3DUsage);
+	return (ID3D11Texture2D*) GetHostResource(pXboxResource, D3DUsage);
 }
 
-IDirect3DBaseTexture *GetHostBaseTexture(xbox::X_D3DResource *pXboxResource, DWORD D3DUsage, int iTextureStage)
+ID3D11Resource *GetHostBaseTexture(xbox::X_D3DResource *pXboxResource, DWORD D3DUsage, int iTextureStage)
 {
 	if (pXboxResource == xbox::zeroptr)
 		return nullptr;
@@ -408,37 +408,37 @@ IDirect3DBaseTexture *GetHostBaseTexture(xbox::X_D3DResource *pXboxResource, DWO
 		//assert(GetXboxCommonResourceType(pXboxResource) == X_D3DCOMMON_TYPE_TEXTURE);
 	}
 
-	return (IDirect3DBaseTexture*)GetHostResource(pXboxResource, D3DUsage, iTextureStage);
+	return (ID3D11Resource*)GetHostResource(pXboxResource, D3DUsage, iTextureStage);
 }
 
 #if 0 // unused
-IDirect3DTexture *GetHostTexture(xbox::X_D3DResource *pXboxResource, int iTextureStage = 0)
+ID3D11Texture2D *GetHostTexture(xbox::X_D3DResource *pXboxResource, int iTextureStage = 0)
 {
 	if (pXboxResource == xbox::zeroptr)
 		return nullptr;
 
-	return (IDirect3DTexture *)GetHostBaseTexture(pXboxResource, 0, iTextureStage);
+	return (ID3D11Texture2D *)GetHostBaseTexture(pXboxResource, 0, iTextureStage);
 
 	// TODO : Check for 1 face (and 2 dimensions)?
 }
 #endif
 
-IDirect3DVolumeTexture *GetHostVolumeTexture(xbox::X_D3DResource *pXboxResource, int iTextureStage)
+ID3D11Texture3D *GetHostVolumeTexture(xbox::X_D3DResource *pXboxResource, int iTextureStage)
 {
-	return (IDirect3DVolumeTexture *)GetHostBaseTexture(pXboxResource, 0, iTextureStage);
+	return (ID3D11Texture3D *)GetHostBaseTexture(pXboxResource, 0, iTextureStage);
 
 	// TODO : Check for 1 face (and 2 dimensions)?
 }
 
 #if 0 // unused
-IDirect3DIndexBuffer *GetHostIndexBuffer(xbox::X_D3DResource *pXboxResource)
+ID3D11Buffer *GetHostIndexBuffer(xbox::X_D3DResource *pXboxResource)
 {
 	if (pXboxResource == xbox::zeroptr)
 		return nullptr;
 
 	assert(GetXboxCommonResourceType(pXboxResource) == X_D3DCOMMON_TYPE_INDEXBUFFER);
 
-	return (IDirect3DIndexBuffer*)GetHostResource(pXboxResource);
+	return (ID3D11Buffer*)GetHostResource(pXboxResource);
 }
 #endif
 
@@ -466,7 +466,7 @@ xbox::X_D3DPALETTESIZE GetXboxPaletteSize(const xbox::X_D3DPalette *pPalette)
 	return PaletteSize;
 }
 
-int GetD3DResourceRefCount(IDirect3DResource *EmuResource)
+int GetD3DResourceRefCount(ID3D11Resource *EmuResource)
 {
 	if (EmuResource != nullptr)
 	{
@@ -548,7 +548,7 @@ uint32_t GetPixelContainerHeight(xbox::X_D3DPixelContainer *pPixelContainer)
 	return Result;
 }
 
-void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D3DBaseTexture* pTexture, UINT& Level, _9_11(D3DCUBEMAP_FACES, int)& Face)
+void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D3DBaseTexture* pTexture, UINT& Level, int& Face)
 {
    	auto pSurfaceData = (uintptr_t)GetDataFromXboxResource(pSurface);
    	auto pTextureData = (uintptr_t)GetDataFromXboxResource(pTexture);
@@ -556,7 +556,7 @@ void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D
    	// Fast path: If the data pointers match, this must be the first surface within the texture
    	if (pSurfaceData == pTextureData) {
    	   	Level = 0;
-   	   	Face = _9_11(D3DCUBEMAP_FACE_POSITIVE_X, 0);
+   	   	Face = 0;
    	   	return;
    	}
 
@@ -578,7 +578,7 @@ void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D
    	int cubeFaceOffset = 0; int cubeFaceSize = 0;
    	auto pData = pTextureData;
 
-   	for (int face = _9_11(D3DCUBEMAP_FACE_POSITIVE_X, 0); face < numFaces; face++) {
+   	for (int face = 0; face < numFaces; face++) {
    	   	int mipWidth = textureWidth;
    	   	int mipHeight = textureHeight;
    	   	int mipDepth = textureDepth;
@@ -588,7 +588,7 @@ void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D
    	   	for (int level = 0; level < numLevels; level++) {
    	   	   	if (pData + mipDataOffset == pSurfaceData) {
    	   	   	   	Level = level;
-   	   	   	   	Face = (_9_11(D3DCUBEMAP_FACES, int))face;
+   	   	   	   	Face = (int)face;
    	   	   	   	return;
    	   	   	}
 
@@ -599,7 +599,7 @@ void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D
    	   	   	}
 
    	   	   	// If this is the first face, set the cube face size
-   	   	   	if (face == _9_11(D3DCUBEMAP_FACE_POSITIVE_X, 0)) {
+   	   	   	if (face == 0) {
    	   	   	   	cubeFaceSize = ROUND_UP(textureDepth * dwMipSize, X_D3DTEXTURE_CUBEFACE_ALIGNMENT);
    	   	   	}
 
@@ -626,13 +626,13 @@ void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D
 
    	LOG_TEST_CASE("Could not find Surface within Texture, falling back to Level = 0, Face = D3DCUBEMAP_FACE_POSITIVE_X");
    	Level = 0;
-   	Face = _9_11(D3DCUBEMAP_FACE_POSITIVE_X, 0);
+   	Face = 0;
 }
 
 // Wrapper function to allow calling without passing a face
 void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D3DBaseTexture* pBaseTexture, UINT& Level)
 {
-   	_9_11(D3DCUBEMAP_FACES, int) face;
+   	int face;
    	GetSurfaceFaceAndLevelWithinTexture(pSurface, pBaseTexture, Level, face);
 }
 

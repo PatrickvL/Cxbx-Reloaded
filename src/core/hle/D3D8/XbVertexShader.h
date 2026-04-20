@@ -31,18 +31,13 @@
 
 #include "core\hle\D3D8\XbD3D8Types.h" // for X_VSH_MAX_ATTRIBUTES
 
-// Host vertex shader counts
-#define VSH_VS11_MAX_INSTRUCTION_COUNT 128
-#define VSH_VS2X_MAX_INSTRUCTION_COUNT 256
-#define VSH_VS30_MAX_INSTRUCTION_COUNT 512
-
 #define VSH_MAX_INTERMEDIATE_COUNT (X_VSH_MAX_INSTRUCTION_COUNT * 3) // The maximum number of shader function slots
 
 typedef struct _CxbxVertexShaderStreamElement
 {
 	UINT XboxType; // The stream element data type (xbox)
 	UINT XboxByteSize; // The stream element data size (xbox)
-	_9_11(BYTE, DXGI_FORMAT) HostDataType; // The stream element data type (pc)
+	DXGI_FORMAT HostDataType; // The stream element data type (pc)
 	UINT HostByteSize; // The stream element data size (pc)
 }
 CxbxVertexShaderStreamElement;
@@ -85,14 +80,13 @@ typedef struct _CxbxVertexDeclaration
 {
 	VertexDeclarationKey Key;
 	CxbxVertexShaderStreamInfo VertexStreams[X_VSH_MAX_STREAMS]; // Note : VertexStreams is indexed by a counter, NOT StreamIndex!
-	IDirect3DVertexDeclaration* pHostVertexDeclaration;
+	ID3D11InputLayout* pHostVertexDeclaration;
 	UINT NumberOfVertexStreams; // The number of streams the vertex shader uses
 	bool vRegisterInDeclaration[X_VSH_MAX_ATTRIBUTES];
-#ifdef CXBX_USE_D3D11
 	// For D3D11, we need to defer input layout creation until we have both
 	// the vertex elements AND compiled vertex shader bytecode.
 	// Store the element descriptors and count for lazy input layout creation.
-	D3DVERTEXELEMENT* pD3D11InputElements;  // Heap-allocated copy of D3D11_INPUT_ELEMENT_DESC[]
+	D3D11_INPUT_ELEMENT_DESC* pD3D11InputElements;  // Heap-allocated copy of D3D11_INPUT_ELEMENT_DESC[]
 	UINT D3D11InputElementCount;
 	// Tessellation auto-generation metadata (for PatchDraw CPU tessellation).
 	// Register indices are -1 when not requested by the vertex declaration.
@@ -100,7 +94,6 @@ typedef struct _CxbxVertexDeclaration
 	int autoNormalRegister;          // Target register for AUTONORMAL (surface normal)
 	int autoNormalSourceRegister;    // Source register to compute derivatives from
 	int autoTexcoordRegister;        // Target register for AUTOTEXCOORD (parametric UV)
-#endif
 }
 CxbxVertexDeclaration;
 
@@ -267,10 +260,8 @@ extern bool g_Xbox_VertexShader_IsFixedFunction;
 extern CxbxVertexDeclaration* CxbxGetVertexDeclaration();
 extern xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS];
 extern xbox::X_STREAMINPUT& GetXboxVertexStreamInput(unsigned XboxStreamNumber);
-#ifdef CXBX_USE_D3D11
 extern ID3DBlob* CxbxGetActiveVertexShaderBytecode();
 extern ID3DBlob* CxbxGetFixedFunctionVertexShaderBytecode();
-#endif
 
 extern void CxbxImpl_SetScreenSpaceOffset(float x, float y);
 extern void CxbxImpl_LoadVertexShaderProgram(CONST DWORD* pFunction, DWORD Address);

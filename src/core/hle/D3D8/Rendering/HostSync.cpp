@@ -30,16 +30,14 @@ void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
-#ifdef CXBX_USE_D3D11
 	// Per-stage SRV cache: avoids recreating SRVs every frame for the same resource
 	static ID3D11Resource*           s_CachedResource[xbox::X_D3DTS_STAGECOUNT] = {};
 	static ID3D11ShaderResourceView* s_CachedSRV[xbox::X_D3DTS_STAGECOUNT] = {};
-#endif
 
 	// Set the host texture for each stage
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
-		IDirect3DBaseTexture* pHostBaseTexture = nullptr;
+		ID3D11Resource* pHostBaseTexture = nullptr;
 		bool bNeedRelease = false;
 		if (pXboxBaseTexture != xbox::zeroptr) {
 			DWORD XboxResourceType = GetXboxCommonResourceType(pXboxBaseTexture);
@@ -70,7 +68,6 @@ void CxbxUpdateHostTextures()
 			}
 		}
 
-#ifdef CXBX_USE_D3D11
 		if (pHostBaseTexture != nullptr) {
 			// Reuse cached SRV if the underlying resource hasn't changed
 			if (s_CachedResource[stage] == pHostBaseTexture && s_CachedSRV[stage] != nullptr) {
@@ -138,10 +135,6 @@ void CxbxUpdateHostTextures()
 			ID3D11ShaderResourceView* pNullSRV = nullptr;
 			g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pNullSRV);
 		}
-#else
-		HRESULT hRet = g_pD3DDevice->SetTexture(stage, pHostBaseTexture);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->SetTexture");
-#endif
 		if (bNeedRelease) {
 			pHostBaseTexture->Release();
 		}
@@ -356,13 +349,13 @@ void CxbxUpdateHostViewport() {
 
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
 		// Set viewport
-		D3DVIEWPORT hostViewport;
-		hostViewport._9_11(X, TopLeftX) = g_Xbox_Viewport.X * Xscale;
-		hostViewport._9_11(Y, TopLeftY) = g_Xbox_Viewport.Y * Yscale;
+		D3D11_VIEWPORT hostViewport;
+		hostViewport.TopLeftX = g_Xbox_Viewport.X * Xscale;
+		hostViewport.TopLeftY = g_Xbox_Viewport.Y * Yscale;
 		hostViewport.Width = g_Xbox_Viewport.Width * Xscale;
 		hostViewport.Height = g_Xbox_Viewport.Height * Yscale;
-		hostViewport._9_11(MinZ, MinDepth) = g_Xbox_Viewport.MinZ; // ?? * Zscale;
-		hostViewport._9_11(MaxZ, MaxDepth) = g_Xbox_Viewport.MaxZ; // ?? * Zscale;
+		hostViewport.MinDepth = g_Xbox_Viewport.MinZ; // ?? * Zscale;
+		hostViewport.MaxDepth = g_Xbox_Viewport.MaxZ; // ?? * Zscale;
 		CxbxSetViewport(&hostViewport);
 
 		// Reset scissor rect
@@ -380,24 +373,20 @@ void CxbxUpdateHostViewport() {
 		// with the currently set viewport
 		// Test case: ???
 
-		D3DVIEWPORT hostViewport;
-		hostViewport._9_11(X, TopLeftX) = 0;
-		hostViewport._9_11(Y, TopLeftY) = 0;
+		D3D11_VIEWPORT hostViewport;
+		hostViewport.TopLeftX = 0;
+		hostViewport.TopLeftY = 0;
 		hostViewport.Width = static_cast<float>(HostRenderTarget_Width);
 		hostViewport.Height = static_cast<float>(HostRenderTarget_Height);
-		hostViewport._9_11(MinZ, MinDepth) = 0.0f;
-		hostViewport._9_11(MaxZ, MaxDepth) = 1.0f;
+		hostViewport.MinDepth = 0.0f;
+		hostViewport.MaxDepth = 1.0f;
 
 		CxbxSetViewport(&hostViewport);
 
 		// We still need to clip to the viewport
 		// Scissor to viewport
-#ifdef CXBX_USE_D3D11
 		g_D3D11RasterizerDesc.ScissorEnable = TRUE;
 		g_bD3D11RasterizerStateDirty = true;
-#else
-		g_pD3DDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
-#endif
 		RECT viewportRect;
 		viewportRect.left = static_cast<LONG>(g_Xbox_Viewport.X * Xscale);
 		viewportRect.top = static_cast<LONG>(g_Xbox_Viewport.Y * Yscale);
@@ -438,7 +427,6 @@ void CxbxUpdateNativeD3DResources()
    	   	CxbxUpdateActivePixelShader();
    	}
 
-#ifdef CXBX_USE_D3D11
 	// Refresh the zero-stride vertex defaults buffer with current NV2A sticky
 	// attribute values before every draw, not just on vertex declaration changes.
 	// This ensures non-streamed attributes (e.g. texcoords not in the vertex
@@ -447,7 +435,6 @@ void CxbxUpdateNativeD3DResources()
 
 	// Apply any pending D3D11 state object changes before drawing
 	CxbxD3D11ApplyDirtyStates();
-#endif
 
 
 /* TODO : Port these :
@@ -489,14 +476,9 @@ bool CxbxFlushHostGPU()
 	CxbxQueryIssueEnd(g_pHostQueryWaitForIdle);
 
 	// Empty the command buffer and wait until host GPU is idle.
-#ifdef CXBX_USE_D3D11
 	BOOL queryData = FALSE;
 	while (CxbxQueryGetData(g_pHostQueryWaitForIdle, &queryData, sizeof(queryData), 0) == S_FALSE)
 		CxbxCPUIdleWait();
-#else
-	while (S_FALSE == CxbxQueryGetData(g_pHostQueryWaitForIdle, nullptr, 0, D3DGETDATA_FLUSH))
-		CxbxCPUIdleWait();
-#endif
 
 	// Signal caller that host GPU has been flushed
 	return true;
@@ -512,12 +494,8 @@ void CxbxHandleXboxCallbacks()
 	// The following can only work when host GPU queries are available
 	if (g_pHostQueryCallbackEvent != nullptr) {
 		// Query whether host GPU encountered a callback event already
-#ifdef CXBX_USE_D3D11
 		BOOL queryData = FALSE;
 		if (S_FALSE == CxbxQueryGetData(g_pHostQueryCallbackEvent, &queryData, sizeof(queryData), 0)) {
-#else
-		if (S_FALSE == CxbxQueryGetData(g_pHostQueryCallbackEvent, nullptr, 0, 0)) {
-#endif
 			// If not, don't handle callbacks
 			return;
 		}

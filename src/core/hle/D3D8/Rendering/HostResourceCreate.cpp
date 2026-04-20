@@ -32,24 +32,13 @@ void UploadPixelContainerMips(
 	const char* ResourceTypeName,
 	VAddr VirtualAddr,
 	int iTextureStage,
-	xbox::X_D3DFORMAT X_Format, EMUFORMAT PCFormat, UINT dwBPP,
+	xbox::X_D3DFORMAT X_Format, DXGI_FORMAT PCFormat, UINT dwBPP,
 	UINT xboxWidth, UINT xboxHeight,
 	DWORD dwDepth, DWORD dwRowPitch, DWORD dwSlicePitch,
 	UINT dwMipMapLevels,
 	bool bCubemap, bool bSwizzled, bool bCompressed, bool bConvertTextureFormat,
-#ifdef CXBX_USE_D3D11
 	ComPtr<ID3D11Resource>& pNewHostResource,
 	bool bHostIsDynamic
-#else
-	ComPtr<IDirect3DSurface>& pNewHostSurface,
-	ComPtr<IDirect3DVolume>& pNewHostVolume,
-	ComPtr<IDirect3DTexture>& pNewHostTexture,
-	ComPtr<IDirect3DTexture>& pIntermediateHostTexture,
-	ComPtr<IDirect3DVolumeTexture>& pNewHostVolumeTexture,
-	ComPtr<IDirect3DVolumeTexture>& pIntermediateHostVolumeTexture,
-	ComPtr<IDirect3DCubeTexture>& pNewHostCubeTexture,
-	ComPtr<IDirect3DCubeTexture>& pIntermediateHostCubeTexture
-#endif
 );
 
 bool IsSupportedFormat(xbox::X_D3DFORMAT X_Format, xbox::X_D3DRESOURCETYPE XboxResourceType, DWORD D3DUsage) {
@@ -117,68 +106,19 @@ static bool TryResolveParentSurface(
 	// TODO : Investigate how it's possible (and how we could fix) the case when
 	// the following call to GetHostBaseTexture would reject non-texture resources,
 	// which would seem to trigger a "CreateCubeTexture Failed!" regression.
-#ifdef CXBX_USE_D3D11
 	// In D3D11, child surfaces are the same texture as the parent - subresource
 	// indices (computed from face + mip level) are used when creating views.
-	IDirect3DBaseTexture *pParentHostBaseTexture = GetHostBaseTexture(pParentXboxTexture, D3DUsage, iTextureStage);
+	ID3D11Resource *pParentHostBaseTexture = GetHostBaseTexture(pParentXboxTexture, D3DUsage, iTextureStage);
 	if (pParentHostBaseTexture) {
 		int CubeMapFace = 0;
 		UINT SurfaceLevel = 0;
 		GetSurfaceFaceAndLevelWithinTexture(pXboxSurface, pParentXboxTexture, SurfaceLevel, CubeMapFace);
-		SetHostSurface(pXboxSurface, (IDirect3DSurface *)pParentHostBaseTexture, iTextureStage);
+		SetHostSurface(pXboxSurface, (ID3D11Texture2D *)pParentHostBaseTexture, iTextureStage);
 		EmuLog(LOG_LEVEL::DEBUG, "TryResolveParentSurface : D3D11 mapped child surface to parent texture (Face: %u, Level: %u, pResource: 0x%.08X)",
 			CubeMapFace, SurfaceLevel, pResource);
 		return true;
 	}
 	EmuLog(LOG_LEVEL::WARNING, "TryResolveParentSurface : D3D11 failed to get parent host texture - falling through");
-#else
-	IDirect3DBaseTexture *pParentHostBaseTexture = GetHostBaseTexture(pParentXboxTexture, D3DUsage, iTextureStage);
-	ComPtr<IDirect3DSurface> pNewHostSurface;
-	switch (pParentHostBaseTexture->GetType()) {
-	case D3DRTYPE_VOLUMETEXTURE: {
-		LOG_TEST_CASE("Using child surface of VolumeTexture");
-		// TODO
-		break;
-	}
-	case D3DRTYPE_CUBETEXTURE: {
-		// test-case : Burnout
-		auto pParentHostTexture = (IDirect3DCubeTexture*)pParentHostBaseTexture;
-
-		_9_11(D3DCUBEMAP_FACES, int) CubeMapFace = _9_11(D3DCUBEMAP_FACE_POSITIVE_X, 0);
-		UINT SurfaceLevel = 0;
-		GetSurfaceFaceAndLevelWithinTexture(pXboxSurface, pParentXboxTexture, SurfaceLevel, CubeMapFace);
-
-		HRESULT hRet = pParentHostTexture->GetCubeMapSurface(CubeMapFace, SurfaceLevel, pNewHostSurface.GetAddressOf());
-
-		DEBUG_D3DRESULT(hRet, "pHostParentTexture->GetCubeMapSurface");
-		if (hRet == D3D_OK) {
-			SetHostResource(pXboxSurface, (IDirect3DResource*)pNewHostSurface.Get(), iTextureStage, D3DUsage);
-			EmuLog(LOG_LEVEL::DEBUG, "TryResolveParentSurface : Successfully created CubeTexture surface level (Face: %u, Level: %u, pResource: 0x%.08X, pNewHostSurface: 0x%.08X)",
-				CubeMapFace, SurfaceLevel, pResource, pNewHostSurface.Get());
-			return true;
-		}
-		break;
-	}
-	case D3DRTYPE_TEXTURE: {
-		IDirect3DTexture* pParentHostTexture = (IDirect3DTexture*)pParentHostBaseTexture;
-
-		UINT SurfaceLevel = 0;
-		GetSurfaceFaceAndLevelWithinTexture(pXboxSurface, pParentXboxTexture, SurfaceLevel);
-		HRESULT hRet = pParentHostTexture->GetSurfaceLevel(SurfaceLevel, pNewHostSurface.GetAddressOf());
-
-		DEBUG_D3DRESULT(hRet, "pHostParentTexture->GetSurfaceLevel");
-		if (hRet == D3D_OK) {
-			SetHostResource(pResource, (IDirect3DResource*)pNewHostSurface.Get(), iTextureStage, D3DUsage);
-			EmuLog(LOG_LEVEL::DEBUG, "TryResolveParentSurface : Successfully created Texture surface level (Level: %u, pResource: 0x%.08X, pNewHostSurface: 0x%.08X)",
-				SurfaceLevel, pResource, pNewHostSurface.Get());
-			return true;
-		}
-		break;
-	}
-	}
-
-	EmuLog(LOG_LEVEL::WARNING, "Failed getting host surface level - falling through to regular surface creation");
-#endif // !CXBX_USE_D3D11
 	return false;
 }
 
@@ -195,44 +135,28 @@ static bool TryResolveParentVolume(
 	if (!pParentXboxVolumeTexture)
 		return false;
 
-#ifdef CXBX_USE_D3D11
-	IDirect3DVolumeTexture *pParentHostVolumeTexture = GetHostVolumeTexture(pParentXboxVolumeTexture, iTextureStage);
+	ID3D11Texture3D *pParentHostVolumeTexture = GetHostVolumeTexture(pParentXboxVolumeTexture, iTextureStage);
 	if (pParentHostVolumeTexture) {
-		SetHostVolume(pXboxVolume, (IDirect3DVolume *)pParentHostVolumeTexture, iTextureStage);
+		SetHostVolume(pXboxVolume, (ID3D11Texture3D *)pParentHostVolumeTexture, iTextureStage);
 		UINT VolumeLevel = 0; // TODO : Derive actual level based on pXboxVolume->Data delta to pParentXboxVolumeTexture->Data
 		EmuLog(LOG_LEVEL::DEBUG, "TryResolveParentVolume : D3D11 mapped child volume to parent texture (Level: %u, pResource: 0x%.08X)",
 			VolumeLevel, pResource);
 		return true;
 	}
 	EmuLog(LOG_LEVEL::WARNING, "TryResolveParentVolume : D3D11 failed to get parent host volume texture - falling through");
-#else
-	IDirect3DVolumeTexture *pParentHostVolumeTexture = GetHostVolumeTexture(pParentXboxVolumeTexture, iTextureStage);
-	UINT VolumeLevel = 0; // TODO : Derive actual level based on pXboxVolume->Data delta to pParentXboxVolumeTexture->Data
-	ComPtr<IDirect3DVolume> pNewHostVolume;
-	HRESULT hRet = pParentHostVolumeTexture->GetVolumeLevel(VolumeLevel, pNewHostVolume.GetAddressOf());
-	DEBUG_D3DRESULT(hRet, "pParentHostVolumeTexture->GetVolumeLevel");
-	if (hRet == D3D_OK) {
-		SetHostResource(pResource, (IDirect3DResource*)pNewHostVolume.Get(), iTextureStage, D3DUsage);
-		EmuLog(LOG_LEVEL::DEBUG, "TryResolveParentVolume : Successfully created volume level (%u, 0x%.08X, 0x%.08X)",
-			VolumeLevel, pResource, pNewHostVolume.Get());
-		return true;
-	}
-
-	EmuLog(LOG_LEVEL::WARNING, "Failed getting host volume level - falling through to regular volume creation");
-#endif // !CXBX_USE_D3D11
 	return false;
 }
 
 // ---- Helper: Determine the host format for an Xbox pixel format ----
 // Sets bConvertTextureFormat and may clear D3DUSAGE_DEPTHSTENCIL from D3DUsage
-static EMUFORMAT ResolveHostFormat(
+static DXGI_FORMAT ResolveHostFormat(
 	xbox::X_D3DFORMAT X_Format,
 	xbox::X_D3DRESOURCETYPE XboxResourceType,
 	DWORD& D3DUsage,
 	const char* ResourceTypeName,
 	bool& bConvertTextureFormat)
 {
-	EMUFORMAT PCFormat;
+	DXGI_FORMAT PCFormat;
 	bConvertTextureFormat = false;
 
 	if (EmuXBFormatRequiresConversion(X_Format, /*&*/PCFormat)) {
@@ -242,7 +166,6 @@ static EMUFORMAT ResolveHostFormat(
 		// Fixes CreateTexture error in Virtua Cop 3 (Chihiro)
 		D3DUsage &= ~D3DUSAGE_DEPTHSTENCIL;
 
-#ifdef CXBX_USE_D3D11
 		// D3D11: For 32-bit formats that differ only in channel order,
 		// skip CPU conversion and upload raw bytes as R8G8B8A8_UNORM.
 		// The pixel shader applies the correct channel swizzle via TEXFMTFIXUP.
@@ -258,7 +181,6 @@ static EMUFORMAT ResolveHostFormat(
 				PCFormat = EMUFMT_A8B8G8R8; // = DXGI_FORMAT_R8G8B8A8_UNORM (raw byte upload, PS swizzles via TEXFMTFIXUP)
 			}
 		}
-#endif
 	}
 	else {
 		if (IsSupportedFormat(X_Format, XboxResourceType, D3DUsage)) {
@@ -286,22 +208,11 @@ static EMUFORMAT ResolveHostFormat(
 static HRESULT CreateGpuPixelContainerResource(
 	xbox::X_D3DRESOURCETYPE XboxResourceType,
 	UINT hostWidth, UINT hostHeight, DWORD dwDepth, UINT dwMipMapLevels,
-	EMUFORMAT& PCFormat,
-	DWORD& D3DUsage, D3DPOOL D3DPool,
+	DXGI_FORMAT& PCFormat,
+	DWORD& D3DUsage,
 	bool bSwizzled, bool& bConvertTextureFormat, xbox::X_D3DFORMAT X_Format,
 	xbox::X_D3DResource* pResource, const char* ResourceTypeName, int iTextureStage,
-#ifdef CXBX_USE_D3D11
 	ComPtr<ID3D11Resource>& pNewHostResource, bool& bHostIsDynamic
-#else
-	ComPtr<IDirect3DSurface>& pNewHostSurface,
-	ComPtr<IDirect3DVolume>& pNewHostVolume,
-	ComPtr<IDirect3DTexture>& pNewHostTexture,
-	ComPtr<IDirect3DTexture>& pIntermediateHostTexture,
-	ComPtr<IDirect3DVolumeTexture>& pNewHostVolumeTexture,
-	ComPtr<IDirect3DVolumeTexture>& pIntermediateHostVolumeTexture,
-	ComPtr<IDirect3DCubeTexture>& pNewHostCubeTexture,
-	ComPtr<IDirect3DCubeTexture>& pIntermediateHostCubeTexture
-#endif
 )
 {
 	LOG_INIT;
@@ -310,7 +221,6 @@ static HRESULT CreateGpuPixelContainerResource(
 	// Create the surface/volume/(volume/cube/)texture
 	switch (XboxResourceType) {
 	case xbox::X_D3DRTYPE_SURFACE: {
-#ifdef CXBX_USE_D3D11
 		D3D11_TEXTURE2D_DESC desc;
 		desc.Width = hostWidth;
 		desc.Height = hostHeight;
@@ -336,53 +246,6 @@ static HRESULT CreateGpuPixelContainerResource(
 
 		hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
-#else
-		if (D3DUsage & D3DUSAGE_DEPTHSTENCIL) {
-			hRet = g_pD3DDevice->CreateDepthStencilSurface(hostWidth, hostHeight, PCFormat,
-				g_EmuCDPD.HostPresentationParameters.MultiSampleType,
-				0, // MultisampleQuality
-				false, // Discard
-				pNewHostSurface.GetAddressOf(),
-				nullptr // pSharedHandle
-			);
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateDepthStencilSurface");
-		}
-		else {
-			// Note : This handles both (D3DUsage & D3DUSAGE_RENDERTARGET) and otherwise alike
-			D3DUsage = D3DUSAGE_RENDERTARGET; // Usage always as render target
-			hRet = g_pD3DDevice->CreateTexture(hostWidth, hostHeight,
-				1, // Levels
-				D3DUsage,
-				PCFormat,
-				D3DPool, // D3DPOOL_DEFAULT
-				pNewHostTexture.GetAddressOf(),
-				nullptr // pSharedHandle
-			);
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture");
-
-			if (hRet == D3D_OK) {
-				HRESULT hRet2 = pNewHostTexture->GetSurfaceLevel(0, pNewHostSurface.GetAddressOf());
-				DEBUG_D3DRESULT(hRet2, "pNewHostTexture->pNewHostSurface");
-				pNewHostTexture.Reset();
-   	   	   	}
-		}
-
-		// First fail, retry with a fallback format
-		// If this succeeds, the surface may not render correctly, but it won't crash
-		if (hRet != D3D_OK) {
-			if (D3DUsage & D3DUSAGE_DEPTHSTENCIL) {
-				EmuLog(LOG_LEVEL::WARNING, "CreateDepthStencilSurface Failed\n\nError: %s\nDesc: %s",
-					DXGetErrorString(hRet), DXGetErrorDescription(hRet));
-			}
-			else {
-				EmuLog(LOG_LEVEL::WARNING, "CreateTexture Failed\n\nError: %s\nDesc: %s",
-					DXGetErrorString(hRet), DXGetErrorDescription(hRet));
-			}
-
-			EmuLog(LOG_LEVEL::WARNING, "Trying Fallback");
-			hRet = g_pD3DDevice->CreateOffscreenPlainSurface(hostWidth, hostHeight, PCFormat, D3DPool, pNewHostSurface.GetAddressOf(), nullptr);
-		}
-#endif
 		// If the fallback failed, show an error and exit execution.
 		if (hRet != D3D_OK) {
 			// We cannot safely continue in this state.
@@ -390,22 +253,15 @@ static HRESULT CreateGpuPixelContainerResource(
 				DXGetErrorString(hRet), DXGetErrorDescription(hRet));
 		}
 
-#ifdef CXBX_USE_D3D11
 		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
 			ResourceTypeName, pResource, pNewHostResource.Get());
-#else
-		SetHostSurface(pResource, pNewHostSurface.Get(), iTextureStage);
-		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
-			ResourceTypeName, pResource, pNewHostSurface.Get());
-#endif
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Width : %d, Height : %d, Format : %d",
 			hostWidth, hostHeight, PCFormat);
 		break;
 	}
 
 	case xbox::X_D3DRTYPE_VOLUME: {
-#ifdef CXBX_USE_D3D11
 		// In D3D11, a standalone volume (no parent VolumeTexture) is backed by
 		// a single-depth Texture3D. This is rare but can occur if a game creates
 		// a volume resource directly.
@@ -427,21 +283,13 @@ static HRESULT CreateGpuPixelContainerResource(
 			CxbxrAbort("CreateTexture3D (standalone volume) Failed!\n\n"
 				"Error: 0x%X\nFormat: %d\nDimensions: %dx%dx%d", hRet, PCFormat, hostWidth, hostHeight, desc.Depth);
 		}
-		SetHostVolume(pResource, (IDirect3DVolume *)pNewHostResource.Get(), iTextureStage);
+		SetHostVolume(pResource, (ID3D11Texture3D *)pNewHostResource.Get(), iTextureStage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created standalone Volume (0x%.08X, 0x%.08X)",
 			pResource, pNewHostResource.Get());
-#else
-		LOG_UNIMPLEMENTED();
-		// Note : Host D3D can only(?) retrieve a volume like this :
-		// hRet = pNewHostVolumeTexture->GetVolumeLevel(level, pNewHostVolume.GetAddressOf());
-		// So, we need to do this differently - we need to step up to the containing VolumeTexture,
-		// and retrieve and convert all of it's GetVolumeLevel() slices.
-#endif
 		break;
 	}
 
 	case xbox::X_D3DRTYPE_TEXTURE: {
-#ifdef CXBX_USE_D3D11
 		D3D11_TEXTURE2D_DESC desc;
 		desc.Width = hostWidth;
 		desc.Height = hostHeight;
@@ -504,28 +352,13 @@ static HRESULT CreateGpuPixelContainerResource(
 
 		hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
-#else
-		hRet = g_pD3DDevice->CreateTexture(hostWidth, hostHeight, dwMipMapLevels,
-			D3DUsage, PCFormat, D3DPool, pNewHostTexture.GetAddressOf(),
-			nullptr
-		);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture");
-#endif
 
 		// If the above failed, we might be able to use an ARGB texture instead
-		EMUFORMAT TmpPCFormat;
+		DXGI_FORMAT TmpPCFormat;
 		if ((hRet != D3D_OK) && (PCFormat != EMUFMT_A8R8G8B8) && EmuXBFormatCanBeConverted(X_Format, TmpPCFormat)) {
-#ifdef CXBX_USE_D3D11
 			desc.Format = TmpPCFormat;
 			hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
-#else
-			hRet = g_pD3DDevice->CreateTexture(hostWidth, hostHeight, dwMipMapLevels,
-				D3DUsage, TmpPCFormat, D3DPool, pNewHostTexture.GetAddressOf(),
-				nullptr
-			);
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture(EMUFMT_A8R8G8B8)");
-#endif
 			if (hRet == D3D_OK) {
 				// Okay, now this works, make sure the texture gets converted
 				bConvertTextureFormat = true;
@@ -533,7 +366,6 @@ static HRESULT CreateGpuPixelContainerResource(
 			}
 		}
 
-#ifdef CXBX_USE_D3D11
 		if (hRet != D3D_OK) {
 			CxbxrAbort("CreateTexture2D Failed!\n\n"
 				"Error: 0x%X\nFormat: %d\nDimensions: %dx%d", hRet, PCFormat, hostWidth, hostHeight);
@@ -541,28 +373,10 @@ static HRESULT CreateGpuPixelContainerResource(
 		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
 			ResourceTypeName, pResource, pNewHostResource.Get());
-#else
-   	   	// Now create our intermediate texture for UpdateTexture, but not for render targets or depth stencils
-   	   	if (hRet == D3D_OK && (D3DUsage & D3DUSAGE_RENDERTARGET) == 0 && (D3DUsage & D3DUSAGE_DEPTHSTENCIL) == 0) {
-   	   	   	hRet = g_pD3DDevice->CreateTexture(hostWidth, hostHeight, dwMipMapLevels,
-   	   	   	   	0, PCFormat, D3DPOOL_SYSTEMMEM, pIntermediateHostTexture.GetAddressOf(),
-   	   	   	   	nullptr
-   	   	   	);
-   	   	}
-
-		if (hRet != D3D_OK) {
-			CxbxrAbort("CreateTexture Failed!\n\n"
-				"Error: 0x%X\nFormat: %d\nDimensions: %dx%d", hRet, PCFormat, hostWidth, hostHeight);
-		}
-		SetHostTexture(pResource, pNewHostTexture.Get(), iTextureStage);
-		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
-			ResourceTypeName, pResource, pNewHostTexture.Get());
-#endif
 		break;
 	}
 
 	case xbox::X_D3DRTYPE_VOLUMETEXTURE: {
-#ifdef CXBX_USE_D3D11
 		D3D11_TEXTURE3D_DESC desc;
 		desc.Width = hostWidth;
 		desc.Height = hostHeight;
@@ -591,37 +405,13 @@ static HRESULT CreateGpuPixelContainerResource(
 		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
 			ResourceTypeName, pResource, pNewHostResource.Get());
-#else
-		hRet = g_pD3DDevice->CreateVolumeTexture(hostWidth, hostHeight, dwDepth,
-			dwMipMapLevels, D3DUsage, PCFormat, D3DPool, pNewHostVolumeTexture.GetAddressOf(),
-			nullptr
-		);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateVolumeTexture");
-
-   	   	// Now create our intermediate texture for UpdateTexture, but not for render targets or depth stencils
-   	   	if (hRet == D3D_OK && (D3DUsage & D3DUSAGE_RENDERTARGET) == 0 && (D3DUsage & D3DUSAGE_DEPTHSTENCIL) == 0) {
-   	   	   	hRet = g_pD3DDevice->CreateVolumeTexture(hostWidth, hostHeight, dwDepth,
-   	   	   	   	dwMipMapLevels, 0, PCFormat, D3DPOOL_SYSTEMMEM, pIntermediateHostVolumeTexture.GetAddressOf(),
-   	   	   	   	nullptr
-   	   	   	);
-   	   	}
-
-		if (hRet != D3D_OK) {
-			CxbxrAbort("CreateVolumeTexture Failed!\n\nError: %s\nDesc: %s",
-				DXGetErrorString(hRet), DXGetErrorDescription(hRet));
-		}
-		SetHostVolumeTexture(pResource, pNewHostVolumeTexture.Get(), iTextureStage);
-		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
-			ResourceTypeName, pResource, pNewHostVolumeTexture.Get());
-#endif
 		break;
 	}
 
 	case xbox::X_D3DRTYPE_CUBETEXTURE: {
-		EmuLog(LOG_LEVEL::DEBUG, "CreateCubeTexture(%d, %d, 0, %d, D3DPOOL_DEFAULT)", hostWidth,
+		EmuLog(LOG_LEVEL::DEBUG, "CreateCubeTexture(%d, %d, 0, %d)", hostWidth,
 			dwMipMapLevels, PCFormat);
 
-#ifdef CXBX_USE_D3D11
 		D3D11_TEXTURE2D_DESC desc;
 		desc.Width = hostWidth;
 		desc.Height = hostHeight;
@@ -639,36 +429,15 @@ static HRESULT CreateGpuPixelContainerResource(
 
 		hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
 		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
-#else
-		hRet = g_pD3DDevice->CreateCubeTexture(hostWidth, dwMipMapLevels, D3DUsage,
-			PCFormat, D3DPool, pNewHostCubeTexture.GetAddressOf(),
-			nullptr
-		);
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateCubeTexture");
-
-   	   	// Now create our intermediate texture for UpdateTexture, but not for render targets or depth stencils
-   	   	if (hRet == D3D_OK && (D3DUsage & D3DUSAGE_RENDERTARGET) == 0 && (D3DUsage & D3DUSAGE_DEPTHSTENCIL) == 0) {
-   	   	   	hRet = g_pD3DDevice->CreateCubeTexture(hostWidth, dwMipMapLevels, 0,
-   	   	   	   	PCFormat, D3DPOOL_SYSTEMMEM, pIntermediateHostCubeTexture.GetAddressOf(),
-   	   	   	   	nullptr
-   	   	   	);
-   	   	}
-#endif
 
 		if (hRet != D3D_OK) {
 			CxbxrAbort("CreateCubeTexture Failed!\n\nError: \nDesc: "/*,
 				DXGetErrorString(hRet), DXGetErrorDescription(hRet)*/);
 		}
 
-#ifdef CXBX_USE_D3D11
 		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
 			ResourceTypeName, pResource, pNewHostResource.Get());
-#else
-		SetHostCubeTexture(pResource, pNewHostCubeTexture.Get(), iTextureStage);
-		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
-			ResourceTypeName, pResource, pNewHostCubeTexture.Get());
-#endif
 		// TODO : Cube face surfaces can be used as a render-target,
 		// so we need to associate host surfaces to each surface of this cube texture
    	   	// However, we can't do it here: On Xbox, a new Surface is created on every call to
@@ -692,7 +461,6 @@ static void CreateHostPixelContainer(
 {
 	xbox::X_D3DPixelContainer *pPixelContainer = (xbox::X_D3DPixelContainer*)pResource;
 	xbox::X_D3DFORMAT X_Format = GetXboxPixelContainerFormat(pPixelContainer);
-	D3DPOOL D3DPool = D3DPOOL_DEFAULT; // TODO : Nuance D3DPOOL where/when needed
 
 	if (EmuXBFormatIsDepthBuffer(X_Format)) {
 		D3DUsage |= D3DUSAGE_DEPTHSTENCIL;
@@ -705,18 +473,7 @@ static void CreateHostPixelContainer(
 	}
 	// Determine the host format
 	bool bConvertTextureFormat;
-	EMUFORMAT PCFormat = ResolveHostFormat(X_Format, XboxResourceType, D3DUsage, ResourceTypeName, bConvertTextureFormat);
-
-	// Update D3DPool accordingly to the active D3DUsage flags
-	if (D3DUsage & D3DUSAGE_DEPTHSTENCIL) {
-		D3DPool = D3DPOOL_DEFAULT;
-	}
-	if (D3DUsage & D3DUSAGE_RENDERTARGET) {
-		D3DPool = D3DPOOL_DEFAULT;
-	}
-	if (D3DUsage & D3DUSAGE_DYNAMIC) {
-		D3DPool = D3DPOOL_DEFAULT;
-	}
+	DXGI_FORMAT PCFormat = ResolveHostFormat(X_Format, XboxResourceType, D3DUsage, ResourceTypeName, bConvertTextureFormat);
 
 	// Interpret Width/Height/BPP
 	bool bCubemap = pPixelContainer->Format & X_D3DFORMAT_CUBEMAP;
@@ -765,37 +522,17 @@ static void CreateHostPixelContainer(
 	}
 
 
-#ifdef CXBX_USE_D3D11
 	ComPtr<ID3D11Resource> pNewHostResource;
 	bool bHostIsDynamic = false;
-#else
-	// One of these will be created : each also has an intermediate copy to allow UpdateTexture to work
-   	// This means we don't need to lock the GPU resource anymore, so we can use D3DPOOL_DEFAULT to allow Stretch/CopyRects to work!
-	ComPtr<IDirect3DSurface> pNewHostSurface; // for X_D3DRTYPE_SURFACE
-	ComPtr<IDirect3DVolume> pNewHostVolume; // for X_D3DRTYPE_VOLUME
-	ComPtr<IDirect3DTexture> pNewHostTexture; // for X_D3DRTYPE_TEXTURE
-	ComPtr<IDirect3DTexture> pIntermediateHostTexture;
-	ComPtr<IDirect3DVolumeTexture> pNewHostVolumeTexture; // for X_D3DRTYPE_VOLUMETEXTURE
-	ComPtr<IDirect3DVolumeTexture> pIntermediateHostVolumeTexture;
-	ComPtr<IDirect3DCubeTexture> pNewHostCubeTexture; // for X_D3DRTYPE_CUBETEXTURE
-	ComPtr<IDirect3DCubeTexture> pIntermediateHostCubeTexture;
-#endif
 
 	CreateGpuPixelContainerResource(
 		XboxResourceType,
 		hostWidth, hostHeight, dwDepth, dwMipMapLevels,
 		PCFormat,
-		D3DUsage, D3DPool,
+		D3DUsage,
 		bSwizzled, bConvertTextureFormat, X_Format,
 		pResource, ResourceTypeName, iTextureStage,
-#ifdef CXBX_USE_D3D11
 		pNewHostResource, bHostIsDynamic
-#else
-		pNewHostSurface, pNewHostVolume,
-		pNewHostTexture, pIntermediateHostTexture,
-		pNewHostVolumeTexture, pIntermediateHostVolumeTexture,
-		pNewHostCubeTexture, pIntermediateHostCubeTexture
-#endif
 	);
 
    	// If this resource is a render target or depth stencil, don't attempt to lock/copy it as it won't work anyway
@@ -811,14 +548,7 @@ static void CreateHostPixelContainer(
 		dwDepth, dwRowPitch, dwSlicePitch,
 		dwMipMapLevels,
 		bCubemap, bSwizzled, bCompressed, bConvertTextureFormat,
-#ifdef CXBX_USE_D3D11
 		pNewHostResource, bHostIsDynamic
-#else
-		pNewHostSurface, pNewHostVolume,
-		pNewHostTexture, pIntermediateHostTexture,
-		pNewHostVolumeTexture, pIntermediateHostVolumeTexture,
-		pNewHostCubeTexture, pIntermediateHostCubeTexture
-#endif
 	);
 
 	// Debug resource dumping
@@ -851,9 +581,9 @@ static void CreateHostPixelContainer(
 		}
 		case xbox::X_D3DRTYPE_CUBETEXTURE: {
 			static int dwDumpCubeTexture = 0;
-			for (unsigned int face = _9_11(D3DCUBEMAP_FACE_POSITIVE_X, 0); face <= _9_11(D3DCUBEMAP_FACE_NEGATIVE_Z, 5); face++) {
-				IDirect3DSurface *pSurface;
-				if (D3D_OK == pNewHostCubeTexture->GetCubeMapSurface((_9_11(D3DCUBEMAP_FACES, int))face, 0, &pSurface)) {
+			for (unsigned int face = 0; face <= 5; face++) {
+				ID3D11Texture2D *pSurface;
+				if (D3D_OK == pNewHostCubeTexture->GetCubeMapSurface((int)face, 0, &pSurface)) {
 					sprintf(szFilePath, _DEBUG_DUMP_TEXTURE_REGISTER "%.03d-CubeTexure%.03d-%d.dds", X_Format, dwDumpCubeTexture, face);
 					D3DXSaveSurfaceToFileA(szFilePath, D3DXIFF_DDS, pSurface, nullptr, nullptr);
 					pSurface->Release();

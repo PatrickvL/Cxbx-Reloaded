@@ -40,32 +40,6 @@ extern const char* D3DErrorString(HRESULT hResult); // Implemented in RenderGlob
 	} while (0)
 
 // Additional types, exclusively for logging (not really enums) :
-#ifndef CXBX_USE_D3D11
-// D3D9-specific enum forward declarations and logging headers
-enum D3DVS20CAPS : int;
-enum D3DPS20CAPS : int;
-enum _D3DCAPS : int;
-enum D3DCAPS2 : int;
-enum D3DCAPS3 : int;
-enum D3DPRESENT_INTERVAL : int;
-enum D3DCURSORCAPS : int;
-enum D3DDEVCAPS : int;
-enum D3DPMISCCAPS : int;
-enum D3DLINECAPS : int;
-enum D3DPRASTERCAPS : int;
-enum D3DPCMPCAPS : int;
-enum D3DPBLENDCAPS : int;
-enum D3DPSHADECAPS : int;
-enum D3DPTEXTURECAPS : int;
-enum D3DPTFILTERCAPS : int;
-enum D3DPTADDRESSCAPS : int;
-enum D3DSTENCILCAPS : int;
-enum D3DTEXOPCAPS : int;
-enum D3DFVFCAPS : int;
-enum D3DVTXPCAPS : int;
-enum D3DDEVCAPS2 : int;
-enum D3DDTCAPS : int;
-#endif
 
 namespace xbox {
 
@@ -81,47 +55,8 @@ enum X_D3DRESOURCE_SIZE : int;
 // Headers for rendering host D3D enum types :
 //
 
-#ifndef CXBX_USE_D3D11
-// D3D9-specific logging headers
-FLAGS2STR_HEADER(D3DVS20CAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPS20CAPS) // Not really an enum
-ENUM2STR_HEADER(D3DDEVTYPE)
-FLAGS2STR_HEADER(_D3DCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DCAPS2) // Not really an enum
-FLAGS2STR_HEADER(D3DCAPS3) // Not really an enum
-FLAGS2STR_HEADER(D3DPRESENT_INTERVAL) // Not really an enum
-FLAGS2STR_HEADER(D3DCURSORCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DDEVCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPMISCCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DLINECAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPRASTERCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPCMPCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPBLENDCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPSHADECAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPTEXTURECAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPTFILTERCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DPTADDRESSCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DSTENCILCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DTEXOPCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DFVFCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DVTXPCAPS) // Not really an enum
-FLAGS2STR_HEADER(D3DDEVCAPS2) // Not really an enum
-FLAGS2STR_HEADER(D3DDTCAPS) // Not really an enum
-
-ENUM2STR_HEADER(D3DFORMAT)
-ENUM2STR_HEADER(D3DPOOL)
-
-//
-// Host D3D LOGRENDER_HEADER(Type) declarations
-//
-
-LOGRENDER_HEADER(D3DVSHADERCAPS2_0)
-LOGRENDER_HEADER(D3DPSHADERCAPS2_0)
-LOGRENDER_HEADER(D3DCAPS)
-#else
 // D3D11-specific logging headers
 ENUM2STR_HEADER(DXGI_FORMAT)
-#endif // !CXBX_USE_D3D11
 
 namespace xbox {
 

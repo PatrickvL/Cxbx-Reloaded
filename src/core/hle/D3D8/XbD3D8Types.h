@@ -25,7 +25,7 @@
 #define XBD3D8TYPES_H
 
 // Umbrella header — includes all XbD3D8Types sub-headers
-#include "XbD3D8Types_D3D9Compat.h"
+#include "XbD3D8Types_D3D11.h"
 #include "XbD3D8Types_Enums.h"
 #include "XbD3D8Types_Resources.h"
 

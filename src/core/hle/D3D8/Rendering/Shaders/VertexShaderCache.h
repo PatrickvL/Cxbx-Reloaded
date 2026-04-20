@@ -36,10 +36,8 @@ class VertexShaderCache {
 
 public:
 	ShaderKey CreateShader(const xbox::dword_xt* pXboxFunction, DWORD* pXboxFunctionSize);
-	IDirect3DVertexShader *GetShader(ShaderKey key);
-#ifdef CXBX_USE_D3D11
+	ID3D11VertexShader *GetShader(ShaderKey key);
 	ID3DBlob* GetShaderBytecode(ShaderKey key);
-#endif
 	void ReleaseShader(ShaderKey key);
 
 	void Clear();
@@ -51,10 +49,8 @@ private:
 	struct LazyVertexShader {
 		bool isReady = false;
 		std::future<ID3DBlob*> compileResult;
-		IDirect3DVertexShader* pHostVertexShader = nullptr;
-#ifdef CXBX_USE_D3D11
+		ID3D11VertexShader* pHostVertexShader = nullptr;
 		ID3DBlob* pBytecode = nullptr; // Kept alive for input layout creation
-#endif
 
 		// TODO when is it a good idea to releas eshaders?
 		int referenceCount = 0;
