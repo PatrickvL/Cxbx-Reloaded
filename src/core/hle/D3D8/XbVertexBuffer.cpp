@@ -784,6 +784,10 @@ void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	attribute_floats[2] = c;
 	attribute_floats[3] = d;
 
+#ifdef CXBX_USE_D3D11
+	g_bD3D11IABypassDefaultsDirty = true;
+#endif
+
 #ifndef CXBX_USE_D3D11
 	// D3D9: Write the given register value to a matching host vertex shader constant.
 	// This allows us to implement Xbox functionality where SetVertexData4f can be used to specify attributes
@@ -921,4 +925,8 @@ void CxbxImpl_SetStreamSource(UINT StreamNumber, xbox::X_D3DVertexBuffer* pStrea
 
 	g_Xbox_SetStreamSource[StreamNumber].VertexBuffer = pStreamData;
 	g_Xbox_SetStreamSource[StreamNumber].Stride = Stride;
+
+#ifdef CXBX_USE_D3D11
+	CxbxD3D11IABypassInvalidateLayout();
+#endif
 }

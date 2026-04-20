@@ -78,6 +78,17 @@ static ID3D11ShaderResourceView* s_pIdxDataSRV = nullptr;
 static ID3D11Buffer*             s_pLayoutCB = nullptr;     // Vertex layout CB (b1)
 static ID3D11Buffer*             s_pDefaultsCB = nullptr;   // Vertex defaults CB (b2)
 
+// Optimization: cached last-bound GPU pointers to skip redundant API calls
+static ID3D11ShaderResourceView* s_pLastBoundVtxSRV = nullptr;
+static ID3D11ShaderResourceView* s_pLastBoundIdxSRV = nullptr;
+static ID3D11Buffer*             s_pLastBoundLayoutCB = nullptr;
+static ID3D11Buffer*             s_pLastBoundDefaultsCB = nullptr;
+static bool                      s_IAAlreadyNull = false;   // IA null-binding elimination
+
+// Layout CB caching: generation counter bumped on state changes
+static UINT                      s_LayoutCBGeneration = 0;
+static UINT                      s_LastLayoutCBGeneration = UINT_MAX;
+
 // ******************************************************************
 // * Layout constant buffer structure (must match CxbxVertexLayoutCB in HLSL)
 // ******************************************************************
@@ -152,6 +163,20 @@ void CxbxD3D11IABypassRelease()
 
 	if (s_pLayoutCB)   { s_pLayoutCB->Release();   s_pLayoutCB = nullptr; }
 	if (s_pDefaultsCB) { s_pDefaultsCB->Release(); s_pDefaultsCB = nullptr; }
+
+	s_pLastBoundVtxSRV = nullptr;
+	s_pLastBoundIdxSRV = nullptr;
+	s_pLastBoundLayoutCB = nullptr;
+	s_pLastBoundDefaultsCB = nullptr;
+	s_IAAlreadyNull = false;
+	s_LayoutCBGeneration = 0;
+	s_LastLayoutCBGeneration = UINT_MAX;
+}
+
+// Called externally when SetStreamSource or SetVertexShader change
+void CxbxD3D11IABypassInvalidateLayout()
+{
+	s_LayoutCBGeneration++;
 }
 
 // ******************************************************************
@@ -177,9 +202,15 @@ static void EnsureIdxDataBuffer(UINT requiredSize)
 // ******************************************************************
 // * Upload vertex defaults (NV2A sticky attribute values) to CB b2
 // ******************************************************************
+// Dirty flag for vertex defaults — set by CxbxSetVertexAttribute, consumed here
+bool g_bD3D11IABypassDefaultsDirty = true;
+
 static void UploadVertexDefaults()
 {
 	if (!s_pDefaultsCB) return;
+	if (!g_bD3D11IABypassDefaultsDirty) return;
+
+	g_bD3D11IABypassDefaultsDirty = false;
 
 	D3D11_MAPPED_SUBRESOURCE mapped = {};
 	HRESULT hr = g_pD3DDeviceContext->Map(s_pDefaultsCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
@@ -362,8 +393,23 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	}
 
 	// ---------------------------------------------------------------
-	// Step 4: Fill layout constant buffer
+	// Step 4: Fill layout constant buffer (skip if generation unchanged)
 	// ---------------------------------------------------------------
+	// Bump generation for prim-type or index-mode changes (cheap inline check)
+	// The generation is also bumped externally by CxbxD3D11IABypassInvalidateLayout()
+	// for SetStreamSource / SetVertexShader changes.
+	{
+		// Build a local hash of fields that change per-draw but aren't covered by
+		// the external invalidation (prim type, indexed mode, vertex range)
+		UINT drawLocalKey = primType | (indexedDraw << 2) | (vertexStart << 8) | (numVertices << 20);
+		static UINT s_LastDrawLocalKey = UINT_MAX;
+		bool layoutDirty = (s_LayoutCBGeneration != s_LastLayoutCBGeneration)
+		                || (drawLocalKey != s_LastDrawLocalKey);
+		s_LastLayoutCBGeneration = s_LayoutCBGeneration;
+		s_LastDrawLocalKey = drawLocalKey;
+
+		if (!layoutDirty) goto skip_layout_upload;
+	}
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
@@ -458,9 +504,10 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 
 		g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
 	}
+skip_layout_upload:
 
 	// ---------------------------------------------------------------
-	// Step 5: Upload vertex defaults
+	// Step 5: Upload vertex defaults (skip if not dirty)
 	// ---------------------------------------------------------------
 	UploadVertexDefaults();
 
@@ -469,22 +516,34 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	// ---------------------------------------------------------------
 
 	// Unbind IA state — null input layout, null vertex/index buffers
-	g_pD3DDeviceContext->IASetInputLayout(nullptr);
-	ID3D11Buffer* nullBufs[17] = {};
-	UINT nullStrides[17] = {};
-	UINT nullOffsets[17] = {};
-	g_pD3DDeviceContext->IASetVertexBuffers(0, 17, nullBufs, nullStrides, nullOffsets);
-	g_pD3DDeviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_R16_UINT, 0);
+	// (skip if already nulled from a prior IA bypass draw)
+	if (!s_IAAlreadyNull) {
+		g_pD3DDeviceContext->IASetInputLayout(nullptr);
+		ID3D11Buffer* nullBufs[17] = {};
+		UINT nullStrides[17] = {};
+		UINT nullOffsets[17] = {};
+		g_pD3DDeviceContext->IASetVertexBuffers(0, 17, nullBufs, nullStrides, nullOffsets);
+		g_pD3DDeviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_R16_UINT, 0);
+		s_IAAlreadyNull = true;
+	}
 	g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
 
-	// Bind SRVs to VS: t0 = vertex data, t1 = index data
-	ID3D11ShaderResourceView* vsSRVs[2] = { s_pVtxDataSRV, s_pIdxDataSRV };
-	g_pD3DDeviceContext->VSSetShaderResources(0, 2, vsSRVs);
+	// Bind SRVs to VS: t0 = vertex data, t1 = index data (skip if unchanged)
+	if (s_pVtxDataSRV != s_pLastBoundVtxSRV || s_pIdxDataSRV != s_pLastBoundIdxSRV) {
+		ID3D11ShaderResourceView* vsSRVs[2] = { s_pVtxDataSRV, s_pIdxDataSRV };
+		g_pD3DDeviceContext->VSSetShaderResources(0, 2, vsSRVs);
+		s_pLastBoundVtxSRV = s_pVtxDataSRV;
+		s_pLastBoundIdxSRV = s_pIdxDataSRV;
+	}
 
-	// Bind CBs to VS: b1 = layout, b2 = defaults
+	// Bind CBs to VS: b1 = layout, b2 = defaults (skip if unchanged)
 	// (b0 is already bound for VS constants by CxbxD3D11FlushVertexShaderConstants)
-	ID3D11Buffer* vsCBs[2] = { s_pLayoutCB, s_pDefaultsCB };
-	g_pD3DDeviceContext->VSSetConstantBuffers(1, 2, vsCBs);
+	if (s_pLayoutCB != s_pLastBoundLayoutCB || s_pDefaultsCB != s_pLastBoundDefaultsCB) {
+		ID3D11Buffer* vsCBs[2] = { s_pLayoutCB, s_pDefaultsCB };
+		g_pD3DDeviceContext->VSSetConstantBuffers(1, 2, vsCBs);
+		s_pLastBoundLayoutCB = s_pLayoutCB;
+		s_pLastBoundDefaultsCB = s_pDefaultsCB;
+	}
 
 	// Bind thick line GS if needed (only for line primitives that aren't topology-converted)
 	if (primType == CXBX_PRIM_NORMAL) {

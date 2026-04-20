@@ -39,6 +39,9 @@
 #include "core\hle\D3D8\XbVertexBuffer.h" // For CxbxImpl_SetVertexData4f
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A, HLE_get_NV2A_vertex_constant_float4_ptr
+#ifdef CXBX_USE_D3D11
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
+#endif
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
 #include "devices\xbox.h"
 #include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST, NV2A_VP_UPLOAD_CONST_ID, NV2A_VP_UPLOAD_CONST
@@ -909,6 +912,10 @@ void SetFixedFunctionDefaultVertexAttributes(DWORD vshFlags) {
 void CxbxImpl_SetVertexShader(DWORD Handle)
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
+
+#ifdef CXBX_USE_D3D11
+	CxbxD3D11IABypassInvalidateLayout();
+#endif
 
 	// Checks if the Handle has bit 0 set - if not, it's a FVF
 	// which is converted to a global Xbox Vertex Shader struct
