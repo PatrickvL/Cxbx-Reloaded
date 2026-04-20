@@ -35,7 +35,6 @@
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // HLE_get_NV2A_vertex_attribute_value_pointer
-#include "../WalkIndexBuffer.h"
 
 // ******************************************************************
 // * Format mapping constants (must match CXBX_VTXFMT_* in CxbxVertexFetch.hlsli)
@@ -71,13 +70,16 @@
 // ******************************************************************
 // * Persistent GPU resources for IA bypass
 // ******************************************************************
-static ID3D11Buffer*             s_pVtxDataBuf = nullptr;   // ByteAddressBuffer for vertex data
-static UINT                      s_VtxDataBufSize = 0;
-static ID3D11ShaderResourceView* s_pVtxDataSRV = nullptr;
-static ID3D11ShaderResourceView* s_pVtxDataSRV_SNORM16x2 = nullptr; // R16G16_SNORM typed view
-static ID3D11ShaderResourceView* s_pVtxDataSRV_UNORM8x4 = nullptr;  // R8G8B8A8_UNORM typed view
+// UP draw staging buffer: only used for DrawPrimitiveUP / inline vertex data
+// where the source pointer is not in the 64 MiB contiguous mirror.
+static ID3D11Buffer*             s_pUPVtxDataBuf = nullptr;
+static UINT                      s_UPVtxDataBufSize = 0;
+static ID3D11ShaderResourceView* s_pUPVtxDataSRV = nullptr;
+static ID3D11ShaderResourceView* s_pUPVtxDataSRV_SNORM16x2 = nullptr;
+static ID3D11ShaderResourceView* s_pUPVtxDataSRV_UNORM8x4 = nullptr;
 
-static ID3D11Buffer*             s_pIdxDataBuf = nullptr;   // ByteAddressBuffer for index data
+// Index data staging buffer: only for indices not in contiguous memory (pushbuffer inline)
+static ID3D11Buffer*             s_pIdxDataBuf = nullptr;
 static UINT                      s_IdxDataBufSize = 0;
 static ID3D11ShaderResourceView* s_pIdxDataSRV = nullptr;
 
@@ -166,11 +168,11 @@ void CxbxD3D11IABypassInit()
 // ******************************************************************
 void CxbxD3D11IABypassRelease()
 {
-	if (s_pVtxDataSRV_UNORM8x4) { s_pVtxDataSRV_UNORM8x4->Release(); s_pVtxDataSRV_UNORM8x4 = nullptr; }
-	if (s_pVtxDataSRV_SNORM16x2) { s_pVtxDataSRV_SNORM16x2->Release(); s_pVtxDataSRV_SNORM16x2 = nullptr; }
-	if (s_pVtxDataSRV) { s_pVtxDataSRV->Release(); s_pVtxDataSRV = nullptr; }
-	if (s_pVtxDataBuf) { s_pVtxDataBuf->Release(); s_pVtxDataBuf = nullptr; }
-	s_VtxDataBufSize = 0;
+	if (s_pUPVtxDataSRV_UNORM8x4) { s_pUPVtxDataSRV_UNORM8x4->Release(); s_pUPVtxDataSRV_UNORM8x4 = nullptr; }
+	if (s_pUPVtxDataSRV_SNORM16x2) { s_pUPVtxDataSRV_SNORM16x2->Release(); s_pUPVtxDataSRV_SNORM16x2 = nullptr; }
+	if (s_pUPVtxDataSRV) { s_pUPVtxDataSRV->Release(); s_pUPVtxDataSRV = nullptr; }
+	if (s_pUPVtxDataBuf) { s_pUPVtxDataBuf->Release(); s_pUPVtxDataBuf = nullptr; }
+	s_UPVtxDataBufSize = 0;
 
 	if (s_pIdxDataSRV) { s_pIdxDataSRV->Release(); s_pIdxDataSRV = nullptr; }
 	if (s_pIdxDataBuf) { s_pIdxDataBuf->Release(); s_pIdxDataBuf = nullptr; }
@@ -197,30 +199,30 @@ void CxbxD3D11IABypassInvalidateLayout()
 }
 
 // ******************************************************************
-// * Ensure vertex data buffer is large enough
+// * Ensure UP vertex data buffer is large enough
 // ******************************************************************
-static void EnsureVtxDataBuffer(UINT requiredSize)
+static void EnsureUPVtxDataBuffer(UINT requiredSize)
 {
-	UINT oldSize = s_VtxDataBufSize;
+	UINT oldSize = s_UPVtxDataBufSize;
 	CxbxD3D11EnsureRawStagingBuffer(requiredSize,
-		&s_pVtxDataBuf, &s_VtxDataBufSize,
-		&s_pVtxDataSRV, "IABypass_VtxData");
+		&s_pUPVtxDataBuf, &s_UPVtxDataBufSize,
+		&s_pUPVtxDataSRV, "IABypass_UPVtxData");
 
 	// If the buffer was (re)created, also create typed SRV views for hardware format decode
-	if (s_VtxDataBufSize != oldSize && s_pVtxDataBuf) {
-		if (s_pVtxDataSRV_SNORM16x2) { s_pVtxDataSRV_SNORM16x2->Release(); s_pVtxDataSRV_SNORM16x2 = nullptr; }
-		if (s_pVtxDataSRV_UNORM8x4)  { s_pVtxDataSRV_UNORM8x4->Release();  s_pVtxDataSRV_UNORM8x4 = nullptr; }
+	if (s_UPVtxDataBufSize != oldSize && s_pUPVtxDataBuf) {
+		if (s_pUPVtxDataSRV_SNORM16x2) { s_pUPVtxDataSRV_SNORM16x2->Release(); s_pUPVtxDataSRV_SNORM16x2 = nullptr; }
+		if (s_pUPVtxDataSRV_UNORM8x4)  { s_pUPVtxDataSRV_UNORM8x4->Release();  s_pUPVtxDataSRV_UNORM8x4 = nullptr; }
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC typedDesc = {};
 		typedDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		typedDesc.Buffer.FirstElement = 0;
-		typedDesc.Buffer.NumElements = s_VtxDataBufSize / 4;
+		typedDesc.Buffer.NumElements = s_UPVtxDataBufSize / 4;
 
 		typedDesc.Format = DXGI_FORMAT_R16G16_SNORM;
-		g_pD3DDevice->CreateShaderResourceView(s_pVtxDataBuf, &typedDesc, &s_pVtxDataSRV_SNORM16x2);
+		g_pD3DDevice->CreateShaderResourceView(s_pUPVtxDataBuf, &typedDesc, &s_pUPVtxDataSRV_SNORM16x2);
 
 		typedDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		g_pD3DDevice->CreateShaderResourceView(s_pVtxDataBuf, &typedDesc, &s_pVtxDataSRV_UNORM8x4);
+		g_pD3DDevice->CreateShaderResourceView(s_pUPVtxDataBuf, &typedDesc, &s_pUPVtxDataSRV_UNORM8x4);
 	}
 }
 
@@ -340,117 +342,45 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		return true; // Nothing to draw — handled
 
 	// ---------------------------------------------------------------
-	// Step 2: Ensure GPU mirror has latest CPU writes (page tracker path)
+	// Step 2: Determine data source — mirror (VB draws) or staging (UP draws)
 	// ---------------------------------------------------------------
-	// Flush any pages the game has written since last draw.
-	// After this, the 64 MiB mirror ByteAddressBuffer is up-to-date.
-	// The mirror path can only be used for VB draws (not UP draws where
-	// vertex data comes from an arbitrary user pointer on the stack/heap).
-	ID3D11ShaderResourceView* pMirrorSRV = CxbxPageTrackerGetMirrorSRV();
-	bool bUsingMirror = (pMirrorSRV != nullptr) && !DrawContext.pXboxVertexStreamZeroData;
+	bool bIsUPDraw = (DrawContext.pXboxVertexStreamZeroData != nullptr);
 
-	if (bUsingMirror) {
+	// The page-tracked 64 MiB mirror covers all Xbox VBs/IBs in contiguous memory.
+	// UP draws use a per-draw staging buffer since data comes from arbitrary pointers.
+	ID3D11ShaderResourceView* pMirrorSRV = CxbxPageTrackerGetMirrorSRV();
+
+	if (!bIsUPDraw) {
+		// Normal VB draw: flush dirty pages so GPU mirror is current.
 		CxbxPageTrackerFlushToGPU();
 	}
 
 	// ---------------------------------------------------------------
-	// Step 2b: Upload vertex data (fallback when mirror is not available)
+	// Step 2b: Upload UP vertex data to staging buffer
 	// ---------------------------------------------------------------
-	// Calculate total data size needed across all streams
-	UINT streamOffsets[X_VSH_MAX_STREAMS] = {};  // byte offset of each stream within g_VtxData
-	UINT totalVtxDataSize = 0;
+	if (bIsUPDraw) {
+		UINT stride = DrawContext.uiXboxVertexStreamZeroStride;
+		UINT vtxDataSize = DrawContext.dwVertexCount * stride;
+		vtxDataSize = (vtxDataSize + 3) & ~3u; // Align to 4 bytes
 
-	// Determine the vertex range to upload
-	UINT vertexStart = DrawContext.dwStartVertex;
-	UINT numVertices = DrawContext.dwVertexCount;
-	if (!bUsingMirror && DrawContext.pXboxIndexData) {
-		// For indexed draws in fallback path, we need the range [LowIndex..HighIndex]
-		// to know what subset of VB data to upload. (Mirror path doesn't need this —
-		// the entire 64 MiB is already available.)
-		if (DrawContext.HighIndex == 0) {
-			WalkIndexBuffer(DrawContext.LowIndex, DrawContext.HighIndex,
-				DrawContext.pXboxIndexData, DrawContext.dwVertexCount);
-		}
-		vertexStart = DrawContext.LowIndex;
-		numVertices = DrawContext.HighIndex - DrawContext.LowIndex + 1;
+		EnsureUPVtxDataBuffer(vtxDataSize);
+		if (!s_pUPVtxDataBuf || !s_pUPVtxDataSRV)
+			return true;
+
+		D3D11_MAPPED_SUBRESOURCE mapped = {};
+		HRESULT hr = g_pD3DDeviceContext->Map(s_pUPVtxDataBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (FAILED(hr)) return true;
+
+		memcpy(mapped.pData,
+			(const uint8_t*)DrawContext.pXboxVertexStreamZeroData
+				+ DrawContext.dwStartVertex * stride,
+			vtxDataSize);
+
+		g_pD3DDeviceContext->Unmap(s_pUPVtxDataBuf, 0);
 	}
 
-	bool bIsUPDraw = (DrawContext.pXboxVertexStreamZeroData != nullptr);
-
-	if (!bUsingMirror) {
-		for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
-			auto& streamInfo = pDecl->VertexStreams[s];
-			UINT streamIdx = streamInfo.XboxStreamIndex;
-			auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
-
-			if (!streamInput.VertexBuffer && !bIsUPDraw)
-				continue;
-
-			UINT stride;
-			if (s == 0 && bIsUPDraw) {
-				stride = DrawContext.uiXboxVertexStreamZeroStride;
-			} else {
-				stride = streamInput.Stride;
-				if (stride == 0) stride = streamInfo.HostVertexStride; // Fallback
-			}
-
-			UINT streamDataSize = numVertices * stride;
-			streamDataSize = (streamDataSize + 3) & ~3u; // Align to 4 bytes
-
-			streamOffsets[s] = totalVtxDataSize;
-			totalVtxDataSize += streamDataSize;
-		}
-
-		if (totalVtxDataSize == 0)
-			return true;
-
-		EnsureVtxDataBuffer(totalVtxDataSize);
-		if (!s_pVtxDataBuf || !s_pVtxDataSRV)
-			return true;
-
-		// Upload all stream data into the single buffer
-		{
-			D3D11_MAPPED_SUBRESOURCE mapped = {};
-			HRESULT hr = g_pD3DDeviceContext->Map(s_pVtxDataBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-			if (FAILED(hr)) return true;
-
-			uint8_t* pDst = (uint8_t*)mapped.pData;
-
-			for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
-				auto& streamInfo = pDecl->VertexStreams[s];
-				UINT streamIdx = streamInfo.XboxStreamIndex;
-				auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
-
-				UINT stride;
-				if (s == 0 && bIsUPDraw) {
-					stride = DrawContext.uiXboxVertexStreamZeroStride;
-				} else {
-					stride = streamInput.Stride;
-					if (stride == 0) stride = streamInfo.HostVertexStride;
-				}
-
-				UINT streamDataSize = numVertices * stride;
-				const uint8_t* pSrc = nullptr;
-
-				if (s == 0 && bIsUPDraw) {
-					// UP draw: vertex data from user pointer
-					pSrc = (const uint8_t*)DrawContext.pXboxVertexStreamZeroData
-						+ vertexStart * stride;
-				} else if (streamInput.VertexBuffer) {
-					// Regular stream: get raw Xbox pointer
-					pSrc = (const uint8_t*)GetDataFromXboxResource(streamInput.VertexBuffer)
-						+ streamInput.Offset
-						+ vertexStart * stride;
-				}
-
-				if (pSrc) {
-					memcpy(pDst + streamOffsets[s], pSrc, streamDataSize);
-				}
-			}
-
-			g_pD3DDeviceContext->Unmap(s_pVtxDataBuf, 0);
-		}
-	} // end if (!bUsingMirror)
+	UINT vertexStart = DrawContext.dwStartVertex;
+	UINT numVertices = DrawContext.dwVertexCount;
 
 	// ---------------------------------------------------------------
 	// Step 3: Resolve index data (if indexed draw)
@@ -465,7 +395,7 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		// Check if index data pointer is in contiguous memory (0x80000000 range).
 		// If so, we can read it directly from the mirror buffer — no upload needed.
 		uintptr_t idxAddr = (uintptr_t)DrawContext.pXboxIndexData;
-		if (bUsingMirror && idxAddr >= CONTIGUOUS_MEMORY_BASE
+		if (idxAddr >= CONTIGUOUS_MEMORY_BASE
 			&& idxAddr < (CONTIGUOUS_MEMORY_BASE + XBOX_CONTIGUOUS_MEMORY_SIZE)) {
 			// Index data is in the mirror — just pass the byte offset.
 			// We bind the mirror SRV as t1 (g_IdxData); the shader reads at g_IndexOffset.
@@ -580,7 +510,13 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 
 				if (found && regIdx < 16) {
 					INT streamBase;
-					if (bUsingMirror && streamInput.VertexBuffer) {
+					if (bIsUPDraw && s == 0) {
+						// UP draw: data uploaded to staging buffer starting at byte 0.
+						// vertexStart already subtracted during upload (we copied from
+						// pData + startVertex*stride), so streamBase = -startVertex*stride
+						// to cancel the shader's vtxIdx*stride calculation.
+						streamBase = -(INT)vertexStart * (INT)stride;
+					} else if (streamInput.VertexBuffer) {
 						// Mirror path: streamBase is the raw byte offset from CONTIGUOUS_MEMORY_BASE
 						// to the start of the VB data. The shader does:
 						//   byteOff = streamBase + vtxIdx * stride + elemOffset
@@ -589,9 +525,7 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 						uintptr_t vbAddr = (uintptr_t)GetDataFromXboxResource(streamInput.VertexBuffer);
 						streamBase = (INT)(vbAddr - CONTIGUOUS_MEMORY_BASE) + (INT)streamInput.Offset;
 					} else {
-						// Fallback path: packed stream data uploaded to s_pVtxDataBuf.
-						// streamBase = streamOffsets[s] - vertexStart * stride.
-						streamBase = (INT)streamOffsets[s] - (INT)vertexStart * (INT)stride;
+						streamBase = 0;
 					}
 
 					pCB->Attribs[regIdx][0] = elemOffset;
@@ -632,14 +566,14 @@ skip_layout_upload:
 
 	// Bind SRVs to VS: t0 = vertex data (raw), t1 = index data,
 	// t2 = vertex data (R16G16_SNORM), t3 = vertex data (R8G8B8A8_UNORM)
-	// When using the mirror, all SRVs come from the page tracker's buffer views.
-	// Otherwise, use the per-draw fallback buffer's views.
-	ID3D11ShaderResourceView* pActiveVtxSRV = bUsingMirror ? pMirrorSRV : s_pVtxDataSRV;
+	// VB draws: SRVs from the 64 MiB page-tracked mirror.
+	// UP draws: SRVs from the per-draw staging buffer.
+	ID3D11ShaderResourceView* pActiveVtxSRV = bIsUPDraw ? s_pUPVtxDataSRV : pMirrorSRV;
 	ID3D11ShaderResourceView* pActiveIdxSRV = bIdxFromMirror ? pMirrorSRV : s_pIdxDataSRV;
-	ID3D11ShaderResourceView* pActiveSNormSRV = bUsingMirror
-		? CxbxPageTrackerGetMirrorSRV_SNORM16x2() : s_pVtxDataSRV_SNORM16x2;
-	ID3D11ShaderResourceView* pActiveUNormSRV = bUsingMirror
-		? CxbxPageTrackerGetMirrorSRV_UNORM8x4() : s_pVtxDataSRV_UNORM8x4;
+	ID3D11ShaderResourceView* pActiveSNormSRV = bIsUPDraw
+		? s_pUPVtxDataSRV_SNORM16x2 : CxbxPageTrackerGetMirrorSRV_SNORM16x2();
+	ID3D11ShaderResourceView* pActiveUNormSRV = bIsUPDraw
+		? s_pUPVtxDataSRV_UNORM8x4 : CxbxPageTrackerGetMirrorSRV_UNORM8x4();
 
 	if (pActiveVtxSRV != s_pLastBoundVtxSRV || pActiveIdxSRV != s_pLastBoundIdxSRV
 		|| pActiveSNormSRV != s_pLastBoundSNormSRV || pActiveUNormSRV != s_pLastBoundUNormSRV) {
