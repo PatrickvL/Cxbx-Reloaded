@@ -278,7 +278,10 @@ float4 DecodeFloat2H(uint byteOff)
 }
 
 // ---------------------------------------------------------------
-// Main attribute fetch — read one attribute from the vertex buffer
+// Main attribute fetch — 2-level dispatch for fast O3 compilation
+// Level 1: [branch] selects category (float / typed SRV / raw ALU)
+// Level 2: small switch within each category (max 6 cases)
+// This prevents 16×20 combinatorial explosion while keeping [unroll].
 // ---------------------------------------------------------------
 float4 FetchAttribute(uint xboxVtxIdx, uint4 attribDesc, float4 defaultVal)
 {
@@ -292,55 +295,57 @@ float4 FetchAttribute(uint xboxVtxIdx, uint4 attribDesc, float4 defaultVal)
 
     uint byteOff = streamBase + xboxVtxIdx * stride + elemOffset;
 
+    // Category A: float formats (0-3) — just asfloat loads
+    [branch] if (fmt <= CXBX_VTXFMT_FLOAT4) {
+        switch (fmt) {
+        case CXBX_VTXFMT_FLOAT1:
+            return float4(asfloat(ReadU32(byteOff)), 0.0f, 0.0f, 1.0f);
+        case CXBX_VTXFMT_FLOAT2:
+            return float4(asfloat(ReadU32(byteOff)), asfloat(ReadU32(byteOff + 4u)), 0.0f, 1.0f);
+        case CXBX_VTXFMT_FLOAT3:
+            return float4(asfloat(ReadU32(byteOff)), asfloat(ReadU32(byteOff + 4u)), asfloat(ReadU32(byteOff + 8u)), 1.0f);
+        default: // FLOAT4
+            return float4(asfloat(ReadU32(byteOff)), asfloat(ReadU32(byteOff + 4u)), asfloat(ReadU32(byteOff + 8u)), asfloat(ReadU32(byteOff + 12u)));
+        }
+    }
+
+    // Category B: typed SRV formats — hardware decode via Buffer<T>.Load
+    // D3DCOLOR(4), SHORT2N(8), SHORT4N(9), PBYTE4(10), SHORT1N(13), SHORT3N(14), PBYTE1(15), PBYTE2(16), PBYTE3(17)
+    [branch] if (fmt == CXBX_VTXFMT_D3DCOLOR || (fmt >= CXBX_VTXFMT_SHORT2N && fmt <= CXBX_VTXFMT_PBYTE4) ||
+                 (fmt >= CXBX_VTXFMT_SHORT1N && fmt <= CXBX_VTXFMT_PBYTE3)) {
+        uint elem = byteOff / 4u;
+        switch (fmt) {
+        case CXBX_VTXFMT_D3DCOLOR:
+            return g_VtxUNorm8x4.Load(elem).zyxw;
+        case CXBX_VTXFMT_SHORT2N:
+            return float4(g_VtxSNorm16x2.Load(elem), 0.0f, 1.0f);
+        case CXBX_VTXFMT_SHORT4N:
+            return float4(g_VtxSNorm16x2.Load(elem), g_VtxSNorm16x2.Load(elem + 1u));
+        case CXBX_VTXFMT_PBYTE4:
+            return g_VtxUNorm8x4.Load(elem);
+        case CXBX_VTXFMT_SHORT1N:
+            return float4((float)SignExtend(ReadU16(byteOff), 16u) / 32767.0f, 0.0f, 0.0f, 1.0f);
+        case CXBX_VTXFMT_SHORT3N:
+            return float4(g_VtxSNorm16x2.Load(elem), g_VtxSNorm16x2.Load(elem + 1u).x, 1.0f);
+        case CXBX_VTXFMT_PBYTE1:
+            return float4(g_VtxUNorm8x4.Load(elem).x, 0.0f, 0.0f, 1.0f);
+        case CXBX_VTXFMT_PBYTE2:
+            return float4(g_VtxUNorm8x4.Load(elem).xy, 0.0f, 1.0f);
+        default: // PBYTE3
+            return float4(g_VtxUNorm8x4.Load(elem).xyz, 1.0f);
+        }
+    }
+
+    // Category C: raw ALU decode (SHORT2, SHORT4, NORMPACKED3, FLOAT2H, SHORT1, SHORT3)
     switch (fmt) {
-    case CXBX_VTXFMT_FLOAT1:
-        return float4(asfloat(ReadU32(byteOff)), 0.0f, 0.0f, 1.0f);
-    case CXBX_VTXFMT_FLOAT2:
-        return float4(asfloat(ReadU32(byteOff)), asfloat(ReadU32(byteOff + 4u)), 0.0f, 1.0f);
-    case CXBX_VTXFMT_FLOAT3:
-        return float4(asfloat(ReadU32(byteOff)), asfloat(ReadU32(byteOff + 4u)), asfloat(ReadU32(byteOff + 8u)), 1.0f);
-    case CXBX_VTXFMT_FLOAT4:
-        return float4(asfloat(ReadU32(byteOff)), asfloat(ReadU32(byteOff + 4u)), asfloat(ReadU32(byteOff + 8u)), asfloat(ReadU32(byteOff + 12u)));
-    case CXBX_VTXFMT_D3DCOLOR:
-        // R8G8B8A8_UNORM typed load: bytes [B,G,R,A] → float4(B,G,R,A) → swizzle to RGBA
-        return g_VtxUNorm8x4.Load(byteOff / 4u).zyxw;
     case CXBX_VTXFMT_SHORT2:
         return DecodeShort2(byteOff);
     case CXBX_VTXFMT_SHORT4:
         return DecodeShort4(byteOff);
     case CXBX_VTXFMT_NORMPACKED3:
         return float4(DecodeNormPacked3(ReadU32(byteOff)), 1.0f);
-    case CXBX_VTXFMT_SHORT2N:
-        // R16G16_SNORM typed load: hardware decodes 2 int16 to [-1,1] float2
-        return float4(g_VtxSNorm16x2.Load(byteOff / 4u), 0.0f, 1.0f);
-    case CXBX_VTXFMT_SHORT4N:
-    {
-        // Two R16G16_SNORM loads for 4 shorts
-        float2 lo = g_VtxSNorm16x2.Load(byteOff / 4u);
-        float2 hi = g_VtxSNorm16x2.Load(byteOff / 4u + 1u);
-        return float4(lo, hi);
-    }
-    case CXBX_VTXFMT_PBYTE4:
-        // R8G8B8A8_UNORM typed load: hardware decodes 4 bytes to [0,1] float4
-        return g_VtxUNorm8x4.Load(byteOff / 4u);
     case CXBX_VTXFMT_FLOAT2H:
         return DecodeFloat2H(byteOff);
-    case CXBX_VTXFMT_SHORT1N:
-        return float4((float)SignExtend(ReadU16(byteOff), 16u) / 32767.0f, 0.0f, 0.0f, 1.0f);
-    case CXBX_VTXFMT_SHORT3N:
-    {
-        // Two R16G16_SNORM loads: first gives (x,y), second gives (z, garbage)
-        float2 lo = g_VtxSNorm16x2.Load(byteOff / 4u);
-        float2 hi = g_VtxSNorm16x2.Load(byteOff / 4u + 1u);
-        return float4(lo, hi.x, 1.0f);
-    }
-    case CXBX_VTXFMT_PBYTE1:
-        // R8G8B8A8_UNORM typed load, take only .x channel
-        return float4(g_VtxUNorm8x4.Load(byteOff / 4u).x, 0.0f, 0.0f, 1.0f);
-    case CXBX_VTXFMT_PBYTE2:
-        return float4(g_VtxUNorm8x4.Load(byteOff / 4u).xy, 0.0f, 1.0f);
-    case CXBX_VTXFMT_PBYTE3:
-        return float4(g_VtxUNorm8x4.Load(byteOff / 4u).xyz, 1.0f);
     case CXBX_VTXFMT_SHORT1:
         return float4((float)SignExtend(ReadU16(byteOff), 16u), 0.0f, 0.0f, 1.0f);
     case CXBX_VTXFMT_SHORT3:
