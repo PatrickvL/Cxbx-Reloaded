@@ -269,12 +269,16 @@ static void UploadVertexDefaults()
 // ******************************************************************
 bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 {
+	// When all vertex shaders are compiled with IA bypass, the normal IA
+	// fallback path cannot work (shader expects SV_VertexID, not TEXCOORD
+	// inputs).  Return true ("handled") to skip the incompatible fallback
+	// even if we can't actually draw.
 	if (!s_pLayoutCB || !s_pDefaultsCB)
-		return false;
+		return true;
 
 	CxbxVertexDeclaration* pDecl = CxbxGetVertexDeclaration();
 	if (!pDecl || pDecl->NumberOfVertexStreams == 0)
-		return false;
+		return true;
 
 	// ---------------------------------------------------------------
 	// Step 1: Determine topology and host vertex count
@@ -328,8 +332,8 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
 		break;
 	default:
-		// Unsupported topology — fall back to IA path
-		return false;
+		// Unsupported topology — skip draw (can't fall back, shader expects SV_VertexID)
+		return true;
 	}
 
 	if (hostVertexCount == 0)
@@ -398,17 +402,17 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		}
 
 		if (totalVtxDataSize == 0)
-			return false;
+			return true;
 
 		EnsureVtxDataBuffer(totalVtxDataSize);
 		if (!s_pVtxDataBuf || !s_pVtxDataSRV)
-			return false;
+			return true;
 
 		// Upload all stream data into the single buffer
 		{
 			D3D11_MAPPED_SUBRESOURCE mapped = {};
 			HRESULT hr = g_pD3DDeviceContext->Map(s_pVtxDataBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-			if (FAILED(hr)) return false;
+			if (FAILED(hr)) return true;
 
 			uint8_t* pDst = (uint8_t*)mapped.pData;
 
@@ -475,10 +479,10 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 
 			EnsureIdxDataBuffer(idxDataSize);
 			if (!s_pIdxDataBuf || !s_pIdxDataSRV)
-				return false;
+				return true;
 
 			HRESULT hr = CxbxD3D11UpdateDynamicBuffer(s_pIdxDataBuf, DrawContext.pXboxIndexData, DrawContext.dwVertexCount * sizeof(INDEX16));
-			if (FAILED(hr)) return false;
+			if (FAILED(hr)) return true;
 
 			indexOffset = 0;
 		}
@@ -508,7 +512,7 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (FAILED(hr)) return false;
+		if (FAILED(hr)) return true;
 
 		IABypassLayoutCB* pCB = (IABypassLayoutCB*)mapped.pData;
 		memset(pCB, 0, sizeof(IABypassLayoutCB));
