@@ -246,6 +246,13 @@ bool CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	if (!s_pLayoutCB || !s_pDefaultsCB)
 		return false;
 
+	// The fixed function shader is compiled without IA bypass (too complex
+	// for the HLSL compiler); fall back to the normal IA path.
+	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
+		s_IAAlreadyNull = false; // normal path will reconfigure IA
+		return false;
+	}
+
 	CxbxVertexDeclaration* pDecl = CxbxGetVertexDeclaration();
 	if (!pDecl || pDecl->NumberOfVertexStreams == 0)
 		return false;
