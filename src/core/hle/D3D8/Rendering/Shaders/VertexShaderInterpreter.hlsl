@@ -26,12 +26,14 @@ uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 #include "VertexShaderInterpreterState.hlsli"
 
 // ============================================================
-// Swizzle helper: rearrange float4 components by index
+// Swizzle helper: rearrange float4 components by packed index
+// Packed format: bits [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W
 // ============================================================
-float4 apply_swizzle(float4 v, uint swz_x, uint swz_y, uint swz_z, uint swz_w)
+float4 apply_swizzle(float4 v, uint swz)
 {
     float arr[4] = { v.x, v.y, v.z, v.w };
-    return float4(arr[swz_x & 3], arr[swz_y & 3], arr[swz_z & 3], arr[swz_w & 3]);
+    return float4(arr[(swz >> 6) & 3], arr[(swz >> 4) & 3],
+                  arr[(swz >> 2) & 3], arr[swz & 3]);
 }
 
 // ============================================================
@@ -39,8 +41,7 @@ float4 apply_swizzle(float4 v, uint swz_x, uint swz_y, uint swz_z, uint swz_w)
 // ============================================================
 float4 fetch_input(
     uint mux, uint r_idx, uint v_idx, uint const_idx,
-    uint swz_x, uint swz_y, uint swz_z, uint swz_w,
-    bool is_neg, bool use_a0x, int a0,
+    uint swz, bool is_neg, bool use_a0x, int a0,
     float4 r[12], float4 oPos_reg, float4 v_regs[16])
 {
     float4 raw;
@@ -68,7 +69,7 @@ float4 fetch_input(
             ? C[c_index] : float4(0, 0, 0, 0);
     }
 
-    float4 swizzled = apply_swizzle(raw, swz_x, swz_y, swz_z, swz_w);
+    float4 swizzled = apply_swizzle(raw, swz);
     return is_neg ? -swizzled : swizzled;
 }
 
@@ -93,33 +94,6 @@ void write_r(uint dest, inout float4 r[12], inout float4 oPos, float4 result, ui
 {
     if (dest == 12)     write_masked(oPos,    result, mask);
     else if (dest < 12) write_masked(r[dest], result, mask);
-}
-
-// ============================================================
-// Write result to an output register by address
-// Addresses 1 and 2 are unused on NV2A and fall through harmlessly.
-// ============================================================
-void write_output(
-    uint o_addr, float4 result, uint mask,
-    inout float4 oPos, inout float4 oD0, inout float4 oD1,
-    inout float4 oFog, inout float4 oPts,
-    inout float4 oB0,  inout float4 oB1,
-    inout float4 oT0,  inout float4 oT1,
-    inout float4 oT2,  inout float4 oT3)
-{
-    switch (o_addr & 0xF) {
-        case 0:  write_masked(oPos, result, mask); break;
-        case 3:  write_masked(oD0,  result, mask); break;
-        case 4:  write_masked(oD1,  result, mask); break;
-        case 5:  write_masked(oFog, result, mask); break;
-        case 6:  write_masked(oPts, result, mask); break;
-        case 7:  write_masked(oB0,  result, mask); break;
-        case 8:  write_masked(oB1,  result, mask); break;
-        case 9:  write_masked(oT0,  result, mask); break;
-        case 10: write_masked(oT1,  result, mask); break;
-        case 11: write_masked(oT2,  result, mask); break;
-        case 12: write_masked(oT3,  result, mask); break;
-    }
 }
 
 // ============================================================
@@ -202,16 +176,22 @@ float4 exec_ilu(uint opcode, float4 c_in)
 // ============================================================
 VS_OUTPUT main(const VS_INPUT xIn)
 {
-    // Output registers
-    float4 oPos, oD0, oD1, oB0, oB1, oT0, oT1, oT2, oT3;
-    oPos = oD0 = oD1 = oB0 = oB1 = oT0 = oT1 = oT2 = oT3 = float4(0, 0, 0, 1);
-
-    float4 oFog = float4(1, 1, 1, 1); // Default no fog
-    float4 oPts = float4(0, 0, 0, 0);
-
-    // Output register array for indexed writes (13 output registers)
-    // Index: 0=oPos, 3=oD0, 4=oD1, 5=oFog, 6=oPts, 7=oB0, 8=oB1, 9-12=oT0-oT3
-    // Indices 1,2 are unused
+    // Output registers: sparse array indexed by NV2A output address
+    // 0=oPos, 1-2=unused, 3=oD0, 4=oD1, 5=oFog, 6=oPts, 7=oB0, 8=oB1, 9-12=oT0-oT3
+    float4 oRegs[13];
+    oRegs[0]  = float4(0, 0, 0, 1); // oPos
+    oRegs[1]  = float4(0, 0, 0, 0); // unused
+    oRegs[2]  = float4(0, 0, 0, 0); // unused
+    oRegs[3]  = float4(0, 0, 0, 1); // oD0
+    oRegs[4]  = float4(0, 0, 0, 1); // oD1
+    oRegs[5]  = float4(1, 1, 1, 1); // oFog
+    oRegs[6]  = float4(0, 0, 0, 0); // oPts
+    oRegs[7]  = float4(0, 0, 0, 1); // oB0
+    oRegs[8]  = float4(0, 0, 0, 1); // oB1
+    oRegs[9]  = float4(0, 0, 0, 1); // oT0
+    oRegs[10] = float4(0, 0, 0, 1); // oT1
+    oRegs[11] = float4(0, 0, 0, 1); // oT2
+    oRegs[12] = float4(0, 0, 0, 1); // oT3
 
     // Address register
     int a0 = 0;
@@ -266,19 +246,13 @@ VS_OUTPUT main(const VS_INPUT xIn)
         uint a_mux   = (dw2 >> VSI_FLD_A_MUX_SHIFT) & VSI_FLD_A_MUX_MASK;
         uint a_reg   = (dw2 >> VSI_FLD_A_R_SHIFT) & VSI_FLD_A_R_MASK;
         bool a_neg   = ((dw1 >> VSI_FLD_A_NEG_BIT1) & 1) != 0;
-        uint a_swz_x = (dw1 >> VSI_FLD_A_SWZ_X_SHIFT1) & 0x3;
-        uint a_swz_y = (dw1 >> VSI_FLD_A_SWZ_Y_SHIFT1) & 0x3;
-        uint a_swz_z = (dw1 >> VSI_FLD_A_SWZ_Z_SHIFT1) & 0x3;
-        uint a_swz_w = (dw1 >> VSI_FLD_A_SWZ_W_SHIFT1) & 0x3;
+        uint a_swz   = dw1 & 0xFF; // Packed XYZW swizzle: bits [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W
 
         // Input B (SubToken 2)
         uint b_mux   = (dw2 >> VSI_FLD_B_MUX_SHIFT) & VSI_FLD_B_MUX_MASK;
         uint b_reg   = (dw2 >> VSI_FLD_B_R_SHIFT) & VSI_FLD_B_R_MASK;
         bool b_neg   = ((dw2 >> VSI_FLD_B_NEG_BIT2) & 1) != 0;
-        uint b_swz_x = (dw2 >> VSI_FLD_B_SWZ_X_SHIFT2) & 0x3;
-        uint b_swz_y = (dw2 >> VSI_FLD_B_SWZ_Y_SHIFT2) & 0x3;
-        uint b_swz_z = (dw2 >> VSI_FLD_B_SWZ_Z_SHIFT2) & 0x3;
-        uint b_swz_w = (dw2 >> VSI_FLD_B_SWZ_W_SHIFT2) & 0x3;
+        uint b_swz   = (dw2 >> 17) & 0xFF; // Packed XYZW swizzle from bits [24:17]
 
         // Input C (SubToken 2 + SubToken 3)
         uint c_mux     = (dw3 >> VSI_FLD_C_MUX_SHIFT3) & VSI_FLD_C_MUX_MASK;
@@ -286,10 +260,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
         uint c_r_low   = (dw3 >> VSI_FLD_C_R_LOW_SHIFT3) & VSI_FLD_C_R_LOW_MASK;
         uint c_reg     = (c_r_high << 2) | c_r_low;
         bool c_neg     = ((dw2 >> VSI_FLD_C_NEG_BIT2) & 1) != 0;
-        uint c_swz_x   = (dw2 >> VSI_FLD_C_SWZ_X_SHIFT2) & 0x3;
-        uint c_swz_y   = (dw2 >> VSI_FLD_C_SWZ_Y_SHIFT2) & 0x3;
-        uint c_swz_z   = (dw2 >> VSI_FLD_C_SWZ_Z_SHIFT2) & 0x3;
-        uint c_swz_w   = (dw2 >> VSI_FLD_C_SWZ_W_SHIFT2) & 0x3;
+        uint c_swz     = (dw2 >> 2) & 0xFF; // Packed XYZW swizzle from bits [9:2]
 
         // Output fields
         uint out_mac_mask = (dw3 >> VSI_FLD_OUT_MAC_MASK_SHIFT) & VSI_FLD_OUT_MAC_MASK_MASK;
@@ -311,19 +282,19 @@ VS_OUTPUT main(const VS_INPUT xIn)
         float4 in_a, in_b, in_c;
 
         if (mac_op != VSI_MAC_NOP) {
-            in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz_x, a_swz_y, a_swz_z, a_swz_w, a_neg, use_a0x, a0, r, oPos, v_regs);
-            in_b = fetch_input(b_mux, b_reg, v_idx, const_idx, b_swz_x, b_swz_y, b_swz_z, b_swz_w, b_neg, use_a0x, a0, r, oPos, v_regs);
-            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz_x, c_swz_y, c_swz_z, c_swz_w, c_neg, use_a0x, a0, r, oPos, v_regs);
+            in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz, a_neg, use_a0x, a0, r, oRegs[0], v_regs);
+            in_b = fetch_input(b_mux, b_reg, v_idx, const_idx, b_swz, b_neg, use_a0x, a0, r, oRegs[0], v_regs);
+            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x, a0, r, oRegs[0], v_regs);
         }
         else if (ilu_op != VSI_ILU_NOP) {
             // ILU-only: C-input not yet fetched
-            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz_x, c_swz_y, c_swz_z, c_swz_w, c_neg, use_a0x, a0, r, oPos, v_regs);
+            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x, a0, r, oRegs[0], v_regs);
         }
 
         // ============================================================
         // Execute MAC operation
         // ============================================================
-        if (mac_op != VSI_MAC_NOP && mac_op <= VSI_MAC_ARL) {
+        if (mac_op != VSI_MAC_NOP) {
             float4 mac_result = exec_mac(mac_op, in_a, in_b, in_c);
 
             // ARL writes to address register
@@ -334,12 +305,11 @@ VS_OUTPUT main(const VS_INPUT xIn)
                 // Write to R register (unless paired and R=1, which is reserved for ILU)
                 uint mac_r_dest = out_r_addr;
                 if (!(is_paired && mac_r_dest == 1) && out_mac_mask != 0)
-                    write_r(mac_r_dest, r, oPos, mac_result, out_mac_mask);
+                    write_r(mac_r_dest, r, oRegs[0], mac_result, out_mac_mask);
 
                 // Write to output register (if MAC is the output source)
                 if (out_mux == 0 && out_o_mask != 0 && out_orb)
-                    write_output(out_address, mac_result, out_o_mask, oPos, oD0, oD1, oFog, oPts, oB0, oB1, oT0, oT1, oT2, oT3);
-                // else if !out_orb: context write (C registers) — rare, vertex state shaders
+                    write_masked(oRegs[out_address & 0xF], mac_result, out_o_mask);
             }
         }
 
@@ -353,11 +323,11 @@ VS_OUTPUT main(const VS_INPUT xIn)
             // When paired, ILU always writes to R1
             uint ilu_r_dest = is_paired ? 1 : out_r_addr;
             if (out_ilu_mask != 0)
-                write_r(ilu_r_dest, r, oPos, ilu_result, out_ilu_mask);
+                write_r(ilu_r_dest, r, oRegs[0], ilu_result, out_ilu_mask);
 
             // Write to output register (if ILU is the output source)
             if (out_mux == 1 && out_o_mask != 0 && out_orb)
-                write_output(out_address, ilu_result, out_o_mask, oPos, oD0, oD1, oFog, oPts, oB0, oB1, oT0, oT1, oT2, oT3);
+                write_masked(oRegs[out_address & 0xF], ilu_result, out_o_mask);
         }
 
         // Stop at the final instruction
@@ -368,6 +338,19 @@ VS_OUTPUT main(const VS_INPUT xIn)
     // ============================================================
     // Copy to output struct (same footer as CxbxVertexShaderTemplate.hlsl)
     // ============================================================
+    // Unpack named outputs for the footer (expects named variables in scope)
+    float4 oPos = oRegs[0];
+    float4 oD0  = oRegs[3];
+    float4 oD1  = oRegs[4];
+    float4 oFog = oRegs[5];
+    float4 oPts = oRegs[6];
+    float4 oB0  = oRegs[7];
+    float4 oB1  = oRegs[8];
+    float4 oT0  = oRegs[9];
+    float4 oT1  = oRegs[10];
+    float4 oT2  = oRegs[11];
+    float4 oT3  = oRegs[12];
+
     VS_OUTPUT xOut;
 #include "CxbxVertexOutputFooter.hlsli"
 
