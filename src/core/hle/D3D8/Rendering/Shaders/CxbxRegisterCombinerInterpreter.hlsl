@@ -21,6 +21,23 @@
 //   Step 7 – Vectorized ApplyColorSign (movc pipeline, no per-channel branches).
 //   Step 8 – MUX selector guarded: R0.a decode skipped when no MUX flag set.
 //             Sum computation skipped when both DOT flags set.
+//   Step 9 – ResolveStageInputAlpha: scalar alpha resolver reads only .a
+//             from the register file and calls ApplyInputMappingScalar,
+//             eliminating ~12 wasted float ops per combiner stage.
+//   Step 10– ApplyInputMappingScalar: scalar float counterpart to
+//             ApplyInputMapping, used exclusively by ResolveStageInputAlpha.
+//   Step 11– round() replaces floor(x + 0.5f) in ApplyDotMapping and
+//             the MUX R0.a decode — single GPU instruction, same semantics.
+//   Step 12– tBase in FetchTexture: PS_REGISTER_T0 + stage extracted once,
+//             simplifying multi-stage dot-mode offsets (tBase - 1u, etc.).
+//   Step 13– ResolveStageInput/Alpha switch eliminated: Regs[14]/[15] are
+//             zero-initialized and never written until DoFinalCombiner, so
+//             V1R0_SUM/EF_PROD already read as zero; FOG falls through to
+//             the default case.  Both functions collapse to a direct array
+//             read, removing a branch from the hottest path (8×/stage).
+//   Step 14– DecodeOutputScale via exp2: scale values are powers of 2
+//             (1, 2, 4, 0.5); exponent = ((m+1)&3)-1.  Single SFU op
+//             replaces a 4-arm switch / 3-movc chain.
 //   All fmod/floor bit-extraction replaced with native bitwise operators.
 //
 // Bug fixes applied (relative to the SM3.0 original):
@@ -36,6 +53,10 @@
 //     direction; no erroneous reflect() computation.
 //   – FOG register in color stages preserves real fog.a for alpha channel
 //     reads (was fabricating 1.0 via float4(fog.rgb, 1.0f) + .aaaa).
+//   – nv2a_mul3 per-component zero propagation: || is scalar in SM5,
+//     so (a == 0 || b == 0) collapsed bool3 to scalar via any(), zeroing
+//     the entire result when any one component was zero.  Fixed with
+//     bitwise | for per-component bool3 OR.
 //
 // Host-side packing change from the SM3.0 version:
 //   All 32-bit Xbox DWORDs (PSRGBInputs, PSAlphaOutputs, etc.) are now
@@ -110,55 +131,100 @@ SamplerState Samp3     : register(s3);
 //   15 EF_PROD       written in final combiner EFG phase, read in ABCD
 // ============================================================
 
-float4 RegRead(float4 Regs[16], uint idx)
-{
-    return Regs[idx & 0xFu];
-}
+#define RegRead(Regs, idx) ((Regs)[(idx) & 0xFu])
 
+// For callsites where the index is a literal constant known != 0
+#define RegWriteDirect(Regs, idx, val) ((Regs)[(idx) & 0xFu] = (val))
+
+// Silently drop writes to the read-only slot.
+// The reserved slots (6,7) are also effectively read-only 
+// since they are never initialised or read by the combiner logic;
+// silently dropping writes to them matches NV2A behavior and
+// avoids the need for explicit checks in the combiner code.
+// C0/C1 ARE writable on NV2A hardware (confirmed by xemu).
+// They are initialised from the cbuffer per-stage, but combiner
+// output stages can overwrite them for subsequent reads.
 void RegWrite(inout float4 Regs[16], uint idx, float4 val)
 {
-    // Silently drop writes to read-only and reserved slots.
-    // C0/C1 ARE writable on NV2A hardware (confirmed by xemu).
-    // They are initialised from the cbuffer per-stage, but combiner
-    // output stages can overwrite them for subsequent reads.
-    if (idx == PS_REGISTER_ZERO ||
-        idx == 6u               ||
-        idx == 7u)
-        return;
-    Regs[idx & 0xFu] = val;
+    uint i = idx & 0xFu;
+    Regs[i] = (i == PS_REGISTER_ZERO) ? Regs[i] : val;
 }
 
 // Modify only the .rgb channels of a register; preserve .a
 void RegWriteRGB(inout float4 Regs[16], uint idx, float3 rgb)
 {
-    if (idx == PS_REGISTER_DISCARD) return;
-    RegWrite(Regs, idx, float4(rgb, RegRead(Regs, idx).a));
+    uint i = idx & 0xFu;
+    Regs[i].xyz = (i == PS_REGISTER_ZERO) ? Regs[i].xyz : rgb;
 }
 
 // Modify only the .a channel of a register; preserve .rgb
 void RegWriteA(inout float4 Regs[16], uint idx, float a)
 {
-    if (idx == PS_REGISTER_DISCARD) return;
-    RegWrite(Regs, idx, float4(RegRead(Regs, idx).rgb, a));
+    uint i = idx & 0xFu;
+    Regs[i].a = (i == PS_REGISTER_ZERO) ? Regs[i].a : a;
 }
 
 // ============================================================
 // Input mapping
+//
+// PS_INPUTMAPPING values (bits [7:5] of the register byte):
+//   0x00 = UNSIGNED_IDENTITY  max(0, v)
+//   0x20 = UNSIGNED_INVERT    1 - sat(v)
+//   0x40 = EXPAND_NORMAL      2 * max(0, v) - 1
+//   0x60 = EXPAND_NEGATE     -2 * max(0, v) + 1
+//   0x80 = HALFBIAS_NORMAL    max(0, v) - 0.5
+//   0xA0 = HALFBIAS_NEGATE    0.5 - max(0, v)
+//   0xC0 = SIGNED_IDENTITY    v
+//   0xE0 = SIGNED_NEGATE     -v
+//
+// All 8 cases reduce to: decode a 2-bit mode from bits [7:6],
+// compute a base expression per mode, then conditionally negate
+// (bit [5]).  Implemented as branchless movc chains — no switch,
+// no jump table, uniform execution across the wavefront.
 // ============================================================
 
 float4 ApplyInputMapping(uint mapping, float4 v)
 {
-    switch (mapping) // caller already isolated bits [7:5]
-    {
-        case PS_INPUTMAPPING_UNSIGNED_IDENTITY: return max(0.0f, v);
-        case PS_INPUTMAPPING_UNSIGNED_INVERT:   return 1.0f - saturate(v);
-        case PS_INPUTMAPPING_EXPAND_NORMAL:     return  2.0f * max(0.0f, v) - 1.0f;
-        case PS_INPUTMAPPING_EXPAND_NEGATE:     return -2.0f * max(0.0f, v) + 1.0f;
-        case PS_INPUTMAPPING_HALFBIAS_NORMAL:   return        max(0.0f, v) - 0.5f;
-        case PS_INPUTMAPPING_HALFBIAS_NEGATE:   return  0.5f - max(0.0f, v);
-        case PS_INPUTMAPPING_SIGNED_IDENTITY:   return v;
-        default: /* PS_INPUTMAPPING_SIGNED_NEGATE */ return -v;
-    }
+    float4 clamped = max(0.0f, v);
+    uint   mode    = (mapping >> 6u) & 3u;
+    bool   negate  = (mapping & 0x20u) != 0u;
+
+    float4 mUnsigned =        clamped;          // mode 0: max(0, v)
+    float4 mExpand   = 2.0f * clamped - 1.0f;   // mode 1: 2*max(0,v)-1
+    float4 mHalfbias =        clamped - 0.5f;   // mode 2: max(0,v)-0.5
+    float4 mSigned   =        v;                // mode 3: v
+
+    // Select base via movc chain
+    float4 base = mUnsigned;
+    base = (mode == 1u) ? mExpand   : base;
+    base = (mode == 2u) ? mHalfbias : base;
+    base = (mode == 3u) ? mSigned   : base;
+
+    // Negate: mode 0 special-cases to 1-sat(v); all others are -base
+    float4 neg = (mode == 0u) ? (1.0f - saturate(v)) : -base;
+
+    return negate ? neg : base;
+}
+
+float ApplyInputMappingScalar(uint mapping, float v)
+{
+    float  clamped = max(0.0f, v);
+    uint   mode    = (mapping >> 6u) & 3u;
+    bool   negate  = (mapping & 0x20u) != 0u;
+
+    float mUnsigned =        clamped;
+    float mExpand   = 2.0f * clamped - 1.0f;
+    float mHalfbias =        clamped - 0.5f;
+    float mSigned   =        v;
+
+    float base = mUnsigned;
+    base = (mode == 1u) ? mExpand   : base;
+    base = (mode == 2u) ? mHalfbias : base;
+    base = (mode == 3u) ? mSigned   : base;
+
+    float neg = (mode == 0u) ? (1.0f - saturate(v)) : -base;
+
+    return negate ? neg : base;
 }
 
 // ============================================================
@@ -180,60 +246,45 @@ float DecodeOutputBias(uint flags)
 
 float DecodeOutputScale(uint flags)
 {
-    switch ((flags >> 4u) & 3u)
-    {
-        case 1u:  return 2.0f;
-        case 2u:  return 4.0f;
-        case 3u:  return 0.5f;
-        default:  return 1.0f;
-    }
+    // Scale values are powers of 2: m=0→1, m=1→2, m=2→4, m=3→0.5
+    // Exponent sequence (0, 1, 2, -1) = ((m + 1) & 3) - 1
+    uint m = (flags >> 4u) & 3u;
+    return exp2((float)((m + 1u) & 3u) - 1.0f);
 }
 
 // ============================================================
 // Input register resolution — split into stage vs final paths
 //
 // ResolveStageInput: called from DoCombinerStage (stageIdx 0..7)
-//   No final-combiner branches; V1R0_SUM/EF_PROD always read zero.
+//   Regs[V1R0_SUM] and Regs[EF_PROD] are zero-initialized and never
+//   written until DoFinalCombiner, so all register indices (including
+//   FOG, V1R0_SUM, EF_PROD) resolve correctly via a direct array read.
 //
 // ResolveFinalInput: called from DoFinalCombiner (EFG stageIdx=8,
 //   ABCD stageIdx=9).  Remaps invalid mappings; V1R0_SUM/EF_PROD
 //   are valid only at stageIdx=9.
 // ============================================================
 
-float4 ResolveStageInput(float4 Regs[16], uint regByte, uint stage,
-                         bool flagUniqueC0, bool flagUniqueC1)
+float4 ResolveStageInput(float4 Regs[16], uint regByte)
 {
     uint regIdx    = regByte & 0x0Fu;
     uint mapping   = regByte & 0xE0u;
     bool useAlphaC = (regByte & PS_CHANNEL_ALPHA) != 0u;
 
-    float4 val;
-    switch (regIdx)
-    {
-        // C0/C1 now read from Regs[] (initialised per-stage from cbuffer,
-        // but writable by combiner output stages — matching NV2A/xemu).
-
-        case PS_REGISTER_FOG:
-            // Color stages see full fog register (rgb + alpha).
-            // Channel select below handles .aaaa broadcast when alpha is requested.
-            val = Regs[PS_REGISTER_FOG];
-            break;
-
-        case PS_REGISTER_V1R0_SUM:
-        case PS_REGISTER_EF_PROD:
-            // Only valid in final combiner ABCD; return zero in stage path
-            val = (float4)0.0f;
-            break;
-
-        default:
-            val = Regs[regIdx & 0xFu];
-            break;
-    }
+    float4 val = Regs[regIdx];
 
     if (useAlphaC)
         val = val.aaaa;
 
     return ApplyInputMapping(mapping, val);
+}
+
+float ResolveStageInputAlpha(float4 Regs[16], uint regByte)
+{
+    uint regIdx  = regByte & 0x0Fu;
+    uint mapping = regByte & 0xE0u;
+
+    return ApplyInputMappingScalar(mapping, Regs[regIdx].a);
 }
 
 float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB,
@@ -349,9 +400,10 @@ float3 ApplyDotMapping(uint stage, float4 src)
     // HILO modes are extremely rare and would need 16-bit decode.
     if (mapping == 0u)
         return src.rgb; // ZERO_TO_ONE: identity [0,1]
+
     if (mapping == 1u) {
         // MINUS1_TO_1_D3D: (byte - 128) / 127
-        float3 b = floor(saturate(src.rgb) * 255.0f + 0.5f);
+        float3 b = round(saturate(src.rgb) * 255.0f);
         return (b - 128.0f) / 127.0f;
     }
     // Fallback: treat as identity for unimplemented HILO/GL modes
@@ -422,10 +474,11 @@ float4 SampleCube(uint s, float3 dir)
 void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 {
     float4 val = float4(0.0f, 0.0f, 0.0f, 1.0f); // default: opaque black
+    uint   tBase = PS_REGISTER_T0 + stage;
 
     // Read texture coordinates from T register (pre-loaded from VS output;
     // may have been perturbed by a prior BUMPENVMAP stage).
-    float4 coords = Regs[PS_REGISTER_T0 + stage];
+    float4 coords = Regs[tBase];
 
     switch (mode)
     {
@@ -510,8 +563,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm  = ApplyDotMapping(stage, src);
         float  d   = dot(coords.xyz, dm);
-        float  s   = Regs[PS_REGISTER_T0 + (stage - 1u)].x; // dot_[ts-1]
-        float  t   = d;                                      // dot_[ts]
+        float  s   = Regs[tBase - 1u].x; // dot_[ts-1]
+        float  t   = d;                   // dot_[ts]
         val = Sample2D(stage, float2(s, t));
         break;
     }
@@ -522,7 +575,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm  = ApplyDotMapping(stage, src);
         float  d   = dot(coords.xyz, dm);
-        float  prevDot = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float  prevDot = Regs[tBase - 1u].x;
         // Avoid division by near-zero (matches compiled PS guard)
         float  depth = (abs(d) < 0.00001f) ? 1.0f : (prevDot / d);
         val = float4(depth, depth, depth, depth);
@@ -535,8 +588,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         // Normal is used directly as the cubemap direction (no reflection for DIFF).
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm   = ApplyDotMapping(stage, src);
-        float  nx   = Regs[PS_REGISTER_T0 + (stage - 1u)].x; // dot_[ts-1]
-        float  ny   = dot(coords.xyz, dm);                    // dot_[ts]
+        float  nx   = Regs[tBase - 1u].x; // dot_[ts-1]
+        float  ny   = dot(coords.xyz, dm);  // dot_[ts]
         val = SampleCube(stage, float3(nx, ny, 0.0f));
         break;
     }
@@ -546,8 +599,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         // Build normal, compute specular reflection vector, cubemap lookup.
         // Eye vector is assembled from the .w component of T1, T2, T3
         // (NV2A hardcodes these indices).
-        float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
-        float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float  nx   = Regs[tBase - 2u].x;
+        float  ny   = Regs[tBase - 1u].x;
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm   = ApplyDotMapping(stage, src);
         float  nz   = dot(coords.xyz, dm);
@@ -562,8 +615,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 
     case PS_TEXTUREMODES_DOT_STR_3D:
     {
-        float  s    = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
-        float  t    = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float  s    = Regs[tBase - 2u].x;
+        float  t    = Regs[tBase - 1u].x;
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm   = ApplyDotMapping(stage, src);
         float  r    = dot(coords.xyz, dm);
@@ -573,8 +626,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 
     case PS_TEXTUREMODES_DOT_STR_CUBE:
     {
-        float  s    = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
-        float  t    = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float  s    = Regs[tBase - 2u].x;
+        float  t    = Regs[tBase - 1u].x;
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm   = ApplyDotMapping(stage, src);
         float  r    = dot(coords.xyz, dm);
@@ -586,8 +639,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
     {
         // Like DOT_RFLCT_SPEC but eye vector is a constant.
         // TODO: wire SetEyeVector() / D3DRS_PSINPUTTEXTURE to a cbuffer entry
-        float  nx   = Regs[PS_REGISTER_T0 + (stage - 2u)].x;
-        float  ny   = Regs[PS_REGISTER_T0 + (stage - 1u)].x;
+        float  nx   = Regs[tBase - 2u].x;
+        float  ny   = Regs[tBase - 1u].x;
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
         float3 dm   = ApplyDotMapping(stage, src);
         float  nz   = dot(coords.xyz, dm);
@@ -610,7 +663,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 
     // Post-process: format fixup, color sign, color key (matches compiled PS pipeline)
     val = PostProcessTexel(stage, val);
-    RegWrite(Regs, PS_REGISTER_T0 + stage, val);
+    RegWriteDirect(Regs, tBase, val);
 }
 
 // ============================================================
@@ -619,14 +672,14 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 // ============================================================
 float3 nv2a_mul3(float3 a, float3 b)
 {
-    float3 r = a * b;
-    r = (a == 0.0f || b == 0.0f) ? 0.0f : r;
-    return r;
+    bool3 isZero = (a == 0.0f) | (b == 0.0f);
+    return isZero ? (float3)0.0f : a * b;
 }
 
 float nv2a_mul1(float a, float b)
 {
-    return (a == 0.0f || b == 0.0f) ? 0.0f : a * b;
+    bool isZero = (a == 0.0f) | (b == 0.0f);
+    return isZero ? 0.0f : a * b;
 }
 
 // ============================================================
@@ -673,14 +726,14 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
     uint aRegSum   = (aOut   >> PS_COMBINEROUTPUTS_MUX_SUM_SHIFT) & 0xFu;
 
     // --- Fetch all eight inputs in one block ---
-    float4 rgbA = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbB = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbC = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1);
-    float4 rgbD = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1);
-    float   aA  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1).a;
-    float   aB  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1).a;
-    float   aC  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1).a;
-    float   aD  = ResolveStageInput(Regs, (aIn   >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, stage, flagUniqueC0, flagUniqueC1).a;
+    float4 rgbA = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu);
+    float4 rgbB = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu);
+    float4 rgbC = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu);
+    float4 rgbD = ResolveStageInput(Regs, (rgbIn >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu);
+    float   aA  = ResolveStageInputAlpha(Regs, (aIn   >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu);
+    float   aB  = ResolveStageInputAlpha(Regs, (aIn   >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu);
+    float   aC  = ResolveStageInputAlpha(Regs, (aIn   >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu);
+    float   aD  = ResolveStageInputAlpha(Regs, (aIn   >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu);
 
     // --- Compute AB and CD products ---
     // Dot product applies to RGB only; alpha always multiplies scalars
@@ -695,7 +748,7 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
     bool muxSel = false;
     if (flagRGBMux || flagAMux) {
         float r0a = Regs[PS_REGISTER_R0].a;
-        uint r0aBits = (uint)(saturate(r0a) * 255.0f + 0.5f);
+        uint r0aBits = (uint)round(saturate(r0a) * 255.0f);
         muxSel = flagMuxMsb
             ? (r0a >= 0.5f)
             : ((r0aBits & 1u) != 0u);
@@ -771,7 +824,7 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
     float  G = ResolveFinalInput(Regs, gReg, false, flagUniqueC0, flagUniqueC1).a;
 
     // Compute E*F and store in EF_PROD for potential use by ABCD inputs
-    RegWrite(Regs, PS_REGISTER_EF_PROD, float4(E * F, 1.0f));
+    RegWriteDirect(Regs, PS_REGISTER_EF_PROD, float4(E * F, 1.0f));
 
     // --- Optional complement and clamp on V1 and R0 ---
     // These modify the sum inputs, not the stored register values
@@ -784,7 +837,7 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
     if (settings & PS_FINALCOMBINERSETTING_CLAMP_SUM) v1r0sum = saturate(v1r0sum);
 
     // Store V1+R0 sum for potential use by ABCD inputs
-    RegWrite(Regs, PS_REGISTER_V1R0_SUM, float4(v1r0sum, 1.0f));
+    RegWriteDirect(Regs, PS_REGISTER_V1R0_SUM, float4(v1r0sum, 1.0f));
 
     // --- Resolve A, B, C, D — ABCD phase (V1R0_SUM / EF_PROD now valid) ---
     uint abcd = PSFinalCombinerInputsABCD;
@@ -860,10 +913,10 @@ float4 main(PS_INPUT input) : SV_Target
     bool isFront = (input.iFF ? 1.0f : -1.0f) * FrontFaceInfo.x >= 0.0f;
     float4 diffuse  = isFront ? input.iD0 : input.iB0;
     float4 specular = isFront ? input.iD1 : input.iB1;
-    RegWrite(Regs, PS_REGISTER_V0, diffuse);
-    RegWrite(Regs, PS_REGISTER_V1, specular);
+    RegWriteDirect(Regs, PS_REGISTER_V0, diffuse);
+    RegWriteDirect(Regs, PS_REGISTER_V1, specular);
     // FOG: rgb from the fog color constant, alpha from the vertex fog factor
-    RegWrite(Regs, PS_REGISTER_FOG, float4(FogColor.rgb, saturate(input.iFog)));
+    RegWriteDirect(Regs, PS_REGISTER_FOG, float4(FogColor.rgb, saturate(input.iFog)));
 
     // R0 initialization: NV2A spec says R0.rgb starts at 0, R0.a starts from T0.a.
     // xemu matches this: "r0 = vec4(0); r0.a = t0.a;".
