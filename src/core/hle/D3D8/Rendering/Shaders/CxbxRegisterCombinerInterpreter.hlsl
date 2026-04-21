@@ -98,8 +98,8 @@ SamplerState Samp3     : register(s3);
 //
 // Slot ownership:
 //   0  ZERO/DISCARD  read-only zero; writes silently dropped
-//   1  C0            resolved from cbuffer; not stored here
-//   2  C1            resolved from cbuffer; not stored here
+//   1  C0            initialised from cbuffer per-stage; read/write
+//   2  C1            initialised from cbuffer per-stage; read/write
 //   3  FOG           read/write
 //   4  V0            read/write
 //   5  V1            read/write
@@ -117,10 +117,11 @@ float4 RegRead(float4 Regs[16], uint idx)
 
 void RegWrite(inout float4 Regs[16], uint idx, float4 val)
 {
-    // Silently drop writes to read-only and reserved slots
+    // Silently drop writes to read-only and reserved slots.
+    // C0/C1 ARE writable on NV2A hardware (confirmed by xemu).
+    // They are initialised from the cbuffer per-stage, but combiner
+    // output stages can overwrite them for subsequent reads.
     if (idx == PS_REGISTER_ZERO ||
-        idx == PS_REGISTER_C0   ||
-        idx == PS_REGISTER_C1   ||
         idx == 6u               ||
         idx == 7u)
         return;
@@ -209,13 +210,8 @@ float4 ResolveStageInput(float4 Regs[16], uint regByte, uint stage,
     float4 val;
     switch (regIdx)
     {
-        case PS_REGISTER_C0:
-            val = flagUniqueC0 ? PSConstant0[stage] : PSConstant0[0];
-            break;
-
-        case PS_REGISTER_C1:
-            val = flagUniqueC1 ? PSConstant1[stage] : PSConstant1[0];
-            break;
+        // C0/C1 now read from Regs[] (initialised per-stage from cbuffer,
+        // but writable by combiner output stages — matching NV2A/xemu).
 
         case PS_REGISTER_FOG:
             // Color stages see full fog register (rgb + alpha).
@@ -250,13 +246,8 @@ float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB,
     float4 val;
     switch (regIdx)
     {
-        case PS_REGISTER_C0:
-            val = PSFinalCombinerConstant[0];
-            break;
-
-        case PS_REGISTER_C1:
-            val = PSFinalCombinerConstant[1];
-            break;
+        // C0/C1 read from Regs[] (pre-loaded from PSFinalCombinerConstant
+        // before DoFinalCombiner, matching NV2A/xemu behavior).
 
         case PS_REGISTER_FOG:
         {
@@ -890,9 +881,21 @@ float4 main(PS_INPUT input) : SV_Target
     for (uint stage = 0u; stage < (uint)NUM_STAGES; stage++)
     {
         if (stage < numStages)
+        {
+            // Initialise C0/C1 from cbuffer constants before each stage.
+            // UNIQUE_C0/C1: each stage gets its own constant; otherwise all
+            // stages share constant[0].  Combiner outputs CAN write to C0/C1
+            // (confirmed by xemu / NV2A hardware), so this must happen before
+            // DoCombinerStage, not inside ResolveStageInput.
+            Regs[PS_REGISTER_C0] = flagUniqueC0 ? PSConstant0[stage] : PSConstant0[0];
+            Regs[PS_REGISTER_C1] = flagUniqueC1 ? PSConstant1[stage] : PSConstant1[0];
             DoCombinerStage(Regs, stage, flagMuxMsb, flagUniqueC0, flagUniqueC1);
+        }
     }
 
+    // Initialise C0/C1 for the final combiner from FinalCombinerConstants
+    Regs[PS_REGISTER_C0] = PSFinalCombinerConstant[0];
+    Regs[PS_REGISTER_C1] = PSFinalCombinerConstant[1];
     float4 result = DoFinalCombiner(Regs, flagUniqueC0, flagUniqueC1);
 
     // --- Alpha test ---
