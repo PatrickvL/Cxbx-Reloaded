@@ -695,6 +695,11 @@ float CxbxGetTexFmtFixup(int stage_nr)
 
 	xbox::X_D3DFORMAT xboxFmt = GetXboxPixelContainerFormat((xbox::X_D3DPixelContainer*)pXboxTex);
 	switch (xboxFmt) {
+	case xbox::X_D3DFMT_X8R8G8B8:
+	case xbox::X_D3DFMT_LIN_X8R8G8B8:
+	case xbox::X_D3DFMT_X1R5G5B5:
+	case xbox::X_D3DFMT_LIN_X1R5G5B5:
+		return TEXFMTFIXUP_OPAQUEA;
 	case xbox::X_D3DFMT_L8:
 	case xbox::X_D3DFMT_LIN_L8:
 	case xbox::X_D3DFMT_L16:

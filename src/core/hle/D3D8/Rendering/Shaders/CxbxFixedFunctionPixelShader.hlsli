@@ -134,6 +134,7 @@ namespace FixedFunctionPixelShader {
 	const CXBX_STEERING_INT TEXFMTFIXUP_ABGR     = 2; // A8B8G8R8 uploaded as R8G8B8A8
 	const CXBX_STEERING_INT TEXFMTFIXUP_LUM      = 3; // Luminance: R8→(R,R,R,1)
 	const CXBX_STEERING_INT TEXFMTFIXUP_ALUM     = 4; // Alpha-luminance: R8G8→(R,R,R,G);
+	const CXBX_STEERING_INT TEXFMTFIXUP_OPAQUEA  = 5; // X8R8G8B8/X1R5G5B5: force alpha to 1.0
 
 	// This state is compiled into the shader
 	// Values correspond to XD3D8 version of D3DTEXTURESTAGESTATETYPE

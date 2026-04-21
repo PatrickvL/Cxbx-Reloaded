@@ -85,7 +85,7 @@ void PerformAlphaTest(const float3 alphaTest, float alpha)
 }
 
 // Texture format channel fixup (D3D11: luminance replication, channel swizzle)
-// fixup: 0=identity, 1=.gbar, 2=.abgr, 3=luminance, 4=alpha-luminance
+// fixup: 0=identity, 1=.gbar, 2=.abgr, 3=luminance, 4=alpha-luminance, 5=opaque-alpha
 float4 ApplyTexFmtFixup(float4 t, CXBX_STEERING_INT fixup)
 {
 	[branch] if (fixup != 0) {
@@ -93,6 +93,7 @@ float4 ApplyTexFmtFixup(float4 t, CXBX_STEERING_INT fixup)
 		if (fixup == 2) return t.abgr;                       // A8B8G8R8 uploaded as R8G8B8A8
 		if (fixup == 3) return float4(t.r, t.r, t.r, t.a);   // Luminance: R→(R,R,R,A)
 		if (fixup == 4) return float4(t.r, t.r, t.r, t.g);   // Alpha-luminance: RG→(R,R,R,G)
+		if (fixup == 5) return float4(t.rgb, 1.0f);           // Opaque-alpha: X8R8G8B8/X1R5G5B5
 	}
 	return t;
 }
