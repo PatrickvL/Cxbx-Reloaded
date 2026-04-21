@@ -24,6 +24,7 @@ uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 
 #include "CxbxScreenspaceTransform.hlsli"
 #include "CxbxVertexShaderInterpreterState.hlsli"
+#include "CxbxNV2AMathHelpers.hlsli"
 
 // ============================================================
 // Swizzle helper: rearrange float4 components by packed index
@@ -89,33 +90,7 @@ void write_r(uint dest, inout float4 t[12], inout float4 oPos, float4 result, ui
     else if (dest < 12) write_masked(t[dest], result, mask);
 }
 
-// ============================================================
-// NV2A-accurate multiply: 0 * anything = 0, even 0 * inf
-// Standard GPU float math produces NaN for 0 * inf.
-// ============================================================
-float4 nv2a_mul(float4 a, float4 b)
-{
-    float4 p = a * b;
-    // Per-component: if either operand is zero, force result to zero
-    p = (a == 0.0f || b == 0.0f) ? 0.0f : p;
-    return p;
-}
-
-// NV2A-accurate dot products: use nv2a_mul per-component so that
-// 0 * inf = 0 instead of NaN. This is critical for vertex transforms
-// where e.g. RCP of a tiny value produces inf, then dp4 with a zero
-// matrix component would produce NaN → entire vertex position lost.
-float nv2a_dot3(float4 a, float4 b)
-{
-    float4 m = nv2a_mul(a, b);
-    return m.x + m.y + m.z;
-}
-
-float nv2a_dot4(float4 a, float4 b)
-{
-    float4 m = nv2a_mul(a, b);
-    return m.x + m.y + m.z + m.w;
-}
+// NV2A-accurate multiply and dot product helpers are in CxbxNV2AMathHelpers.hlsli
 
 // ============================================================
 // MAC unit operations
@@ -130,10 +105,7 @@ float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
         case VSI_MAC_DP3: return nv2a_dot3(a, b).xxxx;
         case VSI_MAC_DPH: return (nv2a_dot3(a, b) + b.w).xxxx;
         case VSI_MAC_DP4: return nv2a_dot4(a, b).xxxx;
-        case VSI_MAC_DST: {
-            float4 m = nv2a_mul(a, b);
-            return float4(1.0, m.y, a.z, b.w);
-        }
+        case VSI_MAC_DST: return float4(1.0, nv2a_mul1(a.y, b.y), a.z, b.w);
         case VSI_MAC_MIN: return min(a, b);
         case VSI_MAC_MAX: return max(a, b);
         case VSI_MAC_SLT: return 1.0 - step(b, a);  // 1 where a < b

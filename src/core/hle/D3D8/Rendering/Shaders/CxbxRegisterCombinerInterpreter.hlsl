@@ -81,6 +81,7 @@
 // ============================================================
 #include "CxbxNV2APixelShaderConstants.hlsli"
 #include "CxbxRegisterCombinerInterpreterState.hlsli"
+#include "CxbxNV2AMathHelpers.hlsli"
 
 // Shared pure-math pixel shader helpers (ApplyTexFmtFixup, PerformColorSign,
 // PerformColorKeyOp, PerformAlphaTest, CalculateFogFactor, etc.)
@@ -666,21 +667,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
     RegWriteDirect(Regs, tBase, val);
 }
 
-// ============================================================
-// NV2A-accurate multiply: 0 * anything = 0, even 0 * inf
-// Standard GPU float math produces NaN for 0 * inf.
-// ============================================================
-float3 nv2a_mul3(float3 a, float3 b)
-{
-    bool3 isZero = (a == 0.0f) | (b == 0.0f);
-    return isZero ? (float3)0.0f : a * b;
-}
-
-float nv2a_mul1(float a, float b)
-{
-    bool isZero = (a == 0.0f) | (b == 0.0f);
-    return isZero ? 0.0f : a * b;
-}
+// NV2A-accurate multiply helpers are in CxbxNV2AMathHelpers.hlsli
 
 // ============================================================
 // Step 4: combined RGB + alpha combiner stage
