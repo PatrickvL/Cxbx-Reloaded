@@ -44,6 +44,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 #include "Rendering\RenderStates.h"
 #include "Rendering\TextureStates.h"
 #include <wrl/client.h>
@@ -313,6 +314,35 @@ typedef struct s_CxbxPSDef {
 		RC.FinalCombiner.Input[6/*G*/].Channel = PS_CHANNEL_ALPHA;
 	}
 
+	// Hash only the identifying fields used by IsEquivalent() for O(1) cache lookup
+	uint64_t ComputeIdentityHash() const
+	{
+		// Build a contiguous buffer of all fields that IsEquivalent compares
+		uint8_t buf[39 * sizeof(DWORD) + 12]; // 39 DWORDs + up to 12 bytes of bools
+		uint8_t *p = buf;
+
+		// [*] PSAlphaInputs[8] + PSFinalCombinerInputsABCD + PSFinalCombinerInputsEFG (10 DWORDs)
+		memcpy(p, &PSDef.PSAlphaInputs[0], 10 * sizeof(DWORD)); p += 10 * sizeof(DWORD);
+		// [*] PSAlphaOutputs[8] + PSRGBInputs[8] + PSCompareMode (17 DWORDs)
+		memcpy(p, &PSDef.PSAlphaOutputs[0], 17 * sizeof(DWORD)); p += 17 * sizeof(DWORD);
+		// [*] PSRGBOutputs[8] + PSCombinerCount + PSTextureModes + PSDotMapping + PSInputTexture (12 DWORDs)
+		memcpy(p, &PSDef.PSRGBOutputs[0], 12 * sizeof(DWORD)); p += 12 * sizeof(DWORD);
+		// Bools and enums
+		*p++ = DecodedTexModeAdjust ? 1 : 0;
+		*p++ = DecodedHasFinalCombiner ? 1 : 0;
+		for (unsigned i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++)
+			*p++ = AlphaKill[i] ? 1 : 0;
+		for (unsigned i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++)
+			*p++ = (uint8_t)ActiveTextureTypes[i];
+		// Conditional fields (must match IsEquivalent logic)
+		if (!DecodedHasFinalCombiner) {
+			*p++ = RenderStateFogEnable ? 1 : 0;
+			*p++ = RenderStateSpecularEnable ? 1 : 0;
+		}
+
+		return ComputeHash(buf, (size_t)(p - buf));
+	}
+
 	void PerformRuntimeAdjustments(DecodedRegisterCombiner &RC)
 	{
 		RC.AlphaKill[0] = AlphaKill[0];
@@ -328,6 +358,7 @@ CxbxPSDef;
 typedef struct _PSH_RECOMPILED_SHADER {
 	CxbxPSDef CompletePSDef;
 	ID3D11PixelShader* ConvertedPixelShader;
+	bool isPending; // true = async compile in flight, don't cache permanently
 } PSH_RECOMPILED_SHADER;
 
 PSH_RECOMPILED_SHADER CxbxRecompilePixelShader(CxbxPSDef &CompletePSDef)
@@ -337,11 +368,12 @@ PSH_RECOMPILED_SHADER CxbxRecompilePixelShader(CxbxPSDef &CompletePSDef)
 	CompletePSDef.PerformRuntimeAdjustments(RC);
 
 	ID3DBlob *pShader = nullptr;
-	EmuCompilePixelShader(&RC, &pShader);
+	HRESULT compileHr = EmuCompilePixelShader(&RC, &pShader);
 
 	PSH_RECOMPILED_SHADER Result;
 	Result.CompletePSDef = CompletePSDef;
 	Result.ConvertedPixelShader = nullptr;
+	Result.isPending = (compileHr == S_FALSE); // S_FALSE = async fallback
 	if (pShader) {
 		DWORD *pFunction = (DWORD*)pShader->GetBufferPointer();
 		if (pFunction) {
@@ -356,7 +388,7 @@ PSH_RECOMPILED_SHADER CxbxRecompilePixelShader(CxbxPSDef &CompletePSDef)
 	return Result;
 } // CxbxRecompilePixelShader
 
-std::vector<PSH_RECOMPILED_SHADER> g_RecompiledPixelShaders;
+std::unordered_map<uint64_t, PSH_RECOMPILED_SHADER> g_RecompiledPixelShaders;
 
 // Mapping indices of Xbox register combiner constants to host pixel shader constants;
 // The first 16 are identity-mapped (C0_1 .. C0_7 are C0 .. C7 on host, C1_0 .. C1_7 are C8 .. C15 on host) :
@@ -1056,7 +1088,7 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 	  pixelShaderVersion = shaderVersion;
 	  CxbxRawSetPixelShader(nullptr);
 
-	  for (auto& hostShader : g_RecompiledPixelShaders) {
+	  for (auto& [key, hostShader] : g_RecompiledPixelShaders) {
 		  if (hostShader.ConvertedPixelShader)
 			  hostShader.ConvertedPixelShader->Release();
 	  }
@@ -1064,21 +1096,26 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 	  g_RecompiledPixelShaders.clear();
   }
 
-  // Now, see if we already have a shader compiled for this definition :
-  // TODO : Change g_RecompiledPixelShaders into an unordered_map, hash just the identifying PSDef members, and add cache eviction (clearing host resources when pruning)
+  // O(1) hash-based pixel shader cache lookup (replaces old linear search)
   const PSH_RECOMPILED_SHADER* RecompiledPixelShader = nullptr;
-  for (const auto& it : g_RecompiledPixelShaders) {
-   	if (CompletePSDef.IsEquivalent(it.CompletePSDef)) {
-   	  RecompiledPixelShader = &it;
-   	  break;
-   	}
+  uint64_t psHash = CompletePSDef.ComputeIdentityHash();
+  auto it = g_RecompiledPixelShaders.find(psHash);
+  if (it != g_RecompiledPixelShaders.end()) {
+    if (it->second.isPending) {
+      // Async fallback entry — recompile to get the real shader
+      auto result = CxbxRecompilePixelShader(CompletePSDef);
+      if (it->second.ConvertedPixelShader)
+        it->second.ConvertedPixelShader->Release();
+      it->second = std::move(result);
+    }
+    RecompiledPixelShader = &it->second;
   }
 
-  // If none was found, recompile this shader and remember it :
+  // If none was found, compile and insert :
   if (RecompiledPixelShader == nullptr) {
-   	// Recompile this pixel shader :
-   	g_RecompiledPixelShaders.push_back(CxbxRecompilePixelShader(CompletePSDef));
-   	RecompiledPixelShader = &g_RecompiledPixelShaders.back();
+    auto result = CxbxRecompilePixelShader(CompletePSDef);
+    auto [insertIt, _] = g_RecompiledPixelShaders.emplace(psHash, std::move(result));
+    RecompiledPixelShader = &insertIt->second;
   }
 
   CxbxSetPixelShader(RecompiledPixelShader->ConvertedPixelShader);
