@@ -40,7 +40,7 @@ cbuffer CxbxVertexLayoutCB : register(b1)
     uint g_IndexOffset;     // Byte offset into g_IdxData for the index data start
     uint g_NumAttribs;      // Number of active vertex attributes (1..16)
     uint g_NumVerts;        // Original Xbox vertex count (needed for lineloop wrap)
-    uint g_Pad5;
+    uint g_VertexOffset;    // Added to resolved index (StartVertex or BaseVertexIndex)
     uint g_Pad6;
     uint g_Pad7;
 
@@ -176,13 +176,13 @@ uint ResolveVertexIndex(uint hostVertId)
         uint aligned  = byteAddr & ~3u;
         uint shift    = (byteAddr & 3u) * 8u;
         uint word     = g_IdxData.Load(aligned);
-        return (word >> shift) & 0xFFFFu;
+        return ((word >> shift) & 0xFFFFu) + g_VertexOffset;
     } else if (g_IndexedDraw == 2u) {
         // 32-bit indices
-        return g_IdxData.Load(g_IndexOffset + logicalIdx * 4u);
+        return g_IdxData.Load(g_IndexOffset + logicalIdx * 4u) + g_VertexOffset;
     }
 
-    return logicalIdx;
+    return logicalIdx + g_VertexOffset;
 }
 
 // ---------------------------------------------------------------

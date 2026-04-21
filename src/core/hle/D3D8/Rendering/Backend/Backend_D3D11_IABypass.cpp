@@ -107,7 +107,9 @@ struct IABypassLayoutCB {
 	UINT IndexOffset;     // Byte offset into index data
 	UINT NumAttribs;      // Number of active attributes
 	UINT NumVerts;        // Original Xbox vertex count (for lineloop wrap)
-	UINT Pad5;
+	UINT VertexOffset;    // Added to each resolved vertex index before VB fetch
+	                      //   Non-indexed: StartVertex
+	                      //   Indexed: BaseVertexIndex
 	UINT Pad6;
 	UINT Pad7;
 	UINT Attribs[16][4];  // Per-attribute: elemOffset, stride, format, streamBase
@@ -424,7 +426,8 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	{
 		// Build a local hash of fields that change per-draw but aren't covered by
 		// the external invalidation (prim type, indexed mode, vertex range, index offset)
-		UINT drawLocalKey = primType | (indexedDraw << 2) | (vertexStart << 8) | (numVertices << 20);
+		UINT vertexOffset = indexedDraw ? DrawContext.dwBaseVertexIndex : vertexStart;
+		UINT drawLocalKey = primType | (indexedDraw << 2) | (vertexOffset << 4) | (numVertices << 20);
 		static UINT s_LastDrawLocalKey = UINT_MAX;
 		static UINT s_LastIndexOffset = UINT_MAX;
 		bool layoutDirty = (s_LayoutCBGeneration != s_LastLayoutCBGeneration)
@@ -449,6 +452,14 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		pCB->IndexOffset = indexOffset;
 		pCB->NumAttribs = 16; // Always provide all 16 attribute descriptors
 		pCB->NumVerts = DrawContext.dwVertexCount; // Original vertex count (for lineloop)
+
+		// VertexOffset: adjusts the resolved vertex index before VB fetch.
+		// Non-indexed draws: StartVertex (DrawVertices skips the first N vertices).
+		// Indexed draws: BaseVertexIndex (SetIndices offset added to each index).
+		if (indexedDraw)
+			pCB->VertexOffset = DrawContext.dwBaseVertexIndex;
+		else
+			pCB->VertexOffset = vertexStart;
 
 		// Fill per-attribute descriptors
 		// Walk the vertex declaration's stream info to find each attribute
