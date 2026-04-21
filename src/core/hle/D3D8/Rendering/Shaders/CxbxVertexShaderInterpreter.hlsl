@@ -151,14 +151,18 @@ float4 exec_ilu(uint opcode, float4 c_in)
         }
         case VSI_ILU_RSQ: return rsqrt(abs(s)).xxxx;
         case VSI_ILU_EXP: {
-            float fl = vsi_floor(s);
+            // EXP uses exact floor (no bias). The +0.001 bias in vsi_floor
+            // is only correct for ARL (byte normalization rounding fix).
+            float fl = floor(s);
             return float4(exp2(fl), s - fl, exp2(s), 1.0);
         }
         case VSI_ILU_LOG: {
-            float ex;
-            float mantissa = frexp(s, ex);
-            float z = log2(s);
-            return float4(ex, mantissa, z, 1.0);
+            // Matches xemu: floor(log2(|src|)), |src|/2^floor(log2(|src|)), log2(|src|), 1
+            // Special case: LOG(0) = (-inf, 1, -inf, 1)
+            float t = abs(s);
+            if (t == 0.0f) return float4(-1.0f / 0.0f, 1.0f, -1.0f / 0.0f, 1.0f);
+            float flLog = floor(log2(t));
+            return float4(flLog, t / exp2(flLog), log2(t), 1.0);
         }
         case VSI_ILU_LIT: {
             float diffuse = c_in.x;
