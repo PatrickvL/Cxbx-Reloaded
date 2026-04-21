@@ -22,6 +22,7 @@
 // ******************************************************************
 
 #include "Backend_D3D11_Internal.h"
+#include "Backend_D3D11_PageTracker.h"
 
 // ******************************************************************
 // * D3D11 device globals — definitions
@@ -1170,6 +1171,9 @@ void CxbxD3D11InitBlit()
 	if (FAILED(hr)) {
 		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11InitBlit: Failed to create vertex convert CB");
 	}
+
+	// Initialize page-tracked 64 MiB mirror (must precede IA bypass init)
+	CxbxPageTrackerInit();
 
 	// Initialize IA bypass resources
 	CxbxD3D11IABypassInit();
