@@ -1273,6 +1273,11 @@ HRESULT CxbxD3D11Blt(
 	ID3D11ShaderResourceView* pNullSRV = nullptr;
 	g_pD3DDeviceContext->PSSetShaderResources(0, 1, &pNullSRV);
 
+	// Invalidate the PS state tracking since we bypassed CxbxSetPixelShader
+	// to bind the blit PS directly. Without this, the next CxbxSetPixelShader
+	// call would skip rebinding the game's pixel shader.
+	CxbxInvalidateActivePixelShader();
+
 	pRTV->Release();
 	pSRV->Release();
 

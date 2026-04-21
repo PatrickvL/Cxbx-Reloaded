@@ -206,6 +206,7 @@ void*   CxbxLockVertexBuffer(ID3D11Buffer* pVertexBuffer); // Returns mapped poi
 void    CxbxUnlockVertexBuffer(ID3D11Buffer* pVertexBuffer);
 HRESULT CxbxCreatePixelShader(const void* pFunction, SIZE_T FunctionSize, ID3D11PixelShader** ppShader);
 void    CxbxRawSetPixelShader(ID3D11PixelShader* pPixelShader);
+void    CxbxInvalidateActivePixelShader(); // Reset PS state tracking after blit/present
 HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader);
 ID3D11InputLayout* CxbxCreateHostVertexDeclaration(D3D11_INPUT_ELEMENT_DESC *pDeclaration);
 struct _CxbxVertexDeclaration;

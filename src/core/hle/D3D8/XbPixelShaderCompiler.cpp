@@ -850,6 +850,15 @@ void UpdateFixedFunctionPixelShaderState()
 
 static ID3D11PixelShader* g_pActivePixelShader = nullptr; // TODO : Reset when device resets!
 
+void CxbxInvalidateActivePixelShader()
+{
+	// Called after the blit/present path which bypasses CxbxSetPixelShader
+	// and binds its own PS directly. Without this, the next CxbxSetPixelShader
+	// call would skip the bind because g_pActivePixelShader still holds the
+	// pre-blit pointer even though the device now has the blit PS bound.
+	g_pActivePixelShader = nullptr;
+}
+
 void CxbxSetPixelShader(ID3D11PixelShader* pPixelShader)
 {
 	// Here no call to (PS)GetPixelShader, but our own state tracking; See https://gamedev.stackexchange.com/a/88117
