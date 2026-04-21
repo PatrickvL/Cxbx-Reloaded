@@ -399,7 +399,8 @@ bool CxbxD3D11InitRCInterpreter()
 	EmuLog(LOG_LEVEL::INFO, "Compiling RC Interpreter pixel shader (this may take a moment)...");
 	ID3DBlob* pBlob = nullptr;
 	HRESULT hr = EmuCompileShader(hlsl, "ps_5_0", &pBlob,
-		g_ShaderSources.registerCombinerInterpreterPath.c_str());
+		g_ShaderSources.registerCombinerInterpreterPath.c_str(),
+		/*asyncAllowed=*/false, /*useSharedCache=*/true);
 	if (FAILED(hr) || !pBlob) {
 		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter pixel shader compilation failed");
 		return false;
@@ -447,7 +448,8 @@ bool CxbxD3D11InitVSInterpreter()
 	EmuLog(LOG_LEVEL::INFO, "Compiling VS Interpreter vertex shader (this may take a moment)...");
 	ID3DBlob* pBlob = nullptr;
 	HRESULT hr = EmuCompileShader(hlsl, "vs_5_0", &pBlob,
-		g_ShaderSources.vertexShaderInterpreterPath.c_str());
+		g_ShaderSources.vertexShaderInterpreterPath.c_str(),
+		/*asyncAllowed=*/false, /*useSharedCache=*/true);
 	if (FAILED(hr) || !pBlob) {
 		EmuLog(LOG_LEVEL::WARNING, "VS Interpreter vertex shader compilation failed");
 		return false;

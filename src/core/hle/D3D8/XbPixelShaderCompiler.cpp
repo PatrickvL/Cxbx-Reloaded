@@ -679,7 +679,8 @@ ID3D11PixelShader* GetFixedFunctionShader()
 
 	auto pseudoFileName = "FixedFunctionPixelShader-" + std::to_string(key) + ".hlsl";
 	auto pseudoSourceFile = hlslDir.append(pseudoFileName).string();
-	EmuCompileShader(finalShader, "ps_5_0", &pShaderBlob, pseudoSourceFile.c_str());
+	EmuCompileShader(finalShader, "ps_5_0", &pShaderBlob, pseudoSourceFile.c_str(),
+		/*asyncAllowed=*/false, /*useSharedCache=*/true);
 
 	ID3D11PixelShader* pShader = nullptr;
 	if (pShaderBlob) {

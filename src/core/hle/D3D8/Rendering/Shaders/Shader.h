@@ -34,7 +34,8 @@ extern HRESULT EmuCompileShader
 	const char* shader_profile,
 	ID3DBlob** ppHostShader,
 	const char* pSourceName = nullptr,
-	bool asyncAllowed = false
+	bool asyncAllowed = false,
+	bool useSharedCache = false
 );
 
 // Flush pending cache writes and close log file. Call before process exit.

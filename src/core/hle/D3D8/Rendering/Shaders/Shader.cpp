@@ -105,6 +105,7 @@ static bool IsValidShaderBytecode(uint32_t magic)
 }
 
 static std::string g_ShaderCacheDir;
+static std::string g_SharedShaderCacheDir;
 static std::atomic<int> g_CacheHits{0};
 static std::atomic<int> g_CacheMisses{0};
 static std::atomic<int> g_CacheSaves{0};
@@ -208,6 +209,39 @@ static std::unordered_map<uint64_t, ID3DBlob*> g_MemCache;
 
 // Forward declarations for functions used by EnsureShaderCacheDir
 static void PreloadShaderCache();
+static void PreloadShaderCacheFrom(const std::string& dir);
+
+// Returns true if the shared shader cache dir (00000000-All) is ready to use.
+// This dir does not require a game certificate — only g_DataFilePath.
+static bool EnsureSharedShaderCacheDir()
+{
+	if (!g_SharedShaderCacheDir.empty()) return true;
+	if (g_DataFilePath.empty()) return false;
+
+	g_SharedShaderCacheDir = g_DataFilePath + "\\ShaderCache\\00000000-All";
+	std::error_code ec;
+	if (!std::filesystem::exists(g_SharedShaderCacheDir)) {
+		std::filesystem::create_directories(g_SharedShaderCacheDir, ec);
+		if (ec) {
+			g_SharedShaderCacheDir.clear();
+			return false;
+		}
+	}
+
+	// Create Dumped and Replacements subdirectories
+	for (const char* sub : { "Dumped", "Replacements" }) {
+		std::string subPath = g_SharedShaderCacheDir + "\\" + sub;
+		if (!std::filesystem::exists(subPath)) {
+			std::filesystem::create_directory(subPath, ec);
+		}
+	}
+
+	// Preload all .cso files from the shared cache into memory
+	PreloadShaderCacheFrom(g_SharedShaderCacheDir);
+
+	ShaderCacheLog("Shared shader cache initialized: %s\n", g_SharedShaderCacheDir.c_str());
+	return true;
+}
 
 // Returns true if cache dir is ready to use
 static bool EnsureShaderCacheDir()
@@ -280,32 +314,35 @@ static bool EnsureShaderCacheDir()
 		}
 	}
 
+	// Also ensure the shared shader cache dir exists
+	EnsureSharedShaderCacheDir();
+
 	// Preload all .cso files into memory now that the cache dir is known
-	PreloadShaderCache();
+	PreloadShaderCacheFrom(g_ShaderCacheDir);
 
 	return true;
 }
 
-static std::string GetShaderCachePath(uint64_t hash)
+static std::string GetShaderCachePath(uint64_t hash, const std::string& cacheDir)
 {
 	char filename[32];
 	snprintf(filename, sizeof(filename), "%016llx.cso", hash);
-	return g_ShaderCacheDir + "\\" + filename;
+	return cacheDir + "\\" + filename;
 }
 
 // Returns path of the HLSL file for the given hash+profile in 'Dumped' or 'Replacements'.
-static std::string GetShaderHlslPath(uint64_t hash, const char* profile, const char* subdir)
+static std::string GetShaderHlslPath(uint64_t hash, const char* profile, const char* subdir, const std::string& cacheDir)
 {
 	char filename[80];
 	snprintf(filename, sizeof(filename), "%016llx_%s.hlsl", hash, profile);
-	return g_ShaderCacheDir + "\\" + subdir + "\\" + filename;
+	return cacheDir + "\\" + subdir + "\\" + filename;
 }
 
 // Write the HLSL source to Dumped\ the first time a shader is seen.
-static void DumpShaderSource(uint64_t hash, const char* profile, const std::string& hlsl)
+static void DumpShaderSource(uint64_t hash, const char* profile, const std::string& hlsl, const std::string& cacheDir)
 {
-	if (g_ShaderCacheDir.empty()) return;
-	std::string path = GetShaderHlslPath(hash, profile, "Dumped");
+	if (cacheDir.empty()) return;
+	std::string path = GetShaderHlslPath(hash, profile, "Dumped", cacheDir);
 	if (std::filesystem::exists(path)) return; // already dumped
 	std::ofstream f(path);
 	if (f.good()) {
@@ -315,10 +352,10 @@ static void DumpShaderSource(uint64_t hash, const char* profile, const std::stri
 }
 
 // Check whether the user placed a replacement HLSL in Replacements\.
-static bool TryLoadReplacementShader(uint64_t hash, const char* profile, std::string& out_hlsl)
+static bool TryLoadReplacementShader(uint64_t hash, const char* profile, std::string& out_hlsl, const std::string& cacheDir)
 {
-	if (g_ShaderCacheDir.empty()) return false;
-	std::string path = GetShaderHlslPath(hash, profile, "Replacements");
+	if (cacheDir.empty()) return false;
+	std::string path = GetShaderHlslPath(hash, profile, "Replacements", cacheDir);
 	std::ifstream f(path);
 	if (!f.good()) return false;
 	out_hlsl.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
@@ -327,9 +364,9 @@ static bool TryLoadReplacementShader(uint64_t hash, const char* profile, std::st
 	return true;
 }
 
-static bool LoadCachedShader(uint64_t hash, ID3DBlob** ppBlob)
+static bool LoadCachedShader(uint64_t hash, ID3DBlob** ppBlob, const std::string& cacheDir)
 {
-	std::string path = GetShaderCachePath(hash);
+	std::string path = GetShaderCachePath(hash, cacheDir);
 	FILE* fp = fopen(path.c_str(), "rb");
 	if (!fp) return false;
 
@@ -383,14 +420,15 @@ static bool LoadCachedShader(uint64_t hash, ID3DBlob** ppBlob)
 	return true;
 }
 
-// Scan the shader cache directory and load every .cso into g_MemCache so that
-// gameplay never needs a file open. Called once at the end of EnsureShaderCacheDir().
-static void PreloadShaderCache()
+// Scan a shader cache directory and load every .cso into g_MemCache so that
+// gameplay never needs a file open.
+static void PreloadShaderCacheFrom(const std::string& dir)
 {
+	if (dir.empty()) return;
 	std::error_code ec;
 	int preloaded = 0;
 	std::lock_guard<std::mutex> lock(g_AsyncMutex);
-	for (auto& entry : std::filesystem::directory_iterator(g_ShaderCacheDir, ec)) {
+	for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
 		if (entry.path().extension() != ".cso") continue;
 		std::string stem = entry.path().stem().string();
 		if (stem.size() != 16) continue;
@@ -399,16 +437,22 @@ static void PreloadShaderCache()
 		catch (...) { continue; }
 		if (g_MemCache.count(hash)) continue;
 		ID3DBlob* pBlob = nullptr;
-		if (LoadCachedShader(hash, &pBlob)) {
+		if (LoadCachedShader(hash, &pBlob, dir)) {
 			g_MemCache[hash] = pBlob;
 			preloaded++;
 		}
 	}
-	ShaderCacheLog("Preloaded %d shader(s) into memory cache\n", preloaded);
-	EmuLog(LOG_LEVEL::INFO, "ShaderCache: preloaded %d shader(s) into memory", preloaded);
+	ShaderCacheLog("Preloaded %d shader(s) into memory cache from %s\n", preloaded, dir.c_str());
+	EmuLog(LOG_LEVEL::INFO, "ShaderCache: preloaded %d shader(s) into memory from %s", preloaded, dir.c_str());
 }
 
-static void QueueSaveCachedShader(uint64_t hash, ID3DBlob* pBlob)
+// Legacy wrapper — preloads from the per-game cache directory.
+static void PreloadShaderCache()
+{
+	PreloadShaderCacheFrom(g_ShaderCacheDir);
+}
+
+static void QueueSaveCachedShader(uint64_t hash, ID3DBlob* pBlob, const std::string& cacheDir)
 {
 	// Validate the blob has DXBC magic before saving
 	if (pBlob->GetBufferSize() < 4) {
@@ -422,7 +466,7 @@ static void QueueSaveCachedShader(uint64_t hash, ID3DBlob* pBlob)
 		return;
 	}
 
-	std::string path = GetShaderCachePath(hash);
+	std::string path = GetShaderCachePath(hash, cacheDir);
 	std::vector<uint8_t> data(
 		static_cast<uint8_t*>(pBlob->GetBufferPointer()),
 		static_cast<uint8_t*>(pBlob->GetBufferPointer()) + pBlob->GetBufferSize()
@@ -460,7 +504,7 @@ static void EnsureFallbackShaders()
 
 // Background compile worker — runs real D3DCompile and stores result
 static void AsyncCompileWorker(std::string hlsl_str, std::string profile,
-	std::string sourceName, uint64_t hash, bool cacheReady)
+	std::string sourceName, uint64_t hash, bool cacheReady, std::string cacheDir)
 {
 	auto tStart = std::chrono::high_resolution_clock::now();
 
@@ -500,7 +544,7 @@ static void AsyncCompileWorker(std::string hlsl_str, std::string profile,
 			pResult->AddRef();
 			g_MemCache[hash] = pResult;     // also in fast in-memory lookup cache
 			if (cacheReady) {
-				QueueSaveCachedShader(hash, pResult);
+				QueueSaveCachedShader(hash, pResult, cacheDir);
 			}
 			ShaderCacheLog("ASYNC COMPILED %016llx in %.2f ms (profile=%s, blob=%zu bytes)\n",
 				hash, ms, profile.c_str(), pResult->GetBufferSize());
@@ -531,7 +575,8 @@ extern HRESULT EmuCompileShader
 	const char* shader_profile,
 	ID3DBlob** ppHostShader,
 	const char* pSourceName,
-	bool asyncAllowed
+	bool asyncAllowed,
+	bool useSharedCache
 )
 {
 	// Compute a cache key from the HLSL source + shader profile
@@ -550,10 +595,22 @@ extern HRESULT EmuCompileShader
 	}
 
 	// 1. Try loading from disk cache (only if cache dir is ready)
-	bool cacheReady = EnsureShaderCacheDir();
+	// For shared (generic) shaders, use the 00000000-All directory;
+	// for per-game shaders, use the title-specific directory.
+	bool cacheReady;
+	std::string effectiveCacheDir;
+	if (useSharedCache) {
+		cacheReady = EnsureSharedShaderCacheDir();
+		effectiveCacheDir = g_SharedShaderCacheDir;
+		// Also ensure the per-game dir is set up (starts save thread, etc.)
+		EnsureShaderCacheDir();
+	} else {
+		cacheReady = EnsureShaderCacheDir();
+		effectiveCacheDir = g_ShaderCacheDir;
+	}
 	if (cacheReady) {
 		auto t0 = std::chrono::high_resolution_clock::now();
-		if (LoadCachedShader(cacheHash, ppHostShader)) {
+		if (LoadCachedShader(cacheHash, ppHostShader, effectiveCacheDir)) {
 			auto t1 = std::chrono::high_resolution_clock::now();
 			double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 			ShaderCacheLog("LOAD took %.2f ms (profile=%s)\n", ms, shader_profile);
@@ -568,9 +625,9 @@ extern HRESULT EmuCompileShader
 	}
 
 	// 1.5. Dump original HLSL + check for user-provided replacement
-	DumpShaderSource(cacheHash, shader_profile, hlsl_str);
+	DumpShaderSource(cacheHash, shader_profile, hlsl_str, effectiveCacheDir);
 	std::string replacementHlsl;
-	if (TryLoadReplacementShader(cacheHash, shader_profile, replacementHlsl)) {
+	if (TryLoadReplacementShader(cacheHash, shader_profile, replacementHlsl, effectiveCacheDir)) {
 		hlsl_str = std::move(replacementHlsl);
 	}
 
@@ -607,7 +664,7 @@ extern HRESULT EmuCompileShader
 
 			std::string profileStr = shader_profile;
 			std::string sourceStr = pSourceName ? pSourceName : "";
-			std::thread(AsyncCompileWorker, hlsl_str, profileStr, sourceStr, cacheHash, cacheReady).detach();
+			std::thread(AsyncCompileWorker, hlsl_str, profileStr, sourceStr, cacheHash, cacheReady, effectiveCacheDir).detach();
 
 			// Return fallback shader
 			if (g_FallbackPSBlob) {
@@ -758,7 +815,7 @@ extern HRESULT EmuCompileShader
 				cacheHash, compileMs, shader_profile,
 				(*ppHostShader)->GetBufferSize(),
 				g_CacheHits.load(), g_CacheMisses.load());
-			QueueSaveCachedShader(cacheHash, *ppHostShader);
+			QueueSaveCachedShader(cacheHash, *ppHostShader, effectiveCacheDir);
 		}
 	} else if (FAILED(compileResult)) {
 		ShaderCacheLog("COMPILE FAILED hash=%016llx profile=%s hr=0x%08lX\n",
@@ -799,6 +856,12 @@ int ShaderSources::Update() {
 			std::error_code ec;
 			std::filesystem::remove_all(g_ShaderCacheDir, ec);
 			std::filesystem::create_directories(g_ShaderCacheDir, ec);
+		}
+		// Also invalidate the shared shader cache
+		if (!g_SharedShaderCacheDir.empty() && std::filesystem::exists(g_SharedShaderCacheDir)) {
+			std::error_code ec;
+			std::filesystem::remove_all(g_SharedShaderCacheDir, ec);
+			std::filesystem::create_directories(g_SharedShaderCacheDir, ec);
 		}
 	}
 
