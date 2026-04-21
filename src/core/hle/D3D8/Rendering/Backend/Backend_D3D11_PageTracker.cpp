@@ -45,8 +45,13 @@
 #include "Backend_D3D11_Internal.h"
 #include "Backend_D3D11_PageTracker.h"
 #include "common/AddressRanges.h"
+#include "common/win32/WineEnv.h"
 
 #include <cstring>
+
+// Wine may not reliably support MEM_WRITE_WATCH / GetWriteWatch.
+// When running on Wine, always do a full memcpy instead.
+static bool s_bWineFallback = false;
 
 // ******************************************************************
 // * Constants
@@ -288,13 +293,21 @@ void CxbxPageTrackerInit()
 	// Reset write-watch to only track changes from this point forward
 	ResetWriteWatch((PVOID)CONTIG_BASE, CONTIG_SIZE);
 
+	// Detect Wine — GetWriteWatch may not reliably track dirty pages.
+	// When running on Wine, always do a full upload on every flush.
+	s_bWineFallback = isWineEnv();
+	if (s_bWineFallback) {
+		EmuLog(LOG_LEVEL::INFO, "PageTracker: Wine detected — using full-upload fallback (GetWriteWatch unreliable)");
+	}
+
 	// Register VEH for GPU-dirty page faults and tiled memory redirect
 	s_hVEH = AddVectoredExceptionHandler(1, PageTrackerVEH);
 	if (!s_hVEH) {
 		EmuLog(LOG_LEVEL::WARNING, "PageTrackerInit: Failed to register VEH");
 	}
 
-	EmuLog(LOG_LEVEL::INFO, "PageTracker: Initialized (MEM_WRITE_WATCH, %u pages tracked)", PAGE_COUNT);
+	EmuLog(LOG_LEVEL::INFO, "PageTracker: Initialized (%s, %u pages tracked)",
+		s_bWineFallback ? "Wine full-upload" : "MEM_WRITE_WATCH", PAGE_COUNT);
 }
 
 // ******************************************************************
@@ -356,6 +369,18 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	// The memcpy writes to 0x80 are automatically tracked by write-watch.
 	SyncTiledPagesBack();
 
+	// Wine fallback: always do a full upload (GetWriteWatch may not work)
+	if (s_bWineFallback) {
+		memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
+		D3D11_MAPPED_SUBRESOURCE mapped = {};
+		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (SUCCEEDED(hr)) {
+			memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
+			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+		}
+		return PAGE_COUNT;
+	}
+
 	// Get dirty pages from write-watch (atomically reads and resets)
 	ULONG_PTR count = PAGE_COUNT;
 	ULONG granularity;
@@ -416,6 +441,8 @@ bool CxbxPageTrackerHasDirtyPages()
 	}
 
 	// Peek at write-watch (do not reset)
+	// On Wine, always report dirty since we can't reliably check
+	if (s_bWineFallback) return true;
 	PVOID addr;
 	ULONG_PTR count = 1;
 	ULONG granularity;
