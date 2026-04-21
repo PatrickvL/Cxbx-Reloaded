@@ -1123,6 +1123,27 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 
   const xbox::X_D3DPIXELSHADERDEF *pPSDef = g_pXbox_PixelShader != nullptr ? (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
   if (pPSDef == nullptr) {
+	// No pixel shader handle set — check if the render state slots contain
+	// a valid RC program (written by the Xbox D3D runtime for fixed-function
+	// rendering, or left over from a previous SetPixelShader call).
+	// If so, prefer the RC interpreter over the fixed function pixel shader.
+	if (g_bUseRCInterpreter) {
+		const xbox::X_D3DPIXELSHADERDEF *pRSPSDef = (const xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
+		if (pRSPSDef && (pRSPSDef->PSCombinerCount & 0xF) > 0) {
+			// Valid RC program found in render state — use RC interpreter
+			if (!g_pD3D11RCInterpreterPS) {
+				if (!CxbxD3D11InitRCInterpreter()) {
+					g_bUseRCInterpreter = false;
+					EmuLog(LOG_LEVEL::WARNING, "RC Interpreter init failed; falling back to fixed function pixel shader");
+					goto ff_path;
+				}
+			}
+			CxbxSetPixelShader(g_pD3D11RCInterpreterPS);
+			CxbxD3D11UploadRCInterpreterState();
+			return;
+		}
+	}
+	ff_path:
 	ID3D11PixelShader* pShader = nullptr;
 	if (g_UseFixedFunctionPixelShader) {
 		pShader = GetFixedFunctionShader();
