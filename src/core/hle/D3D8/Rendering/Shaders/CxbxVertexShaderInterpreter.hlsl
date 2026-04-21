@@ -129,7 +129,7 @@ float4 exec_ilu(uint opcode, float4 c_in)
 
     switch (opcode) {
         case VSI_ILU_MOV: return c_in;
-        case VSI_ILU_RCP:
+        case VSI_ILU_RCP: return (1.0 / s).xxxx;
         case VSI_ILU_RCC: {
             float rv = 1.0 / s;
             rv = (rv >= 0)
@@ -260,12 +260,16 @@ VS_OUTPUT main(const VS_INPUT xIn)
 
         bool is_paired = (mac_op != VSI_MAC_NOP) & (ilu_op != VSI_ILU_NOP);
         bool do_out = (out_o_mask != 0) & out_orb;
+        // NOTE: Context register writes (out_orb==false) are not supported;
+        // C[] is a read-only cbuffer. This is extremely rare on Xbox.
 
         // ============================================================
         // Snapshot inputs before executing (prevents order-dependent behavior)
         // MAC uses inputs A, B, C; ILU uses input C (same parameters)
         // ============================================================
-        float4 in_a, in_b, in_c;
+        float4 in_a = float4(0, 0, 0, 0);
+        float4 in_b = float4(0, 0, 0, 0);
+        float4 in_c = float4(0, 0, 0, 0);
 
         if (mac_op != VSI_MAC_NOP) {
             in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz, a_neg, use_a0x, a0, r, oRegs[0], v_regs);
@@ -288,8 +292,8 @@ VS_OUTPUT main(const VS_INPUT xIn)
             else {
                 float4 mac_result = exec_mac(mac_op, in_a, in_b, in_c);
 
-                // Write to R register (unless paired and R=1, which is reserved for ILU)
-                if (!(is_paired & (out_r_addr == 1)) && out_mac_mask != 0)
+                // Write to temp register
+                if (out_mac_mask != 0)
                     write_r(out_r_addr, r, oRegs[0], mac_result, out_mac_mask);
 
                 // Write to output register (if MAC is the output source)
