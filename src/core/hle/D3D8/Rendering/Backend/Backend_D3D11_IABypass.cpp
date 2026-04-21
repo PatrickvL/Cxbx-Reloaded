@@ -121,9 +121,9 @@ struct IABypassLayoutCB {
 static UINT XboxFormatToVtxFmt(UINT xboxType)
 {
 	switch (xboxType) {
-	case 0x02: return CXBX_VTXFMT_FLOAT1;       // X_D3DVSDT_FLOAT1
-	case 0x12: return CXBX_VTXFMT_FLOAT2;       // X_D3DVSDT_FLOAT2
-	case 0x22: return CXBX_VTXFMT_FLOAT3;       // X_D3DVSDT_FLOAT3
+	case 0x12: return CXBX_VTXFMT_FLOAT1;       // X_D3DVSDT_FLOAT1
+	case 0x22: return CXBX_VTXFMT_FLOAT2;       // X_D3DVSDT_FLOAT2
+	case 0x32: return CXBX_VTXFMT_FLOAT3;       // X_D3DVSDT_FLOAT3
 	case 0x42: return CXBX_VTXFMT_FLOAT4;       // X_D3DVSDT_FLOAT4
 	case 0x40: return CXBX_VTXFMT_D3DCOLOR;     // X_D3DVSDT_D3DCOLOR
 	case 0x25: return CXBX_VTXFMT_SHORT2;       // X_D3DVSDT_SHORT2
@@ -140,7 +140,7 @@ static UINT XboxFormatToVtxFmt(UINT xboxType)
 	case 0x15: return CXBX_VTXFMT_SHORT1;        // X_D3DVSDT_SHORT1 (1 short unnormalized)
 	case 0x35: return CXBX_VTXFMT_SHORT3;        // X_D3DVSDT_SHORT3 (3 shorts unnormalized)
 	case 0x72: return CXBX_VTXFMT_FLOAT2H;      // X_D3DVSDT_FLOAT2H
-	case 0:    return CXBX_VTXFMT_NONE;         // X_D3DVSDT_NONE
+	case 0x02: return CXBX_VTXFMT_NONE;         // X_D3DVSDT_NONE
 	default:   return CXBX_VTXFMT_NONE;
 	}
 }
@@ -484,31 +484,25 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 				if (stride == 0) stride = streamInfo.HostVertexStride;
 			}
 
-			UINT elemOffset = 0;
+			UINT elemOffset = 0;     // Xbox byte offset (written to CB for shader fetch)
+			UINT hostElemOffset = 0; // Host byte offset (for matching D3D11 input elements)
 			for (UINT e = 0; e < streamInfo.NumberOfVertexElements; e++) {
 				auto& elem = streamInfo.VertexElements[e];
 				if (elem.XboxType == 0) // X_D3DVSDT_NONE
 					continue;
 
-				// Determine which attribute register this element maps to.
-				// The register index is encoded in the D3D11 input elements.
-				// For now, use the element's position as a sequential register
-				// starting from a base that depends on the stream index.
-				// Actually — we need the register index from the vertex
-				// declaration. Let's use the D3D11InputElements which have SemanticIndex = register.
-				// But those might not be exactly parallel... let's find the right approach.
-
-				// The pD3D11InputElements array has SemanticIndex = NV2A register index.
-				// We need to find which register this stream element maps to.
-				// The simplest way: search pD3D11InputElements for an element with matching
-				// InputSlot == streamIdx and AlignedByteOffset == elemOffset.
+				// Find which NV2A attribute register this element maps to.
+				// The pD3D11InputElements array has SemanticIndex = register index.
+				// We match on InputSlot == streamIdx and AlignedByteOffset == hostElemOffset.
+				// NOTE: AlignedByteOffset accumulates Host byte sizes (set in XbVertexShaderDecoder),
+				// so we must compare against hostElemOffset (not elemOffset which uses Xbox sizes).
 				UINT regIdx = 0;
 				bool found = false;
 				if (pDecl->pD3D11InputElements) {
 					for (UINT ie = 0; ie < pDecl->D3D11InputElementCount; ie++) {
 						auto& inputElem = pDecl->pD3D11InputElements[ie];
 						if (inputElem.InputSlot == streamIdx
-							&& inputElem.AlignedByteOffset == elemOffset) {
+							&& inputElem.AlignedByteOffset == hostElemOffset) {
 							regIdx = inputElem.SemanticIndex;
 							found = true;
 							break;
@@ -519,17 +513,8 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 				if (found && regIdx < 16) {
 					INT streamBase;
 					if (bIsUPDraw && s == 0) {
-						// UP draw: data uploaded to staging buffer starting at byte 0.
-						// vertexStart already subtracted during upload (we copied from
-						// pData + startVertex*stride), so streamBase = -startVertex*stride
-						// to cancel the shader's vtxIdx*stride calculation.
 						streamBase = -(INT)vertexStart * (INT)stride;
 					} else if (streamInput.VertexBuffer) {
-						// Mirror path: streamBase is the raw byte offset from CONTIGUOUS_MEMORY_BASE
-						// to the start of the VB data. The shader does:
-						//   byteOff = streamBase + vtxIdx * stride + elemOffset
-						// GetDataFromXboxResource returns a pointer in the 0x80000000 region;
-						// subtract CONTIGUOUS_MEMORY_BASE to get the 27-bit offset.
 						uintptr_t vbAddr = (uintptr_t)GetDataFromXboxResource(streamInput.VertexBuffer);
 						streamBase = (INT)(vbAddr - CONTIGUOUS_MEMORY_BASE) + (INT)streamInput.Offset;
 					} else {
@@ -543,6 +528,7 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 				}
 
 				elemOffset += elem.XboxByteSize;
+				hostElemOffset += elem.HostByteSize;
 			}
 		}
 
