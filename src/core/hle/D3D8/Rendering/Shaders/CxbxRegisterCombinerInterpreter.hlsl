@@ -26,8 +26,8 @@
 // Bug fixes applied (relative to the SM3.0 original):
 //   – Texture register written to the correct T[stage] slot.
 //     (Was always writing T3 due to max() used instead of direct index.)
-//   – R0.rgb initialised from T0.rgb, not white.
-//     (NV2A spec: R0 starts as a copy of T0.)
+//   – R0.a initialised from T0.a; R0.rgb starts at zero.
+//     (NV2A spec: only R0.a copies from T0, rgb is zero.)
 //   – PS_CHANNEL_RGB input passes full rgba through intact.
 //     (Was replacing .a with .b via .rgbb swizzle.)
 //   – CLIPPLANE discards without sampling the texture.
@@ -874,9 +874,10 @@ float4 main(PS_INPUT input) : SV_Target
     // FOG: rgb from the fog color constant, alpha from the vertex fog factor
     RegWrite(Regs, PS_REGISTER_FOG, float4(FogColor.rgb, saturate(input.iFog)));
 
-    // R0: Bug fix – initialise from T0 (not white).
-    // NV2A spec: R0 starts as a full copy of T0; R0.a is T0.a.
-    RegWrite(Regs, PS_REGISTER_R0, RegRead(Regs, PS_REGISTER_T0));
+    // R0 initialization: NV2A spec says R0.rgb starts at 0, R0.a starts from T0.a.
+    // xemu matches this: "r0 = vec4(0); r0.a = t0.a;".
+    // Previous code copied all of T0 into R0 which was incorrect.
+    RegWriteA(Regs, PS_REGISTER_R0, RegRead(Regs, PS_REGISTER_T0).a);
     // R1 remains (0,0,0,0) from the zero-init above
 
     // --- Step 3: combiner stage loop ---
