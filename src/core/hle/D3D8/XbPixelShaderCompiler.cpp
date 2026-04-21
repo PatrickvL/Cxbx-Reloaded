@@ -940,7 +940,90 @@ void CxbxD3D11UploadRCInterpreterState()
 	cb.PSCombinerCount.value = pPSDef->PSCombinerCount;
 
 	// PSTextureModes is stored in a different render state slot than the PSDef struct
-	cb.PSTextureModes.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+	DWORD psTextureModes = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+
+	// --- AdjustTextureModes: match the compiled shader path ---
+	// The compiled shader path calls AdjustTextureModes() which adjusts texture
+	// modes based on bound texture types.  Without this, the interpreter may try
+	// to sample unbound textures or use the wrong sampling method.
+	{
+		bool texModeAdjust = ((pPSDef->PSFinalCombinerConstants >> PS_GLOBALFLAGS_SHIFT) & PS_GLOBALFLAGS_TEXMODE_ADJUST) > 0;
+
+		for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
+			uint32_t mode = (psTextureModes >> (i * 5)) & 0x1Fu;
+			uint32_t clearMask = ~(0x1Fu << (i * 5));
+
+			xbox::X_D3DRESOURCETYPE texType = xbox::X_D3DRTYPE_NONE;
+			if (g_pXbox_SetTexture[i])
+				texType = GetXboxD3DResourceType(g_pXbox_SetTexture[i]);
+
+			if (texModeAdjust) {
+				// Disable unbound texture stages
+				if (texType == xbox::X_D3DRTYPE_NONE) {
+					psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_NONE << (i * 5));
+					continue;
+				}
+
+				// Adjust mode based on actual texture type
+				switch (mode) {
+				case PS_TEXTUREMODES_PROJECT2D:
+				case PS_TEXTUREMODES_PROJECT3D:
+				case PS_TEXTUREMODES_CUBEMAP:
+					if (texType == xbox::X_D3DRTYPE_CUBETEXTURE)
+						mode = PS_TEXTUREMODES_CUBEMAP;
+					else if (texType == xbox::X_D3DRTYPE_VOLUMETEXTURE)
+						mode = PS_TEXTUREMODES_PROJECT3D;
+					else
+						mode = PS_TEXTUREMODES_PROJECT2D;
+					psTextureModes = (psTextureModes & clearMask) | (mode << (i * 5));
+					break;
+				case PS_TEXTUREMODES_DOT_STR_3D:
+				case PS_TEXTUREMODES_DOT_STR_CUBE:
+					if (texType == xbox::X_D3DRTYPE_CUBETEXTURE)
+						mode = PS_TEXTUREMODES_DOT_STR_CUBE;
+					else
+						mode = PS_TEXTUREMODES_DOT_STR_3D;
+					psTextureModes = (psTextureModes & clearMask) | (mode << (i * 5));
+					break;
+				}
+			}
+			else {
+				// Even without TEXMODE_ADJUST, fix up mismatched sampling modes
+				if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_PROJECT2D) {
+					psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_CUBEMAP << (i * 5));
+				}
+				else if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_DOT_STR_3D) {
+					psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_DOT_STR_CUBE << (i * 5));
+				}
+			}
+		}
+	}
+	cb.PSTextureModes.value = psTextureModes;
+
+	// --- AdjustFinalCombiner: synthesize final combiner when not explicitly defined ---
+	// The compiled shader path calls AdjustFinalCombiner() which generates a final
+	// combiner for fog/specular when the pixel shader doesn't define one.
+	{
+		bool hasFinalCombiner = (pPSDef->PSFinalCombinerInputsABCD != 0) || (pPSDef->PSFinalCombinerInputsEFG != 0);
+		if (!hasFinalCombiner) {
+			bool fogEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) > 0;
+			bool specularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) > 0;
+
+			// A = FOG.a (alpha channel), B = R0, C = FOG (if fog) or R0 (if no fog), D = V1 (if specular) or ZERO
+			uint32_t regA = PS_REGISTER_FOG | PS_CHANNEL_ALPHA;
+			uint32_t regB = PS_REGISTER_R0;
+			uint32_t regC = fogEnable ? PS_REGISTER_FOG : PS_REGISTER_R0;
+			uint32_t regD = specularEnable ? PS_REGISTER_V1 : PS_REGISTER_ZERO;
+			cb.PSFinalCombinerInputsABCD.value = (regA << 24) | (regB << 16) | (regC << 8) | regD;
+
+			// E = ZERO, F = ZERO, G = R0.a
+			uint32_t regE = PS_REGISTER_ZERO;
+			uint32_t regF = PS_REGISTER_ZERO;
+			uint32_t regG = PS_REGISTER_R0 | PS_CHANNEL_ALPHA;
+			uint32_t settings = 0;
+			cb.PSFinalCombinerInputsEFG.value = (regE << 24) | (regF << 16) | (regG << 8) | settings;
+		}
+	}
 
 	cb.PSDotMapping.value = pPSDef->PSDotMapping;
 	cb.PSInputTexture.value = pPSDef->PSInputTexture;
