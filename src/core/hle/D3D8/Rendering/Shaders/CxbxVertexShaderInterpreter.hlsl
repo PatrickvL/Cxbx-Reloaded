@@ -42,14 +42,14 @@ float4 apply_swizzle(float4 v, uint swz)
 float4 fetch_input(
     uint mux, uint r_idx, uint v_idx, uint const_idx,
     uint swz, bool is_neg, bool use_a0x, int a0,
-    float4 r[12], float4 oPos_reg, float4 v_regs[16])
+    float4 t[12], float4 oPos_reg, float4 v_regs[16])
 {
     float4 raw;
 
     if (mux == VSI_MUX_R) {
         // Temporary register r0-r11; r12 aliases oPos; >12 is NV2A-undefined
         raw = (r_idx == 12) ? oPos_reg
-            : (r_idx <  12) ? r[r_idx]
+            : (r_idx <  12) ? t[r_idx]
             :                 float4(0, 0, 0, 0);
     }
     else if (mux == VSI_MUX_V) {
@@ -83,10 +83,10 @@ void write_masked(inout float4 dest, float4 src, uint mask)
 // Write result to a temporary register (r0-r11) or oPos (r12)
 // Indices > 12 are undefined on NV2A and silently ignored.
 // ============================================================
-void write_r(uint dest, inout float4 r[12], inout float4 oPos, float4 result, uint mask)
+void write_r(uint dest, inout float4 t[12], inout float4 oPos, float4 result, uint mask)
 {
     if (dest == 12)     write_masked(oPos,    result, mask);
-    else if (dest < 12) write_masked(r[dest], result, mask);
+    else if (dest < 12) write_masked(t[dest], result, mask);
 }
 
 // ============================================================
@@ -95,10 +95,26 @@ void write_r(uint dest, inout float4 r[12], inout float4 oPos, float4 result, ui
 // ============================================================
 float4 nv2a_mul(float4 a, float4 b)
 {
-    float4 r = a * b;
+    float4 p = a * b;
     // Per-component: if either operand is zero, force result to zero
-    r = (a == 0.0f || b == 0.0f) ? 0.0f : r;
-    return r;
+    p = (a == 0.0f || b == 0.0f) ? 0.0f : p;
+    return p;
+}
+
+// NV2A-accurate dot products: use nv2a_mul per-component so that
+// 0 * inf = 0 instead of NaN. This is critical for vertex transforms
+// where e.g. RCP of a tiny value produces inf, then dp4 with a zero
+// matrix component would produce NaN → entire vertex position lost.
+float nv2a_dot3(float4 a, float4 b)
+{
+    float4 m = nv2a_mul(a, b);
+    return m.x + m.y + m.z;
+}
+
+float nv2a_dot4(float4 a, float4 b)
+{
+    float4 m = nv2a_mul(a, b);
+    return m.x + m.y + m.z + m.w;
 }
 
 // ============================================================
@@ -111,10 +127,13 @@ float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
         case VSI_MAC_MUL: return nv2a_mul(a, b);
         case VSI_MAC_ADD: return a + c_in;
         case VSI_MAC_MAD: return nv2a_mul(a, b) + c_in;
-        case VSI_MAC_DP3: return dot(a.xyz, b.xyz).xxxx;
-        case VSI_MAC_DPH: return (dot(a.xyz, b.xyz) + b.w).xxxx;
-        case VSI_MAC_DP4: return dot(a, b).xxxx;
-        case VSI_MAC_DST: return float4(1.0, a.y * b.y, a.z, b.w);
+        case VSI_MAC_DP3: return nv2a_dot3(a, b).xxxx;
+        case VSI_MAC_DPH: return (nv2a_dot3(a, b) + b.w).xxxx;
+        case VSI_MAC_DP4: return nv2a_dot4(a, b).xxxx;
+        case VSI_MAC_DST: {
+            float4 m = nv2a_mul(a, b);
+            return float4(1.0, m.y, a.z, b.w);
+        }
         case VSI_MAC_MIN: return min(a, b);
         case VSI_MAC_MAX: return max(a, b);
         case VSI_MAC_SLT: return 1.0 - step(b, a);  // 1 where a < b
@@ -238,9 +257,9 @@ VS_OUTPUT main(const VS_INPUT xIn)
     // Address register
     int a0 = 0;
 
-    // Temporary registers r0-r11
-    float4 r[12];
-    [unroll] for (uint ri = 0; ri < 12; ri++) r[ri] = float4(0, 0, 0, 0);
+    // Temporary registers r0-r11 (named 't' to distinguish from output registers 'oRegs')
+    float4 t[12];
+    [unroll] for (uint ri = 0; ri < 12; ri++) t[ri] = float4(0, 0, 0, 0);
 
     // Input registers v0-v15 — fetch directly into array, bypassing named scalars
     float4 v_regs[16];
@@ -266,10 +285,11 @@ VS_OUTPUT main(const VS_INPUT xIn)
         // Decode opcodes
         uint ilu_op = (dw1 >> VSI_FLD_ILU_SHIFT) & VSI_FLD_ILU_MASK;
         uint mac_op = (dw1 >> VSI_FLD_MAC_SHIFT) & VSI_FLD_MAC_MASK;
+        bool is_final = ((dw3 >> VSI_FLD_FINAL_BIT3) & 1) != 0;
 
         // Skip decode entirely when both units are idle (padding slots)
         if (mac_op == VSI_MAC_NOP && ilu_op == VSI_ILU_NOP) {
-            if (((dw3 >> VSI_FLD_FINAL_BIT3) & 1) != 0) break;
+            if (is_final) break;
             continue;
         }
 
@@ -306,7 +326,6 @@ VS_OUTPUT main(const VS_INPUT xIn)
         uint out_address  = (dw3 >> VSI_FLD_OUT_ADDRESS_SHIFT) & VSI_FLD_OUT_ADDRESS_MASK;
         uint out_mux      = (dw3 >> VSI_FLD_OUT_MUX_BIT3) & 1; // 0=MAC, 1=ILU
         bool use_a0x      = ((dw3 >> VSI_FLD_A0X_BIT3) & 1) != 0;
-        bool is_final     = ((dw3 >> VSI_FLD_FINAL_BIT3) & 1) != 0;
 
         bool is_paired = (mac_op != VSI_MAC_NOP) & (ilu_op != VSI_ILU_NOP);
         bool do_out = (out_o_mask != 0) & out_orb;
@@ -322,13 +341,13 @@ VS_OUTPUT main(const VS_INPUT xIn)
         float4 in_c = float4(0, 0, 0, 0);
 
         if (mac_op != VSI_MAC_NOP) {
-            in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz, a_neg, use_a0x, a0, r, oRegs[0], v_regs);
-            in_b = fetch_input(b_mux, b_reg, v_idx, const_idx, b_swz, b_neg, use_a0x, a0, r, oRegs[0], v_regs);
-            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x, a0, r, oRegs[0], v_regs);
+            in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz, a_neg, use_a0x, a0, t, oRegs[0], v_regs);
+            in_b = fetch_input(b_mux, b_reg, v_idx, const_idx, b_swz, b_neg, use_a0x, a0, t, oRegs[0], v_regs);
+            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x, a0, t, oRegs[0], v_regs);
         }
         else if (ilu_op != VSI_ILU_NOP) {
             // ILU-only: C-input not yet fetched
-            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x, a0, r, oRegs[0], v_regs);
+            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x, a0, t, oRegs[0], v_regs);
         }
 
         // ============================================================
@@ -344,7 +363,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
 
                 // Write to temp register
                 if (out_mac_mask != 0)
-                    write_r(out_r_addr, r, oRegs[0], mac_result, out_mac_mask);
+                    write_r(out_r_addr, t, oRegs[0], mac_result, out_mac_mask);
 
                 // Write to output register (if MAC is the output source)
                 if (!out_mux & do_out)
@@ -361,7 +380,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
             // ILU writes to R register; when paired, always to R1
             uint ilu_r_dest = is_paired ? 1 : out_r_addr;
             if (out_ilu_mask != 0)
-                write_r(ilu_r_dest, r, oRegs[0], ilu_result, out_ilu_mask);
+                write_r(ilu_r_dest, t, oRegs[0], ilu_result, out_ilu_mask);
 
             // Write to output register (if ILU is the output source)
             if (out_mux & do_out)
