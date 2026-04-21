@@ -176,6 +176,40 @@ float4 exec_ilu(uint opcode, float4 c_in)
 }
 
 // ============================================================
+// Fog output register write helper
+//
+// NV2A remaps writes to oFog so that the most significant masked
+// component ends up in .x (the only component the rasterizer reads).
+// For example, a write with mask ,y puts the .y result into oFog.x.
+// This matches xemu's fog_mask_str remapping table.
+// ============================================================
+#define OUTPUT_REG_FOG 5u
+
+void write_fog_output(inout float4 oRegs[16], float4 result, uint mask)
+{
+    // Find the highest set bit in mask (x=8, y=4, z=2, w=1)
+    // and move that component into .x
+    float val;
+    if      (mask & VSI_MASK_X) val = result.x;
+    else if (mask & VSI_MASK_Y) val = result.y;
+    else if (mask & VSI_MASK_Z) val = result.z;
+    else                        val = result.w;
+    oRegs[OUTPUT_REG_FOG].x = val;
+}
+
+// ============================================================
+// Write to output register, with fog mask remapping
+// ============================================================
+void write_output(inout float4 oRegs[16], uint out_address, float4 result, uint mask)
+{
+    uint addr = out_address & 0xF;
+    if (addr == OUTPUT_REG_FOG)
+        write_fog_output(oRegs, result, mask);
+    else
+        write_masked(oRegs[addr], result, mask);
+}
+
+// ============================================================
 // Main vertex shader entry point
 // ============================================================
 VS_OUTPUT main(const VS_INPUT xIn)
@@ -314,7 +348,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
 
                 // Write to output register (if MAC is the output source)
                 if (!out_mux & do_out)
-                    write_masked(oRegs[out_address & 0xF], mac_result, out_o_mask);
+                    write_output(oRegs, out_address, mac_result, out_o_mask);
             }
         }
 
@@ -331,7 +365,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
 
             // Write to output register (if ILU is the output source)
             if (out_mux & do_out)
-                write_masked(oRegs[out_address & 0xF], ilu_result, out_o_mask);
+                write_output(oRegs, out_address, ilu_result, out_o_mask);
         }
 
         // Stop at the final instruction
