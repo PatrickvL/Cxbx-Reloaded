@@ -623,6 +623,22 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 }
 
 // ============================================================
+// NV2A-accurate multiply: 0 * anything = 0, even 0 * inf
+// Standard GPU float math produces NaN for 0 * inf.
+// ============================================================
+float3 nv2a_mul3(float3 a, float3 b)
+{
+    float3 r = a * b;
+    r = (a == 0.0f || b == 0.0f) ? 0.0f : r;
+    return r;
+}
+
+float nv2a_mul1(float a, float b)
+{
+    return (a == 0.0f || b == 0.0f) ? 0.0f : a * b;
+}
+
+// ============================================================
 // Step 4: combined RGB + alpha combiner stage
 //
 // The SM3.0 version called do_color_combiner_stage() twice per stage
@@ -677,10 +693,11 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
 
     // --- Compute AB and CD products ---
     // Dot product applies to RGB only; alpha always multiplies scalars
-    float3 rgbAB = flagABDot ? (float3)dot(rgbA.rgb, rgbB.rgb) : rgbA.rgb * rgbB.rgb;
-    float3 rgbCD = flagCDDot ? (float3)dot(rgbC.rgb, rgbD.rgb) : rgbC.rgb * rgbD.rgb;
-    float   aAB  = aA * aB;
-    float   aCD  = aC * aD;
+    // NV2A enforces 0*anything=0 (even 0*inf); use nv2a_mul to match hardware
+    float3 rgbAB = flagABDot ? (float3)dot(rgbA.rgb, rgbB.rgb) : nv2a_mul3(rgbA.rgb, rgbB.rgb);
+    float3 rgbCD = flagCDDot ? (float3)dot(rgbC.rgb, rgbD.rgb) : nv2a_mul3(rgbC.rgb, rgbD.rgb);
+    float   aAB  = nv2a_mul1(aA, aB);
+    float   aCD  = nv2a_mul1(aC, aD);
 
     // --- SUM or MUX ---
     // Only decode R0.a when a MUX flag is actually set

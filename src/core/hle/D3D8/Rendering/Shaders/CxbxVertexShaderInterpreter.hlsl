@@ -90,15 +90,27 @@ void write_r(uint dest, inout float4 r[12], inout float4 oPos, float4 result, ui
 }
 
 // ============================================================
+// NV2A-accurate multiply: 0 * anything = 0, even 0 * inf
+// Standard GPU float math produces NaN for 0 * inf.
+// ============================================================
+float4 nv2a_mul(float4 a, float4 b)
+{
+    float4 r = a * b;
+    // Per-component: if either operand is zero, force result to zero
+    r = (a == 0.0f || b == 0.0f) ? 0.0f : r;
+    return r;
+}
+
+// ============================================================
 // MAC unit operations
 // ============================================================
 float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
 {
     switch (opcode) {
         case VSI_MAC_MOV: return a;
-        case VSI_MAC_MUL: return a * b;
+        case VSI_MAC_MUL: return nv2a_mul(a, b);
         case VSI_MAC_ADD: return a + c_in;
-        case VSI_MAC_MAD: return a * b + c_in;
+        case VSI_MAC_MAD: return nv2a_mul(a, b) + c_in;
         case VSI_MAC_DP3: return dot(a.xyz, b.xyz).xxxx;
         case VSI_MAC_DPH: return (dot(a.xyz, b.xyz) + b.w).xxxx;
         case VSI_MAC_DP4: return dot(a, b).xxxx;
