@@ -349,11 +349,10 @@ float3 DoBumpEnv(const float4 TexCoord, const float4 BumpEnvMat, const float4 Bu
 PS_OUTPUT main(const PS_INPUT xIn)
 {
 	// fogging
-	// Don't abs fogDepth! NV2A has separate *_ABS fog modes that abs the computed fogFactor
-	// (not the input distance), but Xbox D3D8 API values (0-3) never include those modes.
-	// Abs'ing the input here breaks games with negative fog coordinates (test-case: DolphinClassic).
+	// iFog is already a computed fog factor from the VS (EXP/EXP2/LINEAR/passthrough),
+	// linearly interpolated by the rasterizer. NV2A clamps to [0,1] before use.
 	float fogFactor = (FOGENABLE != 0.0f)
-		? CalculateFogFactor((int)FOGINFO.x, FOGINFO.y, FOGINFO.z, FOGINFO.w, xIn.iFog.x)
+		? saturate(xIn.iFog.x)
 		: 1.0f;
 
 	// Local constants

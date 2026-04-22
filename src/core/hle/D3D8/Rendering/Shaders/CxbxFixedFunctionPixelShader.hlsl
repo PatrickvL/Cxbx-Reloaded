@@ -255,8 +255,10 @@ TextureArgs ExecuteTextureStage(
 }
 
 float4 main(const PS_INPUT input) : SV_Target {
+    // iFog is already a computed fog factor from the VS (EXP/EXP2/LINEAR/passthrough),
+    // linearly interpolated by the rasterizer. NV2A clamps to [0,1] before use.
     float fogFactor = state.FogEnable
-        ? CalculateFogFactor(state.FogTableMode, state.FogDensity, state.FogStart, state.FogEnd, input.iFog)
+        ? saturate(input.iFog)
         : 1.0f;
 
     // Map input texture coordinates to an array, for indexing purposes

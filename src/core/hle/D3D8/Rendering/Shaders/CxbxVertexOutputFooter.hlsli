@@ -1,12 +1,30 @@
 // CxbxVertexOutputFooter.hlsli — Common VS output processing
 //
 // Requires in scope: VS_OUTPUT xOut (declared), float4 oPos/oD0/oD1/oB0/oB1/oT0-oT3/oFog/oPts.
-// Applies: screen→clip transform, color saturation, TEXCOORDINDEX remapping, texture scale.
+// Applies: screen→clip transform, color saturation, fog factor computation,
+//          TEXCOORDINDEX remapping, texture scale.
 
     xOut.oPos = reverseScreenspaceTransform(oPos);
     xOut.oD0 = saturate(oD0);
     xOut.oD1 = saturate(oD1);
-    xOut.oFog = oFog.x;
+
+    // Fog factor computation: NV2A computes the fog formula per-vertex, then
+    // the rasterizer interpolates the resulting factor. The pixel shader only
+    // does the final clamp to [0,1] and the fog color blend.
+    // CxbxFogInfo: x=tableMode, y=density, z=start, w=end (from VS c218)
+    {
+        float fogDepth = oFog.x;
+        int fogMode = (int)CxbxFogInfo.x;
+        if (fogMode == 1)       // EXP
+            xOut.oFog = 1.0f / exp(fogDepth * CxbxFogInfo.y);
+        else if (fogMode == 2)  // EXP2
+            xOut.oFog = 1.0f / exp(pow(fogDepth * CxbxFogInfo.y, 2));
+        else if (fogMode == 3)  // LINEAR
+            xOut.oFog = (CxbxFogInfo.w - fogDepth) / (CxbxFogInfo.w - CxbxFogInfo.z);
+        else                    // 0 = NONE (vertex fog passthrough)
+            xOut.oFog = fogDepth;
+    }
+
     xOut.oPts = oPts.x;
     xOut.oB0 = saturate(oB0);
     xOut.oB1 = saturate(oB1);

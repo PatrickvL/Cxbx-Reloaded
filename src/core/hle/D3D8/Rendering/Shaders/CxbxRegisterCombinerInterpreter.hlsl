@@ -84,7 +84,7 @@
 #include "CxbxNV2AMathHelpers.hlsli"
 
 // Shared pure-math pixel shader helpers (ApplyTexFmtFixup, PerformColorSign,
-// PerformColorKeyOp, PerformAlphaTest, CalculateFogFactor, etc.)
+// PerformColorKeyOp, PerformAlphaTest, etc.)
 #include "CxbxPixelShaderFunctions.hlsli"
 
 // ============================================================
@@ -942,11 +942,10 @@ float4 main(PS_INPUT input) : SV_Target
     PerformAlphaTest(AlphaTest.xyz, result.a);
 
     // --- Fog blending ---
-    // FogInfo: x=tableMode, y=density, z=start, w=end
+    // iFog is already a computed fog factor from the VS (EXP/EXP2/LINEAR/passthrough).
+    // NV2A clamps the interpolated fog factor to [0,1] before blending.
     [branch] if (FogEnable != 0u) {
-        float fogFactor = CalculateFogFactor((int)FogInfo.x, FogInfo.y,
-                                             FogInfo.z, FogInfo.w, input.iFog);
-        result.rgb = lerp(FogColor.rgb, result.rgb, fogFactor);
+        result.rgb = lerp(FogColor.rgb, result.rgb, saturate(input.iFog));
     }
 
     return result;

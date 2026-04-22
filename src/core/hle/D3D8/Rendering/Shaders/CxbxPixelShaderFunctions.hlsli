@@ -98,7 +98,9 @@ float4 ApplyTexFmtFixup(float4 t, CXBX_STEERING_INT fixup)
 	return t;
 }
 
-// Fog factor computation (caller must check fogEnable before calling)
+// Fog factor computation — now called from the vertex shader only.
+// The VS computes the fog factor per-vertex; the rasterizer interpolates it;
+// the PS clamps to [0,1] and blends with the fog color.
 // fogTableMode: 0=NONE (vertex fog passthrough), 1=EXP, 2=EXP2, 3=LINEAR
 float CalculateFogFactor(CXBX_STEERING_INT fogTableMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
 {

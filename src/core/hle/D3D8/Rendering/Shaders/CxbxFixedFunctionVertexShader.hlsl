@@ -235,7 +235,18 @@ float DoFog()
         fogDepth = abs(Projection.Position.z);
     if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_W)
         fogDepth = Projection.Position.w;
-		
+
+    // Compute the fog factor from the depth value.
+    // NV2A evaluates the fog formula per-vertex; the rasterizer linearly
+    // interpolates the result; the PS clamps to [0,1] and blends.
+    if (state.Fog.TableMode == FixedFunctionVertexShader::FOG_TABLE_EXP)
+        return 1.0f / exp(fogDepth * state.Fog.Density);
+    if (state.Fog.TableMode == FixedFunctionVertexShader::FOG_TABLE_EXP2)
+        return 1.0f / exp(pow(fogDepth * state.Fog.Density, 2));
+    if (state.Fog.TableMode == FixedFunctionVertexShader::FOG_TABLE_LINEAR)
+        return (state.Fog.End - fogDepth) / (state.Fog.End - state.Fog.Start);
+
+    // FOG_TABLE_NONE: fogDepth is already the fog factor (vertex fog)
     return fogDepth;
 }
 
