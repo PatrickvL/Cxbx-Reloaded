@@ -102,10 +102,10 @@ float4 ApplyTexFmtFixup(float4 t, CXBX_STEERING_INT fixup)
 // fogTableMode: 0=NONE (vertex fog passthrough), 1=EXP, 2=EXP2, 3=LINEAR
 float CalculateFogFactor(CXBX_STEERING_INT fogTableMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
 {
-	if (fogTableMode == 1)      // EXP
-		return 1.0f / exp(fogDepth * fogDensity);
-	else if (fogTableMode == 2) // EXP2
-		return 1.0f / exp(pow(fogDepth * fogDensity, 2));
+	if (fogTableMode == 1)      // EXP — NV2A clamps fog factor to [0,1]
+		return saturate(1.0f / exp(fogDepth * fogDensity));
+	else if (fogTableMode == 2) // EXP2 — same clamp
+		return saturate(1.0f / exp(pow(fogDepth * fogDensity, 2)));
 	else if (fogTableMode == 3) // LINEAR — per spec, clamped to [0,1]
 		return saturate((fogEnd - fogDepth) / (fogEnd - fogStart));
 	else                        // 0 = NONE (vertex fog passthrough, already [0,1])
