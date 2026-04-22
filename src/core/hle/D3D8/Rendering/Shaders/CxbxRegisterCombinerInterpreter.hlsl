@@ -288,6 +288,8 @@ float4 ResolveStageInput(float4 Regs[16], uint regByte)
 
 float ResolveStageInputAlpha(float4 Regs[16], uint regByte)
 {
+    // Alpha path always reads .a; PS_CHANNEL_ALPHA bit is irrelevant here
+    // and is intentionally not checked (NV2A hardware behavior).
     uint regIdx  = regByte & 0x0Fu;
     uint mapping = regByte & 0xE0u;
 
@@ -335,9 +337,11 @@ float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB)
 
 uint GetSourceStage(uint stage)
 {
-    if (stage <= 1u) return 0u; // stage 0 has no pred; stage 1 always reads 0
-    if (stage == 2u) return (PSInputTexture >> 16u) & 0x1u;
-    /* stage 3 */   return (PSInputTexture >> 20u) & 0x3u;
+    // stage is already masked to NUM_TEXTURE_STAGES-1 by caller
+    uint src2 = (PSInputTexture >> 16u) & 0x1u;
+    uint src3 = (PSInputTexture >> 20u) & 0x3u;
+    uint src  = (stage == 3u) ? src3 : src2;
+    return (stage <= 1u) ? 0u : src;  // stages 0/1 always return 0
 }
 
 // ============================================================
@@ -599,9 +603,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         break;
     }
 
-    default:
-        val = (float4)0.0f;
-        break;
+    // All 15 reachable modes have explicit cases; default is unreachable.
+    // Removing it lets the compiler treat the switch as exhaustive.
     }
 
     // Post-process: format fixup, color sign, color key (matches compiled PS pipeline)
@@ -696,7 +699,9 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
 
     float3 outRGB_AB  = clamp((rgbAB   + rgbBias) * rgbScale, -1.0f, 1.0f);
     float3 outRGB_CD  = clamp((rgbCD   + rgbBias) * rgbScale, -1.0f, 1.0f);
-    float3 outRGB_Sum = clamp((rgbABCD + rgbBias) * rgbScale, -1.0f, 1.0f);
+    float3 outRGB_Sum = writeSumRGB
+        ? clamp((rgbABCD + rgbBias) * rgbScale, -1.0f, 1.0f)
+        : (float3)0.0f;
     float  outA_AB    = clamp((aAB     + aBias)   * aScale,   -1.0f, 1.0f);
     float  outA_CD    = clamp((aCD     + aBias)   * aScale,   -1.0f, 1.0f);
     float  outA_Sum   = clamp((aABCD   + aBias)   * aScale,   -1.0f, 1.0f);
@@ -706,13 +711,13 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
     // Skip BlueToAlpha read when alpha write will overwrite immediately
     {
         bool abAlphaOverwrite = (aRegAB == rgbRegAB) && (aRegAB != PS_REGISTER_DISCARD);
-        float a = (abBlue2A && !abAlphaOverwrite) ? outRGB_AB.b : Regs[rgbRegAB & 0xFu].a;
+        float a = (abBlue2A && !abAlphaOverwrite) ? outRGB_AB.b : Regs[rgbRegAB].a;
         RegWrite(Regs, rgbRegAB, float4(outRGB_AB, a));
     }
     // CD: same pattern
     {
         bool cdAlphaOverwrite = (aRegCD == rgbRegCD) && (aRegCD != PS_REGISTER_DISCARD);
-        float a = (cdBlue2A && !cdAlphaOverwrite) ? outRGB_CD.b : Regs[rgbRegCD & 0xFu].a;
+        float a = (cdBlue2A && !cdAlphaOverwrite) ? outRGB_CD.b : Regs[rgbRegCD].a;
         RegWrite(Regs, rgbRegCD, float4(outRGB_CD, a));
     }
     // AB+CD sum/mux: write RGB only; spec requires DISCARD when any DOT flag is set
@@ -838,7 +843,8 @@ float4 main(PS_INPUT input) : SV_Target
     // --- Set vertex-derived registers ---
     // Use FRONTFACE_FACTOR to match compiled PS winding-order correction:
     // 0 = always front, +/-1 = two-sided with CW/CCW convention
-    bool isFront = (input.iFF ? 1.0f : -1.0f) * FrontFaceInfo.x >= 0.0f;
+    // FrontFaceInfo.x >= 0 means "treat SV_IsFrontFace as-is"; < 0 means "flip"
+    bool isFront = (FrontFaceInfo.x >= 0.0f) == (bool)input.iFF;
     float4 diffuse  = isFront ? input.iD0 : input.iB0;
     float4 specular = isFront ? input.iD1 : input.iB1;
     Regs[PS_REGISTER_V0] = diffuse;
