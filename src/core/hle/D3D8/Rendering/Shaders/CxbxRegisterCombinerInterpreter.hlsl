@@ -294,47 +294,29 @@ float ResolveStageInputAlpha(float4 Regs[16], uint regByte)
 
 float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB)
 {
-    uint regIdx    = regByte & 0x0Fu;
-    uint mapping   = regByte & 0xE0u;
-    bool useAlphaC = (regByte & PS_CHANNEL_ALPHA) != 0u;
-    float4 val     = Regs[regIdx];
+    uint regIdx  = regByte & 0x0Fu;
+    uint mapping = regByte & 0xE0u;
+    float4 val   = Regs[regIdx];
 
-    switch (regIdx)
-    {
-        // C0/C1 read from Regs[] (pre-loaded from PSFinalCombinerConstant
-        // before DoFinalCombiner, matching NV2A/xemu behavior).
+    // FOG: rgb → 0, alpha passthrough
+    val = (regIdx == PS_REGISTER_FOG)
+        ? float4(0.0f, 0.0f, 0.0f, val.a)
+        : val;
 
-        case PS_REGISTER_FOG:
-            // Final combiner sees only FOG.a; rgb reads as zero
-            val = float4(0.0f, 0.0f, 0.0f, val.a);
-            break;
+    // V1R0_SUM / EF_PROD: only valid in A/B slot
+    val = ((regIdx == PS_REGISTER_V1R0_SUM || regIdx == PS_REGISTER_EF_PROD) && !isFinalAB)
+        ? (float4)0.0f
+        : val;
 
-        case PS_REGISTER_V1R0_SUM:
-            val = isFinalAB ? val : (float4)0.0f;
-            break;
-
-        case PS_REGISTER_EF_PROD:
-            val = isFinalAB ? val : (float4)0.0f;
-            break;
-    }
-
-    if (useAlphaC)
+    // Channel select
+    if (regByte & PS_CHANNEL_ALPHA)
         val = val.aaaa;
 
-    // Remap final-combiner-invalid mappings to nearest valid equivalents
-    switch (mapping)
-    {
-        case PS_INPUTMAPPING_EXPAND_NORMAL:
-        case PS_INPUTMAPPING_HALFBIAS_NORMAL:
-        case PS_INPUTMAPPING_SIGNED_IDENTITY:
-            mapping = PS_INPUTMAPPING_UNSIGNED_IDENTITY;
-            break;
-        case PS_INPUTMAPPING_EXPAND_NEGATE:
-        case PS_INPUTMAPPING_HALFBIAS_NEGATE:
-        case PS_INPUTMAPPING_SIGNED_NEGATE:
-            mapping = PS_INPUTMAPPING_UNSIGNED_INVERT;
-            break;
-    }
+    // Invalid final-combiner mappings (expand/halfbias/signed) collapse to
+    // unsigned_identity (0x00) or unsigned_invert (0x20) — bit 5 is the parity.
+    // Mappings 0x00/0x20 are already correct; anything ≥ 0x40 → mask to bit 5.
+    if (mapping >= 0x40u)
+        mapping &= 0x20u;
 
     return ApplyInputMapping(mapping, val);
 }
