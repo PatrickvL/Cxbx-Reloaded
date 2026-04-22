@@ -35,6 +35,21 @@ uniform float4 xboxTextureScaleRcp[4] : register(c214);
 // Parameters for mapping the shader's fog output value to a fog factor
 uniform float4 CxbxFogInfo : register(c218); // = CXBX_D3DVS_CONSTREG_FOGINFO
 
+// Fog table formula — shared by all VS paths (programmable footer + FF DoFog).
+// NV2A evaluates this per-vertex; the rasterizer interpolates the result;
+// the PS clamps to [0,1] and blends with the fog color.
+// fogMode: 0=NONE (vertex fog passthrough), 1=EXP, 2=EXP2, 3=LINEAR
+float CalculateFogFactor(int fogMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
+{
+    if (fogMode == 1)       // EXP
+        return 1.0f / exp(fogDepth * fogDensity);
+    if (fogMode == 2)       // EXP2
+        return 1.0f / exp(pow(fogDepth * fogDensity, 2));
+    if (fogMode == 3)       // LINEAR
+        return (fogEnd - fogDepth) / (fogEnd - fogStart);
+    return fogDepth;        // 0 = NONE (vertex fog passthrough)
+}
+
 // TEXCOORDINDEX remapping: xyzw = texcoord source index for stages 0-3.
 // On NV2A, the texture unit routes interpolated texcoords based on
 // D3DTSS_TEXCOORDINDEX. In D3D11 we apply this in the VS footer.

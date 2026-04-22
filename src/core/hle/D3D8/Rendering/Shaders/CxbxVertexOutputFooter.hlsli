@@ -8,22 +8,11 @@
     xOut.oD0 = saturate(oD0);
     xOut.oD1 = saturate(oD1);
 
-    // Fog factor computation: NV2A computes the fog formula per-vertex, then
-    // the rasterizer interpolates the resulting factor. The pixel shader only
-    // does the final clamp to [0,1] and the fog color blend.
+    // Fog: NV2A computes the fog formula per-vertex; the rasterizer interpolates
+    // the result; the PS clamps to [0,1] and blends with the fog color.
     // CxbxFogInfo: x=tableMode, y=density, z=start, w=end (from VS c218)
-    {
-        float fogDepth = oFog.x;
-        int fogMode = (int)CxbxFogInfo.x;
-        if (fogMode == 1)       // EXP
-            xOut.oFog = 1.0f / exp(fogDepth * CxbxFogInfo.y);
-        else if (fogMode == 2)  // EXP2
-            xOut.oFog = 1.0f / exp(pow(fogDepth * CxbxFogInfo.y, 2));
-        else if (fogMode == 3)  // LINEAR
-            xOut.oFog = (CxbxFogInfo.w - fogDepth) / (CxbxFogInfo.w - CxbxFogInfo.z);
-        else                    // 0 = NONE (vertex fog passthrough)
-            xOut.oFog = fogDepth;
-    }
+    xOut.oFog = CalculateFogFactor((int)CxbxFogInfo.x, CxbxFogInfo.y,
+                                   CxbxFogInfo.z, CxbxFogInfo.w, oFog.x);
 
     xOut.oPts = oPts.x;
     xOut.oB0 = saturate(oB0);
