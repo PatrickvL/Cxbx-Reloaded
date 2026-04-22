@@ -377,75 +377,17 @@ void ApplyCompareMode(uint stage, float4 coords)
 }
 
 // ============================================================
-// PSDotMapping decoder
+// PSDotMapping decoder — thin wrapper around ApplyDotMapping()
+// (defined in CxbxPixelShaderFunctions.hlsli)
 //
-// 3 bits per stage (stage 1 in bits 0-2, stage 2 in bits 4-6, stage 3 in bits 8-10).
-// Returns the remapped float3 value of the source texture register for dot product.
+// Extracts the 3-bit mode for the given stage from the packed PSDotMapping
+// register and dispatches to the shared pure-math function.
 // ============================================================
 
-float3 ApplyDotMapping(uint stage, float4 src)
+float3 ApplyDotMappingForStage(uint stage, float4 src)
 {
     uint mapping = (PSDotMapping >> ((stage - 1u) * 4u)) & 0x7u;
-
-    // PS_DOTMAPPING values (from NV2A docs / xemu psh.c):
-    // 0 = ZERO_TO_ONE        — identity [0,1]
-    // 1 = MINUS1_TO_1_D3D    — (byte - 128) / 127          (sign1 in xemu)
-    // 2 = MINUS1_TO_1_GL     — two's complement + 0.5 bias  (sign2 in xemu)
-    // 3 = MINUS1_TO_1        — two's complement             (sign3 in xemu)
-    // 4 = HILO_1             — 16-bit unsigned pair, Z=1
-    // 5 = HILO_HEMISPHERE_D3D — 16-bit signed pair, Z=sqrt(1-H²-L²)
-    // 6 = HILO_HEMISPHERE_GL  — same (sign convention differs)
-    // 7 = HILO_HEMISPHERE     — same (sign convention differs)
-    float3 b = round(saturate(src.rgb) * 255.0f);
-
-    if (mapping == 0u)
-        return src.rgb;
-
-    if (mapping == 1u)
-        return (b - 128.0f) / 127.0f;
-
-    if (mapping == 2u) {
-        // GL two's complement: (byte >= 128 ? byte-255.5 : byte+0.5) / 127.5
-        float3 s = (b >= 128.0f) ? (b - 255.5f) : (b + 0.5f);
-        return s / 127.5f;
-    }
-
-    if (mapping == 3u) {
-        // Generic two's complement: (byte >= 128 ? byte-256 : byte) / 127
-        float3 s = (b >= 128.0f) ? (b - 256.0f) : b;
-        return s / 127.0f;
-    }
-
-    // HILO modes: reconstruct two 16-bit values from ARGB channels.
-    // Channel order follows xemu HW verification: HI = (A<<8|R), LO = (G<<8|B)
-    if (mapping >= 4u) {
-        float4 c = round(saturate(src) * 255.0f);
-        float H = c.a * 256.0f + c.r;  // 0..65535
-        float L = c.g * 256.0f + c.b;  // 0..65535
-
-        if (mapping == 4u) // HILO_1: unsigned [0,1], Z=1
-            return float3(H / 65535.0f, L / 65535.0f, 1.0f);
-
-        // HILO_HEMISPHERE modes 5-7: signed H,L with Z = sqrt(1 - H² - L²)
-        // Sign convention per mode (matching xemu sign1/sign2/sign3 on 16-bit):
-        float Hs, Ls;
-        if (mapping == 5u) {
-            // D3D: (val - 32768) / 32767
-            Hs = (H - 32768.0f) / 32767.0f;
-            Ls = (L - 32768.0f) / 32767.0f;
-        } else if (mapping == 6u) {
-            // GL: two's complement with +0.5 bias
-            Hs = (H >= 32768.0f) ? (H - 65535.5f) / 32767.5f : (H + 0.5f) / 32767.5f;
-            Ls = (L >= 32768.0f) ? (L - 65535.5f) / 32767.5f : (L + 0.5f) / 32767.5f;
-        } else {
-            // Generic two's complement
-            Hs = (H >= 32768.0f) ? (H - 65536.0f) / 32767.0f : H / 32767.0f;
-            Ls = (L >= 32768.0f) ? (L - 65536.0f) / 32767.0f : L / 32767.0f;
-        }
-        return float3(Hs, Ls, sqrt(max(0.0f, 1.0f - Hs*Hs - Ls*Ls)));
-    }
-
-    return src.rgb;
+    return ApplyDotMapping(mapping, src);
 }
 
 // ============================================================
@@ -588,7 +530,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
     {
         // Apply dot mapping to the source stage's texture register, then dot with coords
         float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm  = ApplyDotMapping(stage, src);
+        float3 dm  = ApplyDotMappingForStage(stage, src);
         float  d   = dot(coords.xyz, dm);
         val = float4(d, 0.0f, 0.0f, 1.0f);
         break;
@@ -599,7 +541,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         // texm3x2tex: Normal2(ts) = (dot_[ts-1], dot_[ts])
         // Compute current dot, then use (previous dot, current dot) as (s,t)
         float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm  = ApplyDotMapping(stage, src);
+        float3 dm  = ApplyDotMappingForStage(stage, src);
         float  d   = dot(coords.xyz, dm);
         float  s   = Regs[tBase - 1u].x; // dot_[ts-1]
         float  t   = d;                   // dot_[ts]
@@ -611,7 +553,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
     {
         // texm3x2depth: compute n = (prev_dot, current_dot), depth = n.x / n.y
         float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm  = ApplyDotMapping(stage, src);
+        float3 dm  = ApplyDotMappingForStage(stage, src);
         float  d   = dot(coords.xyz, dm);
         float  prevDot = Regs[tBase - 1u].x;
         // Avoid division by near-zero (matches compiled PS guard)
@@ -625,7 +567,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         // texm3x3diff: restricted to stage 2. Normal2(ts) = (dot_[ts-1], dot_[ts], 0).
         // Normal is used directly as the cubemap direction (no reflection for DIFF).
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMapping(stage, src);
+        float3 dm   = ApplyDotMappingForStage(stage, src);
         float  nx   = Regs[tBase - 1u].x; // dot_[ts-1]
         float  ny   = dot(coords.xyz, dm);  // dot_[ts]
         val = SampleCube(stage, float3(nx, ny, 0.0f));
@@ -640,7 +582,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         float  nx   = Regs[tBase - 2u].x;
         float  ny   = Regs[tBase - 1u].x;
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMapping(stage, src);
+        float3 dm   = ApplyDotMappingForStage(stage, src);
         float  nz   = dot(coords.xyz, dm);
         float3 N    = normalize(float3(nx, ny, nz));
         float3 E    = normalize(float3(Regs[PS_REGISTER_T1].w,
@@ -656,7 +598,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         float  s    = Regs[tBase - 2u].x;
         float  t    = Regs[tBase - 1u].x;
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMapping(stage, src);
+        float3 dm   = ApplyDotMappingForStage(stage, src);
         float  r    = dot(coords.xyz, dm);
         val = Sample3D(stage, float3(s, t, r));
         break;
@@ -667,7 +609,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         float  s    = Regs[tBase - 2u].x;
         float  t    = Regs[tBase - 1u].x;
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMapping(stage, src);
+        float3 dm   = ApplyDotMappingForStage(stage, src);
         float  r    = dot(coords.xyz, dm);
         val = SampleCube(stage, float3(s, t, r));
         break;
@@ -680,7 +622,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         float  nx   = Regs[tBase - 2u].x;
         float  ny   = Regs[tBase - 1u].x;
         float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMapping(stage, src);
+        float3 dm   = ApplyDotMappingForStage(stage, src);
         float  nz   = dot(coords.xyz, dm);
         float3 N    = normalize(float3(nx, ny, nz));
         float3 E    = float3(0.0f, 0.0f, 1.0f); // placeholder

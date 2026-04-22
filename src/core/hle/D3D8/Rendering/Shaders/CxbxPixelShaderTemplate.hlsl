@@ -78,9 +78,10 @@ uniform const float4 ALPHATEST : register(c43); // D3D11: alpha test state (x=en
    static const int PS_INPUTTEXTURE_[4] = { -1, 0, 0, 0 };
 
    // Dot mappings for texture stage 1, 2 and 3 (stage 0 performs no dot product)
-   #define PS_DOTMAPPING_1 PS_DOTMAPPING_MINUS1_TO_1_D3D
-   #define PS_DOTMAPPING_2 PS_DOTMAPPING_MINUS1_TO_1_D3D
-   #define PS_DOTMAPPING_3 PS_DOTMAPPING_MINUS1_TO_1_D3D
+   // Integer mode values: 0=ZERO_TO_ONE, 1=MINUS1_TO_1_D3D, 2=GL, 3=GENERIC, 4-7=HILO
+   #define PS_DOTMAPPING_1 1
+   #define PS_DOTMAPPING_2 1
+   #define PS_DOTMAPPING_3 1
 
    // Bits from FinalCombinerFlags (the 4th byte in PSFinalCombinerInputsEFG) :
    #define PS_FINALCOMBINERSETTING_COMPLEMENT_V1
@@ -169,66 +170,8 @@ uniform const float4 ALPHATEST : register(c43); // D3D11: alpha test state (x=en
 // lerp(x,  y,  s )  x*(1-s ) +  y*s == x + s(y-x)
 // lerp(s2, s1, s0) s2*(1-s0) + s1*s0
 
-float m21d(const float input)
-{
-	int tmp = (int)round(input * 255); // Convert float 0..1 into byte 0..255 (round to avoid truncation off-by-one)
-	tmp -= 128; // 0 lowers to -128, 128 lowers to 0, 255 lowers to 127
-	return (float)tmp / 127; // -128 scales to -1.007874016, 0 scales to 0.0, 127 scales to 1.0
-}
-
-float m21g(const float input)
-{
-	int tmp = (int)round(input * 255); // Convert float 0..1 into byte 0..255 (round to avoid truncation off-by-one)
-	if (tmp >= 128) {
-		tmp -= 256; // 128 lowers to -128, 255 lowers to -1
-	} // 0 stays 0, 127 stays 127
-
-	return ((float)tmp + 0.5) / 127.5;
-}
-
-float m21(const float input)
-{
-	int tmp = (int)round(input * 255); // Convert float 0..1 into byte 0..255 (round to avoid truncation off-by-one)
-	if (tmp >= 128) {
-		tmp -= 256; // 128 lowers to -128, 255 lowers to -1
-	} // 0 stays 0, 127 stays 127
-
-	return (float)tmp / 127; // -128 scales to -1.007874016, 0 scales to 0.0, 127 scales to 1.0
-}
-
-float hls(float input) // 0..65535 range
-{
-	float tmp = (float)(input); 
-	tmp = (input < 32768) ? tmp / 32767 : (tmp - 65536) / 32767; // -1..1
-	return (float)tmp;
-}
-
-float hlu(float input) // 0..65535 range
-{
-	return (float)input / 65535; // 0..1
-}
-
-float p2(float input) // power of 2
-{
-return input * input;
-}
-
-// Note : each component seems already in range [0..1], but two must be combined into one
-             
-#define TwoIntoOne(a,b) (((a * 256) + b) * 255) 
-#define CalcHiLo(in) H = TwoIntoOne(in.x, in.y); L = TwoIntoOne(in.z, in.w) // TODO : Verify whether this works at all !
-
-
-// Dot mappings over the output value of a (4 component 8 bit unsigned) texture stage register into a (3 component float) vector value, for use in a dot product calculation:
-#define PS_DOTMAPPING_ZERO_TO_ONE(in)         dm = in.rgb                                          // :r8g8b8a8->(r,g,b):                                                   0x00=>0,                       0xff=>1 thus : output =                     (input / 0xff  )
-#define PS_DOTMAPPING_MINUS1_TO_1_D3D(in)     dm = float3(m21d(in.x), m21d(in.y), m21d(in.z))      // :r8g8b8a8->(r,g,b):               0x00=>-128/127,         0x01=>-1,   0x80=>0,                       0xff=>1 thus : output =                                        ((input - 0x100  ) / 0x7f  )
-#define PS_DOTMAPPING_MINUS1_TO_1_GL(in)      dm = float3(m21g(in.x), m21g(in.y), m21g(in.z))      // :r8g8b8a8->(r,g,b):                                       0x80=>-1,   0x00=>0,                       0x7f=>1 thus : output =  (input < 0x80  ) ? (input / 0x7f  ) : ((input - 0x100  ) / 0x80  ) (see https://en.wikipedia.org/wiki/Two's_complement)
-#define PS_DOTMAPPING_MINUS1_TO_1(in)         dm = float3(m21( in.x), m21( in.y), m21( in.z))      // :r8g8b8a8->(r,g,b):               0x80=>-128/127,        ?0x81=>-1,   0x00=>0,                       0x7f=>1 thus : output =  (input < 0x80  ) ? (input / 0x7f  ) : ((input - 0x100  ) / 0x7f  ) (see https://en.wikipedia.org/wiki/Two's_complement)
-
-#define PS_DOTMAPPING_HILO_1(in)              CalcHiLo(in); dm = float3(hlu(H), hlu(L), 1)                   // :H16L16  ->(H,L,1):                                                 0x0000=>0,                     0xffff=>1 thus : output =                     (input / 0xffff)
-#define PS_DOTMAPPING_HILO_HEMISPHERE_D3D(in) CalcHiLo(in); dm = float3(hls(H), hls(L), sqrt(1-p2(H)-p2(L))) // :H16L16  ->(H,L,sqrt(1-H^2-L^2)):?                      0x8000=>-1, 0x0000=>0, 0x7fff=32767/32768            thus : output =                                        ((input - 0x10000) / 0x7fff)
-#define PS_DOTMAPPING_HILO_HEMISPHERE_GL(in)  CalcHiLo(in); dm = float3(hls(H), hls(L), sqrt(1-p2(H)-p2(L))) // :H16L16  ->(H,L,sqrt(1-H^2-L^2)):?                      0x8000=>-1, 0x0000=>0,                     0x7fff=>1 thus : output =  (input < 0x8000) ? (input / 0x7fff) : ((input - 0x10000) / 0x8000)
-#define PS_DOTMAPPING_HILO_HEMISPHERE(in)     CalcHiLo(in); dm = float3(hls(H), hls(L), sqrt(1-p2(H)-p2(L))) // :H16L16  ->(H,L,sqrt(1-H^2-L^2)): 0x8000=>-32768/32767, 0x8001=>-1, 0x0000=>0,                     0x7fff=>1 thus : output =  (input < 0x8000) ? (input / 0x7fff) : ((input - 0x10000) / 0x7fff)
+// Dot mapping is now handled by ApplyDotMapping() in CxbxPixelShaderFunctions.hlsli.
+// PS_DOTMAPPING_1/2/3 are integer mode values (0-7) defined by the C++ BuildShader().
 
 #include "CxbxPixelShaderInput.hlsli"
 
@@ -306,7 +249,7 @@ float3 DoBumpEnv(const float4 TexCoord, const float4 BumpEnvMat, const float4 Bu
 
 // Calculate the dot result for a given texture stage. Since any given stage is input-mapped to always be less than or equal the stage it appears in, this won't cause read-ahead issues
 // Test case: BumpDemo demo
-#define CalcDot(ts) PS_DOTMAPPING_ ## ts(src(ts)); dot_[ts] = dot(iT[ts].xyz, dm)
+#define CalcDot(ts) dm = ApplyDotMapping(PS_DOTMAPPING_ ## ts, src(ts)); dot_[ts] = dot(iT[ts].xyz, dm)
 
 // Addressing operations
 
@@ -314,7 +257,7 @@ float3 DoBumpEnv(const float4 TexCoord, const float4 BumpEnvMat, const float4 Bu
 // Note alpha is passed through rather than set to one like ps_1_3 'texcoord'
 // Test case: Metal Arms (menu skybox clouds, alpha is specifically set in the VS)
 #define Passthru(ts)  float4(saturate(iT[ts]))
-#define Brdf(ts)      float3(t[ts-2].y,  t[ts-1].y,  t[ts-2].x - t[ts-1].x) // TODO : Complete 16 bit phi/sigma retrieval from float4 texture register. Perhaps use CalcHiLo?
+#define Brdf(ts)      float3(t[ts-2].y,  t[ts-1].y,  t[ts-2].x - t[ts-1].x) // TODO : Complete 16 bit phi/sigma retrieval from float4 texture register. Perhaps use HILO decode from ApplyDotMapping?
 #define Normal2(ts)   float3(dot_[ts-1], dot_[ts],   0)                     // Preceding and current stage dot result. Will be input for Sample2D.
 #define Normal3(ts)   float3(dot_[ts-2], dot_[ts-1], dot_[ts])              // Two preceding and current stage dot result.
 #define Eye           float3(iT[1].w,    iT[2].w,    iT[3].w)               // 4th (q) component of input texture coordinates 1, 2 and 3. Only used by texm3x3vspec/PS_TEXTUREMODES_DOT_RFLCT_SPEC, always at stage 3. NV2A hardcodes these indices.
@@ -373,9 +316,8 @@ PS_OUTPUT main(const PS_INPUT xIn)
 	// Helper variables
 	int stage = 0;         // Write-only variable, emitted as prefix-comment before each 'opcode', used in C0 and C1 macro's (and should thus get optimized away), initialized to zero for use of C0 in PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST
 	float4 tmp;
-	float H, L;            // HILO (high/low) temps
 	float dot_[4];
-	float3 dm;             // Dot mapping temporary
+	float3 dm;             // Dot mapping temporary (set by CalcDot via ApplyDotMapping)
 	float3 n;              // Normal vector (based on preceding dot_[] values)
 	float3 s;              // Actual texture coordinate sampling coordinates (temporary)
 	float4 v;              // Texture value (temporary)

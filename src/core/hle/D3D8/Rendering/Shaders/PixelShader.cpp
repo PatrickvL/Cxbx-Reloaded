@@ -319,18 +319,7 @@ void BuildShader(DecodedRegisterCombiner* pShader, std::stringstream& hlsl)
 
 	// Generate #defines required by CxbxPixelShaderTemplate.hlsl :
 	for (unsigned i = 1; i < PSH_XBOX_MAX_T_REGISTER_COUNT; i++) {
-		static const std::string dotmapping_str[8] = {
-			"PS_DOTMAPPING_ZERO_TO_ONE",		 // = 0x00L, // - * * *
-			"PS_DOTMAPPING_MINUS1_TO_1_D3D",	 // = 0x01L, // - * * *
-			"PS_DOTMAPPING_MINUS1_TO_1_GL",		 // = 0x02L, // - * * *
-			"PS_DOTMAPPING_MINUS1_TO_1",		 // = 0x03L, // - * * *
-			"PS_DOTMAPPING_HILO_1",				 // = 0x04L, // - * * *
-			"PS_DOTMAPPING_HILO_HEMISPHERE_D3D", // = 0x05L, // - * * *
-			"PS_DOTMAPPING_HILO_HEMISPHERE_GL",  // = 0x06L, // - * * *
-			"PS_DOTMAPPING_HILO_HEMISPHERE"		 // = 0x07L, // - * * *
-		};
-
-		hlsl << "\n#define PS_DOTMAPPING_" << i << " " << dotmapping_str[(unsigned)pShader->PSDotMapping[i]];
+		hlsl << "\n#define PS_DOTMAPPING_" << i << " " << (unsigned)pShader->PSDotMapping[i];
 	}
 
 	OutputDefineFlag(hlsl, pShader->FinalCombiner.ComplementV1, "PS_FINALCOMBINERSETTING_COMPLEMENT_V1");

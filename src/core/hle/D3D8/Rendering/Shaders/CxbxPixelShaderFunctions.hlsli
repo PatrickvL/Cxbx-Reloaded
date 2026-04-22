@@ -98,4 +98,58 @@ float4 ApplyTexFmtFixup(float4 t, CXBX_STEERING_INT fixup)
 	return t;
 }
 
+// Dot mapping conversion (PS_DOTMAPPING modes 0-7).
+// Remaps a texture register value for use in a dot product calculation.
+// Pure function — no cbuffer dependency; both the compiled PS template and
+// the RC interpreter ubershader call this with a compile-time or runtime mode.
+// Math matches xemu's HW-verified implementation (psh.c sign1/sign2/sign3).
+//
+// mode: 0=ZERO_TO_ONE, 1=MINUS1_TO_1_D3D, 2=MINUS1_TO_1_GL, 3=MINUS1_TO_1,
+//       4=HILO_1, 5=HILO_HEMISPHERE_D3D, 6=HILO_HEMISPHERE_GL, 7=HILO_HEMISPHERE
+float3 ApplyDotMapping(uint mode, float4 src)
+{
+    if (mode == 0u)
+        return src.rgb;
+
+    float3 b = round(saturate(src.rgb) * 255.0f);
+
+    if (mode == 1u) // D3D: (byte - 128) / 127
+        return (b - 128.0f) / 127.0f;
+
+    if (mode == 2u) { // GL: two's complement with +0.5 bias
+        float3 s = (b >= 128.0f) ? (b - 255.5f) : (b + 0.5f);
+        return s / 127.5f;
+    }
+
+    if (mode == 3u) { // Generic two's complement
+        float3 s = (b >= 128.0f) ? (b - 256.0f) : b;
+        return s / 127.0f;
+    }
+
+    // HILO modes: reconstruct two 16-bit values from ARGB channels.
+    // Channel order follows xemu HW verification: HI = (A<<8|R), LO = (G<<8|B)
+    {
+        float4 c = round(saturate(src) * 255.0f);
+        float H = c.a * 256.0f + c.r;  // 0..65535
+        float L = c.g * 256.0f + c.b;  // 0..65535
+
+        if (mode == 4u) // HILO_1: unsigned [0,1], Z=1
+            return float3(H / 65535.0f, L / 65535.0f, 1.0f);
+
+        // HILO_HEMISPHERE modes 5-7: signed H,L with Z = sqrt(1 - H² - L²)
+        float Hs, Ls;
+        if (mode == 5u) { // D3D: (val - 32768) / 32767
+            Hs = (H - 32768.0f) / 32767.0f;
+            Ls = (L - 32768.0f) / 32767.0f;
+        } else if (mode == 6u) { // GL: two's complement with +0.5 bias
+            Hs = (H >= 32768.0f) ? (H - 65535.5f) / 32767.5f : (H + 0.5f) / 32767.5f;
+            Ls = (L >= 32768.0f) ? (L - 65535.5f) / 32767.5f : (L + 0.5f) / 32767.5f;
+        } else { // mode 7: Generic two's complement
+            Hs = (H >= 32768.0f) ? (H - 65536.0f) / 32767.0f : H / 32767.0f;
+            Ls = (L >= 32768.0f) ? (L - 65536.0f) / 32767.0f : L / 32767.0f;
+        }
+        return float3(Hs, Ls, sqrt(max(0.0f, 1.0f - Hs*Hs - Ls*Ls)));
+    }
+}
+
 #endif // CXBX_PIXEL_SHADER_FUNCTIONS_HLSLI
