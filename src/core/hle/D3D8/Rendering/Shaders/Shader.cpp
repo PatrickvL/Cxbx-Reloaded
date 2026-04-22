@@ -510,8 +510,8 @@ static void AsyncCompileWorker(std::string hlsl_str, std::string profile,
 
 	ID3DBlob* pResult = nullptr;
 	ID3DBlob* pErrors = nullptr;
-	// Match the synchronous path: O1 + backwards compat for SM4+ DX9-style intrinsics
-	UINT flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL1 | D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
+	// Match the synchronous path: O1, all shaders use DX11 native Texture2D.Sample()
+	UINT flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL1;
 
 	auto pfnD3DCompile = GetD3DCompileFunc();
 
@@ -523,7 +523,7 @@ static void AsyncCompileWorker(std::string hlsl_str, std::string profile,
 
 	if (FAILED(hr)) {
 		if (pErrors) { pErrors->Release(); pErrors = nullptr; }
-		flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL0 | D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
+		flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL0;
 		hr = pfnD3DCompile(
 			hlsl_str.c_str(), hlsl_str.length(),
 			sourceName.empty() ? nullptr : sourceName.c_str(),
@@ -704,9 +704,6 @@ extern HRESULT EmuCompileShader
 	auto tCompileStart = std::chrono::high_resolution_clock::now();
 	UINT flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL3;
 
-	// SM4.0+ requires backwards compatibility mode for DX9-style intrinsics (tex2D, texCUBE, etc.)
-	flags1 |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
-
 	// Use O1 for all Cxbx shaders:
 	// - Vertex shaders include FetchAllAttributes() which unrolls a
 	//   20-format switch × 16 attributes; at O3 the HLSL compiler spends
@@ -739,10 +736,9 @@ extern HRESULT EmuCompileShader
 		} else {
 			EmuLog(LOG_LEVEL::WARNING, "Shader compile failed. Recompiling in compatibility mode");
 		}
-		// Retry at O0 with backwards compat. Avoid AVOID_FLOW_CONTROL — it flattens
+		// Retry at O0. Avoid AVOID_FLOW_CONTROL — it flattens
 		// the VS/PS interpreter loops and produces wrong results.
-		// Test Case: Spy vs Spy (needs ENABLE_BACKWARDS_COMPATIBILITY)
-		flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL0 | D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
+		flags1 = D3DCOMPILE_OPTIMIZATION_LEVEL0;
 		hRet = pfnD3DCompile(
 			hlsl_str.c_str(),
 			hlsl_str.length(),

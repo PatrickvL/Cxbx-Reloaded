@@ -88,23 +88,26 @@
 #include "CxbxPixelShaderFunctions.hlsli"
 
 // ============================================================
-// Textures and samplers
-// Individual declarations per stage avoid DX11 error X4539
-// (sampler array elements cannot be used with different intrinsics)
+// Textures and samplers — DX11 SM5 style (no backwards compat needed).
+// Register layout shared with compiled PS template and fixed-function PS:
+//   t0-t3  = Texture2D
+//   t4-t7  = Texture3D
+//   t8-t11 = TextureCube
+//   s0-s3  = shared SamplerState
 // ============================================================
 
-Texture2D    Tex2D_0   : register(t0);
-Texture2D    Tex2D_1   : register(t1);
-Texture2D    Tex2D_2   : register(t2);
-Texture2D    Tex2D_3   : register(t3);
-Texture3D    Tex3D_0   : register(t4);
-Texture3D    Tex3D_1   : register(t5);
-Texture3D    Tex3D_2   : register(t6);
-Texture3D    Tex3D_3   : register(t7);
-TextureCube  TexCube_0 : register(t8);
-TextureCube  TexCube_1 : register(t9);
-TextureCube  TexCube_2 : register(t10);
-TextureCube  TexCube_3 : register(t11);
+Texture2D   Tex2D_0    : register(t0);
+Texture2D   Tex2D_1    : register(t1);
+Texture2D   Tex2D_2    : register(t2);
+Texture2D   Tex2D_3    : register(t3);
+Texture3D   Tex3D_0    : register(t4);
+Texture3D   Tex3D_1    : register(t5);
+Texture3D   Tex3D_2    : register(t6);
+Texture3D   Tex3D_3    : register(t7);
+TextureCube TexCube_0  : register(t8);
+TextureCube TexCube_1  : register(t9);
+TextureCube TexCube_2  : register(t10);
+TextureCube TexCube_3  : register(t11);
 
 SamplerState Samp0     : register(s0);
 SamplerState Samp1     : register(s1);
@@ -304,18 +307,21 @@ float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB)
         case PS_REGISTER_FOG:
         {
             // Final combiner sees only FOG.a; rgb reads as zero
-            float4 fog = Regs[PS_REGISTER_FOG];
-            val = float4(0.0f, 0.0f, 0.0f, fog.a);
+            float fog = Regs[PS_REGISTER_FOG].a;
+            val = float4(0.0f, 0.0f, 0.0f, fog);
             break;
         }
 
         case PS_REGISTER_V1R0_SUM:
+            val = isFinalAB ? Regs[PS_REGISTER_V1R0_SUM] : (float4)0.0f;
+            break;
+
         case PS_REGISTER_EF_PROD:
-            val = isFinalAB ? Regs[regIdx & 0xFu] : (float4)0.0f;
+            val = isFinalAB ? Regs[PS_REGISTER_EF_PROD] : (float4)0.0f;
             break;
 
         default:
-            val = Regs[regIdx & 0xFu];
+            val = Regs[regIdx];
             break;
     }
 
@@ -414,7 +420,7 @@ float4 PostProcessTexel(uint stage, float4 t)
 }
 
 // ============================================================
-// Texture sampling helpers (individual to avoid X4539)
+// Texture sampling helpers (DX11 SM5 native .Sample())
 // ============================================================
 
 float4 Sample2D  (uint s, float2 uv)
@@ -453,25 +459,26 @@ float4 SampleCube(uint s, float3 dir)
 
 void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 {
-    float4 val = float4(0.0f, 0.0f, 0.0f, 1.0f); // default: opaque black
-    uint   tBase = PS_REGISTER_T0 + stage;
+    // NUM_TEXTURE_STAGES is always a power of 2 (4); bitmask is faster than modulo
+    stage &= (NUM_TEXTURE_STAGES - 1u);
 
-    // Read texture coordinates from T register (pre-loaded from VS output;
-    // may have been perturbed by a prior BUMPENVMAP stage).
+    uint   tBase = PS_REGISTER_T0 + stage;
     float4 coords = Regs[tBase];
+
+    // Most common case first: simple 2D texture projection
+    if (mode == PS_TEXTUREMODES_PROJECT2D) {
+        Regs[tBase] = PostProcessTexel(stage, Sample2D(stage, coords.xy));
+        return;
+    }
+
+    // Second most common: no texture mode — leave T[stage] at its VS-initialized value
+    if (mode == PS_TEXTUREMODES_NONE)
+        return;
+
+    float4 val = float4(0.0f, 0.0f, 0.0f, 1.0f); // default: opaque black
 
     switch (mode)
     {
-    case PS_TEXTUREMODES_NONE:
-        // Leave T[stage] at its initialised value (0,0,0,1); no write
-        return;
-
-    case PS_TEXTUREMODES_PROJECT2D:
-        // No explicit projective divide — the VS output already accounts for it.
-        // (The compiled PS also uses tex2D without /w.)
-        val = Sample2D(stage, coords.xy);
-        break;
-
     case PS_TEXTUREMODES_PROJECT3D:
         val = Sample3D(stage, coords.xyz);
         break;
@@ -485,165 +492,133 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
         break;
 
     case PS_TEXTUREMODES_CLIPPLANE:
-        // Per-component compare mode from PSCompareMode (4 bits per stage)
         ApplyCompareMode(stage, coords);
-        // val stays (0,0,0,1)
         break;
-
-    case PS_TEXTUREMODES_BUMPENVMAP:
-    case PS_TEXTUREMODES_BUMPENVMAP_LUM:
-    {
-        // Bump source = source stage's already-computed texel (matches compiled PS
-        // BumpEnv() macro which reads src(ts), not the current stage's sample).
-        float4 bumpSrc = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float4 bem = BEM[stage];
-        // Perturb THIS stage's own texcoords, then sample with the perturbed coords
-        float u = coords.x + bem.x * bumpSrc.r + bem.z * bumpSrc.g;
-        float v = coords.y + bem.y * bumpSrc.r + bem.w * bumpSrc.g;
-        val = Sample2D(stage, float2(u, v));
-        // Apply luminance scaling for BUMPENVMAP_LUM
-        if (mode == PS_TEXTUREMODES_BUMPENVMAP_LUM) {
-            // LUM[stage].x = BumpEnvLScale, .y = BumpEnvLOffset
-            float lumFactor = LUM[stage].x * bumpSrc.b + LUM[stage].y;
-            val.rgb *= lumFactor;
-        }
-        break;
-    }
-
-    case PS_TEXTUREMODES_DPNDNT_AR:
-    {
-        // Dependent lookup: use .a and .r from source stage as (u,v)
-        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        val = Sample2D(stage, src.ar);
-        break;
-    }
-
-    case PS_TEXTUREMODES_DPNDNT_GB:
-    {
-        // Dependent lookup: use .g and .b from source stage as (u,v)
-        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        val = Sample2D(stage, src.gb);
-        break;
-    }
-
-    case PS_TEXTUREMODES_DOTPRODUCT:
-    {
-        // Apply dot mapping to the source stage's texture register, then dot with coords
-        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm  = ApplyDotMappingForStage(stage, src);
-        float  d   = dot(coords.xyz, dm);
-        val = float4(d, 0.0f, 0.0f, 1.0f);
-        break;
-    }
-
-    case PS_TEXTUREMODES_DOT_ST:
-    {
-        // texm3x2tex: Normal2(ts) = (dot_[ts-1], dot_[ts])
-        // Compute current dot, then use (previous dot, current dot) as (s,t)
-        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm  = ApplyDotMappingForStage(stage, src);
-        float  d   = dot(coords.xyz, dm);
-        float  s   = Regs[tBase - 1u].x; // dot_[ts-1]
-        float  t   = d;                   // dot_[ts]
-        val = Sample2D(stage, float2(s, t));
-        break;
-    }
-
-    case PS_TEXTUREMODES_DOT_ZW:
-    {
-        // texm3x2depth: compute n = (prev_dot, current_dot), depth = n.x / n.y
-        float4 src = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm  = ApplyDotMappingForStage(stage, src);
-        float  d   = dot(coords.xyz, dm);
-        float  prevDot = Regs[tBase - 1u].x;
-        // Avoid division by near-zero (matches compiled PS guard)
-        float  depth = (abs(d) < 0.00001f) ? 1.0f : (prevDot / d);
-        val = float4(depth, depth, depth, depth);
-        break;
-    }
-
-    case PS_TEXTUREMODES_DOT_RFLCT_DIFF:
-    {
-        // texm3x3diff: restricted to stage 2. Normal2(ts) = (dot_[ts-1], dot_[ts], 0).
-        // Normal is used directly as the cubemap direction (no reflection for DIFF).
-        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMappingForStage(stage, src);
-        float  nx   = Regs[tBase - 1u].x; // dot_[ts-1]
-        float  ny   = dot(coords.xyz, dm);  // dot_[ts]
-        val = SampleCube(stage, float3(nx, ny, 0.0f));
-        break;
-    }
-
-    case PS_TEXTUREMODES_DOT_RFLCT_SPEC:
-    {
-        // Build normal, compute specular reflection vector, cubemap lookup.
-        // Eye vector is assembled from the .w component of T1, T2, T3
-        // (NV2A hardcodes these indices).
-        float  nx   = Regs[tBase - 2u].x;
-        float  ny   = Regs[tBase - 1u].x;
-        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMappingForStage(stage, src);
-        float  nz   = dot(coords.xyz, dm);
-        float3 N    = normalize(float3(nx, ny, nz));
-        float3 E    = normalize(float3(Regs[PS_REGISTER_T1].w,
-                                       Regs[PS_REGISTER_T2].w,
-                                       Regs[PS_REGISTER_T3].w));
-        float3 R    = 2.0f * dot(N, E) * N - E;
-        val = SampleCube(stage, R);
-        break;
-    }
-
-    case PS_TEXTUREMODES_DOT_STR_3D:
-    {
-        float  s    = Regs[tBase - 2u].x;
-        float  t    = Regs[tBase - 1u].x;
-        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMappingForStage(stage, src);
-        float  r    = dot(coords.xyz, dm);
-        val = Sample3D(stage, float3(s, t, r));
-        break;
-    }
-
-    case PS_TEXTUREMODES_DOT_STR_CUBE:
-    {
-        float  s    = Regs[tBase - 2u].x;
-        float  t    = Regs[tBase - 1u].x;
-        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMappingForStage(stage, src);
-        float  r    = dot(coords.xyz, dm);
-        val = SampleCube(stage, float3(s, t, r));
-        break;
-    }
-
-    case PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST:
-    {
-        // Like DOT_RFLCT_SPEC but eye vector is a constant.
-        // TODO: wire SetEyeVector() / D3DRS_PSINPUTTEXTURE to a cbuffer entry
-        float  nx   = Regs[tBase - 2u].x;
-        float  ny   = Regs[tBase - 1u].x;
-        float4 src  = Regs[PS_REGISTER_T0 + GetSourceStage(stage)];
-        float3 dm   = ApplyDotMappingForStage(stage, src);
-        float  nz   = dot(coords.xyz, dm);
-        float3 N    = normalize(float3(nx, ny, nz));
-        float3 E    = float3(0.0f, 0.0f, 1.0f); // placeholder
-        float3 R    = 2.0f * dot(N, E) * N - E;
-        val = SampleCube(stage, R);
-        break;
-    }
 
     case PS_TEXTUREMODES_BRDF:
-        // TODO: proper BRDF requires eye / light sigma inputs
         val = Sample2D(stage, coords.xy);
         break;
 
     default:
-        val = Sample2D(stage, coords.xy);
+    {
+        // All remaining modes read from a source stage's T register.
+        // Pre-compute the source register index (PS_REGISTER_T0 + sourceStage)
+        // with bitmask bounds guard.
+        uint srcReg = PS_REGISTER_T0 + (GetSourceStage(stage) & (NUM_TEXTURE_STAGES - 1u));
+
+        switch (mode)
+        {
+        case PS_TEXTUREMODES_BUMPENVMAP:
+        case PS_TEXTUREMODES_BUMPENVMAP_LUM:
+        {
+            float4 bumpSrc = Regs[srcReg];
+            float4 bem = BEM[stage];
+            float u = coords.x + bem.x * bumpSrc.r + bem.z * bumpSrc.g;
+            float v = coords.y + bem.y * bumpSrc.r + bem.w * bumpSrc.g;
+            val = Sample2D(stage, float2(u, v));
+            if (mode == PS_TEXTUREMODES_BUMPENVMAP_LUM) {
+                float lumFactor = LUM[stage].x * bumpSrc.b + LUM[stage].y;
+                val.rgb *= lumFactor;
+            }
+            break;
+        }
+
+        case PS_TEXTUREMODES_DPNDNT_AR:
+            val = Sample2D(stage, Regs[srcReg].ar);
+            break;
+
+        case PS_TEXTUREMODES_DPNDNT_GB:
+            val = Sample2D(stage, Regs[srcReg].gb);
+            break;
+
+        case PS_TEXTUREMODES_DOTPRODUCT:
+        {
+            float3 dm = ApplyDotMappingForStage(stage, Regs[srcReg]);
+            val = float4(dot(coords.xyz, dm), 0.0f, 0.0f, 1.0f);
+            break;
+        }
+
+        case PS_TEXTUREMODES_DOT_ST:
+        {
+            float3 dm = ApplyDotMappingForStage(stage, Regs[srcReg]);
+            float  d  = dot(coords.xyz, dm);
+            val = Sample2D(stage, float2(Regs[tBase - 1u].x, d));
+            break;
+        }
+
+        case PS_TEXTUREMODES_DOT_ZW:
+        {
+            float3 dm = ApplyDotMappingForStage(stage, Regs[srcReg]);
+            float  d  = dot(coords.xyz, dm);
+            float  prevDot = Regs[tBase - 1u].x;
+            float  depth = (abs(d) < 0.00001f) ? 1.0f : (prevDot / d);
+            val = float4(depth, depth, depth, depth);
+            break;
+        }
+
+        case PS_TEXTUREMODES_DOT_RFLCT_DIFF:
+        {
+            float3 dm = ApplyDotMappingForStage(stage, Regs[srcReg]);
+            float  nx = Regs[tBase - 1u].x;
+            float  ny = dot(coords.xyz, dm);
+            val = SampleCube(stage, float3(nx, ny, 0.0f));
+            break;
+        }
+
+        case PS_TEXTUREMODES_DOT_RFLCT_SPEC:
+        {
+            float  nx  = Regs[tBase - 2u].x;
+            float  ny  = Regs[tBase - 1u].x;
+            float3 dm  = ApplyDotMappingForStage(stage, Regs[srcReg]);
+            float  nz  = dot(coords.xyz, dm);
+            float3 N   = normalize(float3(nx, ny, nz));
+            float3 E   = normalize(float3(Regs[PS_REGISTER_T1].w,
+                                          Regs[PS_REGISTER_T2].w,
+                                          Regs[PS_REGISTER_T3].w));
+            val = SampleCube(stage, 2.0f * dot(N, E) * N - E);
+            break;
+        }
+
+        case PS_TEXTUREMODES_DOT_STR_3D:
+        {
+            float3 dm = ApplyDotMappingForStage(stage, Regs[srcReg]);
+            val = Sample3D(stage, float3(Regs[tBase - 2u].x, Regs[tBase - 1u].x,
+                                         dot(coords.xyz, dm)));
+            break;
+        }
+
+        case PS_TEXTUREMODES_DOT_STR_CUBE:
+        {
+            float3 dm = ApplyDotMappingForStage(stage, Regs[srcReg]);
+            val = SampleCube(stage, float3(Regs[tBase - 2u].x, Regs[tBase - 1u].x,
+                                           dot(coords.xyz, dm)));
+            break;
+        }
+
+        case PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST:
+        {
+            // Like DOT_RFLCT_SPEC but eye vector is a constant.
+            // TODO: wire SetEyeVector() / D3DRS_PSINPUTTEXTURE to a cbuffer entry
+            float  nx  = Regs[tBase - 2u].x;
+            float  ny  = Regs[tBase - 1u].x;
+            float3 dm  = ApplyDotMappingForStage(stage, Regs[srcReg]);
+            float  nz  = dot(coords.xyz, dm);
+            float3 N   = normalize(float3(nx, ny, nz));
+            float3 E   = float3(0.0f, 0.0f, 1.0f); // placeholder
+            val = SampleCube(stage, 2.0f * dot(N, E) * N - E);
+            break;
+        }
+
+        default:
+            val = Sample2D(stage, coords.xy);
+            break;
+        }
         break;
+    }
     }
 
     // Post-process: format fixup, color sign, color key (matches compiled PS pipeline)
-    val = PostProcessTexel(stage, val);
-    RegWriteDirect(Regs, tBase, val);
+    Regs[tBase] = PostProcessTexel(stage, val);
 }
 
 // NV2A-accurate multiply helpers are in CxbxNV2AMathHelpers.hlsli

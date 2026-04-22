@@ -175,13 +175,30 @@ uniform const float4 ALPHATEST : register(c43); // D3D11: alpha test state (x=en
 
 #include "CxbxPixelShaderInput.hlsli"
 
-// Individual samplers instead of an array, because the D3D11 HLSL compiler
-// cannot resolve a sampler array where different elements are used with
-// different DX9-style intrinsics (tex2D vs tex3D vs texCUBE).
-sampler sampler_0 : register(s0);
-sampler sampler_1 : register(s1);
-sampler sampler_2 : register(s2);
-sampler sampler_3 : register(s3);
+// Texture objects and samplers — DX11 SM5 style (no backwards compat needed).
+// Each texture type gets its own register range so the host can bind the
+// same SRV at the base slot (t0-t3) AND the type-specific slot:
+//   t0-t3  = Texture2D
+//   t4-t7  = Texture3D
+//   t8-t11 = TextureCube
+// Samplers are shared across types (s0-s3).
+Texture2D   Tex2D_0   : register(t0);
+Texture2D   Tex2D_1   : register(t1);
+Texture2D   Tex2D_2   : register(t2);
+Texture2D   Tex2D_3   : register(t3);
+Texture3D   Tex3D_0   : register(t4);
+Texture3D   Tex3D_1   : register(t5);
+Texture3D   Tex3D_2   : register(t6);
+Texture3D   Tex3D_3   : register(t7);
+TextureCube TexCube_0 : register(t8);
+TextureCube TexCube_1 : register(t9);
+TextureCube TexCube_2 : register(t10);
+TextureCube TexCube_3 : register(t11);
+
+SamplerState Samp0   : register(s0);
+SamplerState Samp1   : register(s1);
+SamplerState Samp2   : register(s2);
+SamplerState Samp3   : register(s3);
 
 #include "CxbxPixelShaderFunctions.hlsli"
 
@@ -203,31 +220,12 @@ float4 PostProcessTexel(const int ts, float4 t)
 }
 
 // Actual texture sampling per texture stage (ts), using the sampling vector (s) as input.
-// Individual samplers are used so that each sampler is only ever passed to a single
-// DX9-style intrinsic (tex2D, tex3D or texCUBE), avoiding D3D11 error X4539.
+// DX11 SM5 native .Sample() — no backwards compatibility needed.
 // The ts argument is always a compile-time literal from the PS_TEXTUREMODES_* macros,
-// so token-pasting (sampler_##ts) resolves to the correct individual sampler.
-float4 _Sample2D(sampler samp, int ts, float3 s)
-{
-	float4 result = tex2D(samp, s.xy); // Ignores s.z (and whatever it's set to, will be optimized away by the compiler, see [1] below)
-	return PostProcessTexel(ts, result);
-}
-
-float4 _Sample3D(sampler samp, int ts, float3 s)
-{
-	float4 result = tex3D(samp, s.xyz);
-	return PostProcessTexel(ts, result);
-}
-
-float4 _Sample6F(sampler samp, int ts, float3 s)
-{
-	float4 result = texCUBE(samp, s.xyz);
-	return PostProcessTexel(ts, result);
-}
-
-#define Sample2D(ts, s) _Sample2D(sampler_##ts, ts, s)
-#define Sample3D(ts, s) _Sample3D(sampler_##ts, ts, s)
-#define Sample6F(ts, s) _Sample6F(sampler_##ts, ts, s)
+// so token-pasting resolves to the correct individual texture/sampler pair.
+#define Sample2D(ts, s) PostProcessTexel(ts, Tex2D_##ts.Sample(Samp##ts, (s).xy))
+#define Sample3D(ts, s) PostProcessTexel(ts, Tex3D_##ts.Sample(Samp##ts, (s).xyz))
+#define Sample6F(ts, s) PostProcessTexel(ts, TexCube_##ts.Sample(Samp##ts, (s).xyz))
 
 // Test-case JSRF (boost-dash effect).
 float3 DoBumpEnv(const float4 TexCoord, const float4 BumpEnvMat, const float4 BumpMap)

@@ -2,11 +2,27 @@
 
 #include "CxbxPixelShaderInput.hlsli"
 
-// Individual samplers for DX9-style intrinsics (tex2D, tex3D, texCUBE)
-sampler sampler_0 : register(s0);
-sampler sampler_1 : register(s1);
-sampler sampler_2 : register(s2);
-sampler sampler_3 : register(s3);
+// Texture objects and samplers — DX11 SM5 style.
+// Register layout matches all other pixel shaders:
+//   t0-t3  = Texture2D,  t4-t7  = Texture3D,  t8-t11 = TextureCube
+//   s0-s3  = shared SamplerState
+Texture2D   Tex2D_0   : register(t0);
+Texture2D   Tex2D_1   : register(t1);
+Texture2D   Tex2D_2   : register(t2);
+Texture2D   Tex2D_3   : register(t3);
+Texture3D   Tex3D_0   : register(t4);
+Texture3D   Tex3D_1   : register(t5);
+Texture3D   Tex3D_2   : register(t6);
+Texture3D   Tex3D_3   : register(t7);
+TextureCube TexCube_0 : register(t8);
+TextureCube TexCube_1 : register(t9);
+TextureCube TexCube_2 : register(t10);
+TextureCube TexCube_3 : register(t11);
+
+SamplerState Samp0   : register(s0);
+SamplerState Samp1   : register(s1);
+SamplerState Samp2   : register(s2);
+SamplerState Samp3   : register(s3);
 
 static const float4 WarningColor = float4(0, 1, 1, 1); // Returned when unhandled scenario is encountered
 
@@ -169,28 +185,28 @@ TextureArgs ExecuteTextureStage(
 	if (type == SAMPLE_NONE)
 		t = 1; // Test case JSRF
 	else if (type == SAMPLE_2D) {
-		// Use switch to dispatch to individual samplers, avoiding X4539
+		// Use switch to dispatch to individual texture/sampler pairs
 		switch (i) {
-			case 0: t = tex2D(sampler_0, TexCoord.xy); break;
-			case 1: t = tex2D(sampler_1, TexCoord.xy); break;
-			case 2: t = tex2D(sampler_2, TexCoord.xy); break;
-			case 3: t = tex2D(sampler_3, TexCoord.xy); break;
+			case 0: t = Tex2D_0.Sample(Samp0, TexCoord.xy); break;
+			case 1: t = Tex2D_1.Sample(Samp1, TexCoord.xy); break;
+			case 2: t = Tex2D_2.Sample(Samp2, TexCoord.xy); break;
+			case 3: t = Tex2D_3.Sample(Samp3, TexCoord.xy); break;
 		}
 	}
 	else if (type == SAMPLE_3D) {
 		switch (i) {
-			case 0: t = tex3D(sampler_0, TexCoord.xyz); break;
-			case 1: t = tex3D(sampler_1, TexCoord.xyz); break;
-			case 2: t = tex3D(sampler_2, TexCoord.xyz); break;
-			case 3: t = tex3D(sampler_3, TexCoord.xyz); break;
+			case 0: t = Tex3D_0.Sample(Samp0, TexCoord.xyz); break;
+			case 1: t = Tex3D_1.Sample(Samp1, TexCoord.xyz); break;
+			case 2: t = Tex3D_2.Sample(Samp2, TexCoord.xyz); break;
+			case 3: t = Tex3D_3.Sample(Samp3, TexCoord.xyz); break;
 		}
 	}
 	else if (type == SAMPLE_CUBE) {
 		switch (i) {
-			case 0: t = texCUBE(sampler_0, TexCoord.xyz); break;
-			case 1: t = texCUBE(sampler_1, TexCoord.xyz); break;
-			case 2: t = texCUBE(sampler_2, TexCoord.xyz); break;
-			case 3: t = texCUBE(sampler_3, TexCoord.xyz); break;
+			case 0: t = TexCube_0.Sample(Samp0, TexCoord.xyz); break;
+			case 1: t = TexCube_1.Sample(Samp1, TexCoord.xyz); break;
+			case 2: t = TexCube_2.Sample(Samp2, TexCoord.xyz); break;
+			case 3: t = TexCube_3.Sample(Samp3, TexCoord.xyz); break;
 		}
 	}
 

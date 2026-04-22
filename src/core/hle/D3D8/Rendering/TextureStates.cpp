@@ -378,10 +378,15 @@ void XboxTextureStateConverter::Apply()
 						s_CachedSamplerDescs[HostStage] = samplerDesc;
 						s_CachedSamplerValid[HostStage] = true;
 						g_pD3DDeviceContext->PSSetSamplers(HostStage, 1, &pSamplerState);
+						// All shaders use s0-s3 base + s4-s7 for 3D + s8-s11 for cube
+						g_pD3DDeviceContext->PSSetSamplers(4 + HostStage, 1, &pSamplerState);
+						g_pD3DDeviceContext->PSSetSamplers(8 + HostStage, 1, &pSamplerState);
 					}
 				} else {
 					// Desc unchanged — just re-bind the cached sampler
 					g_pD3DDeviceContext->PSSetSamplers(HostStage, 1, &s_CachedSamplerStates[HostStage]);
+					g_pD3DDeviceContext->PSSetSamplers(4 + HostStage, 1, &s_CachedSamplerStates[HostStage]);
+					g_pD3DDeviceContext->PSSetSamplers(8 + HostStage, 1, &s_CachedSamplerStates[HostStage]);
 				}
             } else {
 				switch (State) {

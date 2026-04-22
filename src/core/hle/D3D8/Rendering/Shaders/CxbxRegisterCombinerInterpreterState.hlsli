@@ -39,7 +39,12 @@ struct alignas(16) RCI_Float4 { float x, y, z, w; };
 #define RCI_BEGIN cbuffer RCInterpreterCBLayout : register(b0) {
 #define RCI_END   };
 #define RCI_UINT(name)       uint name; uint3 _pad_##name
-#define RCI_UINT_ARRAY(name, n)  uint name[n]
+// SM5 cbuffer packing: uint[n] last element only uses .x (4 bytes), leaving .yzw
+// free.  Without explicit padding, the next scalar packs into .y, breaking the
+// 16-byte-per-element stride that the C++ alignas(16) struct expects.
+// The uint3 fills the last register's .yzw so the next field starts on a fresh
+// 16-byte boundary.
+#define RCI_UINT_ARRAY(name, n)  uint name[n]; uint3 _pad_##name
 #define RCI_FLOAT4(name)     float4 name
 #define RCI_FLOAT4_ARRAY(name, n) float4 name[n]
 
