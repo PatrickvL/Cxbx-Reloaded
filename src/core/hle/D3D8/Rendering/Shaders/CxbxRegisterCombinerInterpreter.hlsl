@@ -751,6 +751,11 @@ float4 DoFinalCombiner(inout float4 Regs[16])
     uint fReg     = (efg >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu;
     uint gReg     = (efg >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu;
 
+    // Initialise C0/C1 for the final combiner from FinalCombinerConstants.
+    // Placed here (after early exit) so unused final combiners skip the writes.
+    Regs[PS_REGISTER_C0] = PSFinalCombinerConstant[0];
+    Regs[PS_REGISTER_C1] = PSFinalCombinerConstant[1];
+
     // --- Resolve E, F (RGB) and G (alpha) — EFG phase (not ABCD) ---
     float3 E = ResolveFinalInput(Regs, eReg, false).rgb;
     float3 F = ResolveFinalInput(Regs, fReg, false).rgb;
@@ -880,9 +885,6 @@ float4 main(PS_INPUT input) : SV_Target
         }
     }
 
-    // Initialise C0/C1 for the final combiner from FinalCombinerConstants
-    Regs[PS_REGISTER_C0] = PSFinalCombinerConstant[0];
-    Regs[PS_REGISTER_C1] = PSFinalCombinerConstant[1];
     float4 result = DoFinalCombiner(Regs);
 
     // --- Alpha test ---
