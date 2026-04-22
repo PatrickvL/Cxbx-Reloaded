@@ -143,11 +143,6 @@ SamplerState Samp3     : register(s3);
 //   15 EF_PROD       written in final combiner EFG phase, read in ABCD
 // ============================================================
 
-#define RegRead(Regs, idx) ((Regs)[(idx) & 0xFu])
-
-// For callsites where the index is a literal constant known != 0
-#define RegWriteDirect(Regs, idx, val) ((Regs)[(idx) & 0xFu] = (val))
-
 // Silently drop writes to the read-only slot.
 // The reserved slots (6,7) are also effectively read-only 
 // since they are never initialised or read by the combiner logic;
@@ -736,7 +731,7 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
 
 float4 DoFinalCombiner(inout float4 Regs[16])
 {
-    float4 R0 = RegRead(Regs, PS_REGISTER_R0);
+    float4 R0 = Regs[PS_REGISTER_R0];
 
     // If both ABCD and EFG are zero the final combiner is unused
     [branch] if (PSFinalCombinerInputsABCD == 0u && PSFinalCombinerInputsEFG == 0u)
@@ -757,11 +752,11 @@ float4 DoFinalCombiner(inout float4 Regs[16])
     float  G = ResolveFinalInput(Regs, gReg, false).a;
 
     // Compute E*F and store in EF_PROD for potential use by ABCD inputs
-    RegWriteDirect(Regs, PS_REGISTER_EF_PROD, float4(E * F, 1.0f));
+    Regs[PS_REGISTER_EF_PROD] = float4(E * F, 1.0f);
 
     // --- Optional complement and clamp on V1 and R0 ---
     // These modify the sum inputs, not the stored register values
-    float3 v1 = RegRead(Regs, PS_REGISTER_V1).rgb;
+    float3 v1 = Regs[PS_REGISTER_V1].rgb;
     float3 r0 = R0.rgb;
     if (settings & PS_FINALCOMBINERSETTING_COMPLEMENT_V1) v1 = 1.0f - v1;
     if (settings & PS_FINALCOMBINERSETTING_COMPLEMENT_R0) r0 = 1.0f - r0;
@@ -770,7 +765,7 @@ float4 DoFinalCombiner(inout float4 Regs[16])
     if (settings & PS_FINALCOMBINERSETTING_CLAMP_SUM) v1r0sum = saturate(v1r0sum);
 
     // Store V1+R0 sum for potential use by ABCD inputs
-    RegWriteDirect(Regs, PS_REGISTER_V1R0_SUM, float4(v1r0sum, 1.0f));
+    Regs[PS_REGISTER_V1R0_SUM] = float4(v1r0sum, 1.0f);
 
     // --- Resolve A, B, C, D — ABCD phase (V1R0_SUM / EF_PROD now valid) ---
     uint abcd = PSFinalCombinerInputsABCD;
@@ -846,15 +841,15 @@ float4 main(PS_INPUT input) : SV_Target
     bool isFront = (input.iFF ? 1.0f : -1.0f) * FrontFaceInfo.x >= 0.0f;
     float4 diffuse  = isFront ? input.iD0 : input.iB0;
     float4 specular = isFront ? input.iD1 : input.iB1;
-    RegWriteDirect(Regs, PS_REGISTER_V0, diffuse);
-    RegWriteDirect(Regs, PS_REGISTER_V1, specular);
+    Regs[PS_REGISTER_V0] = diffuse;
+    Regs[PS_REGISTER_V1] = specular;
     // FOG: rgb from the fog color constant, alpha from the vertex fog factor
-    RegWriteDirect(Regs, PS_REGISTER_FOG, float4(FogColor.rgb, saturate(input.iFog)));
+    Regs[PS_REGISTER_FOG] = float4(FogColor.rgb, saturate(input.iFog));
 
     // R0 initialization: NV2A spec says R0.rgb starts at 0, R0.a starts from T0.a.
     // xemu matches this: "r0 = vec4(0); r0.a = t0.a;".
     // Previous code copied all of T0 into R0 which was incorrect.
-    RegWriteA(Regs, PS_REGISTER_R0, RegRead(Regs, PS_REGISTER_T0).a);
+    RegWriteA(Regs, PS_REGISTER_R0, Regs[PS_REGISTER_T0].a);
     // R1 remains (0,0,0,0) from the zero-init above
 
     // --- Step 3: combiner stage loop ---
