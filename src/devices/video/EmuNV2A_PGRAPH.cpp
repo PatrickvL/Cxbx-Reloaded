@@ -2993,8 +2993,24 @@ void pgraph_init(NV2AState *d)
 	qemu_cond_init(&pg->fifo_access_cond);
 	qemu_cond_init(&pg->flip_3d);
 
-	if (!(pg->opengl_enabled))
+	if (!(pg->opengl_enabled)) {
+		// In HLE mode, the puller processes pushbuffer methods into PGRAPH
+		// register state (so RC/VS interpreters can read from it) but does
+		// not render.  Initialize minimum context so pgraph_handle_method()
+		// can execute without tripping assertions:
+		// - CTX_CONTROL CHID bit: marks channel as valid
+		// - CTX_SWITCH1 GRCLASS: NV_KELVIN_PRIMITIVE (0x97) — Xbox 3D class
+		// - CTX_CACHE1: standard Xbox subchannel → object class mapping
+		pg->regs[NV_PGRAPH_CTX_CONTROL] = NV_PGRAPH_CTX_CONTROL_CHID;
+		pg->regs[NV_PGRAPH_CTX_SWITCH1] = NV_KELVIN_PRIMITIVE;
+		// Standard Xbox D3D subchannel assignments:
+		pg->regs[NV_PGRAPH_CTX_CACHE1 + 0 * 4] = NV_KELVIN_PRIMITIVE;        // SC 0: 3D (Kelvin)
+		pg->regs[NV_PGRAPH_CTX_CACHE1 + 1 * 4] = NV_CONTEXT_PATTERN;         // SC 1: Pattern
+		pg->regs[NV_PGRAPH_CTX_CACHE1 + 2 * 4] = NV_CONTEXT_SURFACES_2D;     // SC 2: Surfaces2D
+		pg->regs[NV_PGRAPH_CTX_CACHE1 + 3 * 4] = NV_IMAGE_BLIT;              // SC 3: ImageBlit
+		pg->regs[NV_PGRAPH_CTX_CACHE1 + 4 * 4] = NV_MEMORY_TO_MEMORY_FORMAT; // SC 4: MemToMem
 		return;
+	}
 
 	/* attach OpenGL render plugins */
 	OpenGL_init_pgraph_plugins();

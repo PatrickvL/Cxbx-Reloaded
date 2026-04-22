@@ -612,8 +612,12 @@ xbox::void_xt CxbxImpl_SetPixelShader(xbox::dword_xt Handle)
    	   	// store it here and restore after memcpy, or alternatively, perform two separate memcpy's (the halves before, and after the reserved slot).
    	   	memcpy(XboxRenderStates.GetPixelShaderRenderStatePointer(), g_pXbox_PixelShader->pPSDef, sizeof(xbox::X_D3DPIXELSHADERDEF) - 3 * sizeof(DWORD));
    	   	// Copy the PSDef.PSTextureModes field to it's dedicated slot, which lies outside the range of PixelShader render state slots
-   	   	// Note : This seems to be what XDK's do as well. Needs verification.
-   	   	XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, g_pXbox_PixelShader->pPSDef->PSTextureModes);
+   	   	DWORD xboxTexModes = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+   	   	if (xboxTexModes != 0) {
+   	   		XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, xboxTexModes);
+   	   	} else {
+   	   		XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, g_pXbox_PixelShader->pPSDef->PSTextureModes);
+   	   	}
    	}
 }
 

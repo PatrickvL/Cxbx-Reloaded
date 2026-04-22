@@ -144,17 +144,25 @@ static void pfifo_run_puller(NV2AState *d)
             qemu_cond_signal(&d->pfifo.pusher_cond);            
         }
 
-        // In HLE mode (opengl_enabled == false), the D3D HLE layer handles
-        // all rendering; NV2A GPU methods pushed by unpatched Xbox D3D
-        // functions are irrelevant.  Just drain CACHE1 to keep the pusher
-        // (and therefore D3D_MakeRequestedSpace) from stalling.
-        if (!d->pgraph.opengl_enabled) {
-            continue;
-        }
-
-
         uint32_t method = method_entry & 0x1FFC;
         uint32_t subchannel = GET_MASK(method_entry, NV_PFIFO_CACHE1_METHOD_SUBCHANNEL);
+
+        // In HLE mode (opengl_enabled == false), process pushbuffer methods
+        // into PGRAPH register state so the RC/VS interpreters can read from
+        // it.  Skip object binding (method 0) and object-reference methods
+        // (0x180..0x1FF) which require RAMHT lookups that may not be
+        // initialized in HLE mode.  Skip the full context-switch / FIFO-wait
+        // ceremony — Xbox uses a single GPU channel, so it's safe to write
+        // directly.  Draw-triggering methods (BEGIN_END, CLEAR_SURFACE) are
+        // safe because their rendering function pointers are null.
+        if (!d->pgraph.opengl_enabled) {
+            if (method >= 0x100 && !(method >= 0x180 && method < 0x200)) {
+                qemu_mutex_lock(&d->pgraph.pgraph_lock);
+                pgraph_handle_method(d, subchannel, method, parameter);
+                qemu_mutex_unlock(&d->pgraph.pgraph_lock);
+            }
+            continue;
+        }
 
         // NV2A_DPRINTF("pull %d 0x%08X 0x%08X - subch %d\n", get/4, method_entry, parameter, subchannel);
 
