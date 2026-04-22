@@ -387,27 +387,64 @@ float3 ApplyDotMapping(uint stage, float4 src)
 {
     uint mapping = (PSDotMapping >> ((stage - 1u) * 4u)) & 0x7u;
 
-    // PS_DOTMAPPING values (from NV2A docs):
-    // 0 = ZERO_TO_ONE        — identity
-    // 1 = MINUS1_TO_1_D3D    — (v - 128) / 127
-    // 2 = MINUS1_TO_1_GL     — two's complement
-    // 3 = MINUS1_TO_1        — (v < 128 ? v : v-256) / 127
-    // 4 = HILO_1             — 16-bit unsigned
-    // 5 = HILO_HEMISPHERE_D3D
-    // 6 = HILO_HEMISPHERE_GL
-    // 7 = HILO_HEMISPHERE
-    //
-    // Most games use mapping 0 or 1. Implement the common cases;
-    // HILO modes are extremely rare and would need 16-bit decode.
-    if (mapping == 0u)
-        return src.rgb; // ZERO_TO_ONE: identity [0,1]
+    // PS_DOTMAPPING values (from NV2A docs / xemu psh.c):
+    // 0 = ZERO_TO_ONE        — identity [0,1]
+    // 1 = MINUS1_TO_1_D3D    — (byte - 128) / 127          (sign1 in xemu)
+    // 2 = MINUS1_TO_1_GL     — two's complement + 0.5 bias  (sign2 in xemu)
+    // 3 = MINUS1_TO_1        — two's complement             (sign3 in xemu)
+    // 4 = HILO_1             — 16-bit unsigned pair, Z=1
+    // 5 = HILO_HEMISPHERE_D3D — 16-bit signed pair, Z=sqrt(1-H²-L²)
+    // 6 = HILO_HEMISPHERE_GL  — same (sign convention differs)
+    // 7 = HILO_HEMISPHERE     — same (sign convention differs)
+    float3 b = round(saturate(src.rgb) * 255.0f);
 
-    if (mapping == 1u) {
-        // MINUS1_TO_1_D3D: (byte - 128) / 127
-        float3 b = round(saturate(src.rgb) * 255.0f);
+    if (mapping == 0u)
+        return src.rgb;
+
+    if (mapping == 1u)
         return (b - 128.0f) / 127.0f;
+
+    if (mapping == 2u) {
+        // GL two's complement: (byte >= 128 ? byte-255.5 : byte+0.5) / 127.5
+        float3 s = (b >= 128.0f) ? (b - 255.5f) : (b + 0.5f);
+        return s / 127.5f;
     }
-    // Fallback: treat as identity for unimplemented HILO/GL modes
+
+    if (mapping == 3u) {
+        // Generic two's complement: (byte >= 128 ? byte-256 : byte) / 127
+        float3 s = (b >= 128.0f) ? (b - 256.0f) : b;
+        return s / 127.0f;
+    }
+
+    // HILO modes: reconstruct two 16-bit values from ARGB channels.
+    // Channel order follows xemu HW verification: HI = (A<<8|R), LO = (G<<8|B)
+    if (mapping >= 4u) {
+        float4 c = round(saturate(src) * 255.0f);
+        float H = c.a * 256.0f + c.r;  // 0..65535
+        float L = c.g * 256.0f + c.b;  // 0..65535
+
+        if (mapping == 4u) // HILO_1: unsigned [0,1], Z=1
+            return float3(H / 65535.0f, L / 65535.0f, 1.0f);
+
+        // HILO_HEMISPHERE modes 5-7: signed H,L with Z = sqrt(1 - H² - L²)
+        // Sign convention per mode (matching xemu sign1/sign2/sign3 on 16-bit):
+        float Hs, Ls;
+        if (mapping == 5u) {
+            // D3D: (val - 32768) / 32767
+            Hs = (H - 32768.0f) / 32767.0f;
+            Ls = (L - 32768.0f) / 32767.0f;
+        } else if (mapping == 6u) {
+            // GL: two's complement with +0.5 bias
+            Hs = (H >= 32768.0f) ? (H - 65535.5f) / 32767.5f : (H + 0.5f) / 32767.5f;
+            Ls = (L >= 32768.0f) ? (L - 65535.5f) / 32767.5f : (L + 0.5f) / 32767.5f;
+        } else {
+            // Generic two's complement
+            Hs = (H >= 32768.0f) ? (H - 65536.0f) / 32767.0f : H / 32767.0f;
+            Ls = (L >= 32768.0f) ? (L - 65536.0f) / 32767.0f : L / 32767.0f;
+        }
+        return float3(Hs, Ls, sqrt(max(0.0f, 1.0f - Hs*Hs - Ls*Ls)));
+    }
+
     return src.rgb;
 }
 
