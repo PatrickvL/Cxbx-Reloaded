@@ -844,20 +844,27 @@ std::ifstream OpenWithRetry(const std::string& path) {
 int ShaderSources::Update() {
 	int versionOnDisk = shaderVersionOnDisk;
 	if (shaderVersionLoadedFromDisk != versionOnDisk) {
+		bool isInitialLoad = (shaderVersionLoadedFromDisk < 0);
 		LoadShadersFromDisk();
 		shaderVersionLoadedFromDisk = versionOnDisk;
 
-		// Invalidate disk shader cache when HLSL templates change
-		if (!g_ShaderCacheDir.empty() && std::filesystem::exists(g_ShaderCacheDir)) {
-			std::error_code ec;
-			std::filesystem::remove_all(g_ShaderCacheDir, ec);
-			std::filesystem::create_directories(g_ShaderCacheDir, ec);
-		}
-		// Also invalidate the shared shader cache
-		if (!g_SharedShaderCacheDir.empty() && std::filesystem::exists(g_SharedShaderCacheDir)) {
-			std::error_code ec;
-			std::filesystem::remove_all(g_SharedShaderCacheDir, ec);
-			std::filesystem::create_directories(g_SharedShaderCacheDir, ec);
+		// Invalidate disk shader cache only on hot-reload (file watcher fired).
+		// Skip on initial cold load: the compiled .cso cache is still valid
+		// because EmuCompileShader hashes the full HLSL source + profile,
+		// so stale entries from a previous template version are simply never
+		// matched and sit harmlessly on disk.
+		if (!isInitialLoad) {
+			if (!g_ShaderCacheDir.empty() && std::filesystem::exists(g_ShaderCacheDir)) {
+				std::error_code ec;
+				std::filesystem::remove_all(g_ShaderCacheDir, ec);
+				std::filesystem::create_directories(g_ShaderCacheDir, ec);
+			}
+			// Also invalidate the shared shader cache
+			if (!g_SharedShaderCacheDir.empty() && std::filesystem::exists(g_SharedShaderCacheDir)) {
+				std::error_code ec;
+				std::filesystem::remove_all(g_SharedShaderCacheDir, ec);
+				std::filesystem::create_directories(g_SharedShaderCacheDir, ec);
+			}
 		}
 	}
 
