@@ -34,9 +34,9 @@ float nv2a_mul1(float a, float b)
 // ============================================================
 // NV2A-accurate dot products using nv2a_mul per component
 // ============================================================
-float nv2a_dot3(float4 a, float4 b)
+float nv2a_dot3(float3 a, float3 b)
 {
-    float4 m = nv2a_mul(a, b);
+    float3 m = nv2a_mul3(a, b);
     return m.x + m.y + m.z;
 }
 

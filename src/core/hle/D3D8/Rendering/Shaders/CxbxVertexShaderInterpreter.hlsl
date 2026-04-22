@@ -26,7 +26,7 @@ uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 #include "CxbxVertexShaderInterpreterState.hlsli"
 #include "CxbxNV2AMathHelpers.hlsli"
 
-// IEEE 754 negative infinity (-inf) as a raw uint bit pattern.
+// IEEE 754 infinity constants as raw uint bit patterns.
 // Used by LOG(0) below.  The reference C emulator (nv2a_vsh_cpu) returns
 // -INFINITY for this case, and xemu does the same.  However the reference
 // code carries a "TODO: Validate this on HW" comment — real NV2A silicon
@@ -34,7 +34,8 @@ uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 // producing a true IEEE infinity.  We match the existing emulator consensus
 // for now; if hardware tests reveal different behaviour, replacing this
 // with a large negative float (e.g. -FLT_MAX / -3.4e38) would be the fix.
-static const float NEG_INFINITY = asfloat(0xFF800000u);
+static const float CXBX_POS_INF = asfloat(0x7F800000u);
+static const float CXBX_NEG_INF = asfloat(0xFF800000u);
 
 // ============================================================
 // Swizzle helper: rearrange float4 components by packed index
@@ -112,8 +113,8 @@ float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
         case VSI_MAC_MUL: return nv2a_mul(a, b);
         case VSI_MAC_ADD: return a + c_in;
         case VSI_MAC_MAD: return nv2a_mul(a, b) + c_in;
-        case VSI_MAC_DP3: return nv2a_dot3(a, b).xxxx;
-        case VSI_MAC_DPH: return (nv2a_dot3(a, b) + b.w).xxxx;
+        case VSI_MAC_DP3: return nv2a_dot3(a.xyz, b.xyz).xxxx;
+        case VSI_MAC_DPH: return (nv2a_dot3(a.xyz, b.xyz) + b.w).xxxx;
         case VSI_MAC_DP4: return nv2a_dot4(a, b).xxxx;
         case VSI_MAC_DST: return float4(1.0, nv2a_mul1(a.y, b.y), a.z, b.w);
         case VSI_MAC_MIN: return min(a, b);
@@ -160,9 +161,9 @@ float4 exec_ilu(uint opcode, float4 c_in)
         case VSI_ILU_LOG: {
             // Matches xemu: floor(log2(|src|)), |src|/2^floor(log2(|src|)), log2(|src|), 1
             // Special case: LOG(0) = (-inf, 1, -inf, 1)
-            // See NEG_INFINITY definition for hardware uncertainty notes.
+            // See CXBX_NEG_INF definition for hardware uncertainty notes.
             float t = abs(s);
-            if (t == 0.0f) return float4(NEG_INFINITY, 1.0f, NEG_INFINITY, 1.0f);
+            if (t == 0.0f) return float4(CXBX_NEG_INF, 1.0f, CXBX_NEG_INF, 1.0f);
             float flLog = floor(log2(t));
             return float4(flLog, t / exp2(flLog), log2(t), 1.0);
         }
