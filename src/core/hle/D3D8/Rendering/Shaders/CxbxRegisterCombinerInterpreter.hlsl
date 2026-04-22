@@ -297,31 +297,24 @@ float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB)
     uint regIdx    = regByte & 0x0Fu;
     uint mapping   = regByte & 0xE0u;
     bool useAlphaC = (regByte & PS_CHANNEL_ALPHA) != 0u;
+    float4 val     = Regs[regIdx];
 
-    float4 val;
     switch (regIdx)
     {
         // C0/C1 read from Regs[] (pre-loaded from PSFinalCombinerConstant
         // before DoFinalCombiner, matching NV2A/xemu behavior).
 
         case PS_REGISTER_FOG:
-        {
             // Final combiner sees only FOG.a; rgb reads as zero
-            float fog = Regs[PS_REGISTER_FOG].a;
-            val = float4(0.0f, 0.0f, 0.0f, fog);
+            val = float4(0.0f, 0.0f, 0.0f, val.a);
             break;
-        }
 
         case PS_REGISTER_V1R0_SUM:
-            val = isFinalAB ? Regs[PS_REGISTER_V1R0_SUM] : (float4)0.0f;
+            val = isFinalAB ? val : (float4)0.0f;
             break;
 
         case PS_REGISTER_EF_PROD:
-            val = isFinalAB ? Regs[PS_REGISTER_EF_PROD] : (float4)0.0f;
-            break;
-
-        default:
-            val = Regs[regIdx];
+            val = isFinalAB ? val : (float4)0.0f;
             break;
     }
 
