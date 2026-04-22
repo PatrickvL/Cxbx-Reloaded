@@ -289,8 +289,7 @@ float ResolveStageInputAlpha(float4 Regs[16], uint regByte)
     return ApplyInputMappingScalar(mapping, Regs[regIdx].a);
 }
 
-float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB,
-                         bool flagUniqueC0, bool flagUniqueC1)
+float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB)
 {
     uint regIdx    = regByte & 0x0Fu;
     uint mapping   = regByte & 0xE0u;
@@ -688,7 +687,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 // ============================================================
 
 void DoCombinerStage(inout float4 Regs[16], uint stage,
-                     bool flagMuxMsb, bool flagUniqueC0, bool flagUniqueC1)
+                     bool flagMuxMsb)
 {
     uint rgbIn  = PSRGBInputs[stage];
     uint aIn    = PSAlphaInputs[stage];
@@ -789,7 +788,7 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
 // Final combiner
 // ============================================================
 
-float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUniqueC1)
+float4 DoFinalCombiner(inout float4 Regs[16])
 {
     float4 R0 = RegRead(Regs, PS_REGISTER_R0);
 
@@ -807,9 +806,9 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
     uint gReg     = (efg >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu;
 
     // --- Resolve E, F (RGB) and G (alpha) — EFG phase (not ABCD) ---
-    float3 E = ResolveFinalInput(Regs, eReg, false, flagUniqueC0, flagUniqueC1).rgb;
-    float3 F = ResolveFinalInput(Regs, fReg, false, flagUniqueC0, flagUniqueC1).rgb;
-    float  G = ResolveFinalInput(Regs, gReg, false, flagUniqueC0, flagUniqueC1).a;
+    float3 E = ResolveFinalInput(Regs, eReg, false).rgb;
+    float3 F = ResolveFinalInput(Regs, fReg, false).rgb;
+    float  G = ResolveFinalInput(Regs, gReg, false).a;
 
     // Compute E*F and store in EF_PROD for potential use by ABCD inputs
     RegWriteDirect(Regs, PS_REGISTER_EF_PROD, float4(E * F, 1.0f));
@@ -829,10 +828,10 @@ float4 DoFinalCombiner(inout float4 Regs[16], bool flagUniqueC0, bool flagUnique
 
     // --- Resolve A, B, C, D — ABCD phase (V1R0_SUM / EF_PROD now valid) ---
     uint abcd = PSFinalCombinerInputsABCD;
-    float4 A = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, true, flagUniqueC0, flagUniqueC1);
-    float4 B = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, true, flagUniqueC0, flagUniqueC1);
-    float4 C = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, true, flagUniqueC0, flagUniqueC1);
-    float4 D = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, true, flagUniqueC0, flagUniqueC1);
+    float4 A = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, true);
+    float4 B = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, true);
+    float4 C = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, true);
+    float4 D = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, true);
 
     // Final RGB = A*B + (1-A)*C + D, clamped to [0,1]
     // Final alpha = G
@@ -930,14 +929,14 @@ float4 main(PS_INPUT input) : SV_Target
             // DoCombinerStage, not inside ResolveStageInput.
             Regs[PS_REGISTER_C0] = flagUniqueC0 ? PSConstant0[stage] : PSConstant0[0];
             Regs[PS_REGISTER_C1] = flagUniqueC1 ? PSConstant1[stage] : PSConstant1[0];
-            DoCombinerStage(Regs, stage, flagMuxMsb, flagUniqueC0, flagUniqueC1);
+            DoCombinerStage(Regs, stage, flagMuxMsb);
         }
     }
 
     // Initialise C0/C1 for the final combiner from FinalCombinerConstants
     Regs[PS_REGISTER_C0] = PSFinalCombinerConstant[0];
     Regs[PS_REGISTER_C1] = PSFinalCombinerConstant[1];
-    float4 result = DoFinalCombiner(Regs, flagUniqueC0, flagUniqueC1);
+    float4 result = DoFinalCombiner(Regs);
 
     // --- Alpha test ---
     PerformAlphaTest(AlphaTest.xyz, result.a);
