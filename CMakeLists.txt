@@ -168,6 +168,7 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Patches/EmuPatches_Unused.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxFixedFunctionPixelShader.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxFixedFunctionPixelShader.hlsli"
+ "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxNV2AMathHelpers.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxNV2APixelShaderConstants.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxRegisterCombinerInterpreter.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxRegisterCombinerInterpreterState.hlsli"

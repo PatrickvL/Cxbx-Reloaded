@@ -26,6 +26,16 @@ uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 #include "CxbxVertexShaderInterpreterState.hlsli"
 #include "CxbxNV2AMathHelpers.hlsli"
 
+// IEEE 754 negative infinity (-inf) as a raw uint bit pattern.
+// Used by LOG(0) below.  The reference C emulator (nv2a_vsh_cpu) returns
+// -INFINITY for this case, and xemu does the same.  However the reference
+// code carries a "TODO: Validate this on HW" comment — real NV2A silicon
+// (Kelvin-class, 2001) may clamp to a large finite value instead of
+// producing a true IEEE infinity.  We match the existing emulator consensus
+// for now; if hardware tests reveal different behaviour, replacing this
+// with a large negative float (e.g. -FLT_MAX / -3.4e38) would be the fix.
+static const float NEG_INFINITY = asfloat(0xFF800000u);
+
 // ============================================================
 // Swizzle helper: rearrange float4 components by packed index
 // Packed format: bits [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W
@@ -150,8 +160,9 @@ float4 exec_ilu(uint opcode, float4 c_in)
         case VSI_ILU_LOG: {
             // Matches xemu: floor(log2(|src|)), |src|/2^floor(log2(|src|)), log2(|src|), 1
             // Special case: LOG(0) = (-inf, 1, -inf, 1)
+            // See NEG_INFINITY definition for hardware uncertainty notes.
             float t = abs(s);
-            if (t == 0.0f) return float4(-1.0f / 0.0f, 1.0f, -1.0f / 0.0f, 1.0f);
+            if (t == 0.0f) return float4(NEG_INFINITY, 1.0f, NEG_INFINITY, 1.0f);
             float flLog = floor(log2(t));
             return float4(flLog, t / exp2(flLog), log2(t), 1.0);
         }

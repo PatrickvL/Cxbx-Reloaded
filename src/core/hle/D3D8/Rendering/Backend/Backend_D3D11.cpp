@@ -178,6 +178,7 @@ ID3D11Buffer              *g_pD3D11FormatConvertCB = nullptr; // constant buffer
 bool                       g_bUseRCInterpreter = true; // default on — ubershader path
 ID3D11PixelShader         *g_pD3D11RCInterpreterPS = nullptr;
 ID3D11Buffer              *g_pD3D11RCInterpreterCB = nullptr; // matches RCInterpreterCBLayout cbuffer
+bool                       g_bRCInterpreterCBActive = false; // true when RC cbuffer owns b0
 
 // ******************************************************************
 // * Vertex shader interpreter (VS ubershader) resources
@@ -374,8 +375,11 @@ void CxbxD3D11FlushPixelShaderConstants()
 		return;
 
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11PSConstantBuffer, g_D3D11PSConstants, sizeof(g_D3D11PSConstants));
-	// Always rebind the standard PS cbuffer — the RC interpreter may have swapped it
-	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
+	// Only rebind the standard PS cbuffer when the RC interpreter hasn't claimed b0.
+	// The RC interpreter uploads its own cbuffer to b0 in CxbxD3D11UploadRCInterpreterState;
+	// rebinding the standard buffer here would overwrite it with incompatible data.
+	if (!g_bRCInterpreterCBActive)
+		g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
 	g_bD3D11PSConstantsDirty = false;
 }
 

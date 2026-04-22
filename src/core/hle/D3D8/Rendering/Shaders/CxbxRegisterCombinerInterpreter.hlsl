@@ -105,6 +105,7 @@ TextureCube  TexCube_0 : register(t8);
 TextureCube  TexCube_1 : register(t9);
 TextureCube  TexCube_2 : register(t10);
 TextureCube  TexCube_3 : register(t11);
+
 SamplerState Samp0     : register(s0);
 SamplerState Samp1     : register(s1);
 SamplerState Samp2     : register(s2);

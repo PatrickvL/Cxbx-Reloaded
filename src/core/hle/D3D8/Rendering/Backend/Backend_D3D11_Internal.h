@@ -116,6 +116,7 @@ extern ID3D11Buffer              *g_pD3D11FormatConvertCB;
 // ******************************************************************
 extern ID3D11PixelShader         *g_pD3D11RCInterpreterPS;
 extern ID3D11Buffer              *g_pD3D11RCInterpreterCB;
+extern bool                       g_bRCInterpreterCBActive; // true when RC cbuffer is bound at b0
 
 // RC interpreter constant buffer layout — shared with the HLSL cbuffer
 // definition in CxbxRegisterCombinerInterpreterState.hlsli.

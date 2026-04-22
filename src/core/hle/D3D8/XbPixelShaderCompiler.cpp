@@ -206,10 +206,23 @@ typedef struct s_CxbxPSDef {
 		// if this flag is set, the texture mode for each texture stage is adjusted as follows:
 		if (RC.TexModeAdjust) {
 			for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
-				// First, disable not-assigned textures
+				// First, disable not-assigned textures — but preserve modes
+				// that perform dependent lookups (bump env, dependent AR/GB).
+				// These sample from a different source stage's output; the
+				// host texture at this stage may still be properly bound even
+				// when g_pXbox_SetTexture doesn't track it (e.g. render
+				// targets re-used as texture inputs).
 				if (ActiveTextureTypes[i] == xbox::X_D3DRTYPE_NONE) {
-					RC.PSTextureModes[i] = PS_TEXTUREMODES_NONE;
-					continue;
+					switch (RC.PSTextureModes[i]) {
+					case PS_TEXTUREMODES_BUMPENVMAP:
+					case PS_TEXTUREMODES_BUMPENVMAP_LUM:
+					case PS_TEXTUREMODES_DPNDNT_AR:
+					case PS_TEXTUREMODES_DPNDNT_GB:
+						break; // keep the original mode
+					default:
+						RC.PSTextureModes[i] = PS_TEXTUREMODES_NONE;
+						continue;
+					}
 				}
 
 				// Then adjust some texture mode according to the currently active textures, so that the shader will use the appropriate sampling method
@@ -959,10 +972,23 @@ void CxbxD3D11UploadRCInterpreterState()
 				texType = GetXboxD3DResourceType(g_pXbox_SetTexture[i]);
 
 			if (texModeAdjust) {
-				// Disable unbound texture stages
+				// Disable unbound texture stages — but preserve modes that
+				// sample from a DIFFERENT stage's source (the texture at the
+				// source stage may well be bound even if this stage's isn't).
+				// BUMPENVMAP/LUM, DPNDNT_AR/GB, and DOT modes read from
+				// GetSourceStage(), so forcing them to NONE would incorrectly
+				// suppress the dependent lookup.
 				if (texType == xbox::X_D3DRTYPE_NONE) {
-					psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_NONE << (i * 5));
-					continue;
+					switch (mode) {
+					case PS_TEXTUREMODES_BUMPENVMAP:
+					case PS_TEXTUREMODES_BUMPENVMAP_LUM:
+					case PS_TEXTUREMODES_DPNDNT_AR:
+					case PS_TEXTUREMODES_DPNDNT_GB:
+						break; // keep the original mode
+					default:
+						psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_NONE << (i * 5));
+						continue;
+					}
 				}
 
 				// Adjust mode based on actual texture type
@@ -1140,6 +1166,7 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 			}
 			CxbxSetPixelShader(g_pD3D11RCInterpreterPS);
 			CxbxD3D11UploadRCInterpreterState();
+			g_bRCInterpreterCBActive = true;
 			return;
 		}
 	}
@@ -1151,6 +1178,7 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 	}
 
 	CxbxSetPixelShader(pShader);
+	g_bRCInterpreterCBActive = false;
 	// When switching away from the RC interpreter, rebind the normal PS cbuffer
 	if (g_bUseRCInterpreter && g_pD3D11PSConstantBuffer)
 		g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
@@ -1174,6 +1202,7 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 
 	// Upload combiner state as cbuffer
 	CxbxD3D11UploadRCInterpreterState();
+	g_bRCInterpreterCBActive = true;
 	return;
   }
   recompile_path:
@@ -1224,6 +1253,7 @@ void CxbxUpdateActivePixelShader() // NOPATCH
   }
 
   CxbxSetPixelShader(RecompiledPixelShader->ConvertedPixelShader);
+  g_bRCInterpreterCBActive = false;
 
   //PS_TEXTUREMODES psTextureModes[xbox::X_D3DTS_STAGECOUNT];
   //PSH_XBOX_SHADER::GetPSTextureModes(pPSDef, psTextureModes);
