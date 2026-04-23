@@ -42,68 +42,16 @@ void CxbxUpdateHostTextures()
 	static ID3D11ShaderResourceView* s_CachedSRV[xbox::X_D3DTS_STAGECOUNT] = {};
 	static D3D11_SRV_DIMENSION       s_CachedDim[xbox::X_D3DTS_STAGECOUNT] = {};
 
-	// Fallback: read textures from Xbox D3D device internal state when our
-	// SetTexture patches didn't intercept the call (e.g. inlined LTCG code
-	// in XDK libraries like CXBFont/CXBHelp).
-	// We extract the device pointer global and m_Textures offset once from
-	// the detected D3DDevice_SetTexture function's machine code.
-	static bool   s_bInitTextureFallback = false;
-	static DWORD* s_ppXboxDevice = nullptr;   // Address of the Xbox D3D device pointer variable
-	static DWORD  s_textureOffset = 0;        // m_Textures array offset within the device
-
-	if (!s_bInitTextureFallback) {
-		s_bInitTextureFallback = true;
-
-		// Get D3D_g_pDevice (pointer-to-pointer: address of the global that holds the device ptr)
-		auto itDev = g_SymbolAddresses.find("D3D_g_pDevice");
-		if (itDev != g_SymbolAddresses.end() && itDev->second != 0) {
-			s_ppXboxDevice = (DWORD*)itDev->second;
-		}
-
-		// Extract m_Textures offset from SetTexture function code.
-		// subhook overwrites only the first 5 bytes (JMP rel32), so the
-		// m_Textures displacement at offsets 0x0E-0x14 is still readable.
-		// Search for the mov/lea instruction containing [reg+reg*4+imm32]
-		// which encodes the m_Textures offset as its displacement.
-		auto itSetTex = g_SymbolAddresses.find("D3DDevice_SetTexture");
-		if (itSetTex != g_SymbolAddresses.end() && itSetTex->second != 0) {
-			uint8_t* func = (uint8_t*)itSetTex->second;
-			// Scan for ModR/M patterns that encode [reg + reg*4 + disp32]:
-			// 8B 84 B7 = mov eax,[edi+esi*4+disp32]  (4034+)
-			// 8B 84 B1 = mov eax,[ecx+esi*4+disp32]  (3911)
-			// Any 8B 84 xx where xx has scale*index form
-			for (int off = 5; off < 28; off++) {
-				if (func[off] == 0x8B && func[off+1] == 0x84) {
-					// SIB byte at off+2; displacement at off+3
-					s_textureOffset = *(DWORD*)(func + off + 3);
-					break;
-				}
-			}
-		}
-	}
-
 	// Set the host texture for each stage
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
 
-		// Authoritative texture source: read from the Xbox D3D device's
-		// internal m_Textures[] array.  This catches textures set by
-		// unpatched / inlined LTCG code (e.g. XDK CXBFont/CXBHelp)
-		// where our SetTexture HLE patch is never executed.
-		if (s_ppXboxDevice != nullptr && s_textureOffset != 0) {
-			DWORD pDevice = *s_ppXboxDevice;
-			if (pDevice != 0) {
-				xbox::X_D3DBaseTexture* devTex = *(xbox::X_D3DBaseTexture**)(pDevice + stage * sizeof(DWORD) + s_textureOffset);
-				if (devTex != pXboxBaseTexture) {
-					pXboxBaseTexture = (devTex != xbox::zeroptr) ? devTex : xbox::zeroptr;
-				}
-			}
-		}
-
-		// Most authoritative: read the texture VRAM offset from PGRAPH
+		// Authoritative: read the texture VRAM offset from PGRAPH
 		// registers and resolve to an Xbox texture via the side-map
 		// populated by SetTexture/SwitchTexture patches.  This covers
-		// all cases including direct pushbuffer writes.
+		// all cases including direct pushbuffer writes and inlined LTCG
+		// code (e.g. XDK CXBFont/CXBHelp) — the Xbox D3D runtime always
+		// writes SET_TEXTURE_OFFSET to the pushbuffer, so PGRAPH has it.
 		if (g_NV2A) {
 			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 			uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
