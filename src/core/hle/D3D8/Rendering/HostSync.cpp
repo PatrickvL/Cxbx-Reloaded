@@ -24,6 +24,13 @@
 // ******************************************************************
 #include "EmuD3D8_common.h"
 
+// Thread-local flag: true when executing on the PFIFO puller thread.
+// When set, CxbxUpdateNativeD3DResources skips pfifo_flush_to_pgraph
+// because PGRAPH registers are already current (we ARE the puller).
+thread_local bool g_bInPullerContext = false;
+
+void CxbxSetPullerContext(bool active) { g_bInPullerContext = active; }
+
 static std::queue<s_Xbox_Callback> g_Xbox_CallbackQueue;
 
 void CxbxUpdateHostTextures()
@@ -475,7 +482,9 @@ void CxbxUpdateNativeD3DResources()
 	// Drain all pending pushbuffer commands so PGRAPH regs[] are current.
 	// This closes the race between the async PFIFO puller and the HLE
 	// interpreters that read register state at draw time.
-	if (g_NV2A) {
+	// Skip when called from the puller thread itself (registers are
+	// already current, and calling flush would deadlock on pfifo_lock).
+	if (g_NV2A && !g_bInPullerContext) {
 		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
 	}
 

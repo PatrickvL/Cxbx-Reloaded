@@ -161,10 +161,15 @@ static void pfifo_run_puller(NV2AState *d)
     }
 }
 
+// Defined in HostSync.cpp — marks the current thread as the PFIFO puller
+// so CxbxUpdateNativeD3DResources skips pfifo_flush (prevents deadlock).
+extern void CxbxSetPullerContext(bool active);
+
 int pfifo_puller_thread(NV2AState *d)
 {
     g_AffinityPolicy->SetAffinityOther();
     CxbxSetThreadName("Cxbx NV2A FIFO puller");
+    CxbxSetPullerContext(true);
 
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
     while (true) {

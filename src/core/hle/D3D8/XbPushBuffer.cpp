@@ -35,6 +35,7 @@
 #include "core\hle\D3D8\Rendering\RenderGlobals.h" // For g_Xbox_VertexShader_Handle
 #include "core\hle\D3D8\XbPushBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11IABypassDraw
 #include "devices/video/nv2a.h" // For g_NV2A, PGRAPHState
 #include "devices/video/nv2a_int.h" // For NV** defines
 #include "Logging.h"
@@ -125,11 +126,19 @@ DWORD CxbxGetStrideFromVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDecla
 
 void HLE_draw_arrays(NV2AState *d)
 {
-	// PGRAPHState *pg = &d->pgraph;
+	PGRAPHState *pg = &d->pgraph;
 
-	LOG_TEST_CASE("HLE_draw_arrays");
+	for (unsigned int i = 0; i < pg->draw_arrays_length; i++) {
+		CxbxDrawContext DrawContext = {};
 
-	LOG_UNIMPLEMENTED(); // TODO : Implement HLE_draw_arrays
+		DrawContext.XboxPrimitiveType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
+		DrawContext.dwStartVertex = pg->gl_draw_arrays_start[i];
+		DrawContext.dwVertexCount = pg->gl_draw_arrays_count[i];
+
+		CxbxD3D11IABypassDraw(DrawContext);
+		g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(
+			DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
+	}
 }
 
 void HLE_draw_inline_buffer(NV2AState *d)
