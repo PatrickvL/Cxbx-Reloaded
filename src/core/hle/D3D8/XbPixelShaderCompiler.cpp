@@ -931,11 +931,9 @@ void CxbxD3D11UploadRCInterpreterState()
 	if (!g_pD3D11RCInterpreterAuxCB || !g_pD3D11PGRegsBuf)
 		return;
 
-	// PSDef needed for: AdjustTextureModes (texModeAdjust flag), AdjustFinalCombiner
-	// (fog/specular enable), and as fallback when PGRAPH is unavailable.
+	// PSDef only needed for: AdjustTextureModes (texModeAdjust flag) — a D3D8-level
+	// concept with no PGRAPH register equivalent.  May be null; texModeAdjust defaults to false.
 	const xbox::X_D3DPIXELSHADERDEF *pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
-	if (!pPSDef)
-		return;
 
 	// PGRAPH source (populated by the puller thread via pushbuffer methods)
 	PGRAPHState *pg = nullptr;
@@ -960,7 +958,7 @@ void CxbxD3D11UploadRCInterpreterState()
 
 	// --- AdjustTextureModes: match the compiled shader path ---
 	{
-		bool texModeAdjust = ((pPSDef->PSFinalCombinerConstants >> PS_GLOBALFLAGS_SHIFT) & PS_GLOBALFLAGS_TEXMODE_ADJUST) > 0;
+		bool texModeAdjust = pPSDef ? ((pPSDef->PSFinalCombinerConstants >> PS_GLOBALFLAGS_SHIFT) & PS_GLOBALFLAGS_TEXMODE_ADJUST) > 0 : false;
 
 		for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
 			uint32_t mode = (psTextureModes >> (i * 5)) & 0x1Fu;
@@ -1019,13 +1017,15 @@ void CxbxD3D11UploadRCInterpreterState()
 
 	// --- AdjustFinalCombiner: synthesize final combiner when not explicitly defined ---
 	{
-		uint32_t fcABCD = pg ? pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)] : pPSDef->PSFinalCombinerInputsABCD;
-		uint32_t fcEFG  = pg ? pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)] : pPSDef->PSFinalCombinerInputsEFG;
+		uint32_t fcABCD = pg ? pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)] : 0u;
+		uint32_t fcEFG  = pg ? pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)] : 0u;
 
 		bool hasFinalCombiner = (fcABCD != 0) || (fcEFG != 0);
 		if (!hasFinalCombiner) {
-			bool fogEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) > 0;
-			bool specularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) > 0;
+			bool fogEnable = pg ? (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & NV_PGRAPH_CONTROL_3_FOGENABLE) != 0
+			                    : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) > 0;
+			bool specularEnable = pg ? (pg->regs[RI(NV_PGRAPH_CSV0_C)] & NV_PGRAPH_CSV0_C_SPECULAR_ENABLE) != 0
+			                         : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) > 0;
 
 			uint32_t regA = PS_REGISTER_FOG | PS_CHANNEL_ALPHA;
 			uint32_t regB = PS_REGISTER_R0;
@@ -1068,14 +1068,21 @@ void CxbxD3D11UploadRCInterpreterState()
 		static_cast<float>(XboxTextureStates.Get(3, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0)
 	};
 
-	// Fog info: x=tableMode, y=density, z=start, w=end
-	aux.FogInfo = {
-		static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE)),
-		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY),
-		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART),
-		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND)
-	};
-	aux.FogEnable.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1u : 0u;
+	// Fog info: x=tableMode (from PGRAPH FOG_MODE), y/z/w unused by RC interpreter.
+	// FogColor is read directly from g_PGRegs[] in the shader.
+	if (pg) {
+		unsigned int fogMode = GET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_3)], NV_PGRAPH_CONTROL_3_FOG_MODE);
+		aux.FogInfo = { static_cast<float>(fogMode), 0.0f, 0.0f, 0.0f };
+		aux.FogEnable.value = (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & NV_PGRAPH_CONTROL_3_FOGENABLE) ? 1u : 0u;
+	} else {
+		aux.FogInfo = {
+			static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE)),
+			XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY),
+			XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART),
+			XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND)
+		};
+		aux.FogEnable.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1u : 0u;
+	}
 
 	// Front-face factor for two-sided lighting
 	{
