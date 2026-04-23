@@ -17,9 +17,10 @@ the validation corpus.
 | Component | Status |
 |-----------|--------|
 | PFIFO puller → PGRAPH `regs[]` | **Active** — methods ≥ 0x100 dispatched, state populated |
-| RC interpreter reads from | **HLE PSDef** (PGRAPH attempt reverted — race condition) |
-| VS interpreter reads from | **HLE shader slot cache** |
-| Vertex fetch reads from | **HLE `g_Xbox_SetStreamSource[]`** |
+| RC interpreter reads from | **PGRAPH `regs[]`** (Steps 3.1–3.2 done, custom CBLayout still used) |
+| VS interpreter reads from | **PGRAPH `program_data[]`** (Step 4.1 done, custom CBLayout still used) |
+| VS constants reads from | **PGRAPH `vsh_constants[]`** (already PGRAPH-sourced) |
+| Vertex fetch reads from | **PGRAPH `vertex_attributes[]`** (Step 5.1 done, HLE fallback for UP draws) |
 | Surface/RT state from | **HLE globals** (`g_pXbox_RenderTarget`, etc.) |
 | Pipeline state from | **HLE `XboxRenderStates` / `XboxTextureStates`** |
 | Draw trigger | **HLE EMUPATCH** draw functions |
@@ -225,7 +226,7 @@ This ensures compatibility if NV2A init is delayed.
 The combiner state values from PGRAPH and PSDef should be identical (both come from
 the same Xbox D3D calls, just via different paths).
 
-### 3.2 — Migrate remaining RC state fields
+### 3.2 — Migrate remaining RC state fields  ✅ DONE (partial)
 
 Fields that don't have direct PGRAPH register equivalents:
 - `ColorSign[4]` — derived from texture format; may need to stay HLE-sourced
@@ -233,6 +234,9 @@ Fields that don't have direct PGRAPH register equivalents:
 - `AlphaTest` — from `NV_PGRAPH_CONTROL_0`
 - `BEM[4]`, `LUM[4]` — bump environment map; from PGRAPH bump env matrix
 - `ColorKeyOp/Color[4]` — from PGRAPH texture state
+
+PSFinalCombinerConstant, FogColor, AlphaTest, BEM, LUM migrated (commit 52b8a152).
+FogInfo/FogEnable still pending.
 
 Migrate each field individually. Test after each sub-group.
 
@@ -247,62 +251,133 @@ Once all fields read from PGRAPH:
 
 **Test:** Full XDK sample suite.
 
+### 3.4 — Replace RCInterpreterCBLayout with raw PGRAPH regs[] buffer
+
+**Architectural change:** Eliminate the `RCInterpreterCBLayout` struct entirely.
+Instead of C++ code extracting individual fields from `pg->regs[]` into a custom
+struct, upload the raw `pg->regs[]` array (8 KB, 2048 × uint32) as a structured
+buffer or constant buffer. The HLSL RC interpreter shader reads registers directly
+using their `NV_PGRAPH_*` byte-offset indices.
+
+**Rationale:** The current CBLayout is a hand-maintained C++ ↔ HLSL struct with
+84 fields, 1344 bytes, and complex packing (uint registers padded to float4, ABGR
+unpacking, etc.). By passing `regs[]` raw, the shader accesses each register at its
+hardware-defined offset with its natural type (uint or float). This:
+- Eliminates the C++ upload function that extracts and packs fields
+- Makes register access self-documenting (shader reads `regs[RI(NV_PGRAPH_COMBINECTL)]`)
+- Avoids alignment/padding bugs between C++ and HLSL
+- Trivially extends to any new register without touching C++ code
+
+**HLSL side:**
+```hlsl
+// Replace cbuffer RCInterpreterCBLayout : register(b0) with:
+StructuredBuffer<uint> g_PGRegs : register(t4);  // pg->regs[] as uint SRV
+
+// Helper to read a register by its byte offset:
+uint  PG_UINT(uint byteOff)  { return g_PGRegs[byteOff >> 2]; }
+float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs[byteOff >> 2]); }
+
+// Example usage:
+uint combinerCount = PG_UINT(NV_PGRAPH_COMBINECTL);       // was: PSCombinerCount
+uint alphaInput0   = PG_UINT(NV_PGRAPH_COMBINEALPHAI0);   // was: PSAlphaInputs[0]
+```
+
+**C++ side:**
+- Create a D3D11 structured buffer (8 KB) backed by `pg->regs[]`
+- Upload with `Map/memcpy/Unmap` before each draw (or use dirty tracking)
+- Bind as SRV to PS slot t4 (avoids conflict with existing t0-t3 texture slots)
+- For fields not in `regs[]` (ColorSign, TexFmtFixup, etc.), use a small
+  auxiliary cbuffer with only the software-computed fields
+
+**Software-computed fields** that have no PGRAPH register:
+- `ColorSign[4]`, `TexFmtFixup`, `ColorKeyOp/Color[4]` — keep in aux cbuffer
+- `FogInfo`, `FogEnable` — migrate to PGRAPH regs first (Step 3.2)
+- `AlphaKill`, `FrontFaceInfo` — keep in aux cbuffer (runtime-computed)
+
+**For ABGR color registers** (`PSConstant0/1`, `PSFinalCombinerConstant`,
+`FogColor`): These are stored as packed ABGR uint32 in `regs[]`. The shader
+unpacks them inline: `float4 c = UnpackABGR(PG_UINT(NV_PGRAPH_COMBINEFACTOR0 + i*4))`.
+
+**Migration approach:** Single big-bang replacement.
+1. Create the regs[] `StructuredBuffer<uint>` SRV (8 KB) and bind to PS t4
+2. Rewrite the HLSL RC interpreter to read all register-sourced fields from
+   `g_PGRegs[]` using `PG_UINT()` / `PG_FLOAT()` helpers
+3. Replace `RCInterpreterCBLayout` with a small `PSAuxCBLayout` containing
+   only the software-computed fields (ColorSign, TexFmtFixup, AlphaKill, etc.)
+4. Remove `CxbxD3D11UploadRCInterpreterState()` field-by-field extraction;
+   replace with a single `memcpy` of `pg->regs[]` into the SRV
+5. Remove `RCInterpreterCBLayout` struct and `CxbxRegisterCombinerInterpreterState.hlsli`
+
+All done in one commit. No intermediate hybrid state.
+
+**Test:** BumpEarth, PixelShader, DotProduct3, BumpLens, Dolphin.
+
 ---
 
 ## Step 4: Migrate VS Interpreter to Read PGRAPH State
 
-### 4.1 — Switch VS microcode source to PGRAPH
+### 4.1 — Switch VS microcode source to PGRAPH  ✅ DONE
 
 **File:** `src/core/hle/D3D8/XbVertexShader.cpp`
 **Function:** `CxbxD3D11UploadVSInterpreterState()`
 
-Replace HLE shader slot read with PGRAPH read:
-```cpp
-// Current: reads from HLE shader slot cache
-const uint32_t* pTokens = (const uint32_t*)pXboxMicrocode;
+Reads `pg->program_data[startSlot+i][0..3]` using CHEOPS_PROGRAM_START from
+`NV_PGRAPH_CSV0_C`. Committed as 55c680c3.
 
-// New: reads from PGRAPHState.program_data[]
-PGRAPHState *pg = &g_NV2A->pgraph;
-for (int i = 0; i < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH; i++) {
-    cb.Instructions[i] = uint4(pg->program_data[i][0],
-                               pg->program_data[i][1],
-                               pg->program_data[i][2],
-                               pg->program_data[i][3]);
-}
+### 4.2 — Switch VS constants source to PGRAPH  ✅ ALREADY DONE
+
+`CxbxUpdateHostVertexShaderConstants()` already reads `pg->vsh_constants[]`
+with dirty tracking. No migration needed.
+
+### 4.3 — Replace VSInterpreterCBLayout with raw PGRAPH buffers
+
+**Architectural change:** Eliminate the `VSInterpreterCBLayout` struct entirely.
+Instead of C++ code packing `program_data[]` into `Instructions[136]` + `InstructionCount`,
+upload `pg->program_data[]` directly as a structured buffer.
+
+**Current layout:** `VSInterpreterCBLayout` (2192 bytes, b3):
+- `Instructions[136]` as uint4 — from `pg->program_data[slot][0..3]`
+- `InstructionCount` — software-computed (scan for FLD_FINAL bit)
+
+**New approach:**
+```hlsl
+// Replace cbuffer VSInterpreterCB : register(b3) with:
+StructuredBuffer<uint4> g_VSProgramData : register(t5);  // pg->program_data[] as SRV
+
+// Program start from regs[]:
+// uint startSlot = PG_UINT(NV_PGRAPH_CSV0_C) >> 8;  // CHEOPS_PROGRAM_START
+
+// Instruction count: either pass via a small aux CB, or scan FLD_FINAL in shader
 ```
 
-### 4.2 — Switch VS constants source to PGRAPH
+**C++ side:**
+- Create a D3D11 structured buffer for `program_data[136][4]` (2176 bytes)
+- Upload with `Map/memcpy/Unmap` (the data is already contiguous in PGRAPH)
+- Bind as SRV to VS slot t5
+- The program start register is in `regs[]` — accessible via the same regs SRV
+  if VS also gets a `g_PGRegs` binding, or via a tiny aux cbuffer
 
-**Function:** `CxbxUpdateHostVertexShaderConstants()`
+**The VS opcode/field constants** (`FLD_ILU`, `FLD_MAC`, etc.) defined in
+`CxbxVertexShaderInterpreterState.hlsli` are compile-time constants, not
+runtime state — they remain as `#define`s in the HLSL include.
 
-Replace HLE constant buffer read with PGRAPH read:
-```cpp
-// Current: reads from g_Xbox_VertexShaderConstantMode slots
-// New: reads from PGRAPHState.vsh_constants[192][4]
-```
+**For `vsh_constants[192][4]`:** Already uploaded separately as the VS constants
+cbuffer (b0). No change needed.
 
-The vsh_constants array stores raw uint32_t[4] per constant. Convert to float4
-with `reinterpret_cast<float*>`.
+**Migration order:**
+1. Create the program_data SRV and bind it alongside existing CBLayout
+2. Switch HLSL interpreter to read from `g_VSProgramData[i]` instead of
+   `Instructions[i]`
+3. Move program start to regs[] SRV or aux cbuffer
+4. Remove `VSInterpreterCBLayout` struct entirely
 
-### 4.3 — Switch VS mode detection to PGRAPH
-
-**Function:** `CxbxUpdateHostVertexShader()`
-
-Detect fixed-function vs. programmable from PGRAPH:
-```cpp
-// NV_PGRAPH_CSV0_D (offset 0x0FB4) bit 0: vertex program enable
-bool bProgrammable = (pg->regs[NV_PGRAPH_CSV0_D / 4] & 1) != 0;
-```
-
-Replace the current check that reads from `g_Xbox_VertexShader_Handle`.
-
-**Test:** Dolphin (programmable VS), BumpEarth (FF VS), PixelShader (passthrough).
+**Test:** Dolphin, Fur, PerPixelLighting (all programmable VS).
 
 ---
 
 ## Step 5: Migrate Vertex Attribute Fetch to PGRAPH State
 
-### 5.1 — Read vertex array descriptors from PGRAPH
+### 5.1 — Read vertex array descriptors from PGRAPH  ✅ DONE
 
 **File:** `src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_IABypass.cpp`
 
@@ -568,10 +643,14 @@ Move all D3D11-specific code into `src/core/hle/D3D8/Rendering/Backend/`:
 
 Verify that all rendering decisions read from `PGRAPHState` only:
 - No references to `XboxRenderStates`, `g_pXbox_*`, or `pPSDef` in the render path
-- The `RCInterpreterCBLayout` is populated entirely from `pg->regs[]`
-- The `VSInterpreterCBLayout` is populated entirely from `pg->program_data[]`
-  and `pg->vsh_constants[]`
-- The `IABypassLayoutCB` is populated entirely from `pg->vertex_attributes[]`
+- `RCInterpreterCBLayout` is **eliminated** — `pg->regs[]` uploaded as raw
+  `StructuredBuffer<uint>` SRV; shader indexes with `NV_PGRAPH_*` offsets
+- `VSInterpreterCBLayout` is **eliminated** — `pg->program_data[]` uploaded as
+  `StructuredBuffer<uint4>` SRV; program start read from `regs[]`
+- `IABypassLayoutCB` may remain as a small aux cbuffer for per-draw params
+  (PrimType, IndexedDraw, etc.) that have no PGRAPH register equivalent
+- Software-computed fields (ColorSign, TexFmtFixup, AlphaKill, FrontFaceInfo)
+  in a small aux cbuffer — eventual goal: derive these in-shader from regs[]
 
 ### 11.4 — Add Vulkan SDK to CMakeLists.txt (optional prep)
 
