@@ -33,6 +33,8 @@
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // HLE_get_NV2A_vertex_attribute_value_pointer
+#include "devices\Xbox.h"              // For extern NV2ADevice* g_NV2A
+#include "devices\video\nv2a.h"        // For NV2AState, PGRAPHState, VertexAttribute, nv2a_regs.h
 
 // ******************************************************************
 // * Format mapping constants (must match CXBX_VTXFMT_* in CxbxVertexFetch.hlsli)
@@ -114,6 +116,58 @@ struct IABypassLayoutCB {
 	UINT Pad7;
 	UINT Attribs[16][4];  // Per-attribute: elemOffset, stride, format, streamBase
 };
+
+// ******************************************************************
+// * Map NV2A hardware format + count to CXBX_VTXFMT_* constant
+// * format = NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE (bits 3:0)
+// * count  = NV097_SET_VERTEX_DATA_ARRAY_FORMAT_SIZE (bits 7:4)
+// ******************************************************************
+static UINT NV2AFormatToVtxFmt(unsigned format, unsigned count)
+{
+	if (count == 0) return CXBX_VTXFMT_NONE;
+
+	switch (format) {
+	case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D: // 0 — BGRA unsigned byte normalized
+		return CXBX_VTXFMT_D3DCOLOR;
+	case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S1:     // 1 — signed short normalized
+		switch (count) {
+		case 1: return CXBX_VTXFMT_SHORT1N;
+		case 2: return CXBX_VTXFMT_SHORT2N;
+		case 3: return CXBX_VTXFMT_SHORT3N;
+		case 4: return CXBX_VTXFMT_SHORT4N;
+		default: return CXBX_VTXFMT_NONE;
+		}
+	case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F:      // 2 — float
+		switch (count) {
+		case 1: return CXBX_VTXFMT_FLOAT1;
+		case 2: return CXBX_VTXFMT_FLOAT2;
+		case 3: return CXBX_VTXFMT_FLOAT3;
+		case 4: return CXBX_VTXFMT_FLOAT4;
+		case 7: return CXBX_VTXFMT_FLOAT2H; // Xbox FLOAT2H: 3 floats (x, y, 1/w)
+		default: return CXBX_VTXFMT_NONE;
+		}
+	case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL: // 4 — RGBA unsigned byte normalized
+		switch (count) {
+		case 1: return CXBX_VTXFMT_PBYTE1;
+		case 2: return CXBX_VTXFMT_PBYTE2;
+		case 3: return CXBX_VTXFMT_PBYTE3;
+		case 4: return CXBX_VTXFMT_PBYTE4;
+		default: return CXBX_VTXFMT_NONE;
+		}
+	case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S32K:   // 5 — signed short unnormalized
+		switch (count) {
+		case 1: return CXBX_VTXFMT_SHORT1;
+		case 2: return CXBX_VTXFMT_SHORT2;
+		case 3: return CXBX_VTXFMT_SHORT3;
+		case 4: return CXBX_VTXFMT_SHORT4;
+		default: return CXBX_VTXFMT_NONE;
+		}
+	case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP:    // 6 — 11.11.10 packed
+		return CXBX_VTXFMT_NORMPACKED3;
+	default:
+		return CXBX_VTXFMT_NONE;
+	}
+}
 
 // ******************************************************************
 // * Map Xbox vertex format to CXBX_VTXFMT_* constant
@@ -461,8 +515,7 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		else
 			pCB->VertexOffset = vertexStart;
 
-		// Fill per-attribute descriptors
-		// Walk the vertex declaration's stream info to find each attribute
+		// Fill per-attribute descriptors — default all to NONE (use sticky defaults)
 		for (UINT a = 0; a < 16; a++) {
 			pCB->Attribs[a][0] = 0;  // elemOffset
 			pCB->Attribs[a][1] = 0;  // stride
@@ -470,65 +523,81 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 			pCB->Attribs[a][3] = 0;  // streamBase
 		}
 
-		// Map from the vertex declaration into attribute descriptors
-		for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
-			auto& streamInfo = pDecl->VertexStreams[s];
-			UINT streamIdx = streamInfo.XboxStreamIndex;
-			auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
+		// PGRAPH path: read vertex layout directly from NV2A vertex attributes.
+		// Each NV2A attribute slot maps directly to a vertex shader input register.
+		// The attribute offset already includes any intra-vertex element offset,
+		// so elemOffset is always 0 in this path.
+		// For UP draws, vertex data is in a staging buffer (not the 64 MiB mirror),
+		// so we fall back to the HLE path which handles UP data upload.
+		PGRAPHState* pg = (g_NV2A != nullptr) ? &g_NV2A->GetDeviceState()->pgraph : nullptr;
 
-			UINT stride;
-			if (s == 0 && bIsUPDraw) {
-				stride = DrawContext.uiXboxVertexStreamZeroStride;
-			} else {
-				stride = streamInput.Stride;
-				if (stride == 0) stride = streamInfo.HostVertexStride;
+		if (pg && !bIsUPDraw) {
+			// PGRAPH path: slot index = register index, offset = physical address
+			for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
+				const VertexAttribute& attr = pg->vertex_attributes[i];
+				if (attr.count == 0) continue; // inactive attribute → use default
+
+				pCB->Attribs[i][0] = 0;           // elemOffset (baked into offset)
+				pCB->Attribs[i][1] = attr.stride;
+				pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
+				pCB->Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
 			}
+		} else {
+			// HLE fallback: walk CxbxVertexDeclaration + g_Xbox_SetStreamSource[]
+			for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
+				auto& streamInfo = pDecl->VertexStreams[s];
+				UINT streamIdx = streamInfo.XboxStreamIndex;
+				auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
 
-			UINT elemOffset = 0;     // Xbox byte offset (written to CB for shader fetch)
-			UINT hostElemOffset = 0; // Host byte offset (for matching D3D11 input elements)
-			for (UINT e = 0; e < streamInfo.NumberOfVertexElements; e++) {
-				auto& elem = streamInfo.VertexElements[e];
-				if (elem.XboxType == 0) // X_D3DVSDT_NONE
-					continue;
+				UINT stride;
+				if (s == 0 && bIsUPDraw) {
+					stride = DrawContext.uiXboxVertexStreamZeroStride;
+				} else {
+					stride = streamInput.Stride;
+					if (stride == 0) stride = streamInfo.HostVertexStride;
+				}
 
-				// Find which NV2A attribute register this element maps to.
-				// The pD3D11InputElements array has SemanticIndex = register index.
-				// We match on InputSlot == streamIdx and AlignedByteOffset == hostElemOffset.
-				// NOTE: AlignedByteOffset accumulates Host byte sizes (set in XbVertexShaderDecoder),
-				// so we must compare against hostElemOffset (not elemOffset which uses Xbox sizes).
-				UINT regIdx = 0;
-				bool found = false;
-				if (pDecl->pD3D11InputElements) {
-					for (UINT ie = 0; ie < pDecl->D3D11InputElementCount; ie++) {
-						auto& inputElem = pDecl->pD3D11InputElements[ie];
-						if (inputElem.InputSlot == streamIdx
-							&& inputElem.AlignedByteOffset == hostElemOffset) {
-							regIdx = inputElem.SemanticIndex;
-							found = true;
-							break;
+				UINT elemOffset = 0;
+				UINT hostElemOffset = 0;
+				for (UINT e = 0; e < streamInfo.NumberOfVertexElements; e++) {
+					auto& elem = streamInfo.VertexElements[e];
+					if (elem.XboxType == 0)
+						continue;
+
+					UINT regIdx = 0;
+					bool found = false;
+					if (pDecl->pD3D11InputElements) {
+						for (UINT ie = 0; ie < pDecl->D3D11InputElementCount; ie++) {
+							auto& inputElem = pDecl->pD3D11InputElements[ie];
+							if (inputElem.InputSlot == streamIdx
+								&& inputElem.AlignedByteOffset == hostElemOffset) {
+								regIdx = inputElem.SemanticIndex;
+								found = true;
+								break;
+							}
 						}
 					}
-				}
 
-				if (found && regIdx < 16) {
-					INT streamBase;
-					if (bIsUPDraw && s == 0) {
-						streamBase = -(INT)vertexStart * (INT)stride;
-					} else if (streamInput.VertexBuffer) {
-						uintptr_t vbAddr = (uintptr_t)GetDataFromXboxResource(streamInput.VertexBuffer);
-						streamBase = (INT)(vbAddr - CONTIGUOUS_MEMORY_BASE) + (INT)streamInput.Offset;
-					} else {
-						streamBase = 0;
+					if (found && regIdx < 16) {
+						INT streamBase;
+						if (bIsUPDraw && s == 0) {
+							streamBase = -(INT)vertexStart * (INT)stride;
+						} else if (streamInput.VertexBuffer) {
+							uintptr_t vbAddr = (uintptr_t)GetDataFromXboxResource(streamInput.VertexBuffer);
+							streamBase = (INT)(vbAddr - CONTIGUOUS_MEMORY_BASE) + (INT)streamInput.Offset;
+						} else {
+							streamBase = 0;
+						}
+
+						pCB->Attribs[regIdx][0] = elemOffset;
+						pCB->Attribs[regIdx][1] = stride;
+						pCB->Attribs[regIdx][2] = XboxFormatToVtxFmt(elem.XboxType);
+						pCB->Attribs[regIdx][3] = (UINT)streamBase;
 					}
 
-					pCB->Attribs[regIdx][0] = elemOffset;
-					pCB->Attribs[regIdx][1] = stride;
-					pCB->Attribs[regIdx][2] = XboxFormatToVtxFmt(elem.XboxType);
-					pCB->Attribs[regIdx][3] = (UINT)streamBase;
+					elemOffset += elem.XboxByteSize;
+					hostElemOffset += elem.HostByteSize;
 				}
-
-				elemOffset += elem.XboxByteSize;
-				hostElemOffset += elem.HostByteSize;
 			}
 		}
 
