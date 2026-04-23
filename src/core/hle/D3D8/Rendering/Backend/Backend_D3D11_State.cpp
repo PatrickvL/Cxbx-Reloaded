@@ -400,6 +400,85 @@ void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg)
 }
 
 // ******************************************************************
+// * Read viewport/scissor from PGRAPH and apply to D3D11.
+// * Replaces g_Xbox_Viewport HLE reads with PGRAPH register data.
+// *
+// * NV2A viewport transform:
+// *   vsh_constants[VPSCL] = { Width/2, -Height/2, zScale, 0 }
+// *   vsh_constants[VPOFF] = { X+Width/2, Y+Height/2, zOffset, 0 }
+// *
+// * Window clip (scissor): NV_PGRAPH_WINDOWCLIPX0/Y0
+// * Depth clip: NV_PGRAPH_ZCLIPMIN / NV_PGRAPH_ZCLIPMAX
+// ******************************************************************
+void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
+{
+	if (!pg) return;
+
+	// Read viewport offset and scale from XFCTX constants
+	float vpoff[4], vpscl[4];
+	for (int i = 0; i < 4; i++) {
+		std::memcpy(&vpoff[i], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i], sizeof(float));
+		std::memcpy(&vpscl[i], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][i], sizeof(float));
+	}
+
+	// Derive Xbox-style viewport rect from NV2A transform constants
+	float xboxWidth  = vpscl[0] * 2.0f;
+	float xboxHeight = fabsf(vpscl[1]) * 2.0f;
+	float xboxX      = vpoff[0] - vpscl[0];
+	float xboxY      = vpoff[1] + vpscl[1]; // vpscl[1] is negative
+
+	// Read depth clip range
+	float minZ, maxZ;
+	std::memcpy(&minZ, &pg->regs[RI(NV_PGRAPH_ZCLIPMIN)], sizeof(float));
+	std::memcpy(&maxZ, &pg->regs[RI(NV_PGRAPH_ZCLIPMAX)], sizeof(float));
+
+	// Get host scaling factors (AA + render upscale)
+	float aaScaleX, aaScaleY;
+	GetMultiSampleScaleRaw(aaScaleX, aaScaleY);
+	float Xscale = aaScaleX * g_RenderUpscaleFactor;
+	float Yscale = aaScaleY * g_RenderUpscaleFactor;
+
+	DWORD HostRenderTarget_Width, HostRenderTarget_Height;
+	if (!GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height)) {
+		return; // can't set viewport without RT dimensions
+	}
+
+	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
+		D3D11_VIEWPORT hostViewport;
+		hostViewport.TopLeftX = xboxX * Xscale;
+		hostViewport.TopLeftY = xboxY * Yscale;
+		hostViewport.Width    = xboxWidth * Xscale;
+		hostViewport.Height   = xboxHeight * Yscale;
+		hostViewport.MinDepth = minZ;
+		hostViewport.MaxDepth = maxZ;
+		CxbxSetViewport(&hostViewport);
+
+		RECT viewportRect = { 0, 0, (LONG)HostRenderTarget_Width, (LONG)HostRenderTarget_Height };
+		CxbxSetScissorRect(&viewportRect);
+	} else {
+		// Programmable VS: full-screen viewport, scissor clips to viewport bounds
+		D3D11_VIEWPORT hostViewport;
+		hostViewport.TopLeftX = 0;
+		hostViewport.TopLeftY = 0;
+		hostViewport.Width    = static_cast<float>(HostRenderTarget_Width);
+		hostViewport.Height   = static_cast<float>(HostRenderTarget_Height);
+		hostViewport.MinDepth = 0.0f;
+		hostViewport.MaxDepth = 1.0f;
+		CxbxSetViewport(&hostViewport);
+
+		g_D3D11RasterizerDesc.ScissorEnable = TRUE;
+		g_bD3D11RasterizerStateDirty = true;
+
+		RECT viewportRect;
+		viewportRect.left   = static_cast<LONG>(xboxX * Xscale);
+		viewportRect.top    = static_cast<LONG>(xboxY * Yscale);
+		viewportRect.right  = static_cast<LONG>(viewportRect.left + (xboxWidth * Xscale));
+		viewportRect.bottom = static_cast<LONG>(viewportRect.top + (xboxHeight * Yscale));
+		CxbxSetScissorRect(&viewportRect);
+	}
+}
+
+// ******************************************************************
 // * Apply dirty states
 // ******************************************************************
 void CxbxD3D11ApplyDirtyStates()

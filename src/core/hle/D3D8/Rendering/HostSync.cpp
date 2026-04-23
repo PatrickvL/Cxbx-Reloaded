@@ -492,6 +492,13 @@ void CxbxUpdateNativeD3DResources()
 
 	CxbxUpdateHostViewport();
 
+	// Override viewport/scissor from PGRAPH registers.
+	// This runs after CxbxUpdateHostViewport() so PGRAPH values take precedence
+	// over the HLE-derived g_Xbox_Viewport values.
+	if (g_NV2A) {
+		CxbxD3D11UpdateViewportFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
+	}
+
 	// NOTE: Order is important here
    	// Some Texture States depend on RenderState values (Point Sprites)
    	// And some Pixel Shaders depend on Texture State values (BumpEnvMat, etc)

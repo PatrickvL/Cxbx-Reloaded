@@ -106,6 +106,11 @@ void CxbxD3D11SetRenderState(uint32_t State, uint32_t Value);
 struct PGRAPHState; // forward decl
 void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg);
 
+// Read viewport offset/scale and window clip from PGRAPH and set D3D11 viewport/scissor.
+// Called from CxbxUpdateNativeD3DResources() after CxbxUpdateHostViewport(), overriding
+// the HLE-derived g_Xbox_Viewport values with PGRAPH register data.
+void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg);
+
 // Recreate D3D11 state objects that have been marked dirty, and flush constant buffers
 void CxbxD3D11ApplyDirtyStates();
 
