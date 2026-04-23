@@ -51,6 +51,7 @@ static const float CXBX_NEG_INF = asfloat(0xFF800000u);
 static float4 s_r[12];      // temporary registers r0-r11
 static float4 s_v[16];      // input (vertex attribute) registers v0-v15
 static float4 s_oRegs[16];  // output registers (indexed by OUTPUT_REG_*)
+static float4 s_c[X_D3DVS_CONSTREG_COUNT]; // writable shadow of constant registers c0-c191
 static int    s_a0;         // address register
 
 // Named indices into s_oRegs[].  These match the NV2A output address
@@ -105,10 +106,12 @@ float4 fetch_input(uint mux, uint r_idx, uint v_idx, uint const_idx,
     }
     else {
         // Constant register c0..c191, optionally offset by a0.
+        // Reads from writable shadow s_c[] (initialised from cbuffer C[]
+        // at shader entry; vertex programs can write back via out_orb==0).
         // Branchless: multiply by bool (int cast: true=1, false=0).
         int c_index = (int)(const_idx & 0xFF) + s_a0 * (int)use_a0x;
         raw = (c_index >= 0 && c_index < (int)X_D3DVS_CONSTREG_COUNT)
-            ? C[c_index] : float4(0, 0, 0, 0);
+            ? s_c[c_index] : float4(0, 0, 0, 0);
     }
 
     float4 sw = apply_swizzle(raw, swz);
@@ -307,6 +310,14 @@ VS_OUTPUT main(const VS_INPUT xIn)
     // Zero r0-r11 (Xbox semantics).
     [unroll] for (uint ri = 0; ri < 12; ri++) s_r[ri] = float4(0, 0, 0, 0);
 
+    // Copy cbuffer constants to writable shadow array.
+    // NV2A vertex programs can write back to constant registers (context
+    // writes, out_orb==0).  Subsequent reads must see the written values.
+    // This is the same pattern as the RC interpreter's C0/C1 handling
+    // (commit e32ca81b), extended to all 192 VS constants.
+    // FXC compiles this to an indexable temp (x[]) in thread-local memory.
+    [unroll] for (uint ci = 0; ci < X_D3DVS_CONSTREG_COUNT; ci++) s_c[ci] = C[ci];
+
     // Populate v0-v15 directly into the static array.
     FetchAllAttributes(ResolveVertexIndex(xIn.vertexId), s_v);
 
@@ -378,8 +389,10 @@ VS_OUTPUT main(const VS_INPUT xIn)
         bool is_paired     = has_mac && has_ilu;
         bool mac_is_output = (out_mux == 0);
         bool do_out        = (out_o_mask != 0) && out_orb;
-        // NOTE: Context register writes (out_orb==false) are not supported;
-        // C[] is a read-only cbuffer. Extremely rare on Xbox.
+        bool do_ctx        = (out_o_mask != 0) && !out_orb;
+        // Context register writes (out_orb==false) write to s_c[].
+        // Subsequent constant reads from the same vertex program see
+        // the updated value.  Matches nv2a_vsh_cpu NV2ART_CONTEXT.
 
         // ========================================================
         // Snapshot inputs BEFORE either unit writes back.
@@ -418,6 +431,9 @@ VS_OUTPUT main(const VS_INPUT xIn)
 
                 if (mac_is_output && do_out)
                     write_output(out_address, mac_result, out_o_mask);
+
+                if (mac_is_output && do_ctx && out_address < X_D3DVS_CONSTREG_COUNT)
+                    write_masked(s_c[out_address], mac_result, out_o_mask);
             }
         }
 
@@ -434,6 +450,9 @@ VS_OUTPUT main(const VS_INPUT xIn)
 
             if (!mac_is_output && do_out)
                 write_output(out_address, ilu_result, out_o_mask);
+
+            if (!mac_is_output && do_ctx && out_address < X_D3DVS_CONSTREG_COUNT)
+                write_masked(s_c[out_address], ilu_result, out_o_mask);
         }
 
         if (is_final) break;
