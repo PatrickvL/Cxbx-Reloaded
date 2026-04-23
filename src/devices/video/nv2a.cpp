@@ -431,6 +431,8 @@ void NV2ADevice::Init()
     qemu_mutex_init(&d->pfifo.pfifo_lock);
     qemu_cond_init(&d->pfifo.puller_cond);
     qemu_cond_init(&d->pfifo.pusher_cond);
+    qemu_cond_init(&d->pfifo.flush_complete_cond);
+    d->pfifo.flush_requested = false;
 
     d->pfifo.regs[NV_PFIFO_CACHE1_STATUS] |= NV_PFIFO_CACHE1_STATUS_LOW_MARK;
 
@@ -449,6 +451,7 @@ void NV2ADevice::Reset()
 
 	qemu_cond_broadcast(&d->pfifo.puller_cond);
 	qemu_cond_broadcast(&d->pfifo.pusher_cond);
+	qemu_cond_broadcast(&d->pfifo.flush_complete_cond);
 	d->pfifo.puller_thread.join();
 	d->pfifo.pusher_thread.join();
 	qemu_mutex_destroy(&d->pfifo.pfifo_lock); // Cxbxr addition

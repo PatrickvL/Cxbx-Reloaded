@@ -472,6 +472,13 @@ extern void CxbxUpdateHostVertexShader(); // TMP glue
 
 void CxbxUpdateNativeD3DResources()
 {
+	// Drain all pending pushbuffer commands so PGRAPH regs[] are current.
+	// This closes the race between the async PFIFO puller and the HLE
+	// interpreters that read register state at draw time.
+	if (g_NV2A) {
+		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
+	}
+
 	// Before we start, make sure our resource cache stays limited in size
 	PrunePaletizedTexturesCache(); // TODO : Could we move this to Swap instead?
 

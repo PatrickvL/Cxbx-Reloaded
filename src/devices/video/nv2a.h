@@ -83,6 +83,11 @@ const NV2ABlockInfo* EmuNV2A_Block(xbox::addr_xt addr);
 
 void CxbxReserveNV2AMemory(NV2AState *d);
 
+// Drain all pending pushbuffer commands through the PFIFO pusher and puller
+// so that PGRAPH regs[] are fully up-to-date.  Called from the HLE thread
+// before each draw to close the race between the async puller and HLE reads.
+void pfifo_flush_to_pgraph(NV2AState *d);
+
 class NV2ADevice : public PCIDevice {
 public:
 	// constructor

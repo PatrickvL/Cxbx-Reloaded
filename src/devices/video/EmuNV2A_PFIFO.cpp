@@ -169,6 +169,14 @@ int pfifo_puller_thread(NV2AState *d)
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
     while (true) {
         pfifo_run_puller(d);
+
+        // If the HLE thread is waiting for a PFIFO flush, signal it now
+        // that CACHE1 has been drained.  The waiter will re-check whether
+        // the DMA pusher also needs another cycle.
+        if (d->pfifo.flush_requested) {
+            qemu_cond_signal(&d->pfifo.flush_complete_cond);
+        }
+
         qemu_cond_wait(&d->pfifo.puller_cond, &d->pfifo.pfifo_lock);
 
         if (d->exiting) {
@@ -178,6 +186,40 @@ int pfifo_puller_thread(NV2AState *d)
     qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 
 	return NULL;
+}
+
+// ---------------------------------------------------------------------------
+// pfifo_flush_to_pgraph  --  block until all pending pushbuffer commands have
+// been pushed into CACHE1 by the DMA pusher AND pulled/dispatched to PGRAPH
+// by the puller.  Called from the HLE thread before each draw.
+// ---------------------------------------------------------------------------
+void pfifo_flush_to_pgraph(NV2AState *d)
+{
+    qemu_mutex_lock(&d->pfifo.pfifo_lock);
+
+    while (true) {
+        uint32_t status  = d->pfifo.regs[NV_PFIFO_CACHE1_STATUS];
+        bool cache1_empty = (status & NV_PFIFO_CACHE1_STATUS_LOW_MARK) != 0;
+        bool dma_idle     = d->pfifo.regs[NV_PFIFO_CACHE1_DMA_GET]
+                         == d->pfifo.regs[NV_PFIFO_CACHE1_DMA_PUT];
+
+        if (cache1_empty && dma_idle)
+            break;
+
+        // Tell the puller to signal us after its next drain cycle.
+        d->pfifo.flush_requested = true;
+
+        // Wake both threads so the pusher can feed CACHE1 and the puller
+        // can drain it.  Harmless if either thread has nothing to do.
+        qemu_cond_signal(&d->pfifo.pusher_cond);
+        qemu_cond_signal(&d->pfifo.puller_cond);
+
+        // Release pfifo_lock and sleep until the puller finishes a drain.
+        qemu_cond_wait(&d->pfifo.flush_complete_cond, &d->pfifo.pfifo_lock);
+    }
+
+    d->pfifo.flush_requested = false;
+    qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 }
 
 static void pfifo_run_pusher(NV2AState *d)

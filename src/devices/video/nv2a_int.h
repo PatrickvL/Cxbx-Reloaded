@@ -364,6 +364,11 @@ typedef struct NV2AState {
 		QemuCond puller_cond;
 		std::thread pusher_thread;
 		QemuCond pusher_cond;
+		// Flush synchronization: HLE thread signals flush_requested, then
+		// waits on flush_complete_cond.  The puller signals back when CACHE1
+		// is drained (LOW_MARK set) and the pusher has no pending DMA data.
+		bool flush_requested;
+		QemuCond flush_complete_cond;
     } pfifo;
 
     struct {

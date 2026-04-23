@@ -23,18 +23,19 @@ the validation corpus.
 | Surface/RT state from | **HLE globals** (`g_pXbox_RenderTarget`, etc.) |
 | Pipeline state from | **HLE `XboxRenderStates` / `XboxTextureStates`** |
 | Draw trigger | **HLE EMUPATCH** draw functions |
-| OpenGL LLE path | **Dead code** (menu grayed out, `opengl_enabled = false`) |
-| OpenGL types in structs | **Present** in `PGRAPHState`, `VertexAttribute`, `ShaderBinding` |
-| GLSL shader translators | **Present** (`nv2a_vsh.cpp`, `nv2a_psh.cpp`, `nv2a_shaders.cpp`) |
-| gloffscreen library | **Present** (`src/common/util/gloffscreen/`) |
-| GLEW import | **Present** (`import/glew-2.0.0/`) |
+| OpenGL LLE path | **Removed** (Step 1 complete) |
+| OpenGL types in structs | **Removed** from `PGRAPHState`, `VertexAttribute` |
+| GLSL shader translators | **Removed** |
+| gloffscreen library | **Removed** |
+| GLEW import | **Removed** |
+| PFIFO→PGRAPH flush | **Active** — `pfifo_flush_to_pgraph()` called before each HLE draw |
 
 ---
 
-## Step 1: Remove OpenGL LLE Rendering Backend
+## Step 1: Remove OpenGL LLE Rendering Backend  ✅ DONE
 
-**Risk: None** — this code is completely dormant (menu grayed out since `opengl_enabled`
-is always false in HLE mode). No functional change.
+**Completed.** All OpenGL/GLEW code removed. 60 files changed, ~38K lines deleted.
+Build verified, XDK samples render identically.
 
 ### 1.1 — Remove OpenGL draw function implementations
 
@@ -133,7 +134,12 @@ use the same enum. Just ensure it's never checked.
 
 ---
 
-## Step 2: Solve the PGRAPH Race Condition
+## Step 2: Solve the PGRAPH Race Condition  ✅ DONE
+
+Implemented `pfifo_flush_to_pgraph()` in `EmuNV2A_PFIFO.cpp`. Called at
+the top of `CxbxUpdateNativeD3DResources()` before every HLE draw. Blocks
+until the DMA pusher has pushed all commands into CACHE1 and the puller has
+dispatched them all to `pgraph_handle_method()`.
 
 This is the critical blocker. The PFIFO puller processes pushbuffer commands
 asynchronously. HLE EMUPATCH draw calls execute before the puller catches up,
