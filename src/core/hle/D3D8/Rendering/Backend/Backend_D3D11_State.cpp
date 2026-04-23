@@ -548,6 +548,50 @@ void CxbxD3D11ApplyDirtyStates()
 	}
 }
 
+// ******************************************************************
+// * Render target update from PGRAPH surface state
+// ******************************************************************
+
+// Track the last PGRAPH surface offsets we bound, so we only rebind on change
+static xbox::addr_xt g_LastBoundColorOffset = ~0u;
+static xbox::addr_xt g_LastBoundZetaOffset  = ~0u;
+
+void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
+{
+	xbox::addr_xt colorOffset = pg->surface_color.offset;
+	xbox::addr_xt zetaOffset  = pg->surface_zeta.offset;
+
+	// Skip if nothing changed
+	if (colorOffset == g_LastBoundColorOffset && zetaOffset == g_LastBoundZetaOffset)
+		return;
+
+	// Color render target
+	if (colorOffset != g_LastBoundColorOffset && colorOffset != 0) {
+		xbox::X_D3DSurface *pXboxRT = CxbxLookupSurfaceByDataAddr(colorOffset);
+		if (pXboxRT) {
+			ID3D11Texture2D *pHostRT = GetHostSurface(pXboxRT, D3DUSAGE_RENDERTARGET);
+			if (pHostRT) {
+				CxbxSetRenderTarget(pHostRT);
+			}
+		}
+		g_LastBoundColorOffset = colorOffset;
+	}
+
+	// Depth/stencil target
+	if (zetaOffset != g_LastBoundZetaOffset) {
+		if (zetaOffset != 0) {
+			xbox::X_D3DSurface *pXboxDS = CxbxLookupSurfaceByDataAddr(zetaOffset);
+			if (pXboxDS) {
+				ID3D11Texture2D *pHostDS = GetHostSurface(pXboxDS, D3DUSAGE_DEPTHSTENCIL);
+				CxbxSetDepthStencilSurface(pHostDS);
+			}
+		} else {
+			CxbxSetDepthStencilSurface(nullptr);
+		}
+		g_LastBoundZetaOffset = zetaOffset;
+	}
+}
+
 // RTV cache: maps (texture pointer, mip slice) to its render target view, avoiding
 // redundant CreateRenderTargetView calls for the same texture+mip combination.
 std::unordered_map<RTVCacheKey, ID3D11RenderTargetView*, RTVCacheKeyHash> g_RTVCache;

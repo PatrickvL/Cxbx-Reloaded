@@ -111,6 +111,11 @@ void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg);
 // the HLE-derived g_Xbox_Viewport values with PGRAPH register data.
 void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg);
 
+// Read PGRAPH surface_color/zeta offsets and rebind D3D11 render target / depth-stencil
+// if they differ from what's currently bound.  Uses the Data-address side-map populated
+// by CxbxImpl_SetRenderTarget to resolve PGRAPH offsets to host D3D11 textures.
+void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg);
+
 // Recreate D3D11 state objects that have been marked dirty, and flush constant buffers
 void CxbxD3D11ApplyDirtyStates();
 

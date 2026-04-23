@@ -82,6 +82,21 @@ xbox::X_D3DSurface           *g_pXbox_RenderTarget = xbox::zeroptr;
 xbox::X_D3DSurface           *g_pXbox_DepthStencil = xbox::zeroptr;
 xbox::X_D3DMULTISAMPLE_TYPE   g_Xbox_MultiSampleType = xbox::X_D3DMULTISAMPLE_NONE;
 
+// Side-map: VRAM data offset → Xbox surface pointer
+static std::unordered_map<xbox::addr_xt, xbox::X_D3DSurface*> g_SurfacesByDataAddr;
+
+void CxbxRegisterSurfaceByDataAddr(xbox::addr_xt dataAddr, xbox::X_D3DSurface *pSurface)
+{
+	if (dataAddr != xbox::zero)
+		g_SurfacesByDataAddr[dataAddr] = pSurface;
+}
+
+xbox::X_D3DSurface* CxbxLookupSurfaceByDataAddr(xbox::addr_xt dataAddr)
+{
+	auto it = g_SurfacesByDataAddr.find(dataAddr);
+	return (it != g_SurfacesByDataAddr.end()) ? it->second : nullptr;
+}
+
 xbox::X_VERTEXSHADERCONSTANTMODE g_Xbox_VertexShaderConstantMode = X_D3DSCM_192CONSTANTS; // Set by D3DDevice_SetShaderConstantMode, TODO : Move to XbVertexShader.cpp
 xbox::dword_xt                   g_Xbox_BaseVertexIndex = 0; // Set by D3DDevice_SetIndices, read by D3DDevice_DrawIndexedVertices
 

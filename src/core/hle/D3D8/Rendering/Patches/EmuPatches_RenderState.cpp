@@ -300,6 +300,7 @@ void CxbxImpl_SetRenderTarget
 	// The current render target is only replaced if it's passed in here non-null
 	if (pRenderTarget != xbox::zeroptr) {
 		g_pXbox_RenderTarget = pRenderTarget;
+		CxbxRegisterSurfaceByDataAddr(pRenderTarget->Data, pRenderTarget);
 	}
 	else {
 		// If non is given, use the current Xbox render target
@@ -336,6 +337,8 @@ void CxbxImpl_SetRenderTarget
 
 	// The currenct depth stencil is always replaced by whats passed in here (even a null)
 	g_pXbox_DepthStencil = pNewZStencil;
+	if (pNewZStencil != xbox::zeroptr)
+		CxbxRegisterSurfaceByDataAddr(pNewZStencil->Data, pNewZStencil);
 	g_ZScale = GetZScaleForPixelContainer(g_pXbox_DepthStencil); // TODO : Discern between Xbox and host and do this in UpdateDepthStencilFlags?
    	pHostDepthStencil = GetHostSurface(g_pXbox_DepthStencil, D3DUSAGE_DEPTHSTENCIL);
 

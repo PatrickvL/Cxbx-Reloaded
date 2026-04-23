@@ -173,6 +173,12 @@ extern xbox::X_D3DSurface           *g_pXbox_DefaultDepthStencilSurface;
 extern xbox::X_D3DSurface           *g_pXbox_RenderTarget;
 extern xbox::X_D3DSurface           *g_pXbox_DepthStencil;
 extern xbox::X_D3DMULTISAMPLE_TYPE   g_Xbox_MultiSampleType;
+
+// Side-map: VRAM data offset → Xbox surface pointer.
+// Populated by CxbxImpl_SetRenderTarget; queried by CxbxD3D11UpdateRenderTargetFromPGRAPH
+// to resolve PGRAPH surface_color/zeta offsets to host D3D11 textures.
+void CxbxRegisterSurfaceByDataAddr(xbox::addr_xt dataAddr, xbox::X_D3DSurface *pSurface);
+xbox::X_D3DSurface* CxbxLookupSurfaceByDataAddr(xbox::addr_xt dataAddr);
 extern xbox::X_VERTEXSHADERCONSTANTMODE g_Xbox_VertexShaderConstantMode;
 extern xbox::dword_xt                g_Xbox_BaseVertexIndex;
 extern xbox::PVOID                   g_pXbox_Palette_Data[xbox::X_D3DTS_STAGECOUNT];

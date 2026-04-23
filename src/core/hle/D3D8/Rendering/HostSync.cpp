@@ -499,6 +499,13 @@ void CxbxUpdateNativeD3DResources()
 		CxbxD3D11UpdateViewportFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
 	}
 
+	// Verify render target binding against PGRAPH surface offsets.
+	// If the PGRAPH surface offset doesn't match the currently bound RT,
+	// rebind from the Data-address side-map populated by SetRenderTarget.
+	if (g_NV2A) {
+		CxbxD3D11UpdateRenderTargetFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
+	}
+
 	// NOTE: Order is important here
    	// Some Texture States depend on RenderState values (Point Sprites)
    	// And some Pixel Shaders depend on Texture State values (BumpEnvMat, etc)
