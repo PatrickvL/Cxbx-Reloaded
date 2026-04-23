@@ -17,19 +17,20 @@ the validation corpus.
 | Component | Status |
 |-----------|--------|
 | PFIFO puller → PGRAPH `regs[]` | **Active** — methods ≥ 0x100 dispatched, state populated |
-| RC interpreter reads from | **PGRAPH `regs[]`** (Steps 3.1–3.2 done, custom CBLayout still used) |
-| VS interpreter reads from | **PGRAPH `program_data[]` (XFPR RAM mirror)** (Step 4.1 done, custom CBLayout still used) |
+| RC interpreter reads from | **PGRAPH `regs[]` raw SRV** (Steps 3.1–3.4 done, CBLayout eliminated) |
+| VS interpreter reads from | **PGRAPH `program_data[]` via XFPR SRV** (Steps 4.1–4.3 done, CBLayout eliminated) |
 | VS constants reads from | **PGRAPH `vsh_constants[]` (XFCTX RAM mirror)** (already PGRAPH-sourced) |
 | Vertex fetch reads from | **PGRAPH `vertex_attributes[]`** (Step 5.1 done, HLE fallback for UP draws) |
-| Surface/RT state from | **HLE globals** (`g_pXbox_RenderTarget`, etc.) |
-| Pipeline state from | **HLE `XboxRenderStates` / `XboxTextureStates`** |
-| Draw trigger | **HLE EMUPATCH** draw functions |
+| Surface/RT state from | **PGRAPH `surface_color/zeta.offset`** via side-map (Step 6.1 done) |
+| Pipeline state from | **PGRAPH `regs[]`** — blend/depth/stencil/rasterizer/viewport (Steps 6.2–6.3 done) |
+| Texture state from | **PGRAPH `TEXOFFSET` regs** via side-map (Steps 7.1–7.2 done, m_Textures removed) |
+| Draw trigger | **HLE EMUPATCH** + puller-driven `HLE_draw_arrays` (Step 8.1 done) |
 | OpenGL LLE path | **Removed** (Step 1 complete) |
 | OpenGL types in structs | **Removed** from `PGRAPHState`, `VertexAttribute` |
 | GLSL shader translators | **Removed** |
 | gloffscreen library | **Removed** |
 | GLEW import | **Removed** |
-| PFIFO→PGRAPH flush | **Active** — `pfifo_flush_to_pgraph()` called before each HLE draw |
+| PFIFO→PGRAPH flush | **Active** — skipped when `g_bInPullerContext` (Step 8.3) |
 
 ---
 
@@ -226,7 +227,7 @@ This ensures compatibility if NV2A init is delayed.
 The combiner state values from PGRAPH and PSDef should be identical (both come from
 the same Xbox D3D calls, just via different paths).
 
-### 3.2 — Migrate remaining RC state fields  ✅ DONE (partial)
+### 3.2 — Migrate remaining RC state fields  ✅ DONE
 
 Fields that don't have direct PGRAPH register equivalents:
 - `ColorSign[4]` — derived from texture format; may need to stay HLE-sourced
@@ -236,18 +237,16 @@ Fields that don't have direct PGRAPH register equivalents:
 - `ColorKeyOp/Color[4]` — from PGRAPH texture state
 
 PSFinalCombinerConstant, FogColor, AlphaTest, BEM, LUM migrated (commit 52b8a152).
-FogInfo/FogEnable still pending.
+FogInfo/FogEnable migrated from PGRAPH CONTROL_3 (commit d9311588).
 
 Migrate each field individually. Test after each sub-group.
 
 **Test:** PixelShader XDK sample (exercises many combiner configurations).
 
-### 3.3 — Remove PSDef dependency from RC upload path
+### 3.3 — Remove PSDef dependency from RC upload path  ✅ DONE
 
-Once all fields read from PGRAPH:
-- Remove the `X_D3DPIXELSHADERDEF` read from `CxbxD3D11UploadRCInterpreterState()`
-- Remove `GetPixelShaderRenderStatePointer()` dependency
-- Keep `g_NV2A == nullptr` guard as a no-op (return early, skip RC upload)
+PSDef soft dependency only remains for texModeAdjust flag.
+`CxbxD3D11UploadRCInterpreterState()` reads all combiner/fog/alpha state from PGRAPH.
 
 **Test:** Full XDK sample suite.
 
@@ -309,6 +308,9 @@ unpacks them inline: `float4 c = UnpackABGR(PG_UINT(NV_PGRAPH_COMBINEFACTOR0 + i
 5. Remove `RCInterpreterCBLayout` struct and `CxbxRegisterCombinerInterpreterState.hlsli`
 
 All done in one commit. No intermediate hybrid state.
+
+✅ DONE — Committed as 09a1ef0f. RC interpreter reads raw `regs[]` SRV at t12.
+PSAuxCBLayout holds software-computed fields only.
 
 **Test:** BumpEarth, PixelShader, DotProduct3, BumpLens, Dolphin.
 
@@ -410,9 +412,11 @@ Replace `HLE_get_NV2A_vertex_attribute_value_pointer()` with direct PGRAPH read.
 
 ## Step 6: Migrate Surface and Pipeline State to PGRAPH
 
-### 6.1 — Surface/render target state
+### 6.1 — Surface/render target state  ✅ DONE
 
 **File:** `src/core/hle/D3D8/Rendering/HostSync.cpp`
+
+Side-map (VRAM offset → Xbox surface*) populated by EMUPATCH. Committed as 20e012c0.
 
 Replace `g_pXbox_RenderTarget` / `g_pXbox_DepthStencil` reads with PGRAPH:
 - Color offset: `pg->surface_color.offset` (populated by `NV097_SET_SURFACE_COLOR_OFFSET`)
@@ -421,9 +425,12 @@ Replace `g_pXbox_RenderTarget` / `g_pXbox_DepthStencil` reads with PGRAPH:
 - Pitch: from `NV097_SET_SURFACE_PITCH` method handler
 - Dimensions: `pg->surface_shape.clip_x` / `clip_y` / `clip_width` / `clip_height`
 
-### 6.2 — Pipeline state (blend, depth, stencil, rasterizer)
+### 6.2 — Pipeline state (blend, depth, stencil, rasterizer)  ✅ DONE
 
 **File:** `src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_State.cpp`
+
+Committed as 0a2566a2. `CxbxD3D11UpdatePipelineStateFromPGRAPH()` runs after
+`XboxRenderStates.Apply()` to override with authoritative PGRAPH values.
 
 Replace `XboxRenderStates.Apply()` reads with PGRAPH register reads:
 - Blend: `pg->regs[NV_PGRAPH_BLEND]` — equation, factors, enable
@@ -437,9 +444,10 @@ These map to `D3D11_BLEND_DESC`, `D3D11_DEPTH_STENCIL_DESC`, `D3D11_RASTERIZER_D
 objects which are created/cached on the CPU (this is the one part that can't be
 GPU-driven in DX11, as noted in the architecture doc).
 
-### 6.3 — Viewport and scissor
+### 6.3 — Viewport and scissor  ✅ DONE
 
-Replace `g_Xbox_Viewport` reads with PGRAPH viewport registers.
+Committed as fa49e373. `CxbxD3D11UpdateViewportFromPGRAPH()` derives Xbox viewport
+from VPSCL/VPOFF in `vsh_constants[0x3a]/[0x3b]`, depth range from ZCLIPMIN/ZCLIPMAX.
 
 **Test:** ShadowBuffer (depth/stencil), Glass (blend), ProjectedTexture (viewport).
 
@@ -447,13 +455,13 @@ Replace `g_Xbox_Viewport` reads with PGRAPH viewport registers.
 
 ## Step 7: Migrate Texture State to PGRAPH
 
-### 7.1 — Texture binding from PGRAPH
+### 7.1 — Texture binding from PGRAPH  ✅ DONE
 
 **File:** `src/core/hle/D3D8/Rendering/HostSync.cpp`
 **Function:** `CxbxUpdateHostTextures()`
 
-Currently reads `g_pXbox_SetTexture[stage]` (HLE global) and falls back to the
-device's internal `m_Textures[]` array.
+Committed as c09c2bd7. Side-map (VRAM offset → Xbox texture*) populated by
+SetTexture/SwitchTexture/LTCG patches. PGRAPH TEXOFFSET is authoritative source.
 
 Switch to reading texture address from PGRAPH:
 - Texture offset: `pg->regs[NV_PGRAPH_TEXOFFSET0 + stage * 0x40]`
@@ -465,12 +473,10 @@ The texture address resolves via DMA context (`dma_a`/`dma_b`) to a physical
 Xbox memory address. The existing deswizzle pipeline and `Texture2D` creation
 remain — only the source of the texture descriptor changes.
 
-### 7.2 — Remove texture fallback from device internals
+### 7.2 — Remove texture fallback from device internals  ✅ DONE
 
-Once PGRAPH provides all texture state, remove:
-- The `m_Textures[]` device memory scan fallback in `CxbxUpdateHostTextures()`
-- The `D3D_g_pDevice` + `m_Textures_Offset` extraction from `D3DDevice_SetTexture`
-  machine code
+Committed as 16c310e2. Removed m_Textures machine-code scanning and per-frame
+device memory read fallback. PGRAPH TEXOFFSET is sole texture source. (-56 lines)
 
 **Test:** PixelShader (multi-texture), BumpEarth (bump map textures), CubeMap.
 
@@ -481,7 +487,11 @@ Once PGRAPH provides all texture state, remove:
 This is the architectural pivot. Instead of HLE EMUPATCH draw functions triggering
 D3D11 draws, the PFIFO puller triggers draws when it processes `NV097_SET_BEGIN_END(0)`.
 
-### 8.1 — Register D3D11 draw backend as PGRAPH draw functions
+### 8.1 — Register D3D11 draw backend as PGRAPH draw functions  ✅ DONE
+
+Committed as a816390d. `HLE_draw_arrays` calls `CxbxD3D11IABypassDraw()`.
+`HLE_init_pgraph_plugins()` sets function pointers. Puller context flag prevents
+`pfifo_flush` deadlock.
 
 **File:** `src/devices/video/EmuNV2A_PGRAPH.cpp`
 
@@ -520,10 +530,12 @@ driver-specific performance implications.
 **Option C:** Queue draw commands from the puller to the render thread via a
 lock-free ring buffer. The render thread drains the queue each frame.
 
-### 8.3 — Remove the `pfifo_flush_to_pgraph()` sync call
+### 8.3 — Puller context flag (partial)  ✅ DONE
 
-Once draws are puller-driven, the flush from Step 2.2 is no longer needed.
-Remove it from `CxbxUpdateNativeD3DResources()`.
+Committed as a816390d. `thread_local g_bInPullerContext` prevents `pfifo_flush`
+deadlock when `CxbxUpdateNativeD3DResources` is called from puller thread.
+Flush is still needed for HLE-triggered draws; will be fully removed when
+all draw paths are puller-driven.
 
 **Test:** BumpEarth — verify draws come from puller, not from HLE patches.
 Frame timing may change (draws happen when puller processes them, not when
