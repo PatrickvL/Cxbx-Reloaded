@@ -528,6 +528,7 @@ void pgraph_handle_method(NV2AState *d,
 		case NV097_SET_CONTEXT_DMA_COLOR:
 			/* try to get any straggling draws in before the surface's changed :/ */
 			pgraph_update_surface(d, false, true, true);
+			// Also wrote: pg->dma_color = parameter; (field deleted)
 			break;
 		case NV097_SET_CONTEXT_DMA_SEMAPHORE:
 			pg->dma_semaphore = parameter;
@@ -1400,6 +1401,7 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_BASE_SIZE_V, log_height);
 			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_BASE_SIZE_P, log_depth);
 
+			// Also wrote: pg->texture_dirty[slot] = true; (field deleted)
 			break;
 		}
 		CASE_4(NV097_SET_TEXTURE_PALETTE, 64): {
@@ -1417,6 +1419,7 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(*reg, NV_PGRAPH_TEXPALETTE0_LENGTH, length);
 			SET_MASK(*reg, NV_PGRAPH_TEXPALETTE0_OFFSET, offset);
 
+			// Also wrote: pg->texture_dirty[slot] = true; (field deleted)
 			break;
 		}
 
@@ -1426,6 +1429,7 @@ void pgraph_handle_method(NV2AState *d,
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_MAT + 0xc, 64):
 			slot = (method - NV097_SET_TEXTURE_SET_BUMP_ENV_MAT) / 4;
 			assert((slot / 16) > 0); // Stage 0 has no bump env
+			// Also wrote: pg->bump_env_matrix[slot/16 - 1][slot%4] = *(float*)&parameter; (field deleted)
 			break;
 
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_SCALE, 64):
@@ -1580,6 +1584,7 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 		case NV097_CLEAR_SURFACE: {
+			// Also wrote: pg->clear_surface = parameter; (field deleted)
 			if (pgraph_draw_clear != nullptr) {
 				pgraph_draw_clear(d);
 			}
@@ -1644,6 +1649,56 @@ void pgraph_handle_method(NV2AState *d,
 		//     - SEPARATE_SPECULAR (bit 0 of param -> bit 18 of CSV0_C)
 		//     - LOCALEYE (bit 16 of param -> bit 30 of CSV0_C)
 		//     - ALPHA_FROM_MATERIAL_SPECULAR (bit 17 of param -> bit 17 of CSV0_C)
+		//     break;
+
+		// TODO: These cases wrote to PGRAPHState fields that have since been deleted.
+		// The register writes are handled by method table entries; the struct field
+		// writes may need to be restored once replacement PGRAPH register mappings
+		// are identified. See xemu pgraph.c for reference implementations.
+		//
+		// case NV097_SET_CONTEXT_DMA_NOTIFIES:
+		//     pg->dma_notifies = parameter;
+		//     break;
+		// case NV097_SET_CONTEXT_DMA_A:
+		//     pg->dma_a = parameter;
+		//     break;
+		// case NV097_SET_CONTEXT_DMA_B:
+		//     pg->dma_b = parameter;
+		//     break;
+		// case NV097_SET_CONTEXT_DMA_STATE:
+		//     pg->dma_state = parameter;
+		//     break;
+		// case NV097_SET_CONTEXT_DMA_ZETA:
+		//     pg->dma_zeta = parameter;
+		//     break;
+		// case NV097_SET_CONTEXT_DMA_VERTEX_A:
+		//     pg->dma_vertex_a = parameter;
+		//     break;
+		// case NV097_SET_CONTEXT_DMA_VERTEX_B:
+		//     pg->dma_vertex_b = parameter;
+		//     break;
+		//
+		// CASE_4(NV097_SET_TEXTURE_MATRIX_ENABLE, 4):
+		//     slot = (method - NV097_SET_TEXTURE_MATRIX_ENABLE) / 4;
+		//     pg->texture_matrix_enable[slot] = parameter;
+		//     break;
+		//
+		// case NV097_SET_ZPASS_PIXEL_COUNT_ENABLE:
+		//     pg->zpass_pixel_count_enable = parameter;
+		//     break;
+		//
+		// CASE_4(NV097_SET_TEXTURE_OFFSET, 64):
+		//     Handled by table: NV_PGRAPH_TEXOFFSET0
+		//     Also wrote: pg->texture_dirty[slot] = true;
+		//     break;
+		// CASE_4(NV097_SET_TEXTURE_IMAGE_RECT, 64):
+		//     Handled by table: NV_PGRAPH_TEXIMAGERECT0
+		//     Also wrote: pg->texture_dirty[slot] = true;
+		//     break;
+		//
+		// case NV097_SET_TRANSFORM_PROGRAM_CXT_WRITE_EN:
+		//     // Test-case: Whiplash
+		//     pg->enable_vertex_program_write = parameter;
 		//     break;
 
 		default:
