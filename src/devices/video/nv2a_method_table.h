@@ -52,20 +52,20 @@ static inline uint8_t nv097_mask_width(uint32_t mask)
 }
 
 // Helper to register a direct-copy method (full 32-bit write)
-#define NV097_REG_DIRECT(tbl, nv097_method, pgraph_reg) \
+#define NV097_REG_DIRECT(tbl, nv097_method, pg_reg) \
 	do { \
 		auto &e = (tbl)[(nv097_method) >> 2]; \
-		e.pgraph_reg = (uint16_t)(pgraph_reg); \
+		e.pgraph_reg = (uint16_t)(pg_reg); \
 		e.shift = 0; \
 		e.width = 0; \
 	} while (0)
 
 // Helper to register a direct-copy ranged method (variable stride, N slots)
-#define NV097_REG_DIRECT_RANGE(tbl, nv097_base, stride, count, pgraph_base) \
+#define NV097_REG_DIRECT_RANGE(tbl, nv097_base, stride, count, pg_base) \
 	do { \
 		for (int _i = 0; _i < (count); _i++) { \
 			auto &e = (tbl)[((nv097_base) + _i * (stride)) >> 2]; \
-			e.pgraph_reg = (uint16_t)((pgraph_base) + _i * 4); \
+			e.pgraph_reg = (uint16_t)((pg_base) + _i * 4); \
 			e.shift = 0; \
 			e.width = 0; \
 		} \
@@ -73,23 +73,23 @@ static inline uint8_t nv097_mask_width(uint32_t mask)
 
 // Helper to register a value-shift masked write: SET_MASK(reg, mask, parameter)
 // Parameter is a small value at bit 0; SET_MASK shifts it into the mask position.
-#define NV097_REG_MASKED(tbl, nv097_method, pgraph_reg, pgraph_mask) \
+#define NV097_REG_MASKED(tbl, nv097_method, pg_reg, pg_mask) \
 	do { \
 		auto &e = (tbl)[(nv097_method) >> 2]; \
-		e.pgraph_reg = (uint16_t)(pgraph_reg); \
-		e.shift = (uint8_t)(ffs(pgraph_mask) - 1); \
-		e.width = nv097_mask_width(pgraph_mask); \
+		e.pgraph_reg = (uint16_t)(pg_reg); \
+		e.shift = (uint8_t)(ffs(pg_mask) - 1); \
+		e.width = nv097_mask_width(pg_mask); \
 	} while (0)
 
 // Helper to register an identity-copy masked write:
 // reg = (reg & ~mask) | (parameter & mask)
 // Parameter bits are already at the mask position (no shift needed).
-#define NV097_REG_MASKED_IDENTITY(tbl, nv097_method, pgraph_reg, pgraph_mask) \
+#define NV097_REG_MASKED_IDENTITY(tbl, nv097_method, pg_reg, pg_mask) \
 	do { \
 		auto &e = (tbl)[(nv097_method) >> 2]; \
-		e.pgraph_reg = (uint16_t)(pgraph_reg); \
-		e.shift = (uint8_t)((ffs(pgraph_mask) - 1) | NV097_MASK_IDENTITY); \
-		e.width = nv097_mask_width(pgraph_mask); \
+		e.pgraph_reg = (uint16_t)(pg_reg); \
+		e.shift = (uint8_t)((ffs(pg_mask) - 1) | NV097_MASK_IDENTITY); \
+		e.width = nv097_mask_width(pg_mask); \
 	} while (0)
 
 // Build the dispatch table at startup (called once)

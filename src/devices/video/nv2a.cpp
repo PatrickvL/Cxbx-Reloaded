@@ -221,6 +221,7 @@ static void *nv_dma_map(NV2AState *d, xbox::addr_xt dma_obj_address, xbox::addr_
 #include "EmuNV2A_PBUS.cpp"
 #include "EmuNV2A_PCRTC.cpp"
 #include "EmuNV2A_PFB.cpp"
+#include "nv2a_method_table.h"
 #include "EmuNV2A_PGRAPH.cpp"
 #include "EmuNV2A_PFIFO.cpp"
 #include "EmuNV2A_PMC.cpp"

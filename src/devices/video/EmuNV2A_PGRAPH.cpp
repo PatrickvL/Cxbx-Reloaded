@@ -438,6 +438,10 @@ void pgraph_handle_method(NV2AState *d,
 	}
 
 	case NV_KELVIN_PRIMITIVE: {
+		// Try data-driven dispatch first (covers simple reg copies and masked writes)
+		if (nv097_dispatch_method(pg, method, parameter))
+			break;
+
 		switch (method) {
 		case NV097_SET_OBJECT:
 			kelvin->object_instance = parameter;
@@ -480,18 +484,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 
 
-		case NV097_SET_FLIP_READ:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SURFACE)], NV_PGRAPH_SURFACE_READ_3D,
-				parameter);
-			break;
-		case NV097_SET_FLIP_WRITE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SURFACE)], NV_PGRAPH_SURFACE_WRITE_3D,
-				parameter);
-			break;
-		case NV097_SET_FLIP_MODULO:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SURFACE)], NV_PGRAPH_SURFACE_MODULO_3D,
-				parameter);
-			break;
 		case NV097_FLIP_INCREMENT_WRITE: {
 			NV2A_DPRINTF("flip increment write %d -> ",
 				GET_MASK(pg->regs[RI(NV_PGRAPH_SURFACE)],
@@ -622,23 +614,6 @@ void pgraph_handle_method(NV2AState *d,
         pg->surface_zeta.buffer_dirty = true;
 			break;
 
-		CASE_8(NV097_SET_COMBINER_ALPHA_ICW, 4) :
-			slot = (method - NV097_SET_COMBINER_ALPHA_ICW) / 4;
-			pg->regs[RI(NV_PGRAPH_COMBINEALPHAI0 + slot * 4)] = parameter;
-			break;
-
-		case NV097_SET_COMBINER_SPECULAR_FOG_CW0:
-			pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)] = parameter;
-			break;
-
-		case NV097_SET_COMBINER_SPECULAR_FOG_CW1:
-			pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)] = parameter;
-			break;
-
-		CASE_4(NV097_SET_TEXTURE_ADDRESS, 64):
-			slot = (method - NV097_SET_TEXTURE_ADDRESS) / 64;
-			pg->regs[RI(NV_PGRAPH_TEXADDRESS0 + slot * 4)] = parameter;
-			break;
 		case NV097_SET_CONTROL0: {
 			pgraph_update_surface(d, false, true, true);
 
@@ -710,15 +685,6 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_FOGGENMODE, mode);
 			break;
 		}
-		case NV097_SET_FOG_ENABLE:
-			/*
-			FIXME: There is also:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_FOGENABLE,
-			parameter);
-			*/
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_3)], NV_PGRAPH_CONTROL_3_FOGENABLE,
-				parameter);
-			break;
 		case NV097_SET_FOG_COLOR: {
 			/* parameter channels are ABGR, PGRAPH channels are ARGB */
 			uint8_t alpha = GET_MASK(parameter, NV097_SET_FOG_COLOR_ALPHA);
@@ -731,71 +697,6 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_FOGCOLOR)], NV_PGRAPH_FOGCOLOR_BLUE, blue);
 			break;
 		}
-		case NV097_SET_WINDOW_CLIP_TYPE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
-				NV_PGRAPH_SETUPRASTER_WINDOWCLIPTYPE, parameter);
-			break;
-		CASE_8(NV097_SET_WINDOW_CLIP_HORIZONTAL, 4):
-			slot = (method - NV097_SET_WINDOW_CLIP_HORIZONTAL) / 4;
-			pg->regs[RI(NV_PGRAPH_WINDOWCLIPX0 + slot * 4)] = parameter;
-			break;
-		CASE_8(NV097_SET_WINDOW_CLIP_VERTICAL, 4):
-			slot = (method - NV097_SET_WINDOW_CLIP_VERTICAL) / 4;
-			pg->regs[RI(NV_PGRAPH_WINDOWCLIPY0 + slot * 4)] = parameter;
-			break;
-		case NV097_SET_ALPHA_TEST_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
-				NV_PGRAPH_CONTROL_0_ALPHATESTENABLE, parameter);
-			break;
-		case NV097_SET_BLEND_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_BLEND)], NV_PGRAPH_BLEND_EN, parameter);
-			break;
-		case NV097_SET_CULL_FACE_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
-				NV_PGRAPH_SETUPRASTER_CULLENABLE,
-				parameter);
-			break;
-		case NV097_SET_DEPTH_TEST_ENABLE:
-			// Test-case : Whiplash
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)], NV_PGRAPH_CONTROL_0_ZENABLE,
-				parameter);
-			break;
-		case NV097_SET_DITHER_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
-				NV_PGRAPH_CONTROL_0_DITHERENABLE, parameter);
-			break;
-		case NV097_SET_LIGHTING_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_LIGHTING,
-				parameter);
-			break;
-		case NV097_SET_SKIN_MODE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_SKIN,
-				parameter);
-			break;
-		case NV097_SET_STENCIL_TEST_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_1)],
-				NV_PGRAPH_CONTROL_1_STENCIL_TEST_ENABLE, parameter);
-			break;
-		case NV097_SET_POLY_OFFSET_POINT_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
-				NV_PGRAPH_SETUPRASTER_POFFSETPOINTENABLE, parameter);
-			break;
-		case NV097_SET_POLY_OFFSET_LINE_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
-				NV_PGRAPH_SETUPRASTER_POFFSETLINEENABLE, parameter);
-			break;
-		case NV097_SET_POLY_OFFSET_FILL_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
-				NV_PGRAPH_SETUPRASTER_POFFSETFILLENABLE, parameter);
-			break;
-		case NV097_SET_ALPHA_FUNC:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
-				NV_PGRAPH_CONTROL_0_ALPHAFUNC, parameter & 0xF);
-			break;
-		case NV097_SET_ALPHA_REF:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
-				NV_PGRAPH_CONTROL_0_ALPHAREF, parameter);
-			break;
 		case NV097_SET_BLEND_FUNC_SFACTOR: {
 			unsigned int factor;
 			switch (parameter) {
@@ -882,10 +783,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 
-		case NV097_SET_BLEND_COLOR:
-			pg->regs[RI(NV_PGRAPH_BLENDCOLOR)] = parameter;
-			break;
-
 		case NV097_SET_BLEND_EQUATION: {
 			unsigned int equation;
 			switch (parameter) {
@@ -912,12 +809,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 
-		case NV097_SET_DEPTH_FUNC:
-			// Test-case : Whiplash
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)], NV_PGRAPH_CONTROL_0_ZFUNC,
-				parameter & 0xF);
-			break;
-
 		case NV097_SET_COLOR_MASK: {
 			pg->surface_color.write_enabled_cache |= pgraph_get_color_write_enabled(pg);
 
@@ -941,22 +832,6 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
 				NV_PGRAPH_CONTROL_0_ZWRITEENABLE, parameter);
 			break;
-		case NV097_SET_STENCIL_MASK:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_1)],
-				NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE, parameter);
-			break;
-		case NV097_SET_STENCIL_FUNC:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_1)],
-				NV_PGRAPH_CONTROL_1_STENCIL_FUNC, parameter & 0xF);
-			break;
-		case NV097_SET_STENCIL_FUNC_REF:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_1)],
-				NV_PGRAPH_CONTROL_1_STENCIL_REF, parameter);
-			break;
-		case NV097_SET_STENCIL_FUNC_MASK:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_1)],
-				NV_PGRAPH_CONTROL_1_STENCIL_MASK_READ, parameter);
-			break;
 		case NV097_SET_STENCIL_OP_FAIL:
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_2)],
 				NV_PGRAPH_CONTROL_2_STENCIL_OP_FAIL,
@@ -973,12 +848,6 @@ void pgraph_handle_method(NV2AState *d,
 				kelvin_map_stencil_op(parameter));
 			break;
 
-		case NV097_SET_POLYGON_OFFSET_SCALE_FACTOR:
-			pg->regs[RI(NV_PGRAPH_ZOFFSETFACTOR)] = parameter;
-			break;
-		case NV097_SET_POLYGON_OFFSET_BIAS:
-			pg->regs[RI(NV_PGRAPH_ZOFFSETBIAS)] = parameter;
-			break;
 		case NV097_SET_FRONT_POLYGON_MODE:
 			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
 				NV_PGRAPH_SETUPRASTER_FRONTFACEMODE,
@@ -988,12 +857,6 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
 				NV_PGRAPH_SETUPRASTER_BACKFACEMODE,
 				kelvin_map_polygon_mode(parameter));
-			break;
-		case NV097_SET_CLIP_MIN:
-			pg->regs[RI(NV_PGRAPH_ZCLIPMIN)] = parameter;
-			break;
-		case NV097_SET_CLIP_MAX:
-			pg->regs[RI(NV_PGRAPH_ZCLIPMAX)] = parameter;
 			break;
 		case NV097_SET_CULL_FACE: {
 			unsigned int face;
@@ -1030,18 +893,6 @@ void pgraph_handle_method(NV2AState *d,
 				ccw ? 1 : 0);
 			break;
 		}
-		case NV097_SET_NORMALIZATION_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
-				NV_PGRAPH_CSV0_C_NORMALIZATION_ENABLE,
-				parameter);
-			break;
-
-		case NV097_SET_LIGHT_ENABLE_MASK:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)],
-				NV_PGRAPH_CSV0_D_LIGHTS,
-				parameter);
-			break;
-
 		CASE_4(NV097_SET_TEXGEN_S, 16) : {
 			slot = (method - NV097_SET_TEXGEN_S) / 16;
 			unsigned int reg = (slot < 2) ? NV_PGRAPH_CSV1_A
@@ -1149,11 +1000,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 
-		case NV097_SET_TEXGEN_VIEW_MODEL:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_TEXGEN_REF,
-				parameter);
-			break;
-
 		CASE_4(NV097_SET_FOG_PLANE, 4):
 			slot = (method - NV097_SET_FOG_PLANE) / 4;
 			pg->vsh_constants[NV_IGRAPH_XF_XFCTX_FOG][slot] = parameter;
@@ -1177,26 +1023,6 @@ void pgraph_handle_method(NV2AState *d,
 			slot = (method - NV097_SET_EYE_POSITION) / 4;
 			pg->vsh_constants[NV_IGRAPH_XF_XFCTX_EYEP][slot] = parameter;
 			pg->vsh_constants_dirty[NV_IGRAPH_XF_XFCTX_EYEP] = true;
-			break;
-
-		CASE_8(NV097_SET_COMBINER_FACTOR0, 4):
-			slot = (method - NV097_SET_COMBINER_FACTOR0) / 4;
-			pg->regs[RI(NV_PGRAPH_COMBINEFACTOR0 + slot * 4)] = parameter;
-			break;
-
-		CASE_8(NV097_SET_COMBINER_FACTOR1, 4):
-			slot = (method - NV097_SET_COMBINER_FACTOR1) / 4;
-			pg->regs[RI(NV_PGRAPH_COMBINEFACTOR1 + slot * 4)] = parameter;
-			break;
-
-		CASE_8(NV097_SET_COMBINER_ALPHA_OCW, 4):
-			slot = (method - NV097_SET_COMBINER_ALPHA_OCW) / 4;
-			pg->regs[RI(NV_PGRAPH_COMBINEALPHAO0 + slot * 4)] = parameter;
-			break;
-
-		CASE_8(NV097_SET_COMBINER_COLOR_ICW, 4):
-			slot = (method - NV097_SET_COMBINER_COLOR_ICW) / 4;
-			pg->regs[RI(NV_PGRAPH_COMBINECOLORI0 + slot * 4)] = parameter;
 			break;
 
 		CASE_4(NV097_SET_VIEWPORT_SCALE, 4):
@@ -1449,16 +1275,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 
-		case NV097_SET_LOGIC_OP_ENABLE:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_BLEND)],
-					 NV_PGRAPH_BLEND_LOGICOP_ENABLE, parameter);
-			break;
-
-		case NV097_SET_LOGIC_OP:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_BLEND)],
-					 NV_PGRAPH_BLEND_LOGICOP, parameter & 0xF);
-			break;
-
 		case NV097_CLEAR_REPORT_VALUE:
 
 			/* FIXME: Does this have a value in parameter? Also does this (also?) modify
@@ -1624,18 +1440,6 @@ void pgraph_handle_method(NV2AState *d,
 			pg->texture_dirty[slot] = true;
 			break;
 		}
-		CASE_4(NV097_SET_TEXTURE_CONTROL0, 64):
-			slot = (method - NV097_SET_TEXTURE_CONTROL0) / 64;
-			pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + slot*4)] = parameter;
-			break;
-		CASE_4(NV097_SET_TEXTURE_CONTROL1, 64):
-			slot = (method - NV097_SET_TEXTURE_CONTROL1) / 64;
-			pg->regs[RI(NV_PGRAPH_TEXCTL1_0 + slot*4)] = parameter;
-			break;
-		CASE_4(NV097_SET_TEXTURE_FILTER, 64):
-			slot = (method - NV097_SET_TEXTURE_FILTER) / 64;
-			pg->regs[RI(NV_PGRAPH_TEXFILTER0 + slot * 4)] = parameter;
-			break;
 		CASE_4(NV097_SET_TEXTURE_IMAGE_RECT, 64):
 			slot = (method - NV097_SET_TEXTURE_IMAGE_RECT) / 64;
 			pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + slot * 4)] = parameter;
@@ -1660,10 +1464,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 
-		CASE_4(NV097_SET_TEXTURE_BORDER_COLOR, 64):
-			slot = (method - NV097_SET_TEXTURE_BORDER_COLOR) / 64;
-			pg->regs[RI(NV_PGRAPH_BORDERCOLOR0 + slot * 4)] = parameter;
-			break;
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_MAT + 0x0, 64):
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_MAT + 0x4, 64):
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_MAT + 0x8, 64):
@@ -1736,11 +1536,6 @@ void pgraph_handle_method(NV2AState *d,
 			pg->inline_array[
 				pg->inline_array_length++] = parameter;
 			break;
-		CASE_3(NV097_SET_EYE_VECTOR, 4):
-			slot = (method - NV097_SET_EYE_VECTOR) / 4;
-			pg->regs[RI(NV_PGRAPH_EYEVEC0 + slot * 4)] = parameter;
-			break;
-
 		CASE_32(NV097_SET_VERTEX_DATA2F_M, 4): {
 			slot = (method - NV097_SET_VERTEX_DATA2F_M) / 4;
 			unsigned int part = slot % 2;
@@ -1813,9 +1608,6 @@ void pgraph_handle_method(NV2AState *d,
 			}
 			break;
 		}
-		case NV097_SET_SEMAPHORE_OFFSET:
-			pg->regs[RI(NV_PGRAPH_SEMAPHOREOFFSET)] = parameter;
-			break;
 		case NV097_BACK_END_WRITE_SEMAPHORE_RELEASE: {
 			pgraph_update_surface(d, false, true, true);
 
@@ -1837,14 +1629,6 @@ void pgraph_handle_method(NV2AState *d,
 
 			break;
 		}
-		case NV097_SET_ZSTENCIL_CLEAR_VALUE:
-			pg->regs[RI(NV_PGRAPH_ZSTENCILCLEARVALUE)] = parameter;
-			break;
-
-		case NV097_SET_COLOR_CLEAR_VALUE:
-			pg->regs[RI(NV_PGRAPH_COLORCLEARVALUE)] = parameter;
-			break;
-
 		case NV097_CLEAR_SURFACE: {
 			pg->clear_surface = parameter;
 			if (pgraph_draw_clear != nullptr) {
@@ -1853,48 +1637,9 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 
-		case NV097_SET_CLEAR_RECT_HORIZONTAL:
-			pg->regs[RI(NV_PGRAPH_CLEARRECTX)] = parameter;
-			break;
-		case NV097_SET_CLEAR_RECT_VERTICAL:
-			pg->regs[RI(NV_PGRAPH_CLEARRECTY)] = parameter;
-			break;
-
-		CASE_2(NV097_SET_SPECULAR_FOG_FACTOR, 4) :
-			slot = (method - NV097_SET_SPECULAR_FOG_FACTOR) / 4;
-			pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR0 + slot * 4)] = parameter;
-			break;
-
-		case NV097_SET_SHADER_CLIP_PLANE_MODE:
-			pg->regs[RI(NV_PGRAPH_SHADERCLIPMODE)] = parameter;
-			break;
-
-		CASE_8(NV097_SET_COMBINER_COLOR_OCW, 4) :
-			slot = (method - NV097_SET_COMBINER_COLOR_OCW) / 4;
-			pg->regs[RI(NV_PGRAPH_COMBINECOLORO0 + slot * 4)] = parameter;
-			break;
-
-		case NV097_SET_COMBINER_CONTROL:
-			pg->regs[RI(NV_PGRAPH_COMBINECTL)] = parameter;
-			break;
-
 		case NV097_SET_SHADOW_ZSLOPE_THRESHOLD:
 			pg->regs[RI(NV_PGRAPH_SHADOWZSLOPETHRESHOLD)] = parameter;
 			assert(parameter == 0x7F800000); /* FIXME: Unimplemented */
-			break;
-
-		case NV097_SET_SHADER_STAGE_PROGRAM:
-			pg->regs[RI(NV_PGRAPH_SHADERPROG)] = parameter;
-			break;
-
-		case NV097_SET_SHADER_OTHER_STAGE_INPUT:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SHADERCTL)], NV_PGRAPH_SHADERCTL_OTHER_STAGE_INPUT,
-				GET_MASK(parameter, NV_PGRAPH_SHADERCTL_OTHER_STAGE_INPUT));
-			break;
-
-		case NV097_SET_DOT_RGBMAPPING:
-			SET_MASK(pg->regs[RI(NV_PGRAPH_SHADERCTL)], NV_PGRAPH_SHADERCTL_DOT_RGBMAPPING,
-				GET_MASK(parameter, NV_PGRAPH_SHADERCTL_DOT_RGBMAPPING));
 			break;
 
 		case NV097_SET_TRANSFORM_EXECUTION_MODE:
@@ -2072,6 +1817,8 @@ void pgraph_init(NV2AState *d)
     int i;
 
     PGRAPHState *pg = &d->pgraph;
+
+	nv097_init_method_table();
 
 	qemu_mutex_init(&pg->pgraph_lock);
 	qemu_cond_init(&pg->interrupt_cond);
