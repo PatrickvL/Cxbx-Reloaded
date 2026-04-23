@@ -40,8 +40,14 @@ Migrate Cxbx-Reloaded from the current **HLE D3D patch + D3D11 backend** archite
 │ Globals      │ │          │ │ - Fixed-Function  │
 └──────────────┘ └──────────┘ └──────────────────┘
 
-Meanwhile, NV2A pushbuffer is DRAINED and DISCARDED by PFIFO puller thread.
+Meanwhile, NV2A pushbuffer IS PROCESSED by PFIFO puller thread into PGRAPH regs[],
+but HLE draw path reads from HLE state mirrors — NOT from PGRAPH.
 MMIO access trapped by VEH → 10-15 layer dispatch (distorm decode per access).
+
+Note: PFIFO puller was previously draining/discarding commands. It now dispatches
+methods >= 0x100 to pgraph_handle_method(), populating regs[]. However, this state
+is NOT consumed by the D3D11 rendering path due to a race condition: HLE draw calls
+happen before the puller has finished processing the pushbuffer for that frame.
 ```
 
 ## Target Architecture
@@ -150,13 +156,15 @@ rendering interleaved with state management. We need a clean state machine.
   (USER writes) can be handled with minimal overhead.
 
 ### 1.4 — Enable PFIFO Puller to Execute PGRAPH Methods in HLE Mode
-- **Current behavior**: When `!opengl_enabled`, puller thread drains CACHE1 without processing
-- **Change**: Always call `pgraph_handle_method()` for the **state machine** portion
-- The state machine updates `PGRAPHState` registers, but does NOT render
-- Rendering is triggered separately when a draw-triggering method arrives:
-  - `NV097_SET_BEGIN_END` with parameter=0 (end of primitive)
-  - `NV097_CLEAR_SURFACE`
-  - Flip/present commands
+- **Current behavior**: Puller dispatches methods >= 0x100 to `pgraph_handle_method()`
+  which populates `PGRAPHState.regs[]` — **this is already implemented**
+- **Remaining issue**: HLE draw calls execute before the puller finishes processing
+  pushbuffer commands (race condition). The RC interpreter was reverted to read from
+  PSDef (HLE state) because PGRAPH registers were all zeros at draw time.
+- **Solution**: Either (a) flush/synchronize the puller before each HLE draw, or
+  (b) move draw triggering to the puller thread itself (Phase 3 target)
+- Draw function pointers (`pgraph_draw_arrays` etc.) remain `nullptr` in HLE mode,
+  so draw-triggering methods in `pgraph_handle_method` are safe no-ops
 
 ### 1.5 — Optimize PFIFO Command Fetch
 - Current pusher thread reads 32-bit words one at a time from Xbox memory
@@ -173,7 +181,9 @@ read from the NV2A PGRAPH register state populated by Phase 1.
 
 ### 2.1 — RC Interpreter: Switch from Xbox RenderState to PGRAPH Registers
 - **Current source**: `CxbxD3D11UploadRCInterpreterState()` in `XbPixelShaderCompiler.cpp`
-  reads `D3D__RenderState[]` and `X_D3DPIXELSHADERDEF` from Xbox HLE state
+  reads `X_D3DPIXELSHADERDEF` from `XboxRenderStates.GetPixelShaderRenderStatePointer()`
+  (HLE state). An earlier attempt to read from PGRAPH `regs[]` was **reverted** due to
+  the puller race condition (PGRAPH registers all zeros at draw time).
 - **New source**: Read combiner registers directly from `PGRAPHState.regs[]`:
   - `NV_PGRAPH_COMBINECOLORI0..7` → RGB stage inputs
   - `NV_PGRAPH_COMBINECOLORO0..7` → RGB stage outputs
@@ -192,7 +202,9 @@ read from the NV2A PGRAPH register state populated by Phase 1.
 
 ### 2.2 — VS Interpreter: Switch from Xbox VertexShader Slots to PGRAPH Program Data
 - **Current source**: `CxbxD3D11UploadVSInterpreterState()` in `XbVertexShader.cpp`
-  reads Xbox VertexShader microcode from HLE-cached function slots
+  reads raw NV2A vertex shader microcode from HLE-cached function slots
+  (`GetCxbxVertexShaderSlotPtr(g_Xbox_VertexShader_FunctionSlots_StartAddress)`).
+  Uploads up to 136 × 4 DWORDs into `VSInterpreterCBLayout` at `b3` (2192 bytes).
 - **New source**: Read directly from `PGRAPHState`:
   - `program_data[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][4]` — raw VS microcode (4×32-bit per instruction)
   - `vsh_constants[NV2A_VERTEXSHADER_CONSTANTS][4]` — constant registers (192 × float4)
@@ -208,18 +220,23 @@ read from the NV2A PGRAPH register state populated by Phase 1.
 ### 2.3 — Vertex Attribute Fetch: Switch to PGRAPH Vertex Array State
 - **Current**: `Backend_D3D11_IABypass.cpp` reads from `g_Xbox_SetStreamSource[]` (HLE state)
 - **New**: Read from `PGRAPHState.vertex_attributes[16]`:
-  - `dma_select`, `offset`, `format`, `size`, `stride` per attribute
-  - `dma_gl_*` for DMA context (physical address base)
+  - `dma_select`, `offset`, `format`, `size`, `count`, `stride` per attribute
+  - `inline_value[4]` for NV2A sticky/default attribute values
+  - `dma_vertex_a` / `dma_vertex_b` for DMA context (physical address base)
+- **Cleanup required**: Remove GL-specific fields from `VertexAttribute` struct:
+  - `gl_count`, `gl_type`, `gl_normalize`, `gl_converted_buffer`, `gl_inline_buffer`
+  - `needs_conversion`, `converted_buffer`, `converted_elements`, `converted_size`
 - Vertex data still fetched from Xbox memory via SRVs, but address/format comes from PGRAPH
 
 ### 2.4 — Surface/Render Target State from PGRAPH
 - **Current**: `g_pXbox_RenderTarget`, `g_pXbox_DepthStencil` (HLE globals)
-- **New**: Read from PGRAPH:
-  - `NV_PGRAPH_SURFACEFORMAT` → color/zeta format
-  - `NV_PGRAPH_SURFACECOLOROFFSET` → color buffer address in VRAM
-  - `NV_PGRAPH_SURFACEZETAOFFSET` → depth buffer address
-  - `NV_PGRAPH_SURFACEPITCH` → row pitch
-  - `NV_PGRAPH_SURFACECLIPHORIZ/VERT` → surface dimensions
+- **New**: Read from PGRAPH and NV097 methods:
+  - `NV097_SET_SURFACE_FORMAT` (0x0208) → color/zeta format
+  - `NV097_SET_SURFACE_COLOR_OFFSET` (0x0210) → color buffer address in VRAM
+  - `NV097_SET_SURFACE_ZETA_OFFSET` (0x0214) → depth buffer address
+  - `NV097_SET_SURFACE_PITCH` (0x020C) → row pitch
+  - `NV_PGRAPH_SURFACE` (MMIO 0x0710) → surface type/shape
+  - Surface clip from `NV097_SET_SURFACE_CLIP_HORIZONTAL` / `VERTICAL`
 
 ### 2.5 — Remaining Render State from PGRAPH
 - Blend state: `NV_PGRAPH_BLEND`, `NV_PGRAPH_BLENDCOLOR`
