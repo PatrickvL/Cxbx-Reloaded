@@ -500,6 +500,13 @@ void CxbxUpdateNativeD3DResources()
    	XboxRenderStates.Apply();
    	XboxTextureStates.Apply();
 
+	// Override blend/depth-stencil/rasterizer state from PGRAPH registers.
+	// This runs after XboxRenderStates.Apply() so PGRAPH values take precedence
+	// for pipeline state, while HLE still handles minor states (point sprite, line width).
+	if (g_NV2A) {
+		CxbxD3D11UpdatePipelineStateFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
+	}
+
    	// If Pixel Shaders are not disabled, process them
    	if (!g_DisablePixelShaders) {
    	   	CxbxUpdateActivePixelShader();

@@ -100,6 +100,12 @@ void CxbxD3D11ReleaseBackendResources();
 // Called from ApplySimpleRenderState and ApplyComplexRenderState.
 void CxbxD3D11SetRenderState(uint32_t State, uint32_t Value);
 
+// Read NV2A PGRAPH registers and update D3D11 blend/depth-stencil/rasterizer descriptors.
+// Called from CxbxUpdateNativeD3DResources() when g_NV2A is available, overriding any
+// values previously set by XboxRenderStates.Apply().
+struct PGRAPHState; // forward decl
+void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg);
+
 // Recreate D3D11 state objects that have been marked dirty, and flush constant buffers
 void CxbxD3D11ApplyDirtyStates();
 
