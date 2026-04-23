@@ -97,6 +97,21 @@ xbox::X_D3DSurface* CxbxLookupSurfaceByDataAddr(xbox::addr_xt dataAddr)
 	return (it != g_SurfacesByDataAddr.end()) ? it->second : nullptr;
 }
 
+// Side-map: VRAM data offset → Xbox texture pointer
+static std::unordered_map<xbox::addr_xt, xbox::X_D3DBaseTexture*> g_TexturesByDataAddr;
+
+void CxbxRegisterTextureByDataAddr(xbox::addr_xt dataAddr, xbox::X_D3DBaseTexture *pTexture)
+{
+	if (dataAddr != xbox::zero)
+		g_TexturesByDataAddr[dataAddr] = pTexture;
+}
+
+xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr)
+{
+	auto it = g_TexturesByDataAddr.find(dataAddr);
+	return (it != g_TexturesByDataAddr.end()) ? it->second : nullptr;
+}
+
 xbox::X_VERTEXSHADERCONSTANTMODE g_Xbox_VertexShaderConstantMode = X_D3DSCM_192CONSTANTS; // Set by D3DDevice_SetShaderConstantMode, TODO : Move to XbVertexShader.cpp
 xbox::dword_xt                   g_Xbox_BaseVertexIndex = 0; // Set by D3DDevice_SetIndices, read by D3DDevice_DrawIndexedVertices
 

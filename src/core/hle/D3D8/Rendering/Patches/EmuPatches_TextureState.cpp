@@ -263,6 +263,10 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture)
 	XB_TRMP(D3DDevice_SetTexture)(Stage, pTexture);
 
 	g_pXbox_SetTexture[Stage] = pTexture;
+
+	// Register in the VRAM-offset → texture side-map so PGRAPH TEXOFFSET lookups work
+	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero)
+		CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
 }
 
 // ******************************************************************
@@ -330,6 +334,8 @@ xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
 
 			// Use the above modified copy, instead of altering the active Xbox texture
 			g_pXbox_SetTexture[Stage] = &CxbxActiveTextureCopies[Stage];
+			// Register in the VRAM-offset → texture side-map for PGRAPH TEXOFFSET lookup
+			CxbxRegisterTextureByDataAddr(Data, &CxbxActiveTextureCopies[Stage]);
 			// Note : Since g_pXbox_SetTexture and CxbxActiveTextureCopies are host-managed,
 			// Xbox code should never alter these members (so : no reference counting, etc).
 			// As long as that's guaranteed, this is a safe way to emulate SwitchTexture.

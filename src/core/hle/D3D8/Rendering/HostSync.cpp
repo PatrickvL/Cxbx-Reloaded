@@ -99,6 +99,23 @@ void CxbxUpdateHostTextures()
 				}
 			}
 		}
+
+		// Most authoritative: read the texture VRAM offset from PGRAPH
+		// registers and resolve to an Xbox texture via the side-map
+		// populated by SetTexture/SwitchTexture patches.  This covers
+		// all cases including direct pushbuffer writes.
+		if (g_NV2A) {
+			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+			uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
+			if (texOffset != 0) {
+				auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
+				if (pgTex != nullptr)
+					pXboxBaseTexture = pgTex;
+			} else {
+				pXboxBaseTexture = xbox::zeroptr;
+			}
+		}
+
 		ID3D11Resource* pHostBaseTexture = nullptr;
 		bool bNeedRelease = false;
 		if (pXboxBaseTexture != xbox::zeroptr) {

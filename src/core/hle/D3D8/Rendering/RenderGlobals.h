@@ -179,6 +179,12 @@ extern xbox::X_D3DMULTISAMPLE_TYPE   g_Xbox_MultiSampleType;
 // to resolve PGRAPH surface_color/zeta offsets to host D3D11 textures.
 void CxbxRegisterSurfaceByDataAddr(xbox::addr_xt dataAddr, xbox::X_D3DSurface *pSurface);
 xbox::X_D3DSurface* CxbxLookupSurfaceByDataAddr(xbox::addr_xt dataAddr);
+
+// Side-map: VRAM data offset → Xbox texture pointer.
+// Populated by D3DDevice_SetTexture/SwitchTexture patches; queried by
+// CxbxUpdateHostTextures to resolve PGRAPH TEXOFFSET values to Xbox textures.
+void CxbxRegisterTextureByDataAddr(xbox::addr_xt dataAddr, xbox::X_D3DBaseTexture *pTexture);
+xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr);
 extern xbox::X_VERTEXSHADERCONSTANTMODE g_Xbox_VertexShaderConstantMode;
 extern xbox::dword_xt                g_Xbox_BaseVertexIndex;
 extern xbox::PVOID                   g_pXbox_Palette_Data[xbox::X_D3DTS_STAGECOUNT];

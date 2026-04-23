@@ -353,6 +353,10 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture_4__LT
 
    	g_pXbox_SetTexture[Stage] = pTexture;
 
+   	// Register in VRAM-offset → texture side-map for PGRAPH TEXOFFSET lookup
+   	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero)
+   	   	CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
+
    	__asm {
    	   	LTCG_EPILOGUE
    	   	ret  4
@@ -397,6 +401,10 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture_4__LT
    	}
 
    	g_pXbox_SetTexture[Stage] = pTexture;
+
+   	// Register in VRAM-offset → texture side-map for PGRAPH TEXOFFSET lookup
+   	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero)
+   	   	CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
 
    	__asm {
    	   	LTCG_EPILOGUE
