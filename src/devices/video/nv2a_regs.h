@@ -46,6 +46,8 @@
 #define NV_PRAMIN       19  /* RAMIN access */
 #define NV_USER         20  /* PFIFO MMIO and DMA submission area */
 
+#define NV_NUM_GPU_TILES                                 8
+
 #define NV_PMC_BOOT_0                                    0x00000000
 #define NV_PMC_BOOT_1                                    0x00000004
 #define NV_PMC_INTR_0                                    0x00000100
@@ -380,6 +382,7 @@
 #       define NV_PGRAPH_CSV0_D_FOGGENMODE_PLANAR                   2
 #       define NV_PGRAPH_CSV0_D_FOGGENMODE_ABS_PLANAR               3
 #       define NV_PGRAPH_CSV0_D_FOGGENMODE_FOG_X                    4
+#   define NV_PGRAPH_CSV0_D_POINTPARAMSENABLE                   0x02000000
 #   define NV_PGRAPH_CSV0_D_MODE                                0xC0000000
 #   define NV_PGRAPH_CSV0_D_SKIN                                0x1C000000
 #       define NV_PGRAPH_CSV0_D_SKIN_OFF                            0
@@ -391,11 +394,15 @@
 #       define NV_PGRAPH_CSV0_D_SKIN_4                              6
 #define NV_PGRAPH_CSV0_C                                 0x00000FB8
 #   define NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START                0x0000FF00
+#   define NV_PGRAPH_CSV0_C_SPECULAR_ENABLE                     (1 << 16)
+#   define NV_PGRAPH_CSV0_C_ALPHA_FROM_MATERIAL_SPECULAR        (1 << 17)
+#   define NV_PGRAPH_CSV0_C_SEPARATE_SPECULAR                   (1 << 18)
 #   define NV_PGRAPH_CSV0_C_SPECULAR                            (3 << 19)
 #   define NV_PGRAPH_CSV0_C_DIFFUSE                             (3 << 21)
 #   define NV_PGRAPH_CSV0_C_AMBIENT                             (3 << 23)
 #   define NV_PGRAPH_CSV0_C_EMISSION                            (3 << 25)
 #   define NV_PGRAPH_CSV0_C_NORMALIZATION_ENABLE                (1 << 27)
+#   define NV_PGRAPH_CSV0_C_LOCALEYE                            (1 << 30)
 #   define NV_PGRAPH_CSV0_C_LIGHTING                            (1 << 31)
 #define NV_PGRAPH_CSV1_B                                 0x00000FBC
 #define NV_PGRAPH_CSV1_A                                 0x00000FC0
@@ -425,6 +432,8 @@
 #   define NV_PGRAPH_CHEOPS_OFFSET_PROG_LD_PTR                  0x000000FF
 #   define NV_PGRAPH_CHEOPS_OFFSET_CONST_LD_PTR                 0x0000FF00
 #define NV_PGRAPH_DMA_STATE                              0x00001034
+#define NV_PGRAPH_ANTIALIASING                           0x00001800
+#   define NV_PGRAPH_ANTIALIASING_ENABLE                        (1 << 0)
 #define NV_PGRAPH_BLEND                                  0x00001804
 #   define NV_PGRAPH_BLEND_EQN                                  0x00000007
 #   define NV_PGRAPH_BLEND_EN                                   (1 << 3)
@@ -480,6 +489,10 @@
 #       define NV_PGRAPH_CLEARRECTY_YMIN                          0x00000FFF
 #       define NV_PGRAPH_CLEARRECTY_YMAX                          0x0FFF0000
 #define NV_PGRAPH_COLORCLEARVALUE                        0x0000186C
+#define NV_PGRAPH_COLORKEYCOLOR0                         0x00001870
+#define NV_PGRAPH_COLORKEYCOLOR1                         0x00001874
+#define NV_PGRAPH_COLORKEYCOLOR2                         0x00001878
+#define NV_PGRAPH_COLORKEYCOLOR3                         0x0000187C
 #define NV_PGRAPH_COMBINEFACTOR0                         0x00001880
 #define NV_PGRAPH_COMBINEFACTOR1                         0x000018A0
 #define NV_PGRAPH_COMBINEALPHAI0                         0x000018C0
@@ -539,7 +552,14 @@
 #       define NV_PGRAPH_CONTROL_2_STENCIL_OP_V_INCR                7
 #       define NV_PGRAPH_CONTROL_2_STENCIL_OP_V_DECR                8
 #define NV_PGRAPH_CONTROL_3                              0x00001958
+#   define NV_PGRAPH_CONTROL_3_PROVOKING_VERTEX                 (1 << 0)
+#       define NV_PGRAPH_CONTROL_3_PROVOKING_VERTEX_LAST            0
+#       define NV_PGRAPH_CONTROL_3_PROVOKING_VERTEX_FIRST           1
+#   define NV_PGRAPH_CONTROL_3_SHADEMODE                        (1 << 7)
+#       define NV_PGRAPH_CONTROL_3_SHADEMODE_FLAT                   0
+#       define NV_PGRAPH_CONTROL_3_SHADEMODE_SMOOTH                 1
 #   define NV_PGRAPH_CONTROL_3_FOGENABLE                        (1 << 8)
+#   define NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE                (1 << 9)
 #   define NV_PGRAPH_CONTROL_3_FOG_MODE                         0x00070000
 #       define NV_PGRAPH_CONTROL_3_FOG_MODE_LINEAR                  0
 #       define NV_PGRAPH_CONTROL_3_FOG_MODE_EXP                     1
@@ -554,6 +574,7 @@
 #   define NV_PGRAPH_FOGCOLOR_ALPHA                             0xFF000000
 #define NV_PGRAPH_FOGPARAM0                              0x00001984
 #define NV_PGRAPH_FOGPARAM1                              0x00001988
+#define NV_PGRAPH_POINTSIZE                              0x0000198C
 #define NV_PGRAPH_SETUPRASTER                            0x00001990
 #   define NV_PGRAPH_SETUPRASTER_FRONTFACEMODE                  0x00000003
 #       define NV_PGRAPH_SETUPRASTER_FRONTFACEMODE_FILL             0
@@ -563,6 +584,7 @@
 #   define NV_PGRAPH_SETUPRASTER_POFFSETPOINTENABLE             (1 << 6)
 #   define NV_PGRAPH_SETUPRASTER_POFFSETLINEENABLE              (1 << 7)
 #   define NV_PGRAPH_SETUPRASTER_POFFSETFILLENABLE              (1 << 8)
+#   define NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE              (1 << 9)
 #   define NV_PGRAPH_SETUPRASTER_LINESMOOTHENABLE               (1 << 10)
 #   define NV_PGRAPH_SETUPRASTER_POLYSMOOTHENABLE               (1 << 11)
 #   define NV_PGRAPH_SETUPRASTER_CULLCTRL                       0x00600000
@@ -579,6 +601,8 @@
 #   define NV_PGRAPH_SHADERCTL_OTHER_STAGE_INPUT                0x0FFFF000
 #define NV_PGRAPH_SHADERPROG                             0x0000199C
 #define NV_PGRAPH_SEMAPHOREOFFSET                        0x000019A0
+#define NV_PGRAPH_SHADOWCTL                              0x000019A4
+#   define NV_PGRAPH_SHADOWCTL_SHADOW_ZFUNC                     0x00000007
 #define NV_PGRAPH_SHADOWZSLOPETHRESHOLD                  0x000019A8
 #define NV_PGRAPH_SPECFOGFACTOR0                         0x000019AC
 #define NV_PGRAPH_SPECFOGFACTOR1                         0x000019B0
@@ -599,7 +623,9 @@
 #define NV_PGRAPH_TEXADDRESS2                            0x000019C4
 #define NV_PGRAPH_TEXADDRESS3                            0x000019C8
 #define NV_PGRAPH_TEXCTL0_0                              0x000019CC
+#   define NV_PGRAPH_TEXCTL0_0_COLORKEYMODE                     0x03
 #   define NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN                      (1 << 2)
+#   define NV_PGRAPH_TEXCTL0_0_MAX_ANISOTROPY                   0x30
 #   define NV_PGRAPH_TEXCTL0_0_MAX_LOD_CLAMP                    0x0003FFC0
 #   define NV_PGRAPH_TEXCTL0_0_MIN_LOD_CLAMP                    0x3FFC0000
 #   define NV_PGRAPH_TEXCTL0_0_ENABLE                           (1 << 30)
@@ -690,6 +716,10 @@
 #define NV_PGRAPH_WINDOWCLIPY5                           0x00001A78
 #define NV_PGRAPH_WINDOWCLIPY6                           0x00001A7C
 #define NV_PGRAPH_WINDOWCLIPY7                           0x00001A80
+#define NV_PGRAPH_ZCOMPRESSOCCLUDE                       0x00001A84
+#   define NV_PGRAPH_ZCOMPRESSOCCLUDE_ZCLAMP_EN                 (1 << 4)
+#       define NV_PGRAPH_ZCOMPRESSOCCLUDE_ZCLAMP_EN_CULL            0
+#       define NV_PGRAPH_ZCOMPRESSOCCLUDE_ZCLAMP_EN_CLAMP           1
 #define NV_PGRAPH_ZSTENCILCLEARVALUE                     0x00001A88
 #define NV_PGRAPH_ZCLIPMIN                               0x00001A90
 #define NV_PGRAPH_ZOFFSETBIAS                            0x00001AA4
@@ -1026,6 +1056,10 @@
 /* graphic classes and methods */
 #define NV_SET_OBJECT                                        0x00000000
 
+#define NV_BETA                                          0x0012
+#   define NV012_SET_OBJECT                                   0x00000000
+#   define NV012_SET_BETA                                     0x00000300
+
 #define NV_MEMORY_TO_MEMORY_FORMAT                       0x0039
 
 #define NV_CONTEXT_PATTERN                               0x0044
@@ -1038,8 +1072,10 @@
 #   define NV062_SET_COLOR_FORMAT                             0x00000300
 #       define NV062_SET_COLOR_FORMAT_LE_Y8                    0x01
 #       define NV062_SET_COLOR_FORMAT_LE_R5G6B5                0x04
+#       define NV062_SET_COLOR_FORMAT_LE_X8R8G8B8_Z8R8G8B8     0x06
 #       define NV062_SET_COLOR_FORMAT_LE_X8R8G8B8              0x07
 #       define NV062_SET_COLOR_FORMAT_LE_A8R8G8B8              0x0A
+#       define NV062_SET_COLOR_FORMAT_LE_Y32                   0x0B
 #   define NV062_SET_PITCH                                    0x00000304
 #   define NV062_SET_OFFSET_SOURCE                            0x00000308
 #   define NV062_SET_OFFSET_DESTIN                            0x0000030C
@@ -1048,6 +1084,7 @@
 #   define NV09F_SET_OBJECT                                   0x00000000
 #   define NV09F_SET_CONTEXT_SURFACES                         0x0000019C
 #   define NV09F_SET_OPERATION                                0x000002FC
+#       define NV09F_SET_OPERATION_BLEND_AND                      2
 #       define NV09F_SET_OPERATION_SRCCOPY                        3
 #   define NV09F_CONTROL_POINT_IN                             0x00000300
 #   define NV09F_CONTROL_POINT_OUT                            0x00000304
@@ -1310,6 +1347,8 @@
 #       define NV097_SET_STENCIL_OP_V_INCR                        0x8507
 #       define NV097_SET_STENCIL_OP_V_DECR                        0x8508
 #   define NV097_SET_SHADE_MODE                               0x0000037C
+#       define NV097_SET_SHADE_MODE_V_FLAT                        0x1D00
+#       define NV097_SET_SHADE_MODE_V_SMOOTH                      0x1D01
 #   define NV097_SET_LINE_WIDTH                               0x00000380
 #   define NV097_SET_POLYGON_OFFSET_SCALE_FACTOR              0x00000384
 #   define NV097_SET_POLYGON_OFFSET_BIAS                      0x00000388
@@ -1348,6 +1387,7 @@
 #   define NV097_SET_TEXGEN_Q                                 0x000003CC // [4.3]
 #   define NV097_SET_TEXTURE_MATRIX_ENABLE                    0x00000420 // [4]
 #   define NV097_SET_POINT_SIZE                               0x0000043C
+#       define NV097_SET_POINT_SIZE_V_MAX                         0x1FF
 #   define NV097_SET_PROJECTION_MATRIX                        0x00000440 // [16]
 #   define NV097_SET_MODEL_VIEW_MATRIX                        0x00000480 // [16]
 #   define NV097_SET_MODEL_VIEW_MATRIX1                       0x000004C0 // [16]
@@ -1568,6 +1608,7 @@
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_Y16_FIXED 0x2C
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_Y16_FLOAT 0x2D
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_X8_Y24_FIXED 0x2E
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_X8_Y24_FLOAT 0x2F
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED 0x30
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FLOAT 0x31
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_Y16            0x32
@@ -1579,6 +1620,7 @@
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R5G5B5A1       0x38
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R4G4B4A4       0x39
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8       0x3A
+#           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_B8G8R8A8       0x3B
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_SZ_R8G8B8A8       0x3C
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_R5G5B5A1 0x3D
 #           define NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_R4G4B4A4 0x3E
@@ -1628,7 +1670,11 @@
 #   define NV097_BACK_END_WRITE_SEMAPHORE_RELEASE             0x00001D70
 #   define NV097_TEXTURE_READ_SEMAPHORE_RELEASE               0x00001D74
 #   define NV097_SET_ZMIN_MAX_CONTROL                         0x00001D78
+#       define NV097_SET_ZMIN_MAX_CONTROL_ZCLAMP_EN              0x000000F0
+#           define NV097_SET_ZMIN_MAX_CONTROL_ZCLAMP_EN_CULL          0
+#           define NV097_SET_ZMIN_MAX_CONTROL_ZCLAMP_EN_CLAMP         1
 #   define NV097_SET_ANTI_ALIASING_CONTROL                    0x00001D7C
+#       define NV097_SET_ANTI_ALIASING_CONTROL_ENABLE             (1 << 0)
 #   define NV097_SET_COMPRESS_ZBUFFER_EN                      0x00001D80
 #   define NV097_SET_OCCLUDE_ZSTENCIL_EN                      0x00001D84
 #   define NV097_SET_ZSTENCIL_CLEAR_VALUE                     0x00001D8C
@@ -1954,7 +2000,7 @@
 #define NV2A_NUM_SUBCHANNELS 8
 #define NV2A_CACHE1_SIZE 128
 
-#define NV2A_MAX_BATCH_LENGTH 0x1FFFF
+#define NV2A_MAX_BATCH_LENGTH 0x1FFFF // Note: xemu bumped this to 0x07FFFF
 #define NV2A_VERTEXSHADER_ATTRIBUTES 16
 #define NV2A_MAX_TEXTURES 4
 

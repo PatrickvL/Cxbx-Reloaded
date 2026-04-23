@@ -1612,8 +1612,40 @@ void pgraph_handle_method(NV2AState *d,
 
 		case NV097_SET_FLAT_SHADE_OP: 
 			assert(parameter <= 1);
-			// TODO : value & 1 = first/last? vertex selection for glShaderMode(GL_FLAT)
+			// Handled by method table: NV_PGRAPH_CONTROL_3_PROVOKING_VERTEX
 			break;
+
+		// TODO: Implement these methods (not table-compatible due to value remapping or multi-reg writes).
+		// See xemu pgraph.c for reference implementations.
+		//
+		// case NV097_SET_POINT_PARAMS_ENABLE:
+		//     Writes TWO registers: PG_SET_MASK(CSV0_D, POINTPARAMSENABLE, param)
+		//     AND PG_SET_MASK(CONTROL_3, POINTPARAMSENABLE, param)
+		//     break;
+		//
+		// case NV097_SET_SHADE_MODE:
+		//     Value remapping: V_FLAT(0x1D00) -> SHADEMODE_FLAT(0),
+		//     V_SMOOTH(0x1D01) -> SHADEMODE_SMOOTH(1)
+		//     Target: NV_PGRAPH_CONTROL_3_SHADEMODE
+		//     break;
+		//
+		// case NV097_SET_POINT_SIZE:
+		//     Bounds check: if (param > NV097_SET_POINT_SIZE_V_MAX) return;
+		//     Then: pgraph_reg_w(pg, NV_PGRAPH_POINTSIZE, param)
+		//     break;
+		//
+		// case NV097_SET_ZMIN_MAX_CONTROL:
+		//     Extracts ZCLAMP_EN field, maps CULL->0, CLAMP->1
+		//     Target: NV_PGRAPH_ZCOMPRESSOCCLUDE_ZCLAMP_EN
+		//     break;
+		//
+		// case NV097_SET_LIGHT_CONTROL:
+		//     Extracts 3 fields from parameter into NV_PGRAPH_CSV0_C:
+		//     - SEPARATE_SPECULAR (bit 0 of param -> bit 18 of CSV0_C)
+		//     - LOCALEYE (bit 16 of param -> bit 30 of CSV0_C)
+		//     - ALPHA_FROM_MATERIAL_SPECULAR (bit 17 of param -> bit 17 of CSV0_C)
+		//     break;
+
 		default:
 			NV2A_GL_DPRINTF(true, "    unhandled  (0x%02x 0x%08x)",
 					graphics_class, method);
