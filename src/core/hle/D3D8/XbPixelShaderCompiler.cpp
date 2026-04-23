@@ -931,7 +931,8 @@ void CxbxD3D11UploadRCInterpreterState()
 	if (!g_pD3D11RCInterpreterCB)
 		return;
 
-	// Always need PSDef for HLE-only fields (PSFinalCombinerConstants flags, etc.)
+	// PSDef needed for: AdjustTextureModes (texModeAdjust flag), AdjustFinalCombiner
+	// (fog/specular enable), and as fallback when PGRAPH is unavailable.
 	const xbox::X_D3DPIXELSHADERDEF *pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
 	if (!pPSDef)
 		return;
@@ -971,9 +972,14 @@ void CxbxD3D11UploadRCInterpreterState()
 		cb.PSCombinerCount.value = pPSDef->PSCombinerCount;
 	}
 
-	// Final combiner constants — still HLE-sourced (Step 3.2 will migrate)
-	cb.PSFinalCombinerConstant[0] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant0);
-	cb.PSFinalCombinerConstant[1] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant1);
+	// Final combiner constants (Step 3.2: migrated to PGRAPH)
+	if (pg) {
+		cb.PSFinalCombinerConstant[0] = DwordColorToFloat4(pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR0)]);
+		cb.PSFinalCombinerConstant[1] = DwordColorToFloat4(pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR1)]);
+	} else {
+		cb.PSFinalCombinerConstant[0] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant0);
+		cb.PSFinalCombinerConstant[1] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant1);
+	}
 
 	// PSTextureModes: from PGRAPH or HLE render state
 	DWORD psTextureModes = pg ? pg->regs[RI(NV_PGRAPH_SHADERPROG)]
@@ -1084,9 +1090,15 @@ void CxbxD3D11UploadRCInterpreterState()
 		cb.ColorSign[stage] = { cs.r, cs.g, cs.b, cs.a };
 	}
 
-	// Fog color — convert from stored ABGR to float4 RGB
-	DWORD fogArgb = FogColor_ABGR_to_ARGB(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR));
-	cb.FogColor = DwordColorToFloat4(fogArgb);
+	// Fog color (Step 3.2: migrated to PGRAPH)
+	// NV_PGRAPH_FOGCOLOR stores the NV097 parameter directly (ABGR layout:
+	// R@bits0-7, B@bits16-23); convert to ARGB for DwordColorToFloat4.
+	if (pg) {
+		cb.FogColor = DwordColorToFloat4(FogColor_ABGR_to_ARGB(pg->regs[RI(NV_PGRAPH_FOGCOLOR)]));
+	} else {
+		// HLE render state also stores ABGR (Xbox kernel swaps R↔B before storing)
+		cb.FogColor = DwordColorToFloat4(FogColor_ABGR_to_ARGB(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR)));
+	}
 
 	// --- Post-processing state (matches compiled PS pipeline) ---
 
@@ -1094,13 +1106,24 @@ void CxbxD3D11UploadRCInterpreterState()
 	cb.TexFmtFixup = { CxbxGetTexFmtFixup(0), CxbxGetTexFmtFixup(1),
 	                    CxbxGetTexFmtFixup(2), CxbxGetTexFmtFixup(3) };
 
-	// Alpha test: x=enable, y=ref/255, z=PC cmpfunc
-	cb.AlphaTest = {
-		static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHATESTENABLE)),
-		static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHAREF)) / 255.0f,
-		static_cast<float>(EmuXB2PC_D3DCMPFUNC((xbox::X_D3DCMPFUNC)XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHAFUNC))),
-		0.0f
-	};
+	// Alpha test: x=enable, y=ref/255, z=cmpfunc (Step 3.2: migrated to PGRAPH)
+	// NV2A ALPHAFUNC values (1=NEVER..8=ALWAYS) match D3D11 comparison func values.
+	if (pg) {
+		uint32_t control0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
+		cb.AlphaTest = {
+			(control0 & NV_PGRAPH_CONTROL_0_ALPHATESTENABLE) ? 1.0f : 0.0f,
+			static_cast<float>(control0 & NV_PGRAPH_CONTROL_0_ALPHAREF) / 255.0f,
+			static_cast<float>((control0 & NV_PGRAPH_CONTROL_0_ALPHAFUNC) >> 8),
+			0.0f
+		};
+	} else {
+		cb.AlphaTest = {
+			static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHATESTENABLE)),
+			static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHAREF)) / 255.0f,
+			static_cast<float>(EmuXB2PC_D3DCMPFUNC((xbox::X_D3DCMPFUNC)XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHAFUNC))),
+			0.0f
+		};
+	}
 
 	// Color key per stage
 	for (int i = 0; i < 4; i++) {
@@ -1109,19 +1132,45 @@ void CxbxD3D11UploadRCInterpreterState()
 		cb.ColorKeyColor[i] = { ckc.r, ckc.g, ckc.b, ckc.a };
 	}
 
-	// Bump environment map matrix per stage
-	for (int i = 0; i < 4; i++) {
-		DWORD bemDwords[4];
-		CxbxGetBumpEnvMatrix(i, bemDwords);
-		cb.BEM[i] = { AsFloat(bemDwords[0]), AsFloat(bemDwords[1]),
-		              AsFloat(bemDwords[2]), AsFloat(bemDwords[3]) };
+	// Bump environment map matrix per stage (Step 3.2: migrated to PGRAPH)
+	// PGRAPH stores BUMPMATxy for stages 1-3 only; stage 0 has no bump env.
+	// Register layout: NV_PGRAPH_BUMPMATxy + (stage-1)*4 per component.
+	if (pg) {
+		cb.BEM[0] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		for (int i = 1; i < 4; i++) {
+			cb.BEM[i] = {
+				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPMAT00 + (i - 1) * 4)]),
+				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPMAT01 + (i - 1) * 4)]),
+				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPMAT10 + (i - 1) * 4)]),
+				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPMAT11 + (i - 1) * 4)])
+			};
+		}
+	} else {
+		for (int i = 0; i < 4; i++) {
+			DWORD bemDwords[4];
+			CxbxGetBumpEnvMatrix(i, bemDwords);
+			cb.BEM[i] = { AsFloat(bemDwords[0]), AsFloat(bemDwords[1]),
+			              AsFloat(bemDwords[2]), AsFloat(bemDwords[3]) };
+		}
 	}
 
-	// Bump luminance scale/offset per stage
-	for (int i = 0; i < 4; i++) {
-		DWORD lumDwords[2];
-		CxbxGetBumpEnvLuminance(i, lumDwords);
-		cb.LUM[i] = { AsFloat(lumDwords[0]), AsFloat(lumDwords[1]), 0.0f, 0.0f };
+	// Bump luminance scale/offset per stage (Step 3.2: migrated to PGRAPH)
+	// PGRAPH stores BUMPSCALE1/BUMPOFFSET1 for stages 1-3; stage 0 = zero.
+	if (pg) {
+		cb.LUM[0] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		for (int i = 1; i < 4; i++) {
+			cb.LUM[i] = {
+				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPSCALE1 + (i - 1) * 4)]),
+				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPOFFSET1 + (i - 1) * 4)]),
+				0.0f, 0.0f
+			};
+		}
+	} else {
+		for (int i = 0; i < 4; i++) {
+			DWORD lumDwords[2];
+			CxbxGetBumpEnvLuminance(i, lumDwords);
+			cb.LUM[i] = { AsFloat(lumDwords[0]), AsFloat(lumDwords[1]), 0.0f, 0.0f };
+		}
 	}
 
 	// Fog info: x=tableMode, y=density, z=start, w=end
