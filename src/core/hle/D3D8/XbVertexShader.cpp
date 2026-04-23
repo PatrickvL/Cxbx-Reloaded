@@ -488,27 +488,53 @@ ID3D11VertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* labe
 	return shader;
 }
 
-// Upload NV2A vertex shader microcode to the VS interpreter constant buffer (cbuffer b1)
+// Upload NV2A vertex shader microcode to the VS interpreter constant buffer (cbuffer b3)
 // and bind it to the VS stage.
+// Reads from PGRAPH program_data[] when available (populated by NV097_SET_TRANSFORM_PROGRAM
+// via the puller thread), with HLE fallback to the pXboxMicrocode slot array.
 void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* pXboxMicrocode)
 {
 	static const UINT VSI_CB_SLOT = 3; // b3 (b1/b2 used by CxbxVertexFetch.hlsli)
 
 	VSInterpreterCBLayout cb = {};
 
-	// Count instructions by scanning for the FLD_FINAL bit
+	// PGRAPH source: read microcode from pg->program_data[] starting at the
+	// hardware program start address (NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START).
+	PGRAPHState *pg = nullptr;
+	if (g_NV2A) {
+		NV2AState *nv2a = g_NV2A->GetDeviceState();
+		pg = &nv2a->pgraph;
+	}
+
 	uint32_t instCount = 0;
-	const uint32_t* pTokens = (const uint32_t*)pXboxMicrocode;
-	for (uint32_t i = 0; i < VSI_MAX_SLOTS; i++) {
-		const uint32_t* slot = &pTokens[i * X_VSH_INSTRUCTION_SIZE];
-		cb.Instructions[i].x = slot[0];
-		cb.Instructions[i].y = slot[1];
-		cb.Instructions[i].z = slot[2];
-		cb.Instructions[i].w = slot[3];
-		instCount = i + 1;
-		// Check FLD_FINAL (bit 0 of SubToken 3)
-		if (slot[3] & 1)
-			break;
+	if (pg) {
+		uint32_t startSlot = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
+			NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START);
+		for (uint32_t i = 0; i < VSI_MAX_SLOTS && (startSlot + i) < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH; i++) {
+			uint32_t slot = startSlot + i;
+			cb.Instructions[i].x = pg->program_data[slot][0];
+			cb.Instructions[i].y = pg->program_data[slot][1];
+			cb.Instructions[i].z = pg->program_data[slot][2];
+			cb.Instructions[i].w = pg->program_data[slot][3];
+			instCount = i + 1;
+			// Check FLD_FINAL (bit 0 of SubToken 3)
+			if (pg->program_data[slot][3] & 1)
+				break;
+		}
+	} else {
+		// HLE fallback: read from the Xbox vertex shader slot array
+		const uint32_t* pTokens = (const uint32_t*)pXboxMicrocode;
+		for (uint32_t i = 0; i < VSI_MAX_SLOTS; i++) {
+			const uint32_t* slot = &pTokens[i * X_VSH_INSTRUCTION_SIZE];
+			cb.Instructions[i].x = slot[0];
+			cb.Instructions[i].y = slot[1];
+			cb.Instructions[i].z = slot[2];
+			cb.Instructions[i].w = slot[3];
+			instCount = i + 1;
+			// Check FLD_FINAL (bit 0 of SubToken 3)
+			if (slot[3] & 1)
+				break;
+		}
 	}
 
 	cb.InstructionCount = instCount;
@@ -519,7 +545,7 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* pXboxMicrocode)
 
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11VSInterpreterCB, &cb, sizeof(cb));
 
-	// Bind the interpreter CB to VS slot b1
+	// Bind the interpreter CB to VS slot b3
 	g_pD3DDeviceContext->VSSetConstantBuffers(VSI_CB_SLOT, 1, &g_pD3D11VSInterpreterCB);
 }
 
