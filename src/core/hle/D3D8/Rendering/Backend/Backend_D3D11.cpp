@@ -177,7 +177,9 @@ ID3D11Buffer              *g_pD3D11FormatConvertCB = nullptr; // constant buffer
 // ******************************************************************
 bool                       g_bUseRCInterpreter = true; // default on — ubershader path
 ID3D11PixelShader         *g_pD3D11RCInterpreterPS = nullptr;
-ID3D11Buffer              *g_pD3D11RCInterpreterCB = nullptr; // matches RCInterpreterCBLayout cbuffer
+ID3D11Buffer              *g_pD3D11RCInterpreterAuxCB = nullptr; // PSAuxCBLayout (software-computed fields)
+ID3D11Buffer              *g_pD3D11PGRegsBuf = nullptr;          // pg->regs[] structured buffer
+ID3D11ShaderResourceView  *g_pD3D11PGRegsSRV = nullptr;          // SRV for g_PGRegs : register(t12)
 bool                       g_bRCInterpreterCBActive = false; // true when RC cbuffer owns b0
 
 // ******************************************************************
@@ -418,18 +420,54 @@ bool CxbxD3D11InitRCInterpreter()
 		return false;
 	}
 
-	// Create the constant buffer
-	hr = CxbxD3D11CreateConstantBuffer(sizeof(RCInterpreterCBLayout), true, &g_pD3D11RCInterpreterCB);
+	// Create the auxiliary constant buffer (software-computed fields only)
+	hr = CxbxD3D11CreateConstantBuffer(sizeof(PSAuxCBLayout), true, &g_pD3D11RCInterpreterAuxCB);
 	if (FAILED(hr)) {
-		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter CreateConstantBuffer failed: 0x%08X", hr);
+		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter CreateConstantBuffer (aux) failed: 0x%08X", hr);
 		g_pD3D11RCInterpreterPS->Release();
 		g_pD3D11RCInterpreterPS = nullptr;
 		return false;
 	}
 
-	EmuLog(LOG_LEVEL::INFO, "RC Interpreter ubershader compiled successfully (%u byte cbuffer)",
-		(unsigned)sizeof(RCInterpreterCBLayout));
+	// Create the PGRAPH regs[] StructuredBuffer<uint> (2048 elements × 4 bytes = 8 KB)
+	// NV_PGRAPH_SIZE = 0x2000/4 = 2048 (from nv2a_int.h)
+	static const UINT PGRAPH_REG_COUNT = 2048;
+	{
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = PGRAPH_REG_COUNT * sizeof(uint32_t); // 8192 bytes
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		desc.StructureByteStride = sizeof(uint32_t); // 4 bytes per element
+		hr = g_pD3DDevice->CreateBuffer(&desc, nullptr, &g_pD3D11PGRegsBuf);
+		if (FAILED(hr)) {
+			EmuLog(LOG_LEVEL::WARNING, "RC Interpreter CreateBuffer (PGRegs) failed: 0x%08X", hr);
+			goto fail;
+		}
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN; // structured buffer
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = PGRAPH_REG_COUNT; // 2048
+		hr = g_pD3DDevice->CreateShaderResourceView(g_pD3D11PGRegsBuf, &srvDesc, &g_pD3D11PGRegsSRV);
+		if (FAILED(hr)) {
+			EmuLog(LOG_LEVEL::WARNING, "RC Interpreter CreateSRV (PGRegs) failed: 0x%08X", hr);
+			goto fail;
+		}
+	}
+
+	EmuLog(LOG_LEVEL::INFO, "RC Interpreter ubershader compiled successfully (%u byte aux cbuffer, %u byte regs SRV)",
+		(unsigned)sizeof(PSAuxCBLayout), (unsigned)(PGRAPH_REG_COUNT * sizeof(uint32_t)));
 	return true;
+
+fail:
+	if (g_pD3D11PGRegsSRV) { g_pD3D11PGRegsSRV->Release(); g_pD3D11PGRegsSRV = nullptr; }
+	if (g_pD3D11PGRegsBuf) { g_pD3D11PGRegsBuf->Release(); g_pD3D11PGRegsBuf = nullptr; }
+	if (g_pD3D11RCInterpreterAuxCB) { g_pD3D11RCInterpreterAuxCB->Release(); g_pD3D11RCInterpreterAuxCB = nullptr; }
+	if (g_pD3D11RCInterpreterPS) { g_pD3D11RCInterpreterPS->Release(); g_pD3D11RCInterpreterPS = nullptr; }
+	return false;
 }
 
 // ******************************************************************
@@ -1328,7 +1366,9 @@ void CxbxD3D11ReleaseBackendResources()
 	if (g_pD3D11FormatConvertCS) { g_pD3D11FormatConvertCS->Release(); g_pD3D11FormatConvertCS = nullptr; }
 	if (g_pD3D11FormatConvertCB) { g_pD3D11FormatConvertCB->Release(); g_pD3D11FormatConvertCB = nullptr; }
 	if (g_pD3D11RCInterpreterPS) { g_pD3D11RCInterpreterPS->Release(); g_pD3D11RCInterpreterPS = nullptr; }
-	if (g_pD3D11RCInterpreterCB) { g_pD3D11RCInterpreterCB->Release(); g_pD3D11RCInterpreterCB = nullptr; }
+	if (g_pD3D11RCInterpreterAuxCB) { g_pD3D11RCInterpreterAuxCB->Release(); g_pD3D11RCInterpreterAuxCB = nullptr; }
+	if (g_pD3D11PGRegsSRV) { g_pD3D11PGRegsSRV->Release(); g_pD3D11PGRegsSRV = nullptr; }
+	if (g_pD3D11PGRegsBuf) { g_pD3D11PGRegsBuf->Release(); g_pD3D11PGRegsBuf = nullptr; }
 	if (g_pD3D11VSInterpreterVS) { g_pD3D11VSInterpreterVS->Release(); g_pD3D11VSInterpreterVS = nullptr; }
 	if (g_pD3D11VSInterpreterBytecode) { g_pD3D11VSInterpreterBytecode->Release(); g_pD3D11VSInterpreterBytecode = nullptr; }
 	if (g_pD3D11VSInterpreterCB) { g_pD3D11VSInterpreterCB->Release(); g_pD3D11VSInterpreterCB = nullptr; }

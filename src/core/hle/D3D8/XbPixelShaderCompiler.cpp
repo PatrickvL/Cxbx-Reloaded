@@ -928,7 +928,7 @@ bool g_UseFixedFunctionPixelShader = true;
 // come from HLE render/texture state and will migrate in Step 3.2.
 void CxbxD3D11UploadRCInterpreterState()
 {
-	if (!g_pD3D11RCInterpreterCB)
+	if (!g_pD3D11RCInterpreterAuxCB || !g_pD3D11PGRegsBuf)
 		return;
 
 	// PSDef needed for: AdjustTextureModes (texModeAdjust flag), AdjustFinalCombiner
@@ -944,51 +944,21 @@ void CxbxD3D11UploadRCInterpreterState()
 		pg = &nv2a->pgraph;
 	}
 
-	RCInterpreterCBLayout cb = {};
-
-	// --- Core combiner registers: PGRAPH path (Step 3.1) ---
+	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
 	if (pg) {
-		for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value  = pg->regs[RI(NV_PGRAPH_COMBINEALPHAI0 + i * 4)];
-		cb.PSFinalCombinerInputsABCD.value = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)];
-		cb.PSFinalCombinerInputsEFG.value  = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)];
-		for (int i = 0; i < 8; i++) cb.PSConstant0[i] = DwordColorToFloat4(pg->regs[RI(NV_PGRAPH_COMBINEFACTOR0 + i * 4)]);
-		for (int i = 0; i < 8; i++) cb.PSConstant1[i] = DwordColorToFloat4(pg->regs[RI(NV_PGRAPH_COMBINEFACTOR1 + i * 4)]);
-		for (int i = 0; i < 8; i++) cb.PSAlphaOutputs[i].value = pg->regs[RI(NV_PGRAPH_COMBINEALPHAO0 + i * 4)];
-		for (int i = 0; i < 8; i++) cb.PSRGBInputs[i].value    = pg->regs[RI(NV_PGRAPH_COMBINECOLORI0 + i * 4)];
-		cb.PSCompareMode.value = pg->regs[RI(NV_PGRAPH_SHADERCLIPMODE)];
-		for (int i = 0; i < 8; i++) cb.PSRGBOutputs[i].value   = pg->regs[RI(NV_PGRAPH_COMBINECOLORO0 + i * 4)];
-		cb.PSCombinerCount.value = pg->regs[RI(NV_PGRAPH_COMBINECTL)];
-	} else {
-		// Fallback: read from PSDef (HLE render state)
-		for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value = pPSDef->PSAlphaInputs[i];
-		cb.PSFinalCombinerInputsABCD.value = pPSDef->PSFinalCombinerInputsABCD;
-		cb.PSFinalCombinerInputsEFG.value  = pPSDef->PSFinalCombinerInputsEFG;
-		for (int i = 0; i < 8; i++) cb.PSConstant0[i] = DwordColorToFloat4(pPSDef->PSConstant0[i]);
-		for (int i = 0; i < 8; i++) cb.PSConstant1[i] = DwordColorToFloat4(pPSDef->PSConstant1[i]);
-		for (int i = 0; i < 8; i++) cb.PSAlphaOutputs[i].value = pPSDef->PSAlphaOutputs[i];
-		for (int i = 0; i < 8; i++) cb.PSRGBInputs[i].value    = pPSDef->PSRGBInputs[i];
-		cb.PSCompareMode.value = pPSDef->PSCompareMode;
-		for (int i = 0; i < 8; i++) cb.PSRGBOutputs[i].value   = pPSDef->PSRGBOutputs[i];
-		cb.PSCombinerCount.value = pPSDef->PSCombinerCount;
+		CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));
 	}
+	// Bind the regs SRV to PS t12
+	g_pD3DDeviceContext->PSSetShaderResources(CXBX_D3D11_PS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
 
-	// Final combiner constants (Step 3.2: migrated to PGRAPH)
-	if (pg) {
-		cb.PSFinalCombinerConstant[0] = DwordColorToFloat4(pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR0)]);
-		cb.PSFinalCombinerConstant[1] = DwordColorToFloat4(pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR1)]);
-	} else {
-		cb.PSFinalCombinerConstant[0] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant0);
-		cb.PSFinalCombinerConstant[1] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant1);
-	}
+	// --- Build the auxiliary cbuffer (software-computed fields only) ---
+	PSAuxCBLayout aux = {};
 
-	// PSTextureModes: from PGRAPH or HLE render state
+	// PSTextureModes: from PGRAPH or HLE render state, then adjusted
 	DWORD psTextureModes = pg ? pg->regs[RI(NV_PGRAPH_SHADERPROG)]
 	                          : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
 
 	// --- AdjustTextureModes: match the compiled shader path ---
-	// The compiled shader path calls AdjustTextureModes() which adjusts texture
-	// modes based on bound texture types.  Without this, the interpreter may try
-	// to sample unbound textures or use the wrong sampling method.
 	{
 		bool texModeAdjust = ((pPSDef->PSFinalCombinerConstants >> PS_GLOBALFLAGS_SHIFT) & PS_GLOBALFLAGS_TEXMODE_ADJUST) > 0;
 
@@ -1001,26 +971,18 @@ void CxbxD3D11UploadRCInterpreterState()
 				texType = GetXboxD3DResourceType(g_pXbox_SetTexture[i]);
 
 			if (texModeAdjust) {
-				// Disable unbound texture stages — but preserve modes that
-				// sample from a DIFFERENT stage's source (the texture at the
-				// source stage may well be bound even if this stage's isn't).
-				// BUMPENVMAP/LUM, DPNDNT_AR/GB, and DOT modes read from
-				// GetSourceStage(), so forcing them to NONE would incorrectly
-				// suppress the dependent lookup.
 				if (texType == xbox::X_D3DRTYPE_NONE) {
 					switch (mode) {
 					case PS_TEXTUREMODES_BUMPENVMAP:
 					case PS_TEXTUREMODES_BUMPENVMAP_LUM:
 					case PS_TEXTUREMODES_DPNDNT_AR:
 					case PS_TEXTUREMODES_DPNDNT_GB:
-						break; // keep the original mode
+						break;
 					default:
 						psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_NONE << (i * 5));
 						continue;
 					}
 				}
-
-				// Adjust mode based on actual texture type
 				switch (mode) {
 				case PS_TEXTUREMODES_PROJECT2D:
 				case PS_TEXTUREMODES_PROJECT3D:
@@ -1044,7 +1006,6 @@ void CxbxD3D11UploadRCInterpreterState()
 				}
 			}
 			else {
-				// Even without TEXMODE_ADJUST, fix up mismatched sampling modes
 				if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_PROJECT2D) {
 					psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_CUBEMAP << (i * 5));
 				}
@@ -1054,155 +1015,81 @@ void CxbxD3D11UploadRCInterpreterState()
 			}
 		}
 	}
-	cb.PSTextureModes.value = psTextureModes;
+	aux.PSTextureModes.value = psTextureModes;
 
 	// --- AdjustFinalCombiner: synthesize final combiner when not explicitly defined ---
-	// The compiled shader path calls AdjustFinalCombiner() which generates a final
-	// combiner for fog/specular when the pixel shader doesn't define one.
 	{
-		bool hasFinalCombiner = (cb.PSFinalCombinerInputsABCD.value != 0) || (cb.PSFinalCombinerInputsEFG.value != 0);
+		uint32_t fcABCD = pg ? pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)] : pPSDef->PSFinalCombinerInputsABCD;
+		uint32_t fcEFG  = pg ? pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)] : pPSDef->PSFinalCombinerInputsEFG;
+
+		bool hasFinalCombiner = (fcABCD != 0) || (fcEFG != 0);
 		if (!hasFinalCombiner) {
 			bool fogEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) > 0;
 			bool specularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) > 0;
 
-			// A = FOG.a (alpha channel), B = R0, C = FOG (if fog) or R0 (if no fog), D = V1 (if specular) or ZERO
 			uint32_t regA = PS_REGISTER_FOG | PS_CHANNEL_ALPHA;
 			uint32_t regB = PS_REGISTER_R0;
 			uint32_t regC = fogEnable ? PS_REGISTER_FOG : PS_REGISTER_R0;
 			uint32_t regD = specularEnable ? PS_REGISTER_V1 : PS_REGISTER_ZERO;
-			cb.PSFinalCombinerInputsABCD.value = (regA << 24) | (regB << 16) | (regC << 8) | regD;
+			fcABCD = (regA << 24) | (regB << 16) | (regC << 8) | regD;
 
-			// E = ZERO, F = ZERO, G = R0.a
 			uint32_t regE = PS_REGISTER_ZERO;
 			uint32_t regF = PS_REGISTER_ZERO;
 			uint32_t regG = PS_REGISTER_R0 | PS_CHANNEL_ALPHA;
-			uint32_t settings = 0;
-			cb.PSFinalCombinerInputsEFG.value = (regE << 24) | (regF << 16) | (regG << 8) | settings;
+			fcEFG = (regE << 24) | (regF << 16) | (regG << 8);
 		}
-	}
 
-	cb.PSDotMapping.value  = pg ? pg->regs[RI(NV_PGRAPH_SHADERCTL)] : pPSDef->PSDotMapping;
-	cb.PSInputTexture.value = pg ? pg->regs[RI(NV_PGRAPH_SHADERCTL)] : pPSDef->PSInputTexture;
+		aux.PSFinalCombinerInputsABCD.value = fcABCD;
+		aux.PSFinalCombinerInputsEFG.value  = fcEFG;
+	}
 
 	// Color sign conversion — per-stage
 	for (int stage = 0; stage < 4; stage++) {
 		D3DXCOLOR cs = CxbxCalcColorSign(stage);
-		cb.ColorSign[stage] = { cs.r, cs.g, cs.b, cs.a };
+		aux.ColorSign[stage] = { cs.r, cs.g, cs.b, cs.a };
 	}
-
-	// Fog color (Step 3.2: migrated to PGRAPH)
-	// NV_PGRAPH_FOGCOLOR stores the NV097 parameter directly (ABGR layout:
-	// R@bits0-7, B@bits16-23); convert to ARGB for DwordColorToFloat4.
-	if (pg) {
-		cb.FogColor = DwordColorToFloat4(FogColor_ABGR_to_ARGB(pg->regs[RI(NV_PGRAPH_FOGCOLOR)]));
-	} else {
-		// HLE render state also stores ABGR (Xbox kernel swaps R↔B before storing)
-		cb.FogColor = DwordColorToFloat4(FogColor_ABGR_to_ARGB(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR)));
-	}
-
-	// --- Post-processing state (matches compiled PS pipeline) ---
 
 	// Texture format channel fixup per stage
-	cb.TexFmtFixup = { CxbxGetTexFmtFixup(0), CxbxGetTexFmtFixup(1),
-	                    CxbxGetTexFmtFixup(2), CxbxGetTexFmtFixup(3) };
-
-	// Alpha test: x=enable, y=ref/255, z=cmpfunc (Step 3.2: migrated to PGRAPH)
-	// NV2A ALPHAFUNC values (1=NEVER..8=ALWAYS) match D3D11 comparison func values.
-	if (pg) {
-		uint32_t control0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
-		cb.AlphaTest = {
-			(control0 & NV_PGRAPH_CONTROL_0_ALPHATESTENABLE) ? 1.0f : 0.0f,
-			static_cast<float>(control0 & NV_PGRAPH_CONTROL_0_ALPHAREF) / 255.0f,
-			static_cast<float>((control0 & NV_PGRAPH_CONTROL_0_ALPHAFUNC) >> 8),
-			0.0f
-		};
-	} else {
-		cb.AlphaTest = {
-			static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHATESTENABLE)),
-			static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHAREF)) / 255.0f,
-			static_cast<float>(EmuXB2PC_D3DCMPFUNC((xbox::X_D3DCMPFUNC)XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_ALPHAFUNC))),
-			0.0f
-		};
-	}
+	aux.TexFmtFixup = { CxbxGetTexFmtFixup(0), CxbxGetTexFmtFixup(1),
+	                     CxbxGetTexFmtFixup(2), CxbxGetTexFmtFixup(3) };
 
 	// Color key per stage
 	for (int i = 0; i < 4; i++) {
-		cb.ColorKeyOp[i] = { static_cast<float>(XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYOP)), 0.0f, 0.0f, 0.0f };
+		aux.ColorKeyOp[i] = { static_cast<float>(XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYOP)), 0.0f, 0.0f, 0.0f };
 		D3DXCOLOR ckc(XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYCOLOR));
-		cb.ColorKeyColor[i] = { ckc.r, ckc.g, ckc.b, ckc.a };
+		aux.ColorKeyColor[i] = { ckc.r, ckc.g, ckc.b, ckc.a };
 	}
-
-	// Bump environment map matrix per stage (Step 3.2: migrated to PGRAPH)
-	// PGRAPH stores BUMPMATxy for stages 1-3 only; stage 0 has no bump env.
-	// Register layout: NV_PGRAPH_BUMPMATxy + (stage-1)*4 per component.
-	if (pg) {
-		cb.BEM[0] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		for (int i = 1; i < 4; i++) {
-			cb.BEM[i] = {
-				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPMAT00 + (i - 1) * 4)]),
-				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPMAT01 + (i - 1) * 4)]),
-				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPMAT10 + (i - 1) * 4)]),
-				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPMAT11 + (i - 1) * 4)])
-			};
-		}
-	} else {
-		for (int i = 0; i < 4; i++) {
-			DWORD bemDwords[4];
-			CxbxGetBumpEnvMatrix(i, bemDwords);
-			cb.BEM[i] = { AsFloat(bemDwords[0]), AsFloat(bemDwords[1]),
-			              AsFloat(bemDwords[2]), AsFloat(bemDwords[3]) };
-		}
-	}
-
-	// Bump luminance scale/offset per stage (Step 3.2: migrated to PGRAPH)
-	// PGRAPH stores BUMPSCALE1/BUMPOFFSET1 for stages 1-3; stage 0 = zero.
-	if (pg) {
-		cb.LUM[0] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		for (int i = 1; i < 4; i++) {
-			cb.LUM[i] = {
-				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPSCALE1 + (i - 1) * 4)]),
-				AsFloat(pg->regs[RI(NV_PGRAPH_BUMPOFFSET1 + (i - 1) * 4)]),
-				0.0f, 0.0f
-			};
-		}
-	} else {
-		for (int i = 0; i < 4; i++) {
-			DWORD lumDwords[2];
-			CxbxGetBumpEnvLuminance(i, lumDwords);
-			cb.LUM[i] = { AsFloat(lumDwords[0]), AsFloat(lumDwords[1]), 0.0f, 0.0f };
-		}
-	}
-
-	// Fog info: x=tableMode, y=density, z=start, w=end
-	cb.FogInfo = {
-		static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE)),
-		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY),
-		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART),
-		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND)
-	};
-	cb.FogEnable.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1u : 0u;
 
 	// Alpha kill per stage (D3DTALPHAKILL_ENABLE = 4)
-	cb.AlphaKill = {
+	aux.AlphaKill = {
 		static_cast<float>(XboxTextureStates.Get(0, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
 		static_cast<float>(XboxTextureStates.Get(1, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
 		static_cast<float>(XboxTextureStates.Get(2, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
 		static_cast<float>(XboxTextureStates.Get(3, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0)
 	};
 
+	// Fog info: x=tableMode, y=density, z=start, w=end
+	aux.FogInfo = {
+		static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE)),
+		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY),
+		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART),
+		XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND)
+	};
+	aux.FogEnable.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1u : 0u;
+
 	// Front-face factor for two-sided lighting
 	{
-		float ff = 0.0f; // 0 = always use front colours
+		float ff = 0.0f;
 		if (XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_TWOSIDEDLIGHTING)) {
-			bool cwFrontface = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FRONTFACE) == 0x900; // NV2A_FRONT_FACE_CW
+			bool cwFrontface = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FRONTFACE) == 0x900;
 			ff = cwFrontface ? 1.0f : -1.0f;
 		}
-		cb.FrontFaceInfo = { ff, 0.0f, 0.0f, 0.0f };
+		aux.FrontFaceInfo = { ff, 0.0f, 0.0f, 0.0f };
 	}
 
-	// Upload and bind to b0
-	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterCB, &cb, sizeof(cb));
-	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterCB);
+	// Upload aux cbuffer and bind to b0
+	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterAuxCB, &aux, sizeof(aux));
+	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterAuxCB);
 }
 
 void CxbxUpdateActivePixelShader() // NOPATCH

@@ -87,6 +87,7 @@
 // shared with C++ backend code)
 // ============================================================
 #include "CxbxNV2APixelShaderConstants.hlsli"
+#include "CxbxPGRAPHRegs.hlsli"
 #include "CxbxRegisterCombinerInterpreterState.hlsli"
 #include "CxbxNV2AMathHelpers.hlsli"
 
@@ -337,9 +338,10 @@ float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB)
 
 uint GetSourceStage(uint stage)
 {
-    // stage is already masked to NUM_TEXTURE_STAGES-1 by caller
-    uint src2 = (PSInputTexture >> 16u) & 0x1u;
-    uint src3 = (PSInputTexture >> 20u) & 0x3u;
+    // PSInputTexture = NV_PGRAPH_SHADERCTL (bits 12-27 = input texture config)
+    uint shaderCtl = PG_UINT(NV_PGRAPH_SHADERCTL);
+    uint src2 = (shaderCtl >> 16u) & 0x1u;
+    uint src3 = (shaderCtl >> 20u) & 0x3u;
     uint src  = (stage == 3u) ? src3 : src2;
     return (stage <= 1u) ? 0u : src;  // stages 0/1 always return 0
 }
@@ -352,7 +354,7 @@ uint GetSourceStage(uint stage)
 
 void ApplyCompareMode(uint stage, float4 coords)
 {
-    uint bits = (PSCompareMode >> (stage * 4u)) & 0xFu;
+    uint bits = (PG_UINT(NV_PGRAPH_SHADERCLIPMODE) >> (stage * 4u)) & 0xFu;
     // Each bit: 0 = GE (clip if >= 0), 1 = LT (clip if < 0)
     // Per NV2A: bit set means "discard if coord < 0"
     bool killR = (bits & 1u) != 0u ? (coords.x < 0.0f) : (coords.x >= 0.0f);
@@ -373,7 +375,9 @@ void ApplyCompareMode(uint stage, float4 coords)
 
 float3 ApplyDotMappingForStage(uint stage, float4 src)
 {
-    uint mapping = (PSDotMapping >> ((stage - 1u) * 4u)) & 0x7u;
+    // PSDotMapping = NV_PGRAPH_SHADERCTL bits 0-11; 3 bits per stage (stages 1-3)
+    uint shaderCtl = PG_UINT(NV_PGRAPH_SHADERCTL);
+    uint mapping = (shaderCtl >> ((stage - 1u) * 4u)) & 0x7u;
     return ApplyDotMapping(mapping, src);
 }
 
@@ -510,7 +514,12 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 
     case PS_TEXTUREMODES_BUMPENVMAP:
     {
-        float4 bem = BEM[stage];
+        // BEM from PGRAPH: BUMPMATxy registers for stages 1-3 (stage offset = (stage-1)*4)
+        float4 bem = float4(
+            PG_FLOAT(NV_PGRAPH_BUMPMAT00 + (stage - 1u) * 4),
+            PG_FLOAT(NV_PGRAPH_BUMPMAT01 + (stage - 1u) * 4),
+            PG_FLOAT(NV_PGRAPH_BUMPMAT10 + (stage - 1u) * 4),
+            PG_FLOAT(NV_PGRAPH_BUMPMAT11 + (stage - 1u) * 4));
         val = Sample2D(stage, float2(
             coords.x + bem.x * src.r + bem.z * src.g,
             coords.y + bem.y * src.r + bem.w * src.g));
@@ -519,12 +528,17 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 
     case PS_TEXTUREMODES_BUMPENVMAP_LUM:
     {
-        float4 bem = BEM[stage];
-        float4 lum = LUM[stage];
+        float4 bem = float4(
+            PG_FLOAT(NV_PGRAPH_BUMPMAT00 + (stage - 1u) * 4),
+            PG_FLOAT(NV_PGRAPH_BUMPMAT01 + (stage - 1u) * 4),
+            PG_FLOAT(NV_PGRAPH_BUMPMAT10 + (stage - 1u) * 4),
+            PG_FLOAT(NV_PGRAPH_BUMPMAT11 + (stage - 1u) * 4));
+        float lumScale  = PG_FLOAT(NV_PGRAPH_BUMPSCALE1  + (stage - 1u) * 4);
+        float lumOffset = PG_FLOAT(NV_PGRAPH_BUMPOFFSET1 + (stage - 1u) * 4);
         val = Sample2D(stage, float2(
             coords.x + bem.x * src.r + bem.z * src.g,
             coords.y + bem.y * src.r + bem.w * src.g));
-        val.rgb *= lum.x * src.b + lum.y;
+        val.rgb *= lumScale * src.b + lumOffset;
         break;
     }
 
@@ -633,10 +647,10 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
 void DoCombinerStage(inout float4 Regs[16], uint stage,
                      bool flagMuxMsb)
 {
-    uint rgbIn  = PSRGBInputs[stage];
-    uint aIn    = PSAlphaInputs[stage];
-    uint rgbOut = PSRGBOutputs[stage];
-    uint aOut   = PSAlphaOutputs[stage];
+    uint rgbIn  = PG_UINT(NV_PGRAPH_COMBINECOLORI0 + stage * 4);
+    uint aIn    = PG_UINT(NV_PGRAPH_COMBINEALPHAI0 + stage * 4);
+    uint rgbOut = PG_UINT(NV_PGRAPH_COMBINECOLORO0 + stage * 4);
+    uint aOut   = PG_UINT(NV_PGRAPH_COMBINEALPHAO0 + stage * 4);
 
     // --- Decode output control bits ---
     uint rgbFlags = rgbOut >> PS_COMBINEROUTPUTS_FLAGS_SHIFT;
@@ -751,10 +765,10 @@ float4 DoFinalCombiner(inout float4 Regs[16])
     uint fReg     = (efg >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu;
     uint gReg     = (efg >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu;
 
-    // Initialise C0/C1 for the final combiner from FinalCombinerConstants.
+    // Initialise C0/C1 for the final combiner from PGRAPH specular/fog factor regs.
     // Placed here (after early exit) so unused final combiners skip the writes.
-    Regs[PS_REGISTER_C0] = PSFinalCombinerConstant[0];
-    Regs[PS_REGISTER_C1] = PSFinalCombinerConstant[1];
+    Regs[PS_REGISTER_C0] = PG_COLOR(NV_PGRAPH_SPECFOGFACTOR0);
+    Regs[PS_REGISTER_C1] = PG_COLOR(NV_PGRAPH_SPECFOGFACTOR1);
 
     // --- Resolve E, F (RGB) and G (alpha) — EFG phase (not ABCD) ---
     float3 E = ResolveFinalInput(Regs, eReg, false).rgb;
@@ -800,8 +814,9 @@ float4 main(PS_INPUT input) : SV_Target
 {
     // --- Decode PSCombinerCount ---
     // PSCombinerCount = PS_COMBINERCOUNT(count, flags) = (flags<<8) | count
-    uint numStages    = clamp(PSCombinerCount & 0xFFu, 1u, 8u);
-    uint ccFlags      = PSCombinerCount >> 8u; // extract flags portion
+    uint rawCombinerCount = PG_UINT(NV_PGRAPH_COMBINECTL);
+    uint numStages    = clamp(rawCombinerCount & 0xFFu, 1u, 8u);
+    uint ccFlags      = rawCombinerCount >> 8u; // extract flags portion
     bool flagMuxMsb   = (ccFlags & PS_COMBINERCOUNT_MUX_MSB)   != 0u;
     bool flagUniqueC0 = (ccFlags & PS_COMBINERCOUNT_UNIQUE_C0) != 0u;
     bool flagUniqueC1 = (ccFlags & PS_COMBINERCOUNT_UNIQUE_C1) != 0u;
@@ -855,7 +870,7 @@ float4 main(PS_INPUT input) : SV_Target
     Regs[PS_REGISTER_V0] = diffuse;
     Regs[PS_REGISTER_V1] = specular;
     // FOG: rgb from the fog color constant, alpha from the vertex fog factor
-    Regs[PS_REGISTER_FOG] = float4(FogColor.rgb, saturate(input.iFog));
+    Regs[PS_REGISTER_FOG] = float4(PG_COLOR(NV_PGRAPH_FOGCOLOR).rgb, saturate(input.iFog));
 
     // R0 initialization: NV2A spec says R0.rgb starts at 0, R0.a starts from T0.a.
     // xemu matches this: "r0 = vec4(0); r0.a = t0.a;".
@@ -874,27 +889,33 @@ float4 main(PS_INPUT input) : SV_Target
     {
         if (stage < numStages)
         {
-            // Initialise C0/C1 from cbuffer constants before each stage.
+            // Initialise C0/C1 from PGRAPH combiner factor registers before each stage.
             // UNIQUE_C0/C1: each stage gets its own constant; otherwise all
             // stages share constant[0].  Combiner outputs CAN write to C0/C1
             // (confirmed by xemu / NV2A hardware), so this must happen before
             // DoCombinerStage, not inside ResolveStageInput.
-            Regs[PS_REGISTER_C0] = flagUniqueC0 ? PSConstant0[stage] : PSConstant0[0];
-            Regs[PS_REGISTER_C1] = flagUniqueC1 ? PSConstant1[stage] : PSConstant1[0];
+            Regs[PS_REGISTER_C0] = flagUniqueC0 ? PG_COLOR(NV_PGRAPH_COMBINEFACTOR0 + stage * 4) : PG_COLOR(NV_PGRAPH_COMBINEFACTOR0);
+            Regs[PS_REGISTER_C1] = flagUniqueC1 ? PG_COLOR(NV_PGRAPH_COMBINEFACTOR1 + stage * 4) : PG_COLOR(NV_PGRAPH_COMBINEFACTOR1);
             DoCombinerStage(Regs, stage, flagMuxMsb);
         }
     }
 
     float4 result = DoFinalCombiner(Regs);
 
-    // --- Alpha test ---
-    PerformAlphaTest(AlphaTest.xyz, result.a);
+    // --- Alpha test (from NV_PGRAPH_CONTROL_0) ---
+    {
+        uint control0 = PG_UINT(NV_PGRAPH_CONTROL_0);
+        float alphaEnable = (control0 & NV_PGRAPH_CONTROL_0_ALPHATESTENABLE) ? 1.0f : 0.0f;
+        float alphaRef    = float(control0 & NV_PGRAPH_CONTROL_0_ALPHAREF) / 255.0f;
+        float alphaFunc   = float((control0 & NV_PGRAPH_CONTROL_0_ALPHAFUNC) >> 8);
+        PerformAlphaTest(float3(alphaEnable, alphaRef, alphaFunc), result.a);
+    }
 
     // --- Fog blending ---
     // iFog is already a computed fog factor from the VS (EXP/EXP2/LINEAR/passthrough).
     // NV2A clamps the interpolated fog factor to [0,1] before blending.
     [branch] if (FogEnable != 0u) {
-        result.rgb = lerp(FogColor.rgb, result.rgb, saturate(input.iFog));
+        result.rgb = lerp(PG_COLOR(NV_PGRAPH_FOGCOLOR).rgb, result.rgb, saturate(input.iFog));
     }
 
     return result;

@@ -48,6 +48,7 @@ static const UINT CXBX_D3D11_VS_CB_SLOT = 0;
 static const UINT CXBX_D3D11_VS_CB_COUNT = 256;
 static const UINT CXBX_D3D11_PS_CB_SLOT = 0;
 static const UINT CXBX_D3D11_PS_CB_COUNT = 53; // Must accommodate both programmatic PS (44 regs) and FF PS FixedFunctionPixelShaderState struct (53 regs)
+static const UINT CXBX_D3D11_PS_PGREGS_SRV_SLOT = 12; // StructuredBuffer<uint> g_PGRegs : register(t12)
 
 // ******************************************************************
 // * Vertex defaults buffer — provides all 16 TEXCOORD attributes via

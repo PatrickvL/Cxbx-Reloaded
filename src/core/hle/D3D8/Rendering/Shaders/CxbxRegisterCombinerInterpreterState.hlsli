@@ -1,30 +1,29 @@
 // CxbxRegisterCombinerInterpreterState.hlsli — shared C++ / HLSL header
 //
-// Defines the constant buffer layout for the register combiner interpreter
-// ubershader.  Included by both the HLSL pixel shader and the C++ backend
-// to ensure the cbuffer layout stays in sync.
+// Defines the AUXILIARY constant buffer layout for the register combiner
+// interpreter ubershader.  Contains only software-computed fields that
+// have no direct PGRAPH register equivalent.
 //
-// Field ordering matches X_D3DPIXELSHADERDEF, with the following differences:
-//   - PSConstant0/1 are float4 RGBA [0..1] (Xbox stores packed ARGB DWORDs;
-//     the C++ upload code converts at upload time).
-//   - PSFinalCombinerConstant is a float4[2] array instead of two separate DWORDs.
-//   - ColorSign[4] and FogColor are appended (not part of X_D3DPIXELSHADERDEF).
-//   - Software-only fields (PSC0Mapping, PSC1Mapping, PSFinalCombinerConstants)
-//     are omitted.
+// Register-backed combiner state (PSAlphaInputs, PSRGBOutputs, PSConstant0,
+// PSCombinerCount, etc.) is now read directly from the raw PGRAPH regs[]
+// StructuredBuffer<uint> (see CxbxPGRAPHRegs.hlsli).
+//
+// This aux cbuffer also carries a few fields that ARE derived from PGRAPH
+// registers but require C++-side adjustment before the shader sees them
+// (PSTextureModes after AdjustTextureModes, PSFinalCombinerInputs after
+// AdjustFinalCombiner).
 
 #ifdef __cplusplus
 #pragma once
 #include <cstdint>
 
 // C++: 16-byte-aligned scalar uint occupying one SM5 constant register.
-// SM5 cbuffer packing places each uint array element in its own 16-byte slot.
 struct alignas(16) RCI_UintReg { uint32_t value; uint32_t _pad[3]; };
 
 // C++: 16-byte float4 matching HLSL's native float4.
 struct alignas(16) RCI_Float4 { float x, y, z, w; };
 
-// Begin the struct definition for C++
-#define RCI_BEGIN struct RCInterpreterCBLayout {
+#define RCI_BEGIN struct PSAuxCBLayout {
 #define RCI_END   };
 #define RCI_UINT(name)       RCI_UintReg name
 #define RCI_UINT_ARRAY(name, n)  RCI_UintReg name[n]
@@ -32,18 +31,11 @@ struct alignas(16) RCI_Float4 { float x, y, z, w; };
 #define RCI_FLOAT4_ARRAY(name, n) RCI_Float4 name[n]
 
 #else
-// HLSL: the cbuffer keyword defines the layout directly.
-// Single uint fields must be padded to 16 bytes (one constant register) to
-// match the C++ alignas(16) layout.  Without this, SM5 cbuffer packing rules
-// pack consecutive scalars together, shifting all subsequent field offsets.
-#define RCI_BEGIN cbuffer RCInterpreterCBLayout : register(b0) {
+// HLSL cbuffer definition.  Single uint fields are padded to 16 bytes to
+// match the C++ alignas(16) layout.
+#define RCI_BEGIN cbuffer PSAuxCBLayout : register(b0) {
 #define RCI_END   };
 #define RCI_UINT(name)       uint name; uint3 _pad_##name
-// SM5 cbuffer packing: uint[n] last element only uses .x (4 bytes), leaving .yzw
-// free.  Without explicit padding, the next scalar packs into .y, breaking the
-// 16-byte-per-element stride that the C++ alignas(16) struct expects.
-// The uint3 fills the last register's .yzw so the next field starts on a fresh
-// 16-byte boundary.
 #define RCI_UINT_ARRAY(name, n)  uint name[n]; uint3 _pad_##name
 #define RCI_FLOAT4(name)     float4 name
 #define RCI_FLOAT4_ARRAY(name, n) float4 name[n]
@@ -51,42 +43,33 @@ struct alignas(16) RCI_Float4 { float x, y, z, w; };
 #endif
 
 // ============================================================
-// Shared cbuffer / struct layout
+// Auxiliary cbuffer — software-computed fields only.
+// Register-backed fields are accessed via g_PGRegs[].
 //
 // Field order MUST match between HLSL and C++ — do not reorder.
 // ============================================================
 RCI_BEGIN
-    RCI_UINT_ARRAY(PSAlphaInputs, 8);          // Alpha combiner A..D input specs
-    RCI_UINT(PSFinalCombinerInputsABCD);        // (A<<24)|(B<<16)|(C<<8)|D
-    RCI_UINT(PSFinalCombinerInputsEFG);         // (E<<24)|(F<<16)|(G<<8)|settings
-    RCI_FLOAT4_ARRAY(PSConstant0, 8);           // Per-stage C0 color constant [0..1]
-    RCI_FLOAT4_ARRAY(PSConstant1, 8);           // Per-stage C1 color constant [0..1]
-    RCI_UINT_ARRAY(PSAlphaOutputs, 8);
-    RCI_UINT_ARRAY(PSRGBInputs, 8);             // RGB combiner A..D input specs
-    RCI_UINT(PSCompareMode);                    // Clip-plane comparison mode
-    RCI_FLOAT4_ARRAY(PSFinalCombinerConstant, 2); // FC0, FC1
-    RCI_UINT_ARRAY(PSRGBOutputs, 8);
-    RCI_UINT(PSCombinerCount);                  // (flags<<8)|numStages
-    RCI_UINT(PSTextureModes);                   // 4 x 5-bit modes
-    // Both originate from NV_PGRAPH_SHADERCTL (0x1998): bits 0-11 = dot mapping, bits 12-27 = input texture
-    RCI_UINT(PSDotMapping);                     // Dot-product normal mapping (SHADERCTL bits 0-11)
-    RCI_UINT(PSInputTexture);                   // Input-texture for dependent modes (SHADERCTL bits 12-27)
-    RCI_FLOAT4_ARRAY(ColorSign, 4);             // Per-stage: 0=keep, >0=u->s, <0=s->u
-    RCI_FLOAT4(FogColor);                       // rgb=fog color constant; a=unused
-    // --- Post-processing state (matches compiled PS c23..c43) ---
-    RCI_FLOAT4(TexFmtFixup);                    // Per-stage fixup: 0=id,1=.gbar,2=.abgr,3=lum,4=alum
-    RCI_FLOAT4(AlphaTest);                      // x=enable, y=ref [0..1], z=func [D3DCMPFUNC]
+    // --- Adjusted register values (C++ modifies before upload) ---
+    RCI_UINT(PSTextureModes);                   // After AdjustTextureModes
+    RCI_UINT(PSFinalCombinerInputsABCD);        // After AdjustFinalCombiner
+    RCI_UINT(PSFinalCombinerInputsEFG);         // After AdjustFinalCombiner
+
+    // --- Software-computed per-stage state ---
+    RCI_FLOAT4_ARRAY(ColorSign, 4);             // Per-stage sign conversion
+    RCI_FLOAT4(TexFmtFixup);                    // Per-stage format fixup
     RCI_FLOAT4_ARRAY(ColorKeyOp, 4);            // Per-stage color key operation
     RCI_FLOAT4_ARRAY(ColorKeyColor, 4);         // Per-stage color key color
-    RCI_FLOAT4_ARRAY(BEM, 4);                   // Per-stage bump env material matrix
-    RCI_FLOAT4_ARRAY(LUM, 4);                   // Per-stage bump luminance (scale, offset)
+    RCI_FLOAT4(AlphaKill);                      // Per-stage alpha kill
+
+    // --- Fog state (not yet migrated to PGRAPH) ---
     RCI_FLOAT4(FogInfo);                        // x=tableMode, y=density, z=start, w=end
     RCI_UINT(FogEnable);                        // Fog enable flag
-    RCI_FLOAT4(AlphaKill);                      // Per-stage: 0=disabled, nonzero=kill if alpha==0
-    RCI_FLOAT4(FrontFaceInfo);                  // x=FrontFaceFactor (0=no 2-sided, +1/-1=CW/CCW)
+
+    // --- Misc runtime state ---
+    RCI_FLOAT4(FrontFaceInfo);                  // x=FrontFaceFactor
 RCI_END
 
-// Clean up macros to avoid polluting the global namespace
+// Clean up macros
 #undef RCI_BEGIN
 #undef RCI_END
 #undef RCI_UINT
@@ -95,16 +78,5 @@ RCI_END
 #undef RCI_FLOAT4_ARRAY
 
 #ifdef __cplusplus
-static_assert(sizeof(RCInterpreterCBLayout) == 1344, "RC cbuffer layout size mismatch");
-
-// Convert a packed DWORD ARGB color (0xAARRGGBB) to RCI_Float4 RGBA [0..1]
-inline RCI_Float4 DwordColorToFloat4(uint32_t color)
-{
-    RCI_Float4 f;
-    f.x = ((color >> 16) & 0xFF) / 255.0f; // R
-    f.y = ((color >> 8)  & 0xFF) / 255.0f; // G
-    f.z = ( color        & 0xFF) / 255.0f; // B
-    f.w = ((color >> 24) & 0xFF) / 255.0f; // A
-    return f;
-}
+static_assert(sizeof(PSAuxCBLayout) == 320, "PSAuxCBLayout size mismatch");
 #endif
