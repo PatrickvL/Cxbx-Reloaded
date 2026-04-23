@@ -4,11 +4,14 @@
 //
 // Instead of recompiling each Xbox vertex shader program into host HLSL,
 // this single precompiled shader interprets the raw NV2A microcode at
-// runtime. The 128-bit instruction slots are uploaded to cbuffer b3;
-// vertex constants (c0–c191) are in the existing cbuffer b0.
+// runtime.  All state comes from two StructuredBuffers:
+//   - g_PGRegs (t12): shared PGRAPH register array (same buffer as PS)
+//     provides CHEOPS_PROGRAM_START to locate the active program slot.
+//   - g_ProgramData (t5): raw vertex shader microcode (136 × uint4).
+// Vertex constants (c0–c191) remain in the existing cbuffer b0.
 //
 // Architecture mirrors the register combiner interpreter:
-//   - C++ uploads raw Xbox microcode bytes to a constant buffer
+//   - C++ uploads raw data to StructuredBuffers
 //   - This shader loops over instruction slots, decodes fields, executes ops
 //   - No CPU-side D3DCompile, no shader cache, no async compilation
 //
@@ -23,6 +26,7 @@
 uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 
 #include "CxbxScreenspaceTransform.hlsli"
+#include "CxbxPGRAPHRegs.hlsli"
 #include "CxbxVertexShaderInterpreterState.hlsli"
 #include "CxbxNV2AMathHelpers.hlsli"
 
@@ -336,12 +340,15 @@ VS_OUTPUT main(const VS_INPUT xIn)
 
     // ============================================================
     // Instruction execution loop
+    // Read program start address from PGRAPH register CSV0_C.
+    // The shader loops from startSlot until FLD_FINAL or max slots.
     // ============================================================
-    uint instCount = min(InstructionCount, VSI_MAX_SLOTS);
+    uint startSlot = (PG_UINT(NV_PGRAPH_CSV0_C) >> NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START_SHIFT)
+                   & NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START_MASK;
 
     [loop]
-    for (uint pc = 0; pc < instCount; pc++) {
-        uint4 inst = Instructions[pc];
+    for (uint pc = 0; pc < VSI_MAX_SLOTS && (startSlot + pc) < VSI_MAX_SLOTS; pc++) {
+        uint4 inst = g_ProgramData[startSlot + pc];
         // inst.x = SubToken 0 (unused by fields)
         // inst.y = SubToken 1
         // inst.z = SubToken 2

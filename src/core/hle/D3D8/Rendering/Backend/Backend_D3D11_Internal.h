@@ -131,10 +131,10 @@ extern bool                       g_bRCInterpreterCBActive; // true when RC cbuf
 extern bool                       g_bUseVSInterpreter;
 extern ID3D11VertexShader        *g_pD3D11VSInterpreterVS;
 extern ID3DBlob                  *g_pD3D11VSInterpreterBytecode;
-extern ID3D11Buffer              *g_pD3D11VSInterpreterCB;
+extern ID3D11Buffer              *g_pD3D11VSProgramDataBuf;      // pg->program_data[] StructuredBuffer
+extern ID3D11ShaderResourceView  *g_pD3D11VSProgramDataSRV;      // SRV for g_ProgramData : register(t5)
 
-// VS interpreter constant buffer layout — shared with the HLSL cbuffer
-// definition in CxbxVertexShaderInterpreterState.hlsli.
+// VS interpreter instruction field constants — shared with HLSL.
 #include "../Shaders/CxbxVertexShaderInterpreterState.hlsli"
 
 // ******************************************************************

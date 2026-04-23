@@ -1,34 +1,23 @@
 // CxbxVertexShaderInterpreterState.hlsli — shared C++ / HLSL header
 //
-// Defines the constant buffer layout for the NV2A vertex shader interpreter
-// ubershader. Included by both the HLSL vertex shader and the C++ backend
-// to ensure the cbuffer layout stays in sync.
+// Defines instruction field constants for the NV2A vertex shader interpreter.
+// Included by both the HLSL vertex shader and the C++ backend.
 //
-// The NV2A vertex processor executes up to 136 instruction slots, each
-// being 128 bits (4 × 32-bit DWORDs). We upload these as uint4 values.
-//
-// SM5 cbuffer packing: uint4 arrays pack one element per 16-byte register,
-// which is exactly what we want — each uint4 = one instruction slot.
+// Data flow (no cbuffer — all data via SRVs):
+//   - g_PGRegs (StructuredBuffer<uint>, t12): shared PGRAPH register array,
+//     provides CHEOPS_PROGRAM_START and any future register-backed VS fields.
+//     Same GPU buffer bound to PS and VS stages.
+//   - g_ProgramData (StructuredBuffer<uint4>, t5): raw NV2A vertex shader
+//     microcode — 136 instruction slots × 128 bits each.
+//     The shader reads CHEOPS_PROGRAM_START from g_PGRegs to find the
+//     first active slot and loops until FLD_FINAL.
 
 #ifdef __cplusplus
 #pragma once
 #include <cstdint>
-
-// C++ side types
-struct VSI_Uint4 { uint32_t x, y, z, w; };
-
-#define VSI_BEGIN struct VSInterpreterCBLayout {
-#define VSI_END   };
-#define VSI_UINT(name)            alignas(16) uint32_t name; uint32_t _pad_##name[3]
-#define VSI_UINT4_ARRAY(name, n)  VSI_Uint4 name[n]
-
 #else
-// HLSL side
-#define VSI_BEGIN cbuffer VSInterpreterCB : register(b3) {
-#define VSI_END   };
-#define VSI_UINT(name)            uint name
-#define VSI_UINT4_ARRAY(name, n)  uint4 name[n]
-
+// HLSL side: program data SRV (uploaded from pg->program_data[136][4])
+StructuredBuffer<uint4> g_ProgramData : register(t5);
 #endif
 
 // ============================================================
@@ -164,21 +153,3 @@ VSI_CONST VSI_MASK_Z = 0x2;
 VSI_CONST VSI_MASK_W = 0x1;
 
 #undef VSI_CONST
-
-// ============================================================
-// Cbuffer layout: 136 instruction uint4s + instruction count
-// Total: 137 × 16 bytes = 2192 bytes
-// ============================================================
-VSI_BEGIN
-    VSI_UINT4_ARRAY(Instructions, 136);  // Raw 128-bit NV2A microcode
-    VSI_UINT(InstructionCount);           // Number of active instruction slots
-VSI_END
-
-#undef VSI_BEGIN
-#undef VSI_END
-#undef VSI_UINT
-#undef VSI_UINT4_ARRAY
-
-#ifdef __cplusplus
-static_assert(sizeof(VSInterpreterCBLayout) == 2192, "VS interpreter cbuffer layout size mismatch");
-#endif

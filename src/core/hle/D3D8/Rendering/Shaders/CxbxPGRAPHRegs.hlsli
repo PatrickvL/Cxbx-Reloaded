@@ -16,7 +16,9 @@
 
 // ============================================================
 // The raw PGRAPH regs[] buffer — 2048 uint32 elements (8 KB).
-// Bound as a StructuredBuffer<uint> at PS t12 (avoids t0-t11 texture slots).
+// Bound as a StructuredBuffer<uint> at t12 (avoids t0-t11 texture slots).
+// Shared by both PS (register combiner interpreter) and VS (vertex
+// shader interpreter) stages — the same GPU buffer is bound to both.
 // ============================================================
 StructuredBuffer<uint> g_PGRegs : register(t12);
 
@@ -71,6 +73,11 @@ float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs[byteOff >> 2]); }
 // Specular fog factors (final combiner constants, ABGR packed)
 #define NV_PGRAPH_SPECFOGFACTOR0            0x19AC
 #define NV_PGRAPH_SPECFOGFACTOR1            0x19B0
+
+// Vertex shader control (CHEOPS vertex processor)
+#define NV_PGRAPH_CSV0_C                    0x0FB8
+#define NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START_SHIFT 8
+#define NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START_MASK  0xFF
 
 // ============================================================
 // Color unpacking: ABGR uint32 → float4 RGBA [0..1]
