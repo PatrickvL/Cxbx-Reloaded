@@ -68,8 +68,9 @@ RCI_BEGIN
     RCI_UINT_ARRAY(PSRGBOutputs, 8);
     RCI_UINT(PSCombinerCount);                  // (flags<<8)|numStages
     RCI_UINT(PSTextureModes);                   // 4 x 5-bit modes
-    RCI_UINT(PSDotMapping);                     // Dot-product normal mapping
-    RCI_UINT(PSInputTexture);                   // Input-texture for dependent modes
+    // Both originate from NV_PGRAPH_SHADERCTL (0x1998): bits 0-11 = dot mapping, bits 12-27 = input texture
+    RCI_UINT(PSDotMapping);                     // Dot-product normal mapping (SHADERCTL bits 0-11)
+    RCI_UINT(PSInputTexture);                   // Input-texture for dependent modes (SHADERCTL bits 12-27)
     RCI_FLOAT4_ARRAY(ColorSign, 4);             // Per-stage: 0=keep, >0=u->s, <0=s->u
     RCI_FLOAT4(FogColor);                       // rgb=fog color constant; a=unused
     // --- Post-processing state (matches compiled PS c23..c43) ---

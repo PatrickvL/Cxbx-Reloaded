@@ -195,7 +195,7 @@ Add a diagnostic dump if needed to confirm.
 
 ## Step 3: Migrate RC Interpreter to Read PGRAPH State
 
-### 3.1 — Switch core combiner registers to PGRAPH source
+### 3.1 — Switch core combiner registers to PGRAPH source ✅ DONE
 
 **File:** `src/core/hle/D3D8/XbPixelShaderCompiler.cpp`
 **Function:** `CxbxD3D11UploadRCInterpreterState()`

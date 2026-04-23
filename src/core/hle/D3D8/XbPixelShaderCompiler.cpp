@@ -39,6 +39,8 @@
 #include "util\hasher.h"
 #include "core\hle\D3D8\Rendering\Shaders\CxbxFixedFunctionPixelShader.hlsli"
 #include "common/FilePaths.hpp"
+#include "devices\Xbox.h"              // For extern NV2ADevice* g_NV2A
+#include "devices\video\nv2a.h"        // For NV2ADevice::GetDeviceState(), NV2AState, PGRAPHState, nv2a_regs.h
 #include <assert.h>
 #include <process.h>
 #include <locale.h>
@@ -921,41 +923,61 @@ void CxbxSetPixelShader(ID3D11PixelShader* pPixelShader)
 bool g_UseFixedFunctionPixelShader = true;
 
 // Upload Xbox register combiner state to the RC interpreter constant buffer.
-// Reads directly from Xbox render state and texture state.
+// Step 3: Core combiner registers are read from PGRAPH when available;
+// remaining fields (final combiner constants, fog, alpha, BEM, etc.) still
+// come from HLE render/texture state and will migrate in Step 3.2.
 void CxbxD3D11UploadRCInterpreterState()
 {
 	if (!g_pD3D11RCInterpreterCB)
 		return;
 
-	// Use the pixel shader def from render state (same source as CxbxUpdateActivePixelShader)
+	// Always need PSDef for HLE-only fields (PSFinalCombinerConstants flags, etc.)
 	const xbox::X_D3DPIXELSHADERDEF *pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
 	if (!pPSDef)
 		return;
 
+	// PGRAPH source (populated by the puller thread via pushbuffer methods)
+	PGRAPHState *pg = nullptr;
+	if (g_NV2A) {
+		NV2AState *nv2a = g_NV2A->GetDeviceState();
+		pg = &nv2a->pgraph;
+	}
+
 	RCInterpreterCBLayout cb = {};
 
-	// Copy raw DWORD fields
-	for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value = pPSDef->PSAlphaInputs[i];
-	cb.PSFinalCombinerInputsABCD.value = pPSDef->PSFinalCombinerInputsABCD;
-	cb.PSFinalCombinerInputsEFG.value = pPSDef->PSFinalCombinerInputsEFG;
+	// --- Core combiner registers: PGRAPH path (Step 3.1) ---
+	if (pg) {
+		for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value  = pg->regs[NV_PGRAPH_COMBINEALPHAI0 + i * 4];
+		cb.PSFinalCombinerInputsABCD.value = pg->regs[NV_PGRAPH_COMBINESPECFOG0];
+		cb.PSFinalCombinerInputsEFG.value  = pg->regs[NV_PGRAPH_COMBINESPECFOG1];
+		for (int i = 0; i < 8; i++) cb.PSConstant0[i] = DwordColorToFloat4(pg->regs[NV_PGRAPH_COMBINEFACTOR0 + i * 4]);
+		for (int i = 0; i < 8; i++) cb.PSConstant1[i] = DwordColorToFloat4(pg->regs[NV_PGRAPH_COMBINEFACTOR1 + i * 4]);
+		for (int i = 0; i < 8; i++) cb.PSAlphaOutputs[i].value = pg->regs[NV_PGRAPH_COMBINEALPHAO0 + i * 4];
+		for (int i = 0; i < 8; i++) cb.PSRGBInputs[i].value    = pg->regs[NV_PGRAPH_COMBINECOLORI0 + i * 4];
+		cb.PSCompareMode.value = pg->regs[NV_PGRAPH_SHADERCLIPMODE];
+		for (int i = 0; i < 8; i++) cb.PSRGBOutputs[i].value   = pg->regs[NV_PGRAPH_COMBINECOLORO0 + i * 4];
+		cb.PSCombinerCount.value = pg->regs[NV_PGRAPH_COMBINECTL];
+	} else {
+		// Fallback: read from PSDef (HLE render state)
+		for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value = pPSDef->PSAlphaInputs[i];
+		cb.PSFinalCombinerInputsABCD.value = pPSDef->PSFinalCombinerInputsABCD;
+		cb.PSFinalCombinerInputsEFG.value  = pPSDef->PSFinalCombinerInputsEFG;
+		for (int i = 0; i < 8; i++) cb.PSConstant0[i] = DwordColorToFloat4(pPSDef->PSConstant0[i]);
+		for (int i = 0; i < 8; i++) cb.PSConstant1[i] = DwordColorToFloat4(pPSDef->PSConstant1[i]);
+		for (int i = 0; i < 8; i++) cb.PSAlphaOutputs[i].value = pPSDef->PSAlphaOutputs[i];
+		for (int i = 0; i < 8; i++) cb.PSRGBInputs[i].value    = pPSDef->PSRGBInputs[i];
+		cb.PSCompareMode.value = pPSDef->PSCompareMode;
+		for (int i = 0; i < 8; i++) cb.PSRGBOutputs[i].value   = pPSDef->PSRGBOutputs[i];
+		cb.PSCombinerCount.value = pPSDef->PSCombinerCount;
+	}
 
-	// PSConstant0/1: Xbox stores as packed ARGB DWORDs; convert to float4 RGBA
-	for (int i = 0; i < 8; i++) cb.PSConstant0[i] = DwordColorToFloat4(pPSDef->PSConstant0[i]);
-	for (int i = 0; i < 8; i++) cb.PSConstant1[i] = DwordColorToFloat4(pPSDef->PSConstant1[i]);
-
-	for (int i = 0; i < 8; i++) cb.PSAlphaOutputs[i].value = pPSDef->PSAlphaOutputs[i];
-	for (int i = 0; i < 8; i++) cb.PSRGBInputs[i].value = pPSDef->PSRGBInputs[i];
-	cb.PSCompareMode.value = pPSDef->PSCompareMode;
-
-	// Final combiner constants — also packed ARGB DWORDs
+	// Final combiner constants — still HLE-sourced (Step 3.2 will migrate)
 	cb.PSFinalCombinerConstant[0] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant0);
 	cb.PSFinalCombinerConstant[1] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant1);
 
-	for (int i = 0; i < 8; i++) cb.PSRGBOutputs[i].value = pPSDef->PSRGBOutputs[i];
-	cb.PSCombinerCount.value = pPSDef->PSCombinerCount;
-
-	// PSTextureModes is stored in a different render state slot than the PSDef struct
-	DWORD psTextureModes = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+	// PSTextureModes: from PGRAPH or HLE render state
+	DWORD psTextureModes = pg ? pg->regs[NV_PGRAPH_SHADERPROG]
+	                          : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
 
 	// --- AdjustTextureModes: match the compiled shader path ---
 	// The compiled shader path calls AdjustTextureModes() which adjusts texture
@@ -1032,7 +1054,7 @@ void CxbxD3D11UploadRCInterpreterState()
 	// The compiled shader path calls AdjustFinalCombiner() which generates a final
 	// combiner for fog/specular when the pixel shader doesn't define one.
 	{
-		bool hasFinalCombiner = (pPSDef->PSFinalCombinerInputsABCD != 0) || (pPSDef->PSFinalCombinerInputsEFG != 0);
+		bool hasFinalCombiner = (cb.PSFinalCombinerInputsABCD.value != 0) || (cb.PSFinalCombinerInputsEFG.value != 0);
 		if (!hasFinalCombiner) {
 			bool fogEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) > 0;
 			bool specularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) > 0;
@@ -1053,8 +1075,8 @@ void CxbxD3D11UploadRCInterpreterState()
 		}
 	}
 
-	cb.PSDotMapping.value = pPSDef->PSDotMapping;
-	cb.PSInputTexture.value = pPSDef->PSInputTexture;
+	cb.PSDotMapping.value  = pg ? pg->regs[NV_PGRAPH_SHADERCTL] : pPSDef->PSDotMapping;
+	cb.PSInputTexture.value = pg ? pg->regs[NV_PGRAPH_SHADERCTL] : pPSDef->PSInputTexture;
 
 	// Color sign conversion — per-stage
 	for (int stage = 0; stage < 4; stage++) {
