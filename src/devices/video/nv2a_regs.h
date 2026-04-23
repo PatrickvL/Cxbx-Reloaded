@@ -571,6 +571,8 @@
 #   define NV_PGRAPH_SETUPRASTER_WINDOWCLIPTYPE                 (1 << 31)
 #define NV_PGRAPH_SHADERCLIPMODE                         0x00001994
 #define NV_PGRAPH_SHADERCTL                              0x00001998
+#   define NV_PGRAPH_SHADERCTL_DOT_RGBMAPPING                   0x00000FFF
+#   define NV_PGRAPH_SHADERCTL_OTHER_STAGE_INPUT                0x0FFFF000
 #define NV_PGRAPH_SHADERPROG                             0x0000199C
 #define NV_PGRAPH_SEMAPHOREOFFSET                        0x000019A0
 #define NV_PGRAPH_SHADOWZSLOPETHRESHOLD                  0x000019A8
