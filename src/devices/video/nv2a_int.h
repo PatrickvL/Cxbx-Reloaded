@@ -27,7 +27,7 @@
 
 #include <queue>
 #include <thread>
-#include <GL/glew.h>
+#include <cstdint>
 
 #include "xbox_types.h" // For xbox::addr_xt
 
@@ -36,12 +36,10 @@
 #ifdef USE_SHADER_CACHE
 #include "glib_compat.h" // For GHashTable, g_hash_table_new, g_hash_table_lookup, g_hash_table_insert
 #endif
-#include "common\util\gloffscreen\gloffscreen.h" // For GloContext, etc
 
 #include "swizzle.h"
 
 #include "nv2a_debug.h" // For HWADDR_PRIx, NV2A_DPRINTF, NV2A_GL_DPRINTF, etc.
-#include "nv2a_shaders.h" // For ShaderBinding, etc
 #include "nv2a_regs.h" // For NV2A_MAX_TEXTURES, etc
 
 
@@ -154,12 +152,9 @@ typedef struct VertexAttribute {
 
 	float *inline_buffer;
 
-	GLint gl_count;
-	GLenum gl_type;
-	GLboolean gl_normalize;
-
-	GLuint gl_converted_buffer;
-	GLuint gl_inline_buffer;
+	int32_t gl_count;
+	int32_t gl_type;
+	int32_t gl_normalize;
 } VertexAttribute;
 
 typedef struct Surface {
@@ -199,12 +194,6 @@ typedef struct TextureKey {
 	uint8_t* palette_data;
 } TextureKey;
 
-typedef struct TextureBinding {
-	GLenum gl_target;
-	GLuint gl_texture;
-	unsigned int refcnt;
-} TextureBinding;
-
 typedef struct KelvinState {
 	xbox::addr_xt object_instance;
 } KelvinState;
@@ -228,7 +217,6 @@ typedef struct ImageBlitState {
 } ImageBlitState;
 
 typedef struct PGRAPHState {
-	bool opengl_enabled; // == bLLE_GPU
 	QemuMutex pgraph_lock;
 
 	uint32_t pending_interrupts;
@@ -250,25 +238,12 @@ typedef struct PGRAPHState {
 	SurfaceShape last_surface_shape;
 
 	xbox::addr_xt dma_a, dma_b;
-#ifdef USE_TEXTURE_CACHE
-	GLruCache *texture_cache;
-#endif
 	bool texture_dirty[NV2A_MAX_TEXTURES];
-	TextureBinding *texture_binding[NV2A_MAX_TEXTURES];
-
-#ifdef USE_SHADER_CACHE
-	GHashTable *shader_cache;
-#endif
-	ShaderBinding *shader_binding;
 
 	bool texture_matrix_enable[NV2A_MAX_TEXTURES];
 
 	/* FIXME: Move to NV_PGRAPH_BUMPMAT... */
 	float bump_env_matrix[NV2A_MAX_TEXTURES - 1][4]; /* 3 allowed stages with 2x2 matrix each */
-
-	GloContext *gl_context;
-	GLuint gl_framebuffer;
-	GLuint gl_color_buffer, gl_zeta_buffer;
 
 	xbox::addr_xt dma_state;
 	xbox::addr_xt dma_notifies;
@@ -278,9 +253,6 @@ typedef struct PGRAPHState {
 	xbox::addr_xt report_offset;
 	bool zpass_pixel_count_enable;
 	unsigned int zpass_pixel_count_result;
-	unsigned int gl_zpass_pixel_count_query_count;
-	GLuint* gl_zpass_pixel_count_queries;
-
 	xbox::addr_xt dma_vertex_a, dma_vertex_b;
 
 	unsigned int primitive_mode;
@@ -312,8 +284,6 @@ typedef struct PGRAPHState {
 
 	unsigned int inline_array_length;
 	uint32_t inline_array[NV2A_MAX_BATCH_LENGTH];
-	GLuint gl_inline_array_buffer;
-
 	unsigned int inline_elements_length;
 	uint16_t inline_elements[NV2A_MAX_BATCH_LENGTH]; // Cxbx-Reloaded TODO : Restore uint32_t once HLE_draw_inline_elements can using that
 
@@ -323,12 +293,8 @@ typedef struct PGRAPHState {
 	unsigned int draw_arrays_max_count;
 
 	/* FIXME: Unknown size, possibly endless, 1000 will do for now */
-	GLint gl_draw_arrays_start[1000];
-	GLsizei gl_draw_arrays_count[1000];
-
-	GLuint gl_element_buffer;
-	GLuint gl_memory_buffer;
-	GLuint gl_vertex_array;
+	int32_t gl_draw_arrays_start[1000];
+	int32_t gl_draw_arrays_count[1000];
 
 	uint32_t regs[NV_PGRAPH_SIZE]; // TODO : union
 } PGRAPHState;
@@ -353,7 +319,6 @@ typedef struct OverlayState {
 	int old_in_width;
 	int old_in_height;
 	int old_pitch;
-	GLuint gl_texture;
 } OverlayState;
 
 typedef struct NV2AState {

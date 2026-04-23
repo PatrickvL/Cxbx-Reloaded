@@ -147,86 +147,15 @@ static void pfifo_run_puller(NV2AState *d)
         uint32_t method = method_entry & 0x1FFC;
         uint32_t subchannel = GET_MASK(method_entry, NV_PFIFO_CACHE1_METHOD_SUBCHANNEL);
 
-        // In HLE mode (opengl_enabled == false), process pushbuffer methods
-        // into PGRAPH register state so the RC/VS interpreters can read from
-        // it.  Skip object binding (method 0) and object-reference methods
-        // (0x180..0x1FF) which require RAMHT lookups that may not be
-        // initialized in HLE mode.  Skip the full context-switch / FIFO-wait
-        // ceremony — Xbox uses a single GPU channel, so it's safe to write
-        // directly.  Draw-triggering methods (BEGIN_END, CLEAR_SURFACE) are
-        // safe because their rendering function pointers are null.
-        if (!d->pgraph.opengl_enabled) {
-            if (method >= 0x100 && !(method >= 0x180 && method < 0x200)) {
-                qemu_mutex_lock(&d->pgraph.pgraph_lock);
-                pgraph_handle_method(d, subchannel, method, parameter);
-                qemu_mutex_unlock(&d->pgraph.pgraph_lock);
-            }
-            continue;
-        }
-
-        // NV2A_DPRINTF("pull %d 0x%08X 0x%08X - subch %d\n", get/4, method_entry, parameter, subchannel);
-
-        if (method == 0) {
-            RAMHTEntry entry = ramht_lookup(d, parameter);
-            assert(entry.valid);
-
-            // assert(entry.channel_id == state->channel_id);
-
-            assert(entry.engine == ENGINE_GRAPHICS);
-
-
-            /* the engine is bound to the subchannel */
-            assert(subchannel < 8);
-            SET_MASK(*engine_reg, 3 << (4*subchannel), entry.engine);
-            SET_MASK(*pull1, NV_PFIFO_CACHE1_PULL1_ENGINE, entry.engine);
-            // NV2A_DPRINTF("engine_reg1 %d 0x%08X\n", subchannel, *engine_reg);
-
-
-            // TODO: this is fucked
+        // Process pushbuffer methods into PGRAPH register state so the
+        // RC/VS interpreters can read from it.  Skip object binding
+        // (method 0) and object-reference methods (0x180..0x1FF) which
+        // require RAMHT lookups.  Skip context-switch / FIFO-wait —
+        // Xbox uses a single GPU channel, so it's safe to write directly.
+        if (method >= 0x100 && !(method >= 0x180 && method < 0x200)) {
             qemu_mutex_lock(&d->pgraph.pgraph_lock);
-            //make pgraph busy
-            qemu_mutex_unlock(&d->pfifo.pfifo_lock);
-
-            pgraph_switch_context(d, entry.channel_id);
-            pgraph_wait_fifo_access(d);
-            pgraph_handle_method(d, subchannel, 0, entry.instance);
-
-            // make pgraph not busy
-            qemu_mutex_unlock(&d->pgraph.pgraph_lock);
-            qemu_mutex_lock(&d->pfifo.pfifo_lock);
-
-        } else if (method >= 0x100) {
-            // method passed to engine
-
-            /* methods that take objects.
-             * TODO: Check this range is correct for the nv2a */
-            if (method >= 0x180 && method < 0x200) {
-                //qemu_mutex_lock_iothread();
-                RAMHTEntry entry = ramht_lookup(d, parameter);
-                assert(entry.valid);
-                // assert(entry.channel_id == state->channel_id);
-                parameter = entry.instance;
-                //qemu_mutex_unlock_iothread();
-            }
-
-            enum FIFOEngine engine = (enum FIFOEngine)GET_MASK(*engine_reg, 3 << (4*subchannel));
-            // NV2A_DPRINTF("engine_reg2 %d 0x%08X\n", subchannel, *engine_reg);
-            assert(engine == ENGINE_GRAPHICS);
-            SET_MASK(*pull1, NV_PFIFO_CACHE1_PULL1_ENGINE, engine);
-
-            // TODO: this is fucked
-            qemu_mutex_lock(&d->pgraph.pgraph_lock);
-            //make pgraph busy
-            qemu_mutex_unlock(&d->pfifo.pfifo_lock);
-
-            pgraph_wait_fifo_access(d);
             pgraph_handle_method(d, subchannel, method, parameter);
-
-            // make pgraph not busy
             qemu_mutex_unlock(&d->pgraph.pgraph_lock);
-            qemu_mutex_lock(&d->pfifo.pfifo_lock);
-        } else {
-            assert(false);
         }
 
     }
@@ -236,10 +165,6 @@ int pfifo_puller_thread(NV2AState *d)
 {
     g_AffinityPolicy->SetAffinityOther();
     CxbxSetThreadName("Cxbx NV2A FIFO puller");
-
-    if (d->pgraph.opengl_enabled) {
-        glo_set_current(d->pgraph.gl_context);
-    }
 
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
     while (true) {
@@ -251,10 +176,6 @@ int pfifo_puller_thread(NV2AState *d)
         }
     }
     qemu_mutex_unlock(&d->pfifo.pfifo_lock);
-
-    if (d->pgraph.opengl_enabled) {
-        glo_set_current(NULL); // Cxbx addition
-    }
 
 	return NULL;
 }

@@ -133,15 +133,12 @@ set(IMGUI_GFX_HEADER "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_dx11.h"
 set(IMGUI_GFX_SOURCE "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_dx11.cpp")
 file (GLOB CXBXR_HEADER_EMU_IMPORT
  "${IMGUI_GFX_HEADER}"
- "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_opengl3.h"
  "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_win32.h"
 )
 file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/common/audio/converter.hpp"
  "${CXBXR_ROOT_DIR}/src/common/audio/XADPCM.h"
  "${CXBXR_ROOT_DIR}/src/common/Timer.h"
- "${CXBXR_ROOT_DIR}/src/common/util/gloffscreen/glextensions.h"
- "${CXBXR_ROOT_DIR}/src/common/util/gloffscreen/gloffscreen.h"
  "${CXBXR_ROOT_DIR}/src/common/win32/Threads.h"
  "${CXBXR_ROOT_DIR}/src/core/common/imgui/audio.hpp"
  "${CXBXR_ROOT_DIR}/src/core/common/imgui/ui.hpp"
@@ -263,11 +260,7 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/devices/video/nv2a.h"
  "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_debug.h"
  "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_int.h"
- "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_psh.h"
  "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_regs.h"
- "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_shaders.h"
- "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_shaders_common.h"
- "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_vsh.h"
  "${CXBXR_ROOT_DIR}/src/devices/video/qemu-thread.h"
  "${CXBXR_ROOT_DIR}/src/devices/video/queue.h"
  "${CXBXR_ROOT_DIR}/src/devices/video/swizzle.h"
@@ -357,15 +350,11 @@ file (GLOB CXBXR_KRNL_CPP
 )
 file (GLOB CXBXR_SOURCE_EMU_IMPORT
  "${IMGUI_GFX_SOURCE}"
- "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_opengl3.cpp"
  "${CXBXR_ROOT_DIR}/import/imgui/backends/imgui_impl_win32.cpp"
 )
 file (GLOB CXBXR_SOURCE_EMU
  "${CXBXR_KRNL_CPP}"
  "${CXBXR_ROOT_DIR}/src/common/Timer.cpp"
- "${CXBXR_ROOT_DIR}/src/common/util/gloffscreen/glextensions.cpp"
- "${CXBXR_ROOT_DIR}/src/common/util/gloffscreen/gloffscreen_common.cpp"
- "${CXBXR_ROOT_DIR}/src/common/util/gloffscreen/gloffscreen_wgl.cpp"
  "${CXBXR_ROOT_DIR}/src/common/VerifyAddressRanges.cpp"
  "${CXBXR_ROOT_DIR}/src/common/win32/Threads.cpp"
  "${CXBXR_ROOT_DIR}/src/core/common/imgui/audio.cpp"
@@ -500,9 +489,6 @@ file (GLOB CXBXR_SOURCE_EMU
 
  "${CXBXR_ROOT_DIR}/src/devices/video/nv2a.cpp"
  "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_debug.cpp"
- "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_psh.cpp"
- "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_shaders.cpp"
- "${CXBXR_ROOT_DIR}/src/devices/video/nv2a_vsh.cpp"
  "${CXBXR_ROOT_DIR}/src/devices/video/qemu-thread-win32.cpp"
  "${CXBXR_ROOT_DIR}/src/devices/video/swizzle.cpp"
  "${CXBXR_ROOT_DIR}/src/devices/x86/EmuX86.cpp"
@@ -584,12 +570,6 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CXBXR_HLSL_FILES} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/hlsl/backup"
 )
 install(DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/hlsl DESTINATION bin)
-
-set(cxbxr_GLEW_DLL "${CMAKE_SOURCE_DIR}/import/glew-2.0.0/bin/Release/Win32/glew32.dll")
-
-install(PROGRAMS ${cxbxr_GLEW_DLL}
-  DESTINATION bin
-)
 
 install(PROGRAMS $<TARGET_FILE_DIR:cxbx>/${CMAKE_SHARED_LIBRARY_PREFIX}subhook${CMAKE_SHARED_LIBRARY_SUFFIX}
   DESTINATION bin
