@@ -198,7 +198,7 @@ void HLE_draw_state_update(NV2AState *d)
 	// NV_PGRAPH_FOGCOLOR stores fog color in ARGB format (the PGRAPH extracts
 	// individual R,G,B,A fields from the NV2A ABGR method parameter and
 	// reassembles them into ARGB-ordered bit fields). No byte swap needed.
-	uint32_t fog_color = pg->regs[NV_PGRAPH_FOGCOLOR];
+	uint32_t fog_color = pg->regs[RI(NV_PGRAPH_FOGCOLOR)];
 	CxbxSetFogColor(fog_color);
 
 	LOG_INCOMPLETE(); // TODO : Read state from pgraph, convert to D3D
@@ -242,7 +242,7 @@ uint32_t HLE_read_NV2A_pgraph_register(const int reg)
 {
 	NV2AState* dev = g_NV2A->GetDeviceState();
 	PGRAPHState *pg = &(dev->pgraph);
-	return pg->regs[reg];
+	return pg->regs[RI(reg)];
 }
 
 float *HLE_get_NV2A_vertex_attribute_value_pointer(unsigned slot)
@@ -355,7 +355,7 @@ extern void EmuExecutePushBufferRaw
 
 	// Retrieve NV2AState via the (LLE) NV2A device :
 	NV2AState *d = g_NV2A->GetDeviceState();
-	d->pgraph.regs[NV_PGRAPH_CTX_CONTROL] |= NV_PGRAPH_CTX_CONTROL_CHID; // avoid assert in pgraph_handle_method()
+	d->pgraph.regs[RI(NV_PGRAPH_CTX_CONTROL)] |= NV_PGRAPH_CTX_CONTROL_CHID; // avoid assert in pgraph_handle_method()
 
 
 	// DMA Pusher state -- see https://envytools.readthedocs.io/en/latest/hw/fifo/dma-pusher.html#pusher-state

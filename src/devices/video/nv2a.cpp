@@ -160,11 +160,11 @@ static void update_irq(NV2AState *d)
 
 #define DEVICE_READ32(DEV) uint32_t EmuNV2A_##DEV##_Read32(NV2AState *d, xbox::addr_xt addr)
 #define DEVICE_READ32_SWITCH() uint32_t result = 0; switch (addr) 
-#define DEVICE_READ32_REG(dev) result = d->dev.regs[addr]
+#define DEVICE_READ32_REG(dev) result = d->dev.regs[RI(addr)]
 #define DEVICE_READ32_END(DEV) DEBUG_READ32(DEV); return result
 
 #define DEVICE_WRITE32(DEV) void EmuNV2A_##DEV##_Write32(NV2AState *d, xbox::addr_xt addr, uint32_t value)
-#define DEVICE_WRITE32_REG(dev) d->dev.regs[addr] = value
+#define DEVICE_WRITE32_REG(dev) d->dev.regs[RI(addr)] = value
 #define DEVICE_WRITE32_END(DEV) DEBUG_WRITE32(DEV)
 
 static inline uint32_t ldl_le_p(const void *p)
@@ -434,7 +434,7 @@ void NV2ADevice::Init()
     qemu_cond_init(&d->pfifo.flush_complete_cond);
     d->pfifo.flush_requested = false;
 
-    d->pfifo.regs[NV_PFIFO_CACHE1_STATUS] |= NV_PFIFO_CACHE1_STATUS_LOW_MARK;
+    d->pfifo.regs[RI(NV_PFIFO_CACHE1_STATUS)] |= NV_PFIFO_CACHE1_STATUS_LOW_MARK;
 
     /* fire up puller */
 	d->pfifo.puller_thread = std::thread(pfifo_puller_thread, d);

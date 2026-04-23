@@ -947,16 +947,16 @@ void CxbxD3D11UploadRCInterpreterState()
 
 	// --- Core combiner registers: PGRAPH path (Step 3.1) ---
 	if (pg) {
-		for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value  = pg->regs[NV_PGRAPH_COMBINEALPHAI0 + i * 4];
-		cb.PSFinalCombinerInputsABCD.value = pg->regs[NV_PGRAPH_COMBINESPECFOG0];
-		cb.PSFinalCombinerInputsEFG.value  = pg->regs[NV_PGRAPH_COMBINESPECFOG1];
-		for (int i = 0; i < 8; i++) cb.PSConstant0[i] = DwordColorToFloat4(pg->regs[NV_PGRAPH_COMBINEFACTOR0 + i * 4]);
-		for (int i = 0; i < 8; i++) cb.PSConstant1[i] = DwordColorToFloat4(pg->regs[NV_PGRAPH_COMBINEFACTOR1 + i * 4]);
-		for (int i = 0; i < 8; i++) cb.PSAlphaOutputs[i].value = pg->regs[NV_PGRAPH_COMBINEALPHAO0 + i * 4];
-		for (int i = 0; i < 8; i++) cb.PSRGBInputs[i].value    = pg->regs[NV_PGRAPH_COMBINECOLORI0 + i * 4];
-		cb.PSCompareMode.value = pg->regs[NV_PGRAPH_SHADERCLIPMODE];
-		for (int i = 0; i < 8; i++) cb.PSRGBOutputs[i].value   = pg->regs[NV_PGRAPH_COMBINECOLORO0 + i * 4];
-		cb.PSCombinerCount.value = pg->regs[NV_PGRAPH_COMBINECTL];
+		for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value  = pg->regs[RI(NV_PGRAPH_COMBINEALPHAI0 + i * 4)];
+		cb.PSFinalCombinerInputsABCD.value = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)];
+		cb.PSFinalCombinerInputsEFG.value  = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)];
+		for (int i = 0; i < 8; i++) cb.PSConstant0[i] = DwordColorToFloat4(pg->regs[RI(NV_PGRAPH_COMBINEFACTOR0 + i * 4)]);
+		for (int i = 0; i < 8; i++) cb.PSConstant1[i] = DwordColorToFloat4(pg->regs[RI(NV_PGRAPH_COMBINEFACTOR1 + i * 4)]);
+		for (int i = 0; i < 8; i++) cb.PSAlphaOutputs[i].value = pg->regs[RI(NV_PGRAPH_COMBINEALPHAO0 + i * 4)];
+		for (int i = 0; i < 8; i++) cb.PSRGBInputs[i].value    = pg->regs[RI(NV_PGRAPH_COMBINECOLORI0 + i * 4)];
+		cb.PSCompareMode.value = pg->regs[RI(NV_PGRAPH_SHADERCLIPMODE)];
+		for (int i = 0; i < 8; i++) cb.PSRGBOutputs[i].value   = pg->regs[RI(NV_PGRAPH_COMBINECOLORO0 + i * 4)];
+		cb.PSCombinerCount.value = pg->regs[RI(NV_PGRAPH_COMBINECTL)];
 	} else {
 		// Fallback: read from PSDef (HLE render state)
 		for (int i = 0; i < 8; i++) cb.PSAlphaInputs[i].value = pPSDef->PSAlphaInputs[i];
@@ -976,7 +976,7 @@ void CxbxD3D11UploadRCInterpreterState()
 	cb.PSFinalCombinerConstant[1] = DwordColorToFloat4(pPSDef->PSFinalCombinerConstant1);
 
 	// PSTextureModes: from PGRAPH or HLE render state
-	DWORD psTextureModes = pg ? pg->regs[NV_PGRAPH_SHADERPROG]
+	DWORD psTextureModes = pg ? pg->regs[RI(NV_PGRAPH_SHADERPROG)]
 	                          : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
 
 	// --- AdjustTextureModes: match the compiled shader path ---
@@ -1075,8 +1075,8 @@ void CxbxD3D11UploadRCInterpreterState()
 		}
 	}
 
-	cb.PSDotMapping.value  = pg ? pg->regs[NV_PGRAPH_SHADERCTL] : pPSDef->PSDotMapping;
-	cb.PSInputTexture.value = pg ? pg->regs[NV_PGRAPH_SHADERCTL] : pPSDef->PSInputTexture;
+	cb.PSDotMapping.value  = pg ? pg->regs[RI(NV_PGRAPH_SHADERCTL)] : pPSDef->PSDotMapping;
+	cb.PSInputTexture.value = pg ? pg->regs[RI(NV_PGRAPH_SHADERCTL)] : pPSDef->PSInputTexture;
 
 	// Color sign conversion — per-stage
 	for (int stage = 0; stage < 4; stage++) {

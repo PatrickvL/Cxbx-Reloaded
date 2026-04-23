@@ -46,14 +46,17 @@
 typedef xbox::addr_xt hwaddr; // Compatibility; Cxbx uses xbox::addr_xt, xqemu and OpenXbox use hwaddr 
 typedef uint32_t value_t; // Compatibility; Cxbx values are uint32_t (xqemu and OpenXbox use uint64_t)
 
-#define NV_PMC_SIZE                 0x001000
-#define _NV_PFIFO_SIZE              0x002000 // Underscore prefix to prevent clash with NV_PFIFO_SIZE
-#define NV_PVIDEO_SIZE              0x001000
-#define NV_PTIMER_SIZE              0x001000
-#define NV_PFB_SIZE                 0x001000
-#define NV_PGRAPH_SIZE              0x002000
-#define NV_PCRTC_SIZE               0x001000
-#define NV_PRAMDAC_SIZE             0x001000
+// Register index: convert MMIO byte offset to uint32_t array index
+#define RI(byte_offset) ((byte_offset) >> 2)
+
+#define NV_PMC_SIZE                 (0x001000 / 4)
+#define _NV_PFIFO_SIZE              (0x002000 / 4) // Underscore prefix to prevent clash with NV_PFIFO_SIZE
+#define NV_PVIDEO_SIZE              (0x001000 / 4)
+#define NV_PTIMER_SIZE              (0x001000 / 4)
+#define NV_PFB_SIZE                 (0x001000 / 4)
+#define NV_PGRAPH_SIZE              (0x002000 / 4)
+#define NV_PCRTC_SIZE               (0x001000 / 4)
+#define NV_PRAMDAC_SIZE             (0x001000 / 4)
 
 #define VSH_TOKEN_SIZE 4 // Compatibility; TODO : Move this to nv2a_vsh.h
 #define MAX(a,b) ((a)>(b) ? (a) : (b)) // Compatibility
