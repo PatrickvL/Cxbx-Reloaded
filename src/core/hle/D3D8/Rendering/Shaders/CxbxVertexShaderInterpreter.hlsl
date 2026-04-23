@@ -34,71 +34,108 @@ uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 // producing a true IEEE infinity.  We match the existing emulator consensus
 // for now; if hardware tests reveal different behaviour, replacing this
 // with a large negative float (e.g. -FLT_MAX / -3.4e38) would be the fix.
+// Note: FXC rejects literal division by zero (-1.0f/0.0f), so we use
+// asfloat() on the raw IEEE 754 bit patterns instead.
 static const float CXBX_POS_INF = asfloat(0x7F800000u);
 static const float CXBX_NEG_INF = asfloat(0xFF800000u);
 
 // ============================================================
-// Swizzle helper: rearrange float4 components by packed index
-// Packed format: bits [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W
+// Per-invocation interpreter state.
+//
+// HLSL `static` globals are per-thread (each vertex gets its own copy,
+// reset at shader entry). Keeping state here instead of in locals avoids
+// passing 12 + 16 + 16 float4 arrays through every helper call, which
+// is the single biggest driver of compile time and helper-inlining cost
+// in this shader.
+// ============================================================
+static float4 s_r[12];      // temporary registers r0-r11
+static float4 s_v[16];      // input (vertex attribute) registers v0-v15
+static float4 s_oRegs[16];  // output registers (indexed by OUTPUT_REG_*)
+static int    s_a0;         // address register
+
+// Named indices into s_oRegs[].  These match the NV2A output address
+// encoding: the 4-bit out_address field maps directly to these slots.
+// The layout mirrors the NV2A vertex attribute (input) slot numbering
+// used for v[] registers (see CxbxFixedFunctionVertexShader.hlsl and
+// VertexShader.cpp OReg_Name[]):
+//   0=oPos/position  3=oD0/diffuse    4=oD1/specular   5=oFog/fogCoord
+//   6=oPts/pointSize 7=oB0/backDiff   8=oB1/backSpec   9-12=oT0-oT3/texcoord0-3
+// Slots 1-2 (weight/normal on the input side) are unused for output.
+// Slot 15 is a0.x in the OReg encoding (handled via s_a0/ARL, not s_oRegs).
+#define OUTPUT_REG_OPOS  0u  // position
+#define OUTPUT_REG_OD0   3u  // front diffuse colour
+#define OUTPUT_REG_OD1   4u  // front specular colour
+#define OUTPUT_REG_OFOG  5u  // fog coordinate (only .x used by rasterizer)
+#define OUTPUT_REG_OPTS  6u  // point sprite size
+#define OUTPUT_REG_OB0   7u  // back diffuse colour
+#define OUTPUT_REG_OB1   8u  // back specular colour
+#define OUTPUT_REG_OT0   9u  // texture coordinate 0
+#define OUTPUT_REG_OT1  10u  // texture coordinate 1
+#define OUTPUT_REG_OT2  11u  // texture coordinate 2
+#define OUTPUT_REG_OT3  12u  // texture coordinate 3
+#define OUTPUT_REG_A0X  15u  // a0.x (writes go through s_a0/ARL, not write_output)
+
+// ============================================================
+// Swizzle helper: rearrange float4 components by packed index.
+// Packed format: bits [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W.
+// Direct float4 indexing (no temp scalar array).
 // ============================================================
 float4 apply_swizzle(float4 v, uint swz)
 {
-    float arr[4] = { v.x, v.y, v.z, v.w };
-    return float4(arr[(swz >> 6) & 3], arr[(swz >> 4) & 3],
-                  arr[(swz >> 2) & 3], arr[swz & 3]);
+    return float4(v[(swz >> 6) & 3], v[(swz >> 4) & 3],
+                  v[(swz >> 2) & 3], v[ swz       & 3]);
 }
 
 // ============================================================
-// Fetch an input source register value
+// Fetch an input source register value (A, B, or C input).
 // ============================================================
-float4 fetch_input(
-    uint mux, uint r_idx, uint v_idx, uint const_idx,
-    uint swz, bool is_neg, bool use_a0x, int a0,
-    float4 t[12], float4 oPos_reg, float4 v_regs[16])
+float4 fetch_input(uint mux, uint r_idx, uint v_idx, uint const_idx,
+                   uint swz, bool is_neg, bool use_a0x)
 {
     float4 raw;
 
     if (mux == VSI_MUX_R) {
-        // Temporary register r0-r11; r12 aliases oPos; >12 is NV2A-undefined
-        raw = (r_idx == 12) ? oPos_reg
-            : (r_idx <  12) ? t[r_idx]
+        // r0-r11, r12 aliases oPos; >12 is NV2A-undefined -> 0
+        raw = (r_idx == 12) ? s_oRegs[OUTPUT_REG_OPOS]
+            : (r_idx <  12) ? s_r[r_idx]
             :                 float4(0, 0, 0, 0);
     }
     else if (mux == VSI_MUX_V) {
-        // Vertex input register v0-v15
-        raw = v_regs[v_idx & 0xF];
+        raw = s_v[v_idx & 0xF];
     }
     else {
-        // Constant register c0-c191
-        // The Xbox encoding collapses to: (const_idx & 0xFF) maps to 0..191
+        // Constant register c0..c191, optionally offset by a0
         int c_index = (int)(const_idx & 0xFF);
-        if (use_a0x)
-            c_index += a0;
+        if (use_a0x) c_index += s_a0;
         raw = (c_index >= 0 && c_index < (int)X_D3DVS_CONSTREG_COUNT)
             ? C[c_index] : float4(0, 0, 0, 0);
     }
 
-    float4 swizzled = apply_swizzle(raw, swz);
-    return is_neg ? -swizzled : swizzled;
+    float4 sw = apply_swizzle(raw, swz);
+    return is_neg ? -sw : sw;
 }
 
 // ============================================================
-// Write result to register with writemask
+// Write `src` into `dest` respecting the 4-bit component mask.
+// Four independent scalar bit-tests compile to four `movc`s without
+// FXC having to build a bool4 from a uint constant first.
 // ============================================================
 void write_masked(inout float4 dest, float4 src, uint mask)
 {
-    bool4 sel = (uint4(VSI_MASK_X, VSI_MASK_Y, VSI_MASK_Z, VSI_MASK_W) & mask) != 0;
-    dest = sel ? src : dest;
+    if (mask & VSI_MASK_X) dest.x = src.x;
+    if (mask & VSI_MASK_Y) dest.y = src.y;
+    if (mask & VSI_MASK_Z) dest.z = src.z;
+    if (mask & VSI_MASK_W) dest.w = src.w;
 }
 
 // ============================================================
-// Write result to a temporary register (r0-r11) or oPos (r12)
+// Write to a temporary register (r0-r11) or oPos (r12).
 // Indices > 12 are undefined on NV2A and silently ignored.
 // ============================================================
-void write_r(uint dest, inout float4 t[12], inout float4 oPos, float4 result, uint mask)
+void write_r(uint dest, float4 result, uint mask)
 {
-    if (dest == 12)     write_masked(oPos,    result, mask);
-    else if (dest < 12) write_masked(t[dest], result, mask);
+    if (dest == 12)     write_masked(s_oRegs[OUTPUT_REG_OPOS], result, mask);
+    else if (dest < 12) write_masked(s_r[dest],  result, mask);
 }
 
 // NV2A-accurate multiply and dot product helpers are in CxbxNV2AMathHelpers.hlsli
@@ -129,7 +166,29 @@ float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
 // ILU unit operations
 // ============================================================
 
-// Floor with bias (matching CxbxVertexShaderTemplate.hlsl)
+// Floor with ARL bias — workaround for GPU float precision on byte-normalised
+// vertex attributes.  When the Xbox CPU uploads a byte vertex attribute like
+// 17, NV2A hardware normalises it to 17/255 using its fixed-function input
+// unit (well-defined rounding).  GPU shader floats may represent this as
+// slightly less than the true value (e.g. 16.9999… instead of 17.0) after
+// the shader multiplies back by 255, so a naïve floor() would yield 16.
+// Adding a small bias before floor() compensates for this.
+//
+// Origin: xqemu PR #79 "Add ARL-bias to work around OpenGL float behaviour"
+//   https://github.com/xqemu/xqemu/pull/79
+// Background: xqemu issue #78 "GLSL floats are not suitable for VS emulation"
+//   https://github.com/xqemu/xqemu/issues/78
+//
+// Per the NV_vertex_program spec (§2.14.1.11), the floor operations in ARL
+// and EXP "must operate identically".  xqemu issue #105 notes that applying
+// the bias to EXP's floor too would be the correct approach, but doing so
+// risks breaking EXP's result.y fractional guarantee (expected in [0,1)).
+// We therefore apply the bias only to ARL (matching xemu behaviour) and
+// leave EXP using exact floor() — see exec_ilu / VSI_ILU_EXP below.
+//
+// Known limitation: the bias can cause floor(N - epsilon) → N when the true
+// mathematical result should be N-1 (e.g. 16.999 → 17).  This is considered
+// less common than the byte-normalisation under-rounding it fixes.
 #define BIAS 0.001
 
 float vsi_floor(float src)
@@ -153,8 +212,7 @@ float4 exec_ilu(uint opcode, float4 c_in)
         }
         case VSI_ILU_RSQ: return rsqrt(abs(s)).xxxx;
         case VSI_ILU_EXP: {
-            // EXP uses exact floor (no bias). The +0.001 bias in vsi_floor
-            // is only correct for ARL (byte normalization rounding fix).
+            // EXP uses exact floor (no ARL bias).
             float fl = floor(s);
             return float4(exp2(fl), s - fl, exp2(s), 1.0);
         }
@@ -186,9 +244,7 @@ float4 exec_ilu(uint opcode, float4 c_in)
 // For example, a write with mask ,y puts the .y result into oFog.x.
 // This matches xemu's fog_mask_str remapping table.
 // ============================================================
-#define OUTPUT_REG_FOG 5u
-
-void write_fog_output(inout float4 oRegs[16], float4 result, uint mask)
+void write_fog_output(float4 result, uint mask)
 {
     // Find the highest set bit in mask (x=8, y=4, z=2, w=1)
     // and move that component into .x
@@ -197,19 +253,19 @@ void write_fog_output(inout float4 oRegs[16], float4 result, uint mask)
     else if (mask & VSI_MASK_Y) val = result.y;
     else if (mask & VSI_MASK_Z) val = result.z;
     else                        val = result.w;
-    oRegs[OUTPUT_REG_FOG].x = val;
+    s_oRegs[OUTPUT_REG_OFOG].x = val;
 }
 
 // ============================================================
-// Write to output register, with fog mask remapping
+// Write to output register, with fog mask remapping.
 // ============================================================
-void write_output(inout float4 oRegs[16], uint out_address, float4 result, uint mask)
+void write_output(uint out_address, float4 result, uint mask)
 {
     uint addr = out_address & 0xF;
-    if (addr == OUTPUT_REG_FOG)
-        write_fog_output(oRegs, result, mask);
+    if (addr == OUTPUT_REG_OFOG)
+        write_fog_output(result, mask);
     else
-        write_masked(oRegs[addr], result, mask);
+        write_masked(s_oRegs[addr], result, mask);
 }
 
 // ============================================================
@@ -217,37 +273,34 @@ void write_output(inout float4 oRegs[16], uint out_address, float4 result, uint 
 // ============================================================
 VS_OUTPUT main(const VS_INPUT xIn)
 {
-    // Output registers: sparse array indexed by NV2A output address
-    // 0=oPos, 1-2=unused, 3=oD0, 4=oD1, 5=oFog, 6=oPts, 7=oB0, 8=oB1, 9-12=oT0-oT3
-    // Padded to 16 so out_address & 0xF (from the 8-bit field) never goes out of bounds.
-    float4 oRegs[16];
-    oRegs[0]  = float4(0, 0, 0, 1); // oPos
-    oRegs[1]  = float4(0, 0, 0, 0); // unused
-    oRegs[2]  = float4(0, 0, 0, 0); // unused
-    oRegs[3]  = float4(0, 0, 0, 1); // oD0
-    oRegs[4]  = float4(0, 0, 0, 1); // oD1
-    oRegs[5]  = float4(1, 1, 1, 1); // oFog
-    oRegs[6]  = float4(0, 0, 0, 0); // oPts
-    oRegs[7]  = float4(0, 0, 0, 1); // oB0
-    oRegs[8]  = float4(0, 0, 0, 1); // oB1
-    oRegs[9]  = float4(0, 0, 0, 1); // oT0
-    oRegs[10] = float4(0, 0, 0, 1); // oT1
-    oRegs[11] = float4(0, 0, 0, 1); // oT2
-    oRegs[12] = float4(0, 0, 0, 1); // oT3
-    oRegs[13] = float4(0, 0, 0, 0); // scratch (unused on NV2A)
-    oRegs[14] = float4(0, 0, 0, 0); // scratch
-    oRegs[15] = float4(0, 0, 0, 0); // scratch
+    // Output register defaults.
+    //   0=oPos, 1-2=unused, 3=oD0, 4=oD1, 5=oFog, 6=oPts, 7=oB0, 8=oB1,
+    //   9-12=oT0-oT3, 13-15=padding so (out_address & 0xF) can never
+    //   land on an unmapped slot and write into other state.
+    s_oRegs[OUTPUT_REG_OPOS] = float4(0, 0, 0, 1);
+    s_oRegs[1]               = float4(0, 0, 0, 0); // unused
+    s_oRegs[2]               = float4(0, 0, 0, 0); // unused
+    s_oRegs[OUTPUT_REG_OD0]  = float4(0, 0, 0, 1);
+    s_oRegs[OUTPUT_REG_OD1]  = float4(0, 0, 0, 1);
+    s_oRegs[OUTPUT_REG_OFOG] = float4(1, 1, 1, 1);
+    s_oRegs[OUTPUT_REG_OPTS] = float4(0, 0, 0, 0);
+    s_oRegs[OUTPUT_REG_OB0]  = float4(0, 0, 0, 1);
+    s_oRegs[OUTPUT_REG_OB1]  = float4(0, 0, 0, 1);
+    s_oRegs[OUTPUT_REG_OT0]  = float4(0, 0, 0, 1);
+    s_oRegs[OUTPUT_REG_OT1]  = float4(0, 0, 0, 1);
+    s_oRegs[OUTPUT_REG_OT2]  = float4(0, 0, 0, 1);
+    s_oRegs[OUTPUT_REG_OT3]  = float4(0, 0, 0, 1);
+    s_oRegs[13]              = float4(0, 0, 0, 0); // padding
+    s_oRegs[14]              = float4(0, 0, 0, 0); // padding
+    s_oRegs[OUTPUT_REG_A0X]  = float4(0, 0, 0, 0); // a0.x (writes go through s_a0/ARL, not here)
 
-    // Address register
-    int a0 = 0;
+    s_a0 = 0;
 
-    // Temporary registers r0-r11 (named 't' to distinguish from output registers 'oRegs')
-    float4 t[12];
-    [unroll] for (uint ri = 0; ri < 12; ri++) t[ri] = float4(0, 0, 0, 0);
+    // Zero r0-r11 (Xbox semantics).
+    [unroll] for (uint ri = 0; ri < 12; ri++) s_r[ri] = float4(0, 0, 0, 0);
 
-    // Input registers v0-v15 — fetch directly into array, bypassing named scalars
-    float4 v_regs[16];
-    FetchAllAttributes(ResolveVertexIndex(xIn.vertexId), v_regs);
+    // Populate v0-v15 directly into the static array.
+    FetchAllAttributes(ResolveVertexIndex(xIn.vertexId), s_v);
 
     // ============================================================
     // Instruction execution loop
@@ -266,131 +319,128 @@ VS_OUTPUT main(const VS_INPUT xIn)
         uint dw2 = inst.z;
         uint dw3 = inst.w;
 
-        // Decode opcodes
-        uint ilu_op = (dw1 >> VSI_FLD_ILU_SHIFT) & VSI_FLD_ILU_MASK;
-        uint mac_op = (dw1 >> VSI_FLD_MAC_SHIFT) & VSI_FLD_MAC_MASK;
+        // Opcode fields
+        uint ilu_op   = (dw1 >> VSI_FLD_ILU_SHIFT) & VSI_FLD_ILU_MASK;
+        uint mac_op   = (dw1 >> VSI_FLD_MAC_SHIFT) & VSI_FLD_MAC_MASK;
         bool is_final = ((dw3 >> VSI_FLD_FINAL_BIT3) & 1) != 0;
 
+        bool has_mac = (mac_op != VSI_MAC_NOP);
+        bool has_ilu = (ilu_op != VSI_ILU_NOP);
+
         // Skip decode entirely when both units are idle (padding slots)
-        if (mac_op == VSI_MAC_NOP && ilu_op == VSI_ILU_NOP) {
+        if (!has_mac && !has_ilu) {
             if (is_final) break;
             continue;
         }
 
-        // Decode register indices
+        // -- Register indices
         uint const_idx = (dw1 >> VSI_FLD_CONST_SHIFT) & VSI_FLD_CONST_MASK;
         uint v_idx     = (dw1 >> VSI_FLD_V_SHIFT)     & VSI_FLD_V_MASK;
 
-        // Input A (SubToken 1 + SubToken 2)
-        uint a_mux   = (dw2 >> VSI_FLD_A_MUX_SHIFT) & VSI_FLD_A_MUX_MASK;
-        uint a_reg   = (dw2 >> VSI_FLD_A_R_SHIFT) & VSI_FLD_A_R_MASK;
-        bool a_neg   = ((dw1 >> VSI_FLD_A_NEG_BIT1) & 1) != 0;
-        uint a_swz   = dw1 & 0xFF; // Packed XYZW swizzle: bits [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W
+        // -- Input A (dw1 + dw2)
+        uint a_mux = (dw2 >> VSI_FLD_A_MUX_SHIFT) & VSI_FLD_A_MUX_MASK;
+        uint a_reg = (dw2 >> VSI_FLD_A_R_SHIFT)   & VSI_FLD_A_R_MASK;
+        bool a_neg = ((dw1 >> VSI_FLD_A_NEG_BIT1) & 1) != 0;
+        uint a_swz = dw1 & 0xFF;          // Packed XYZW: [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W
 
-        // Input B (SubToken 2)
-        uint b_mux   = (dw2 >> VSI_FLD_B_MUX_SHIFT) & VSI_FLD_B_MUX_MASK;
-        uint b_reg   = (dw2 >> VSI_FLD_B_R_SHIFT) & VSI_FLD_B_R_MASK;
-        bool b_neg   = ((dw2 >> VSI_FLD_B_NEG_BIT2) & 1) != 0;
-        uint b_swz   = (dw2 >> 17) & 0xFF; // Packed XYZW swizzle from bits [24:17]
+        // -- Input B (dw2)
+        uint b_mux = (dw2 >> VSI_FLD_B_MUX_SHIFT) & VSI_FLD_B_MUX_MASK;
+        uint b_reg = (dw2 >> VSI_FLD_B_R_SHIFT)   & VSI_FLD_B_R_MASK;
+        bool b_neg = ((dw2 >> VSI_FLD_B_NEG_BIT2) & 1) != 0;
+        uint b_swz = (dw2 >> 17) & 0xFF;  // Packed XYZW from bits [24:17]
 
-        // Input C (SubToken 2 + SubToken 3)
-        uint c_mux     = (dw3 >> VSI_FLD_C_MUX_SHIFT3) & VSI_FLD_C_MUX_MASK;
-        uint c_r_high  = (dw2 >> VSI_FLD_C_R_HIGH_SHIFT2) & VSI_FLD_C_R_HIGH_MASK;
-        uint c_r_low   = (dw3 >> VSI_FLD_C_R_LOW_SHIFT3) & VSI_FLD_C_R_LOW_MASK;
-        uint c_reg     = (c_r_high << 2) | c_r_low;
-        bool c_neg     = ((dw2 >> VSI_FLD_C_NEG_BIT2) & 1) != 0;
-        uint c_swz     = (dw2 >> 2) & 0xFF; // Packed XYZW swizzle from bits [9:2]
+        // -- Input C (dw2 + dw3)
+        uint c_mux   = (dw3 >> VSI_FLD_C_MUX_SHIFT3)    & VSI_FLD_C_MUX_MASK;
+        uint c_r_hi  = (dw2 >> VSI_FLD_C_R_HIGH_SHIFT2) & VSI_FLD_C_R_HIGH_MASK;
+        uint c_r_lo  = (dw3 >> VSI_FLD_C_R_LOW_SHIFT3)  & VSI_FLD_C_R_LOW_MASK;
+        uint c_reg   = (c_r_hi << 2) | c_r_lo;
+        bool c_neg   = ((dw2 >> VSI_FLD_C_NEG_BIT2) & 1) != 0;
+        uint c_swz   = (dw2 >> 2) & 0xFF; // Packed XYZW from bits [9:2]
 
-        // Output fields
+        // -- Output fields
         uint out_mac_mask = (dw3 >> VSI_FLD_OUT_MAC_MASK_SHIFT) & VSI_FLD_OUT_MAC_MASK_MASK;
-        uint out_r_addr   = (dw3 >> VSI_FLD_OUT_R_SHIFT) & VSI_FLD_OUT_R_MASK;
+        uint out_r_addr   = (dw3 >> VSI_FLD_OUT_R_SHIFT)        & VSI_FLD_OUT_R_MASK;
         uint out_ilu_mask = (dw3 >> VSI_FLD_OUT_ILU_MASK_SHIFT) & VSI_FLD_OUT_ILU_MASK_MASK;
-        uint out_o_mask   = (dw3 >> VSI_FLD_OUT_O_MASK_SHIFT) & VSI_FLD_OUT_O_MASK_MASK;
+        uint out_o_mask   = (dw3 >> VSI_FLD_OUT_O_MASK_SHIFT)   & VSI_FLD_OUT_O_MASK_MASK;
         bool out_orb      = ((dw3 >> VSI_FLD_OUT_ORB_BIT3) & 1) != 0; // 0=context, 1=output
-        uint out_address  = (dw3 >> VSI_FLD_OUT_ADDRESS_SHIFT) & VSI_FLD_OUT_ADDRESS_MASK;
-        uint out_mux      = (dw3 >> VSI_FLD_OUT_MUX_BIT3) & 1; // 0=MAC, 1=ILU
+        uint out_address  = (dw3 >> VSI_FLD_OUT_ADDRESS_SHIFT)  & VSI_FLD_OUT_ADDRESS_MASK;
+        uint out_mux      = (dw3 >> VSI_FLD_OUT_MUX_BIT3) & 1;        // 0=MAC, 1=ILU
         bool use_a0x      = ((dw3 >> VSI_FLD_A0X_BIT3) & 1) != 0;
 
-        bool is_paired = (mac_op != VSI_MAC_NOP) & (ilu_op != VSI_ILU_NOP);
-        bool do_out = (out_o_mask != 0) & out_orb;
+        bool is_paired     = has_mac && has_ilu;
+        bool mac_is_output = (out_mux == 0);
+        bool do_out        = (out_o_mask != 0) && out_orb;
         // NOTE: Context register writes (out_orb==false) are not supported;
-        // C[] is a read-only cbuffer. This is extremely rare on Xbox.
+        // C[] is a read-only cbuffer. Extremely rare on Xbox.
 
-        // ============================================================
-        // Snapshot inputs before executing (prevents order-dependent behavior)
-        // MAC uses inputs A, B, C; ILU uses input C (same parameters)
-        // ============================================================
+        // ========================================================
+        // Snapshot inputs BEFORE either unit writes back.
+        // Critical for correctness: when paired, ILU must see the
+        // pre-MAC value of its source register, not the post-MAC one.
+        // ========================================================
         float4 in_a = float4(0, 0, 0, 0);
         float4 in_b = float4(0, 0, 0, 0);
-        float4 in_c = float4(0, 0, 0, 0);
 
-        if (mac_op != VSI_MAC_NOP) {
-            in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz, a_neg, use_a0x, a0, t, oRegs[0], v_regs);
-            in_b = fetch_input(b_mux, b_reg, v_idx, const_idx, b_swz, b_neg, use_a0x, a0, t, oRegs[0], v_regs);
-            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x, a0, t, oRegs[0], v_regs);
-        }
-        else if (ilu_op != VSI_ILU_NOP) {
-            // ILU-only: C-input not yet fetched
-            in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x, a0, t, oRegs[0], v_regs);
+        if (has_mac) {
+            in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz, a_neg, use_a0x);
+            in_b = fetch_input(b_mux, b_reg, v_idx, const_idx, b_swz, b_neg, use_a0x);
         }
 
-        // ============================================================
-        // Execute MAC operation
-        // ============================================================
-        if (mac_op != VSI_MAC_NOP) {
+        // C input is used by both MAC and ILU; fetch unconditionally.
+        float4 in_c = fetch_input(c_mux, c_reg, v_idx, const_idx, c_swz, c_neg, use_a0x);
+
+        // ========================================================
+        // Execute MAC
+        // ========================================================
+        if (has_mac) {
             if (mac_op == VSI_MAC_ARL) {
-                // ARL: bypass exec_mac — only needs floor(in_a.x)
-                a0 = (int)vsi_floor(in_a.x);
+                // ARL bypasses exec_mac; only needs floor(in_a.x) with bias.
+                s_a0 = (int)vsi_floor(in_a.x);
             }
             else {
                 float4 mac_result = exec_mac(mac_op, in_a, in_b, in_c);
 
-                // Write to temp register
                 if (out_mac_mask != 0)
-                    write_r(out_r_addr, t, oRegs[0], mac_result, out_mac_mask);
+                    write_r(out_r_addr, mac_result, out_mac_mask);
 
-                // Write to output register (if MAC is the output source)
-                if (!out_mux & do_out)
-                    write_output(oRegs, out_address, mac_result, out_o_mask);
+                if (mac_is_output && do_out)
+                    write_output(out_address, mac_result, out_o_mask);
             }
         }
 
-        // ============================================================
-        // Execute ILU operation
-        // ============================================================
-        if (ilu_op != VSI_ILU_NOP) {
+        // ========================================================
+        // Execute ILU
+        // ========================================================
+        if (has_ilu) {
             float4 ilu_result = exec_ilu(ilu_op, in_c);
 
-            // ILU writes to R register; when paired, always to R1
+            // When paired, ILU always writes to r1; otherwise shares out_r_addr with MAC.
             uint ilu_r_dest = is_paired ? 1 : out_r_addr;
             if (out_ilu_mask != 0)
-                write_r(ilu_r_dest, t, oRegs[0], ilu_result, out_ilu_mask);
+                write_r(ilu_r_dest, ilu_result, out_ilu_mask);
 
-            // Write to output register (if ILU is the output source)
-            if (out_mux & do_out)
-                write_output(oRegs, out_address, ilu_result, out_o_mask);
+            if (!mac_is_output && do_out)
+                write_output(out_address, ilu_result, out_o_mask);
         }
 
-        // Stop at the final instruction
-        if (is_final)
-            break;
+        if (is_final) break;
     }
 
     // ============================================================
-    // Copy to output struct (same footer as CxbxVertexShaderTemplate.hlsl)
+    // Copy to output struct (same footer as CxbxVertexShaderTemplate.hlsl).
+    // Footer expects these named variables in scope.
     // ============================================================
-    // Unpack named outputs for the footer (expects named variables in scope)
-    float4 oPos = oRegs[0];
-    float4 oD0  = oRegs[3];
-    float4 oD1  = oRegs[4];
-    float4 oFog = oRegs[5];
-    float4 oPts = oRegs[6];
-    float4 oB0  = oRegs[7];
-    float4 oB1  = oRegs[8];
-    float4 oT0  = oRegs[9];
-    float4 oT1  = oRegs[10];
-    float4 oT2  = oRegs[11];
-    float4 oT3  = oRegs[12];
+    float4 oPos = s_oRegs[OUTPUT_REG_OPOS];
+    float4 oD0  = s_oRegs[OUTPUT_REG_OD0];
+    float4 oD1  = s_oRegs[OUTPUT_REG_OD1];
+    float4 oFog = s_oRegs[OUTPUT_REG_OFOG];
+    float4 oPts = s_oRegs[OUTPUT_REG_OPTS];
+    float4 oB0  = s_oRegs[OUTPUT_REG_OB0];
+    float4 oB1  = s_oRegs[OUTPUT_REG_OB1];
+    float4 oT0  = s_oRegs[OUTPUT_REG_OT0];
+    float4 oT1  = s_oRegs[OUTPUT_REG_OT1];
+    float4 oT2  = s_oRegs[OUTPUT_REG_OT2];
+    float4 oT3  = s_oRegs[OUTPUT_REG_OT3];
 
     VS_OUTPUT xOut;
 #include "CxbxVertexOutputFooter.hlsli"
