@@ -188,8 +188,8 @@ bool                       g_bRCInterpreterCBActive = false; // true when RC cbu
 bool                       g_bUseVSInterpreter = true; // default on — ubershader path
 ID3D11VertexShader        *g_pD3D11VSInterpreterVS = nullptr;
 ID3DBlob                  *g_pD3D11VSInterpreterBytecode = nullptr; // kept for input layout creation
-ID3D11Buffer              *g_pD3D11VSProgramDataBuf = nullptr;      // pg->program_data[] structured buffer
-ID3D11ShaderResourceView  *g_pD3D11VSProgramDataSRV = nullptr;      // SRV for g_ProgramData : register(t5)
+ID3D11Buffer              *g_pD3D11XFPRBuf = nullptr;           // XFPR (Transform Program RAM) structured buffer — pg->program_data[]
+ID3D11ShaderResourceView  *g_pD3D11XFPRSRV = nullptr;           // SRV for g_XFPR : register(t5)
 
 // ******************************************************************
 // * Compute shader vertex format conversion resources
@@ -509,18 +509,19 @@ bool CxbxD3D11InitVSInterpreter()
 	// Keep the bytecode alive for input layout creation
 	g_pD3D11VSInterpreterBytecode = pBlob;
 
-	// Create the program_data StructuredBuffer<uint4> (136 elements × 16 bytes = 2176 bytes)
+	// Create the XFPR StructuredBuffer<uint4> (136 slots × 16 bytes = 2176 bytes)
+	// XFPR = NV2A Transform Program RAM (on-chip XF SRAM, 136 × 92-bit instructions in 128-bit containers)
 	{
 		D3D11_BUFFER_DESC desc = {};
-		desc.ByteWidth = VSI_MAX_SLOTS * 4 * sizeof(uint32_t); // 136 × 16 = 2176
+		desc.ByteWidth = XFPR_LENGTH * 4 * sizeof(uint32_t); // 136 × 16 = 2176
 		desc.Usage = D3D11_USAGE_DYNAMIC;
 		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		desc.StructureByteStride = 4 * sizeof(uint32_t); // 16 bytes per uint4
-		hr = g_pD3DDevice->CreateBuffer(&desc, nullptr, &g_pD3D11VSProgramDataBuf);
+		hr = g_pD3DDevice->CreateBuffer(&desc, nullptr, &g_pD3D11XFPRBuf);
 		if (FAILED(hr)) {
-			EmuLog(LOG_LEVEL::WARNING, "VS Interpreter CreateBuffer (ProgramData) failed: 0x%08X", hr);
+			EmuLog(LOG_LEVEL::WARNING, "VS Interpreter CreateBuffer (XFPR) failed: 0x%08X", hr);
 			g_pD3D11VSInterpreterVS->Release();
 			g_pD3D11VSInterpreterVS = nullptr;
 			g_pD3D11VSInterpreterBytecode->Release();
@@ -532,12 +533,12 @@ bool CxbxD3D11InitVSInterpreter()
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN; // structured buffer
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.FirstElement = 0;
-		srvDesc.Buffer.NumElements = VSI_MAX_SLOTS; // 136
-		hr = g_pD3DDevice->CreateShaderResourceView(g_pD3D11VSProgramDataBuf, &srvDesc, &g_pD3D11VSProgramDataSRV);
+		srvDesc.Buffer.NumElements = XFPR_LENGTH; // 136
+		hr = g_pD3DDevice->CreateShaderResourceView(g_pD3D11XFPRBuf, &srvDesc, &g_pD3D11XFPRSRV);
 		if (FAILED(hr)) {
-			EmuLog(LOG_LEVEL::WARNING, "VS Interpreter CreateSRV (ProgramData) failed: 0x%08X", hr);
-			g_pD3D11VSProgramDataBuf->Release();
-			g_pD3D11VSProgramDataBuf = nullptr;
+			EmuLog(LOG_LEVEL::WARNING, "VS Interpreter CreateSRV (XFPR) failed: 0x%08X", hr);
+			g_pD3D11XFPRBuf->Release();
+			g_pD3D11XFPRBuf = nullptr;
 			g_pD3D11VSInterpreterVS->Release();
 			g_pD3D11VSInterpreterVS = nullptr;
 			g_pD3D11VSInterpreterBytecode->Release();
@@ -546,8 +547,8 @@ bool CxbxD3D11InitVSInterpreter()
 		}
 	}
 
-	EmuLog(LOG_LEVEL::INFO, "VS Interpreter ubershader compiled successfully (%u byte program_data SRV, shared PGRegs SRV at t%u)",
-		(unsigned)(VSI_MAX_SLOTS * 4 * sizeof(uint32_t)),
+	EmuLog(LOG_LEVEL::INFO, "VS Interpreter ubershader compiled successfully (%u byte XFPR SRV, shared PGRegs SRV at t%u)",
+		(unsigned)(XFPR_LENGTH * 4 * sizeof(uint32_t)),
 		(unsigned)CXBX_D3D11_VS_PGREGS_SRV_SLOT);
 	return true;
 }
@@ -1399,8 +1400,8 @@ void CxbxD3D11ReleaseBackendResources()
 	if (g_pD3D11PGRegsBuf) { g_pD3D11PGRegsBuf->Release(); g_pD3D11PGRegsBuf = nullptr; }
 	if (g_pD3D11VSInterpreterVS) { g_pD3D11VSInterpreterVS->Release(); g_pD3D11VSInterpreterVS = nullptr; }
 	if (g_pD3D11VSInterpreterBytecode) { g_pD3D11VSInterpreterBytecode->Release(); g_pD3D11VSInterpreterBytecode = nullptr; }
-	if (g_pD3D11VSProgramDataSRV) { g_pD3D11VSProgramDataSRV->Release(); g_pD3D11VSProgramDataSRV = nullptr; }
-	if (g_pD3D11VSProgramDataBuf) { g_pD3D11VSProgramDataBuf->Release(); g_pD3D11VSProgramDataBuf = nullptr; }
+	if (g_pD3D11XFPRSRV) { g_pD3D11XFPRSRV->Release(); g_pD3D11XFPRSRV = nullptr; }
+	if (g_pD3D11XFPRBuf) { g_pD3D11XFPRBuf->Release(); g_pD3D11XFPRBuf = nullptr; }
 	ClearRTVCache();
 }
 

@@ -7,8 +7,12 @@
 //   - g_PGRegs (StructuredBuffer<uint>, t12): shared PGRAPH register array,
 //     provides CHEOPS_PROGRAM_START and any future register-backed VS fields.
 //     Same GPU buffer bound to PS and VS stages.
-//   - g_ProgramData (StructuredBuffer<uint4>, t5): raw NV2A vertex shader
-//     microcode — 136 instruction slots × 128 bits each.
+//   - g_XFPR (StructuredBuffer<uint4>, t5): NV2A XFPR (Transform Program
+//     RAM) — 136 instruction slots × 128-bit containers (92 bits used per
+//     instruction in Kelvin ISA encoding).  On real hardware this is on-chip
+//     XF SRAM accessed via the RDI (Register Direct Interface); the CPU
+//     reaches it through the NV097_SET_TRANSFORM_PROGRAM method range with
+//     the write pointer in NV_PGRAPH_CHEOPS_OFFSET.PROG_LD_PTR.
 //     The shader reads CHEOPS_PROGRAM_START from g_PGRegs to find the
 //     first active slot and loops until FLD_FINAL.
 
@@ -16,8 +20,8 @@
 #pragma once
 #include <cstdint>
 #else
-// HLSL side: program data SRV (uploaded from pg->program_data[136][4])
-StructuredBuffer<uint4> g_ProgramData : register(t5);
+// HLSL side: XFPR (Transform Program RAM) SRV, uploaded from pg->program_data[136][4]
+StructuredBuffer<uint4> g_XFPR : register(t5);
 #endif
 
 // ============================================================
@@ -25,11 +29,12 @@ StructuredBuffer<uint4> g_ProgramData : register(t5);
 // (matches XbVertexShaderDecoder.cpp FieldMapping)
 // ============================================================
 
-// Maximum instruction slots in the NV2A vertex shader program
+// XFPR capacity: 136 instruction slots (indices 0-0x87), shared across all VPEs.
+// On Kelvin each slot is a 128-bit container with 92 bits of actual instruction data.
 #ifdef __cplusplus
-static constexpr uint32_t VSI_MAX_SLOTS = 136;
+static constexpr uint32_t XFPR_LENGTH = 136;
 #else
-static const uint VSI_MAX_SLOTS = 136;
+static const uint XFPR_LENGTH = 136;
 #endif
 
 // ============================================================

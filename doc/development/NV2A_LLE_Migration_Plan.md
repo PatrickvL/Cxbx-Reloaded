@@ -76,7 +76,7 @@ happen before the puller has finished processing the pushbuffer for that frame.
 ┌──────────────────────────────────────────────────────────┐
 │ Vulkan Rendering Backend                                 │
 │   - Reads PGRAPH state (regs[], vertex_attributes, etc.) │
-│   - VS Interpreter reads program_data[] + vsh_constants[]│
+│   - VS Interpreter reads program_data[] (XFPR RAM) + vsh_constants[] (XFCTX RAM) │
 │   - RC Interpreter reads combiner regs from PGRAPH       │
 │   - Vulkan compute shader for pushbuffer processing      │
 │     (ultimate goal)                                      │
@@ -121,8 +121,8 @@ rendering interleaved with state management. We need a clean state machine.
 - For each NV097 method, extract the **state update** portion:
   - `NV097_SET_SURFACE_*` → update `surface_color`, `surface_zeta`, `surface_shape`
   - `NV097_SET_VERTEX_DATA_ARRAY_*` → update `vertex_attributes[]`
-  - `NV097_SET_TRANSFORM_PROGRAM` → update `program_data[][]`
-  - `NV097_SET_TRANSFORM_CONSTANT` → update `vsh_constants[][]`
+  - `NV097_SET_TRANSFORM_PROGRAM` → update `program_data[][]` (XFPR RAM mirror)
+  - `NV097_SET_TRANSFORM_CONSTANT` → update `vsh_constants[][]` (XFCTX RAM mirror)
   - `NV097_SET_COMBINER_*` → update combiner registers in `regs[]`
   - `NV097_SET_TEXTURE_*` → update texture state per unit
   - `NV097_SET_BLEND_*`, `NV097_SET_DEPTH_*`, `NV097_SET_STENCIL_*` → update `regs[]`
@@ -200,14 +200,20 @@ read from the NV2A PGRAPH register state populated by Phase 1.
 - **The HLSL interpreter code** (`CxbxRegisterCombinerInterpreter.hlsl`) may need minimal
   changes — the register combiner logic is the same, only the source of constants changes
 
-### 2.2 — VS Interpreter: Switch from Xbox VertexShader Slots to PGRAPH Program Data
+### 2.2 — VS Interpreter: Switch from Xbox VertexShader Slots to PGRAPH Program Data  ✅ DONE
 - **Current source**: `CxbxD3D11UploadVSInterpreterState()` in `XbVertexShader.cpp`
   reads raw NV2A vertex shader microcode from HLE-cached function slots
   (`GetCxbxVertexShaderSlotPtr(g_Xbox_VertexShader_FunctionSlots_StartAddress)`).
   Uploads up to 136 × 4 DWORDs into `VSInterpreterCBLayout` at `b3` (2192 bytes).
 - **New source**: Read directly from `PGRAPHState`:
-  - `program_data[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][4]` — raw VS microcode (4×32-bit per instruction)
-  - `vsh_constants[NV2A_VERTEXSHADER_CONSTANTS][4]` — constant registers (192 × float4)
+  - `program_data[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][4]` — XFPR RAM mirror:
+    NV2A Transform Program RAM, on-chip XF SRAM with 136 × 92-bit instructions
+    in 128-bit containers. Uploaded via `NV097_SET_TRANSFORM_PROGRAM` with
+    `NV_PGRAPH_CHEOPS_OFFSET.PROG_LD_PTR` as auto-incrementing write pointer.
+    The RDI (Register Direct Interface) is used for context save/restore.
+  - `vsh_constants[NV2A_VERTEXSHADER_CONSTANTS][4]` — XFCTX RAM mirror:
+    NV2A Transform Context RAM, also on-chip XF SRAM behind the RDI interface.
+    Holds 192 × float4 constant registers.
   - `NV_PGRAPH_CSV0_D` / `NV_PGRAPH_CSV0_C` — VS program start address, mode bits
 - **Constant buffer upload**: `VSInterpreterCBLayout` now populated from PGRAPH state
 - **Fixed-function pipeline**: When no vertex shader program is active, the NV2A uses

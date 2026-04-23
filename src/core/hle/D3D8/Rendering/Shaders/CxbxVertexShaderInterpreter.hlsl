@@ -7,7 +7,8 @@
 // runtime.  All state comes from two StructuredBuffers:
 //   - g_PGRegs (t12): shared PGRAPH register array (same buffer as PS)
 //     provides CHEOPS_PROGRAM_START to locate the active program slot.
-//   - g_ProgramData (t5): raw vertex shader microcode (136 × uint4).
+//   - g_XFPR (t5): NV2A XFPR (Transform Program RAM) — 136 × uint4.
+//     On real hardware this is on-chip XF SRAM behind the RDI interface.
 // Vertex constants (c0–c191) remain in the existing cbuffer b0.
 //
 // Architecture mirrors the register combiner interpreter:
@@ -347,8 +348,8 @@ VS_OUTPUT main(const VS_INPUT xIn)
                    & NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START_MASK;
 
     [loop]
-    for (uint pc = 0; pc < VSI_MAX_SLOTS && (startSlot + pc) < VSI_MAX_SLOTS; pc++) {
-        uint4 inst = g_ProgramData[startSlot + pc];
+    for (uint pc = 0; pc < XFPR_LENGTH && (startSlot + pc) < XFPR_LENGTH; pc++) {
+        uint4 inst = g_XFPR[startSlot + pc];
         // inst.x = SubToken 0 (unused by fields)
         // inst.y = SubToken 1
         // inst.z = SubToken 2

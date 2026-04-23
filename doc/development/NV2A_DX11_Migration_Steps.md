@@ -18,8 +18,8 @@ the validation corpus.
 |-----------|--------|
 | PFIFO puller → PGRAPH `regs[]` | **Active** — methods ≥ 0x100 dispatched, state populated |
 | RC interpreter reads from | **PGRAPH `regs[]`** (Steps 3.1–3.2 done, custom CBLayout still used) |
-| VS interpreter reads from | **PGRAPH `program_data[]`** (Step 4.1 done, custom CBLayout still used) |
-| VS constants reads from | **PGRAPH `vsh_constants[]`** (already PGRAPH-sourced) |
+| VS interpreter reads from | **PGRAPH `program_data[]` (XFPR RAM mirror)** (Step 4.1 done, custom CBLayout still used) |
+| VS constants reads from | **PGRAPH `vsh_constants[]` (XFCTX RAM mirror)** (already PGRAPH-sourced) |
 | Vertex fetch reads from | **PGRAPH `vertex_attributes[]`** (Step 5.1 done, HLE fallback for UP draws) |
 | Surface/RT state from | **HLE globals** (`g_pXbox_RenderTarget`, etc.) |
 | Pipeline state from | **HLE `XboxRenderStates` / `XboxTextureStates`** |
@@ -329,49 +329,48 @@ Reads `pg->program_data[startSlot+i][0..3]` using CHEOPS_PROGRAM_START from
 `CxbxUpdateHostVertexShaderConstants()` already reads `pg->vsh_constants[]`
 with dirty tracking. No migration needed.
 
-### 4.3 — Replace VSInterpreterCBLayout with raw PGRAPH buffers
+### 4.3 — Replace VSInterpreterCBLayout with raw PGRAPH buffers  ✅ DONE
 
 **Architectural change:** Eliminate the `VSInterpreterCBLayout` struct entirely.
 Instead of C++ code packing `program_data[]` into `Instructions[136]` + `InstructionCount`,
 upload `pg->program_data[]` directly as a structured buffer.
 
-**Current layout:** `VSInterpreterCBLayout` (2192 bytes, b3):
-- `Instructions[136]` as uint4 — from `pg->program_data[slot][0..3]`
-- `InstructionCount` — software-computed (scan for FLD_FINAL bit)
+**Hardware background (XFPR RAM):**
+On real NV2A, vertex shader microcode lives in the **XFPR (Transform Program RAM)**
+— on-chip XF SRAM with 136 slots of 92-bit instructions in 128-bit containers.
+This is not VRAM or MMIO-visible; the CPU reaches it through the
+`NV097_SET_TRANSFORM_PROGRAM` method range (32 DWORDs per batch), with
+`NV_PGRAPH_CHEOPS_OFFSET.PROG_LD_PTR` as the auto-incrementing write pointer.
+`NV097_SET_TRANSFORM_PROGRAM_LOAD` resets the write pointer.
+The RDI (Register Direct Interface) is used separately for context save/restore.
+`pg->program_data[136][4]` in `PGRAPHState` is the software mirror of XFPR.
 
-**New approach:**
+**D3D11 implementation:**
 ```hlsl
-// Replace cbuffer VSInterpreterCB : register(b3) with:
-StructuredBuffer<uint4> g_VSProgramData : register(t5);  // pg->program_data[] as SRV
+// XFPR SRV (Transform Program RAM — pg->program_data[] mirror):
+StructuredBuffer<uint4> g_XFPR : register(t5);
 
 // Program start from regs[]:
-// uint startSlot = PG_UINT(NV_PGRAPH_CSV0_C) >> 8;  // CHEOPS_PROGRAM_START
-
-// Instruction count: either pass via a small aux CB, or scan FLD_FINAL in shader
+// uint startSlot = PG_UINT(NV_PGRAPH_CSV0_C) >> CHEOPS shift;
+// Loop until FLD_FINAL — no InstructionCount needed.
 ```
 
 **C++ side:**
 - Create a D3D11 structured buffer for `program_data[136][4]` (2176 bytes)
 - Upload with `Map/memcpy/Unmap` (the data is already contiguous in PGRAPH)
 - Bind as SRV to VS slot t5
-- The program start register is in `regs[]` — accessible via the same regs SRV
-  if VS also gets a `g_PGRegs` binding, or via a tiny aux cbuffer
+- The program start register is in `regs[]` — accessible via the shared
+  `g_PGRegs` SRV at t12 (same buffer bound to PS and VS stages)
 
 **The VS opcode/field constants** (`FLD_ILU`, `FLD_MAC`, etc.) defined in
 `CxbxVertexShaderInterpreterState.hlsli` are compile-time constants, not
 runtime state — they remain as `#define`s in the HLSL include.
 
-**For `vsh_constants[192][4]`:** Already uploaded separately as the VS constants
-cbuffer (b0). No change needed.
+**For `vsh_constants[192][4]` (XFCTX RAM):** Already uploaded separately as
+the VS constants cbuffer (b0). On real hardware this is XFCTX (Transform
+Context RAM), also on-chip XF SRAM behind the RDI interface. No change needed.
 
-**Migration order:**
-1. Create the program_data SRV and bind it alongside existing CBLayout
-2. Switch HLSL interpreter to read from `g_VSProgramData[i]` instead of
-   `Instructions[i]`
-3. Move program start to regs[] SRV or aux cbuffer
-4. Remove `VSInterpreterCBLayout` struct entirely
-
-**Test:** Dolphin, Fur, PerPixelLighting (all programmable VS).
+Committed as b8b3b99c. Tested: BumpEarth, Dolphin, Fur.
 
 ---
 
@@ -645,8 +644,9 @@ Verify that all rendering decisions read from `PGRAPHState` only:
 - No references to `XboxRenderStates`, `g_pXbox_*`, or `pPSDef` in the render path
 - `RCInterpreterCBLayout` is **eliminated** — `pg->regs[]` uploaded as raw
   `StructuredBuffer<uint>` SRV; shader indexes with `NV_PGRAPH_*` offsets
-- `VSInterpreterCBLayout` is **eliminated** — `pg->program_data[]` uploaded as
-  `StructuredBuffer<uint4>` SRV; program start read from `regs[]`
+- `VSInterpreterCBLayout` is **eliminated** — `pg->program_data[]` (XFPR RAM mirror)
+  uploaded as `StructuredBuffer<uint4>` SRV (`g_XFPR` at t5); program start read
+  from `regs[]`
 - `IABypassLayoutCB` may remain as a small aux cbuffer for per-draw params
   (PrimType, IndexedDraw, etc.) that have no PGRAPH register equivalent
 - Software-computed fields (ColorSign, TexFmtFixup, AlphaKill, FrontFaceInfo)

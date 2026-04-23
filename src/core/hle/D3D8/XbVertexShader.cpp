@@ -40,7 +40,7 @@
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A, HLE_get_NV2A_vertex_constant_float4_ptr
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
-#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Internal.h" // For g_pD3D11VSProgramDataBuf, g_pD3D11PGRegsSRV
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Internal.h" // For g_pD3D11XFPRBuf, g_pD3D11PGRegsSRV
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
 #include "devices\xbox.h"
 #include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST, NV2A_VP_UPLOAD_CONST_ID, NV2A_VP_UPLOAD_CONST
@@ -488,21 +488,24 @@ ID3D11VertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* labe
 	return shader;
 }
 
-// Upload NV2A vertex shader program data and bind SRVs for the VS interpreter.
+// Upload NV2A XFPR (Transform Program RAM) and bind SRVs for the VS interpreter.
 //
 // Two StructuredBuffers feed the interpreter shader:
 //   - g_PGRegs (t12): shared PGRAPH register array — already uploaded by
 //     CxbxD3D11UploadRCInterpreterState(). We just bind it to the VS stage.
-//   - g_ProgramData (t5): pg->program_data[136][4] — uploaded here.
+//   - g_XFPR (t5): pg->program_data[136][4] — the XFPR RAM mirror,
+//     uploaded here.  On real NV2A hardware this is on-chip XF SRAM
+//     behind the RDI interface, uploaded via NV097_SET_TRANSFORM_PROGRAM
+//     with an auto-incrementing write pointer (CHEOPS_OFFSET.PROG_LD_PTR).
 //
 // The shader reads CHEOPS_PROGRAM_START from g_PGRegs to find the first
 // active instruction slot and loops until FLD_FINAL.
 void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 {
-	if (!g_pD3D11VSProgramDataBuf || !g_pD3D11PGRegsSRV)
+	if (!g_pD3D11XFPRBuf || !g_pD3D11PGRegsSRV)
 		return;
 
-	// PGRAPH source: upload the entire program_data[] array.
+	// PGRAPH source: upload the entire program_data[] array (XFPR mirror).
 	// The shader selects the active program via CHEOPS_PROGRAM_START.
 	PGRAPHState *pg = nullptr;
 	if (g_NV2A) {
@@ -511,15 +514,15 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 	}
 
 	if (pg) {
-		CxbxD3D11UpdateDynamicBuffer(g_pD3D11VSProgramDataBuf,
+		CxbxD3D11UpdateDynamicBuffer(g_pD3D11XFPRBuf,
 			pg->program_data, sizeof(pg->program_data));
 	}
 
 	// Bind the shared PGRAPH regs SRV to VS t12 (same buffer, different stage)
 	g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
 
-	// Bind the program data SRV to VS t5
-	g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PROGRAM_DATA_SRV_SLOT, 1, &g_pD3D11VSProgramDataSRV);
+	// Bind the XFPR SRV to VS t5
+	g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_XFPR_SRV_SLOT, 1, &g_pD3D11XFPRSRV);
 }
 
 void CxbxUpdateHostVertexShader()
@@ -556,8 +559,8 @@ void CxbxUpdateHostVertexShader()
 		// Invalidate the VS interpreter so it recompiles from updated sources
 		if (g_pD3D11VSInterpreterVS) { g_pD3D11VSInterpreterVS->Release(); g_pD3D11VSInterpreterVS = nullptr; }
 		if (g_pD3D11VSInterpreterBytecode) { g_pD3D11VSInterpreterBytecode->Release(); g_pD3D11VSInterpreterBytecode = nullptr; }
-		if (g_pD3D11VSProgramDataSRV) { g_pD3D11VSProgramDataSRV->Release(); g_pD3D11VSProgramDataSRV = nullptr; }
-		if (g_pD3D11VSProgramDataBuf) { g_pD3D11VSProgramDataBuf->Release(); g_pD3D11VSProgramDataBuf = nullptr; }
+		if (g_pD3D11XFPRSRV) { g_pD3D11XFPRSRV->Release(); g_pD3D11XFPRSRV = nullptr; }
+		if (g_pD3D11XFPRBuf) { g_pD3D11XFPRBuf->Release(); g_pD3D11XFPRBuf = nullptr; }
 	}
 
 	// TODO Call this when state is dirty
