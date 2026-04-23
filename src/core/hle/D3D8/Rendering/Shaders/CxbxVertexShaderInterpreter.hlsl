@@ -104,9 +104,9 @@ float4 fetch_input(uint mux, uint r_idx, uint v_idx, uint const_idx,
         raw = s_v[v_idx & 0xF];
     }
     else {
-        // Constant register c0..c191, optionally offset by a0
-        int c_index = (int)(const_idx & 0xFF);
-        if (use_a0x) c_index += s_a0;
+        // Constant register c0..c191, optionally offset by a0.
+        // Branchless: multiply by bool (int cast: true=1, false=0).
+        int c_index = (int)(const_idx & 0xFF) + s_a0 * (int)use_a0x;
         raw = (c_index >= 0 && c_index < (int)X_D3DVS_CONSTREG_COUNT)
             ? C[c_index] : float4(0, 0, 0, 0);
     }
@@ -142,10 +142,15 @@ void write_r(uint dest, float4 result, uint mask)
 
 // ============================================================
 // MAC unit operations
+//
+// [branch]: All vertices in a draw call execute the same instruction,
+// so opcode is wavefront-uniform.  [branch] prevents FXC from
+// flattening the switch (which would evaluate ALL 12 cases per
+// iteration) and generates a single indexed jump instead.
 // ============================================================
 float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
 {
-    switch (opcode) {
+    [branch] switch (opcode) {
         case VSI_MAC_MOV: return a;
         case VSI_MAC_MUL: return nv2a_mul(a, b);
         case VSI_MAC_ADD: return a + c_in;
@@ -196,19 +201,19 @@ float vsi_floor(float src)
     return floor(src + BIAS);
 }
 
+// [branch]: Same rationale as exec_mac — opcode is wavefront-uniform.
 float4 exec_ilu(uint opcode, float4 c_in)
 {
     float s = c_in.x; // Scalar input
 
-    switch (opcode) {
+    [branch] switch (opcode) {
         case VSI_ILU_MOV: return c_in;
         case VSI_ILU_RCP: return (1.0 / s).xxxx;
         case VSI_ILU_RCC: {
+            // Branchless sign-preserving clamp: clamp(|rv|) then copy sign bit.
             float rv = 1.0 / s;
-            rv = (rv >= 0)
-                ? clamp(rv, 5.42101e-020f, 1.84467e+019f)
-                : clamp(rv, -1.84467e+019f, -5.42101e-020f);
-            return rv.xxxx;
+            float clamped = clamp(abs(rv), 5.42101e-020f, 1.84467e+019f);
+            return asfloat(asuint(clamped) | (asuint(rv) & 0x80000000u)).xxxx;
         }
         case VSI_ILU_RSQ: return rsqrt(abs(s)).xxxx;
         case VSI_ILU_EXP: {
@@ -220,10 +225,15 @@ float4 exec_ilu(uint opcode, float4 c_in)
             // Matches xemu: floor(log2(|src|)), |src|/2^floor(log2(|src|)), log2(|src|), 1
             // Special case: LOG(0) = (-inf, 1, -inf, 1)
             // See CXBX_NEG_INF definition for hardware uncertainty notes.
+            // Branchless: compute normal path (NaN when t==0 is harmless,
+            // selected away by the ternary → movc).  Caches log2(t) to
+            // avoid computing it twice; uses mul instead of div.
             float t = abs(s);
-            if (t == 0.0f) return float4(CXBX_NEG_INF, 1.0f, CXBX_NEG_INF, 1.0f);
-            float flLog = floor(log2(t));
-            return float4(flLog, t / exp2(flLog), log2(t), 1.0);
+            float lg = log2(t);
+            float flLog = floor(lg);
+            float4 normal_result = float4(flLog, t * exp2(-flLog), lg, 1.0);
+            return (t == 0.0f) ? float4(CXBX_NEG_INF, 1.0f, CXBX_NEG_INF, 1.0f)
+                               : normal_result;
         }
         case VSI_ILU_LIT: {
             float diffuse = c_in.x;
@@ -246,14 +256,12 @@ float4 exec_ilu(uint opcode, float4 c_in)
 // ============================================================
 void write_fog_output(float4 result, uint mask)
 {
-    // Find the highest set bit in mask (x=8, y=4, z=2, w=1)
-    // and move that component into .x
-    float val;
-    if      (mask & VSI_MASK_X) val = result.x;
-    else if (mask & VSI_MASK_Y) val = result.y;
-    else if (mask & VSI_MASK_Z) val = result.z;
-    else                        val = result.w;
-    s_oRegs[OUTPUT_REG_OFOG].x = val;
+    // Highest set bit in mask (x=8,y=4,z=2,w=1) selects component → .x.
+    // Ternary chain compiles to a cascade of movc (branchless).
+    s_oRegs[OUTPUT_REG_OFOG].x = (mask & VSI_MASK_X) ? result.x
+                                : (mask & VSI_MASK_Y) ? result.y
+                                : (mask & VSI_MASK_Z) ? result.z
+                                :                        result.w;
 }
 
 // ============================================================
@@ -377,11 +385,16 @@ VS_OUTPUT main(const VS_INPUT xIn)
         // Snapshot inputs BEFORE either unit writes back.
         // Critical for correctness: when paired, ILU must see the
         // pre-MAC value of its source register, not the post-MAC one.
+        //
+        // [branch] on has_mac / has_ilu: these bools derive from the
+        // instruction word, so every vertex in the wave takes the
+        // same path.  [branch] prevents FXC from flattening (which
+        // would evaluate both fetch+execute paths every iteration).
         // ========================================================
         float4 in_a = float4(0, 0, 0, 0);
         float4 in_b = float4(0, 0, 0, 0);
 
-        if (has_mac) {
+        [branch] if (has_mac) {
             in_a = fetch_input(a_mux, a_reg, v_idx, const_idx, a_swz, a_neg, use_a0x);
             in_b = fetch_input(b_mux, b_reg, v_idx, const_idx, b_swz, b_neg, use_a0x);
         }
@@ -392,8 +405,8 @@ VS_OUTPUT main(const VS_INPUT xIn)
         // ========================================================
         // Execute MAC
         // ========================================================
-        if (has_mac) {
-            if (mac_op == VSI_MAC_ARL) {
+        [branch] if (has_mac) {
+            [branch] if (mac_op == VSI_MAC_ARL) {
                 // ARL bypasses exec_mac; only needs floor(in_a.x) with bias.
                 s_a0 = (int)vsi_floor(in_a.x);
             }
@@ -411,7 +424,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
         // ========================================================
         // Execute ILU
         // ========================================================
-        if (has_ilu) {
+        [branch] if (has_ilu) {
             float4 ilu_result = exec_ilu(ilu_op, in_c);
 
             // When paired, ILU always writes to r1; otherwise shares out_r_addr with MAC.
