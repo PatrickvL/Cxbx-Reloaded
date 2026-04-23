@@ -234,35 +234,17 @@ typedef struct PGRAPHState {
 	QemuCond fifo_access_cond;
 	QemuCond flip_3d;
 
-	xbox::addr_xt dma_color, dma_zeta;
 	Surface surface_color, surface_zeta;
 	unsigned int surface_type;
 	SurfaceShape surface_shape;
 	SurfaceShape last_surface_shape;
 
-	xbox::addr_xt dma_a, dma_b;
-	bool texture_dirty[NV2A_MAX_TEXTURES];
-
-	bool texture_matrix_enable[NV2A_MAX_TEXTURES];
-
-	/* FIXME: Move to NV_PGRAPH_BUMPMAT... */
-	float bump_env_matrix[NV2A_MAX_TEXTURES - 1][4]; /* 3 allowed stages with 2x2 matrix each */
-
-	xbox::addr_xt dma_state;
-	xbox::addr_xt dma_notifies;
 	xbox::addr_xt dma_semaphore;
 
 	xbox::addr_xt dma_report;
-	xbox::addr_xt report_offset;
-	bool zpass_pixel_count_enable;
 	unsigned int zpass_pixel_count_result;
-	xbox::addr_xt dma_vertex_a, dma_vertex_b;
 
 	unsigned int primitive_mode;
-
-	unsigned int clear_surface;
-
-	bool enable_vertex_program_write;
 
 	uint32_t program_data[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][VSH_TOKEN_SIZE];
 

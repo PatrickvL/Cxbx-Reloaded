@@ -438,9 +438,9 @@ void pgraph_handle_method(NV2AState *d,
 	}
 
 	case NV_KELVIN_PRIMITIVE: {
-		// Try data-driven dispatch first (covers simple reg copies and masked writes)
-		if (nv097_dispatch_method(pg, method, parameter))
-			break;
+		// Data-driven dispatch: handles reg copies and masked writes for all
+		// table-registered methods. Returns old register value before overwrite.
+		uint32_t old_reg = nv097_dispatch_method(pg, method, parameter);
 
 		switch (method) {
 		case NV097_SET_OBJECT:
@@ -525,32 +525,9 @@ void pgraph_handle_method(NV2AState *d,
 			NV2A_DPRINTF("flip stall done\n");
 			break;
 
-		case NV097_SET_CONTEXT_DMA_NOTIFIES:
-			pg->dma_notifies = parameter;
-			break;
-		case NV097_SET_CONTEXT_DMA_A:
-			pg->dma_a = parameter;
-			break;
-		case NV097_SET_CONTEXT_DMA_B:
-			pg->dma_b = parameter;
-			break;
-		case NV097_SET_CONTEXT_DMA_STATE:
-			pg->dma_state = parameter;
-			break;
 		case NV097_SET_CONTEXT_DMA_COLOR:
 			/* try to get any straggling draws in before the surface's changed :/ */
 			pgraph_update_surface(d, false, true, true);
-
-			pg->dma_color = parameter;
-			break;
-		case NV097_SET_CONTEXT_DMA_ZETA:
-			pg->dma_zeta = parameter;
-			break;
-		case NV097_SET_CONTEXT_DMA_VERTEX_A:
-			pg->dma_vertex_a = parameter;
-			break;
-		case NV097_SET_CONTEXT_DMA_VERTEX_B:
-			pg->dma_vertex_b = parameter;
 			break;
 		case NV097_SET_CONTEXT_DMA_SEMAPHORE:
 			pg->dma_semaphore = parameter;
@@ -810,6 +787,8 @@ void pgraph_handle_method(NV2AState *d,
 		}
 
 		case NV097_SET_COLOR_MASK: {
+			// No table entry for this method (NV097 param bits != PGRAPH reg bits),
+			// so NV_PGRAPH_CONTROL_0 is unchanged — read current state directly.
 			pg->surface_color.write_enabled_cache |= pgraph_get_color_write_enabled(pg);
 
 			bool alpha = parameter & NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE;
@@ -827,10 +806,8 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 		case NV097_SET_DEPTH_MASK:
-			pg->surface_zeta.write_enabled_cache |= pgraph_get_zeta_write_enabled(pg);
-
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
-				NV_PGRAPH_CONTROL_0_ZWRITEENABLE, parameter);
+			// old_reg is the pre-write NV_PGRAPH_CONTROL_0 value (table already wrote the new ZWRITEENABLE bit)
+			pg->surface_zeta.write_enabled_cache |= (old_reg & (NV_PGRAPH_CONTROL_0_ZWRITEENABLE | NV_PGRAPH_CONTROL_0_STENCIL_WRITE_ENABLE)) != 0;
 			break;
 		case NV097_SET_STENCIL_OP_FAIL:
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_2)],
@@ -929,10 +906,6 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(reg)], mask, kelvin_map_texgen(parameter, 3));
 			break;
 		}
-		CASE_4(NV097_SET_TEXTURE_MATRIX_ENABLE, 4) :
-			slot = (method - NV097_SET_TEXTURE_MATRIX_ENABLE) / 4;
-			pg->texture_matrix_enable[slot] = parameter;
-			break;
 
 		CASE_16(NV097_SET_PROJECTION_MATRIX, 4) : {
 			slot = (method - NV097_SET_PROJECTION_MATRIX) / 4;
@@ -983,7 +956,6 @@ void pgraph_handle_method(NV2AState *d,
 
 		CASE_3(NV097_SET_FOG_PARAMS, 4) :
 			slot = (method - NV097_SET_FOG_PARAMS) / 4;
-			pg->regs[RI(NV_PGRAPH_FOGPARAM0 + slot * 4)] = parameter;
 			/* Cxbx note: slot = 2 is right after slot = 1 */
 			pg->ltctxa[NV_IGRAPH_XF_LTCTXA_FOG_K][slot] = parameter;
 			pg->ltctxa_dirty[NV_IGRAPH_XF_LTCTXA_FOG_K] = true;
@@ -1284,10 +1256,6 @@ void pgraph_handle_method(NV2AState *d,
 
 			break;
 
-		case NV097_SET_ZPASS_PIXEL_COUNT_ENABLE:
-			pg->zpass_pixel_count_enable = parameter;
-			break;
-
 		case NV097_GET_REPORT: {
 			/* FIXME: This was first intended to be watchpoint-based. However,
 			 *        qemu / kvm only supports virtual-address watchpoints.
@@ -1399,11 +1367,6 @@ void pgraph_handle_method(NV2AState *d,
 			pgraph_set_surface_dirty(pg, true, depth_test || stencil_test);
 			break;
 		}
-		CASE_4(NV097_SET_TEXTURE_OFFSET, 64):
-			slot = (method - NV097_SET_TEXTURE_OFFSET) / 64;
-			pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + slot * 4)] = parameter;
-			pg->texture_dirty[slot] = true;
-			break;
 		CASE_4(NV097_SET_TEXTURE_FORMAT, 64): {
 			slot = (method - NV097_SET_TEXTURE_FORMAT) / 64;
 
@@ -1437,14 +1400,8 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_BASE_SIZE_V, log_height);
 			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_BASE_SIZE_P, log_depth);
 
-			pg->texture_dirty[slot] = true;
 			break;
 		}
-		CASE_4(NV097_SET_TEXTURE_IMAGE_RECT, 64):
-			slot = (method - NV097_SET_TEXTURE_IMAGE_RECT) / 64;
-			pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + slot * 4)] = parameter;
-			pg->texture_dirty[slot] = true;
-			break;
 		CASE_4(NV097_SET_TEXTURE_PALETTE, 64): {
 			slot = (method - NV097_SET_TEXTURE_PALETTE) / 64;
 
@@ -1460,7 +1417,6 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(*reg, NV_PGRAPH_TEXPALETTE0_LENGTH, length);
 			SET_MASK(*reg, NV_PGRAPH_TEXPALETTE0_OFFSET, offset);
 
-			pg->texture_dirty[slot] = true;
 			break;
 		}
 
@@ -1469,22 +1425,16 @@ void pgraph_handle_method(NV2AState *d,
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_MAT + 0x8, 64):
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_MAT + 0xc, 64):
 			slot = (method - NV097_SET_TEXTURE_SET_BUMP_ENV_MAT) / 4;
-			assert((slot / 16) > 0);
-			slot -= 16;
-			pg->bump_env_matrix[slot / 16][slot % 4] = *(float*)&parameter;
+			assert((slot / 16) > 0); // Stage 0 has no bump env
 			break;
 
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_SCALE, 64):
 			slot = (method - NV097_SET_TEXTURE_SET_BUMP_ENV_SCALE) / 64;
 			assert(slot > 0);
-			slot--;
-			pg->regs[RI(NV_PGRAPH_BUMPSCALE1 + slot * 4)] = parameter;
 			break;
 		CASE_4(NV097_SET_TEXTURE_SET_BUMP_ENV_OFFSET, 64):
 			slot = (method - NV097_SET_TEXTURE_SET_BUMP_ENV_OFFSET) / 64;
 			assert(slot > 0);
-			slot--;
-			pg->regs[RI(NV_PGRAPH_BUMPOFFSET1 + slot * 4)] = parameter;
 			break;
 
 		case NV097_ARRAY_ELEMENT16:
@@ -1630,7 +1580,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 		case NV097_CLEAR_SURFACE: {
-			pg->clear_surface = parameter;
 			if (pgraph_draw_clear != nullptr) {
 				pgraph_draw_clear(d);
 			}
@@ -1638,7 +1587,6 @@ void pgraph_handle_method(NV2AState *d,
 		}
 
 		case NV097_SET_SHADOW_ZSLOPE_THRESHOLD:
-			pg->regs[RI(NV_PGRAPH_SHADOWZSLOPETHRESHOLD)] = parameter;
 			assert(parameter == 0x7F800000); /* FIXME: Unimplemented */
 			break;
 
@@ -1651,24 +1599,14 @@ void pgraph_handle_method(NV2AState *d,
 				GET_MASK(parameter,
 					NV097_SET_TRANSFORM_EXECUTION_MODE_RANGE_MODE));
 			break;
-		case NV097_SET_TRANSFORM_PROGRAM_CXT_WRITE_EN:
-			// Test-case : Whiplash
-			pg->enable_vertex_program_write = parameter;
-			break;
 		case NV097_SET_TRANSFORM_PROGRAM_LOAD:
 			assert(parameter < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CHEOPS_OFFSET)],
-				NV_PGRAPH_CHEOPS_OFFSET_PROG_LD_PTR, parameter);
 			break;
 		case NV097_SET_TRANSFORM_PROGRAM_START:
 			assert(parameter < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
-				NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START, parameter);
 			break;
 		case NV097_SET_TRANSFORM_CONSTANT_LOAD:
 			assert(parameter < NV2A_VERTEXSHADER_CONSTANTS);
-			SET_MASK(pg->regs[RI(NV_PGRAPH_CHEOPS_OFFSET)],
-				NV_PGRAPH_CHEOPS_OFFSET_CONST_LD_PTR, parameter);
 			NV2A_DPRINTF("load to %d\n", parameter);
 			break;
 
