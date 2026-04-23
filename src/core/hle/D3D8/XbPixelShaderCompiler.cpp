@@ -31,6 +31,7 @@
 #include "core\hle\D3D8\Rendering\RenderGlobals.h"
 #include "core\hle\D3D8\Rendering\Shaders\Shader.h"
 #include "core\hle\D3D8\XbPixelShader.h"
+#include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\Rendering\Shaders\PixelShader.h"
 #include "core\hle\D3D8\XbD3D8Logging.h"
 #include "core\hle\D3D8\XbConvert.h"
@@ -1155,7 +1156,10 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 	// If so, prefer the RC interpreter over the fixed function pixel shader.
 	if (g_bUseRCInterpreter) {
 		const xbox::X_D3DPIXELSHADERDEF *pRSPSDef = (const xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
-		if (pRSPSDef && (pRSPSDef->PSCombinerCount & 0xF) > 0) {
+		DWORD combinerCount = pRSPSDef ? (pRSPSDef->PSCombinerCount & 0xF) : 0;
+		DWORD psTexModes = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+
+		if (pRSPSDef && combinerCount > 0) {
 			// Valid RC program found in render state — use RC interpreter
 			if (!g_pD3D11RCInterpreterPS) {
 				if (!CxbxD3D11InitRCInterpreter()) {
