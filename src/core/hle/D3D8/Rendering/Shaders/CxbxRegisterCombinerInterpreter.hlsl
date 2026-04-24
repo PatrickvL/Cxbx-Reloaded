@@ -293,12 +293,15 @@ float ResolveStageInputAlpha(float4 Regs[16], uint regByte)
     //   PS_CHANNEL_ALPHA (bit 4) = 1 → read ALPHA channel (.a)
     //   PS_CHANNEL_BLUE  (bit 4) = 0 → read BLUE channel (.b)
     // This matches the NV_register_combiners spec and the recompiled PS path.
+    //
+    // Uses .ba swizzle + computed index: .ba = (blue, alpha), so
+    // index = (bit4 >> 4) selects 0→blue, 1→alpha.  Single dynamic index
+    // avoids branch duplication that kills register allocation in the
+    // 8× unrolled combiner loop.
     uint regIdx  = regByte & 0x0Fu;
     uint mapping = regByte & 0xE0u;
-    bool useAlpha = (regByte & PS_CHANNEL_ALPHA) != 0u;
-    float val = useAlpha ? Regs[regIdx].a : Regs[regIdx].b;
 
-    return ApplyInputMappingScalar(mapping, val);
+    return ApplyInputMappingScalar(mapping, Regs[regIdx].ba[(regByte >> 4u) & 1u]);
 }
 
 float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB)
@@ -882,7 +885,7 @@ float4 main(PS_INPUT input) : SV_Target
     Regs[PS_REGISTER_V0] = diffuse;
     Regs[PS_REGISTER_V1] = specular;
     // FOG: rgb from the fog color constant, alpha from the vertex fog factor
-    Regs[PS_REGISTER_FOG] = float4(PG_COLOR(NV_PGRAPH_FOGCOLOR).rgb, saturate(input.iFog));
+    Regs[PS_REGISTER_FOG] = float4(PG_COLOR_ARGB(NV_PGRAPH_FOGCOLOR).rgb, saturate(input.iFog));
 
     // R0 initialization: NV2A spec says R0.rgb starts at 0, R0.a starts from T0.a.
     // xemu matches this: "r0 = vec4(0); r0.a = t0.a;".
@@ -927,7 +930,7 @@ float4 main(PS_INPUT input) : SV_Target
     // iFog is already a computed fog factor from the VS (EXP/EXP2/LINEAR/passthrough).
     // NV2A clamps the interpolated fog factor to [0,1] before blending.
     [branch] if (FogEnable != 0u) {
-        result.rgb = lerp(PG_COLOR(NV_PGRAPH_FOGCOLOR).rgb, result.rgb, saturate(input.iFog));
+        result.rgb = lerp(PG_COLOR_ARGB(NV_PGRAPH_FOGCOLOR).rgb, result.rgb, saturate(input.iFog));
     }
 
     return result;

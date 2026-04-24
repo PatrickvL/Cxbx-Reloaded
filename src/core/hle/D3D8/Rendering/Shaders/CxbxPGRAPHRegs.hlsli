@@ -99,8 +99,31 @@ float4 UnpackABGR(uint c)
 }
 
 // ============================================================
+// Color unpacking: ARGB uint32 → float4 RGBA [0..1]
+//
+// NV_PGRAPH_FOGCOLOR is stored in ARGB byte order (the PGRAPH
+// SET_FOG_COLOR handler re-packs the ABGR method parameter):
+//   bits  0-7  = B
+//   bits  8-15 = G
+//   bits 16-23 = R
+//   bits 24-31 = A
+// ============================================================
+float4 UnpackARGB(uint c)
+{
+    return float4(
+        float((c >> 16) & 0xFFu) / 255.0f,   // R
+        float((c >>  8) & 0xFFu) / 255.0f,   // G
+        float( c        & 0xFFu) / 255.0f,   // B
+        float((c >> 24) & 0xFFu) / 255.0f    // A
+    );
+}
+
+// ============================================================
 // Convenience: read a color register and unpack ABGR → float4
 // ============================================================
 float4 PG_COLOR(uint byteOff) { return UnpackABGR(PG_UINT(byteOff)); }
+
+// Convenience: read FOGCOLOR (stored as ARGB) and unpack → float4
+float4 PG_COLOR_ARGB(uint byteOff) { return UnpackARGB(PG_UINT(byteOff)); }
 
 #endif // CXBX_PGRAPH_REGS_HLSLI
