@@ -326,12 +326,24 @@ void CxbxImpl_SetRenderTarget
 
 	pHostRenderTarget = GetHostSurface(pRenderTarget, D3DUSAGE_RENDERTARGET);
 
-	// Determine mip level for surfaces that are children of a texture
+	// Determine mip level and cubemap face for surfaces that are children of a texture
 	UINT mipSlice = 0;
+	int  faceIndex = 0;
 	if (pRenderTarget != xbox::zeroptr) {
 		xbox::X_D3DBaseTexture* pParent = ((xbox::X_D3DSurface*)pRenderTarget)->Parent;
 		if (pParent != xbox::zeroptr && pRenderTarget->Format == pParent->Format) {
-			GetSurfaceFaceAndLevelWithinTexture((xbox::X_D3DSurface*)pRenderTarget, pParent, mipSlice);
+			GetSurfaceFaceAndLevelWithinTexture((xbox::X_D3DSurface*)pRenderTarget, pParent, mipSlice, faceIndex);
+			// For cubemap face surfaces, render into the parent cubemap's array slice
+			// instead of a standalone surface texture (which would be disconnected
+			// from the cubemap used for sampling).
+			if (GetXboxD3DResourceType(pParent) == xbox::X_D3DRTYPE_CUBETEXTURE) {
+				auto pParentHost = (ID3D11Texture2D*)GetHostBaseTexture(pParent, D3DUSAGE_RENDERTARGET);
+				EmuLog(LOG_LEVEL::INFO, "SetRenderTarget: cubemap face=%d mip=%d parent=%p parentHost=%p standalone=%p",
+					faceIndex, mipSlice, pParent, pParentHost, pHostRenderTarget);
+				if (pParentHost) {
+					pHostRenderTarget = pParentHost;
+				}
+			}
 		}
 	}
 
@@ -345,7 +357,7 @@ void CxbxImpl_SetRenderTarget
 	HRESULT hRet;
 	// Mimick Direct3D 8 SetRenderTarget by only setting render target if non-null
 	if (pHostRenderTarget) {
-		hRet = CxbxSetRenderTarget(pHostRenderTarget, mipSlice);
+		hRet = CxbxSetRenderTarget(pHostRenderTarget, mipSlice, static_cast<UINT>(faceIndex));
 		if (FAILED(hRet)) {
 			// If Direct3D 9 SetRenderTarget failed, skip setting depth stencil
 			return;

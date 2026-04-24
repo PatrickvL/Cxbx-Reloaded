@@ -161,10 +161,13 @@ void CxbxD3D11DispatchCS(ID3D11ComputeShader* pShader, ID3D11Buffer* pCB, UINT n
 HRESULT CxbxD3D11UpdateDynamicBuffer(ID3D11Buffer* pBuffer, const void* pData, size_t dataSize);
 
 // RTV cache helpers
-using RTVCacheKey = std::pair<ID3D11Texture2D*, UINT>;
+// Key: (texture*, mipSlice, arraySlice) — arraySlice selects cubemap face (0-5) or 0 for 2D
+using RTVCacheKey = std::tuple<ID3D11Texture2D*, UINT, UINT>;
 struct RTVCacheKeyHash {
 	size_t operator()(const RTVCacheKey& k) const {
-		return std::hash<ID3D11Texture2D*>()(k.first) ^ (static_cast<size_t>(k.second) << 16);
+		return std::hash<ID3D11Texture2D*>()(std::get<0>(k))
+		     ^ (static_cast<size_t>(std::get<1>(k)) << 16)
+		     ^ (static_cast<size_t>(std::get<2>(k)) << 24);
 	}
 };
 void ClearRTVCache();

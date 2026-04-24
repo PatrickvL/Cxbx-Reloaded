@@ -28,7 +28,7 @@
 // * Rendering helpers (D3D11 implementations)
 // ******************************************************************
 
-HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice)
+HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice, UINT arraySlice)
 {
 	LOG_INIT;
 	HRESULT hRet;
@@ -43,7 +43,7 @@ HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice)
 	} else {
 		g_pD3DCurrentHostRenderTarget = pHostRenderTarget;
 
-		RTVCacheKey cacheKey = { pHostRenderTarget, mipSlice };
+		RTVCacheKey cacheKey = { pHostRenderTarget, mipSlice, arraySlice };
 
 		// Check RTV cache first
 		auto it = g_RTVCache.find(cacheKey);
@@ -52,7 +52,26 @@ HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice)
 				// Don't release — it's in the cache
 			}
 			g_pD3DCurrentRTV = it->second;
-			g_pD3DDeviceContext->OMSetRenderTargets(1, &g_pD3DCurrentRTV, g_pD3DDepthStencilView);
+
+			// If DS dimensions don't match the RT, unbind DS to avoid
+			// D3D11 silently discarding the RT binding.
+			ID3D11DepthStencilView* pDSV = g_pD3DDepthStencilView;
+			if (pDSV != nullptr) {
+				D3D11_TEXTURE2D_DESC textureDesc = {};
+				pHostRenderTarget->GetDesc(&textureDesc);
+				ID3D11Resource* dsRes = nullptr;
+				pDSV->GetResource(&dsRes);
+				if (dsRes) {
+					D3D11_TEXTURE2D_DESC dsTexDesc = {};
+					((ID3D11Texture2D*)dsRes)->GetDesc(&dsTexDesc);
+					dsRes->Release();
+					if (dsTexDesc.Width != textureDesc.Width || dsTexDesc.Height != textureDesc.Height) {
+						pDSV = nullptr;
+					}
+				}
+			}
+
+			g_pD3DDeviceContext->OMSetRenderTargets(1, &g_pD3DCurrentRTV, pDSV);
 			hRet = S_OK;
 		} else {
 			D3D11_TEXTURE2D_DESC textureDesc = {};
@@ -60,8 +79,16 @@ HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice)
 
 			D3D11_RENDER_TARGET_VIEW_DESC renderTargetViewDesc{};
 			renderTargetViewDesc.Format = textureDesc.Format;
-			renderTargetViewDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-			renderTargetViewDesc.Texture2D.MipSlice = mipSlice;
+			if (textureDesc.ArraySize > 1) {
+				// Cubemap face or texture array — use TEXTURE2DARRAY view
+				renderTargetViewDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+				renderTargetViewDesc.Texture2DArray.MipSlice = mipSlice;
+				renderTargetViewDesc.Texture2DArray.FirstArraySlice = arraySlice;
+				renderTargetViewDesc.Texture2DArray.ArraySize = 1;
+			} else {
+				renderTargetViewDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+				renderTargetViewDesc.Texture2D.MipSlice = mipSlice;
+			}
 
 			ID3D11RenderTargetView* renderTargetView = nullptr;
 			hRet = g_pD3DDevice->CreateRenderTargetView((ID3D11Resource*)pHostRenderTarget, &renderTargetViewDesc, &renderTargetView);
@@ -73,7 +100,26 @@ HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice)
 					// Don't release — it's in the cache
 				}
 				g_pD3DCurrentRTV = renderTargetView;
-				g_pD3DDeviceContext->OMSetRenderTargets(1, &renderTargetView, g_pD3DDepthStencilView);
+
+				// If DS dimensions don't match the RT, unbind DS to avoid
+				// D3D11 silently discarding the RT binding.
+				ID3D11DepthStencilView* pDSV = g_pD3DDepthStencilView;
+				if (pDSV != nullptr) {
+					D3D11_DEPTH_STENCIL_VIEW_DESC dsDesc;
+					pDSV->GetDesc(&dsDesc);
+					ID3D11Resource* dsRes = nullptr;
+					pDSV->GetResource(&dsRes);
+					if (dsRes) {
+						D3D11_TEXTURE2D_DESC dsTexDesc = {};
+						((ID3D11Texture2D*)dsRes)->GetDesc(&dsTexDesc);
+						dsRes->Release();
+						if (dsTexDesc.Width != textureDesc.Width || dsTexDesc.Height != textureDesc.Height) {
+							pDSV = nullptr; // Unbind mismatched DS
+						}
+					}
+				}
+
+				g_pD3DDeviceContext->OMSetRenderTargets(1, &renderTargetView, pDSV);
 			}
 		}
 	}
@@ -156,6 +202,19 @@ void CxbxSetDepthStencilSurface(ID3D11Texture2D* pHostDepthStencil)
 		dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 		dsvDesc.Texture2D.MipSlice = 0;
 		g_pD3DDevice->CreateDepthStencilView(pHostDepthStencil, &dsvDesc, &pDSV);
+
+		// D3D11 requires RTV and DSV dimensions to match, otherwise
+		// OMSetRenderTargets silently unbinds both.  If the current RT
+		// is a different size (e.g. 256x256 cubemap face vs 640x480 DS),
+		// unbind the DSV rather than breaking the RT binding.
+		if (pDSV != nullptr && g_pD3DCurrentHostRenderTarget != nullptr) {
+			D3D11_TEXTURE2D_DESC rtDesc = {};
+			g_pD3DCurrentHostRenderTarget->GetDesc(&rtDesc);
+			if (texDesc.Width != rtDesc.Width || texDesc.Height != rtDesc.Height) {
+				pDSV->Release();
+				pDSV = nullptr;
+			}
+		}
 	}
 	if (g_pD3DDepthStencilView) { g_pD3DDepthStencilView->Release(); }
 	g_pD3DDepthStencilView = pDSV;

@@ -322,6 +322,13 @@ bool HostResourceRequiresUpdate(resource_key_t key, xbox::X_D3DResource* pXboxRe
 		return true;
 	}
 
+	// Render targets have their content managed by the GPU, not by CPU writes
+	// to Xbox memory. Don't recreate them based on dirty page tracking, as that
+	// would wipe GPU-rendered content (e.g. dynamically rendered cubemap faces).
+	if (it->second.HostUsage & D3DUSAGE_RENDERTARGET) {
+		return false;
+	}
+
 	// Dirty-page-gated texture update: for textures in contiguous memory
 	// (0x80000000..0x83FFFFFF), check the page tracker's texture-dirty bitmap
 	// instead of hashing. If no pages covering this texture have been written
@@ -696,6 +703,13 @@ static void EmuVerifyResourceIsRegistered(xbox::X_D3DResource *pResource, DWORD 
    	   	   	   	   	   	FreeHostResource(key);
 
    	   	   	   	   	   	// And re-create the texture with D3DUSAGE_RENDERTARGET
+   	   	   	   	   	   	CreateHostResource(pResource, D3DUsage, iTextureStage, dwSize);
+   	   	   	   	   	} break;
+   	   	   	   	   	case xbox::X_D3DRTYPE_CUBETEXTURE: {
+   	   	   	   	   	   	// Free the host cubemap texture
+   	   	   	   	   	   	FreeHostResource(key);
+
+   	   	   	   	   	   	// Re-create with D3DUSAGE_RENDERTARGET so faces can be used as render targets
    	   	   	   	   	   	CreateHostResource(pResource, D3DUsage, iTextureStage, dwSize);
    	   	   	   	   	} break;
    	   	   	   	   	default:

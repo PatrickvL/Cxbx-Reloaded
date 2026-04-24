@@ -203,7 +203,7 @@ void CxbxSetVertexShaderConstantF(UINT startRegister, const float* pConstantData
 void CxbxSetPixelShaderConstantF(UINT startRegister, const float* pConstantData, UINT Vector4fCount);
 
 // Rendering helpers (implemented in Backend_D3D11*.cpp)
-HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice = 0);
+HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice = 0, UINT arraySlice = 0);
 void    CxbxD3DClear(DWORD Count, CONST D3DRECT* pRects, DWORD Flags, D3DCOLOR Color, float Z, DWORD Stencil);
 void    CxbxSetViewport(D3D11_VIEWPORT *pHostViewport);
 void    CxbxSetScissorRect(CONST RECT *pHostViewportRect);

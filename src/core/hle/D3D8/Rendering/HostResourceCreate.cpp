@@ -424,6 +424,9 @@ static HRESULT CreateGpuPixelContainerResource(
 		// Always use DEFAULT and upload data via UpdateSubresource.
 		desc.Usage = D3D11_USAGE_DEFAULT;
 		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		if (D3DUsage & D3DUSAGE_RENDERTARGET) {
+			desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
+		}
 		desc.CPUAccessFlags = 0;
 		desc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
 

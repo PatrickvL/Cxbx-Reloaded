@@ -688,7 +688,17 @@ xbox::void_xt CxbxImpl_SetPixelShader(xbox::dword_xt Handle)
 		// NOTE: PGRAPH combiner registers are bridged at draw time in
 		// CxbxD3D11UploadRCInterpreterState() to also catch subsequent
 		// SetPixelShaderConstant / SetRenderState changes.
-   	}
+   	} else {
+		// When clearing the pixel shader (handle=0), sync PSTextureModes from
+		// the PSDef area that the native trampoline just wrote (default combiner
+		// program). Without this, X_D3DRS_PSTEXTUREMODES retains the previous
+		// shader's value — e.g. CUBEMAP mode leaks into subsequent fixed-function
+		// draws, causing them to sample from the wrong SRV slot and produce black.
+		const xbox::X_D3DPIXELSHADERDEF *pRSPSDef = (const xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
+		if (pRSPSDef) {
+			XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, pRSPSDef->PSTextureModes);
+		}
+	}
 }
 
 // ******************************************************************
