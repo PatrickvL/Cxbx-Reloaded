@@ -86,13 +86,15 @@ static const ShaderJob g_Jobs[] = {
 };
 
 static std::string ReadFile(const std::string& path) {
-    FILE* f = fopen(path.c_str(), "rb");
+    // Use text mode ("r") to match the emulator's std::ifstream (text mode),
+    // which converts \r\n to \n on Windows. This ensures the hash of the HLSL
+    // content matches what the emulator computes at runtime.
+    FILE* f = fopen(path.c_str(), "r");
     if (!f) return {};
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    std::string buf(sz, '\0');
-    fread(&buf[0], 1, sz, f);
+    std::string buf;
+    char tmp[4096];
+    while (size_t n = fread(tmp, 1, sizeof(tmp), f))
+        buf.append(tmp, n);
     fclose(f);
     return buf;
 }
