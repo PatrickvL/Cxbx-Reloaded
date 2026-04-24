@@ -942,6 +942,33 @@ void CxbxD3D11UploadRCInterpreterState()
 		pg = &nv2a->pgraph;
 	}
 
+	// --- Bridge HLE pixel shader render state to PGRAPH registers ---
+	// In hybrid HLE mode, the pushbuffer may not be processed, so PGRAPH
+	// combiner registers could be stale/zero.  Sync from the live HLE
+	// render state (which is always current) before uploading to GPU.
+	if (pg && pPSDef) {
+		for (int i = 0; i < 8; i++) {
+			pg->regs[RI(NV_PGRAPH_COMBINEALPHAI0 + i * 4)] = pPSDef->PSAlphaInputs[i];
+			pg->regs[RI(NV_PGRAPH_COMBINEALPHAO0 + i * 4)] = pPSDef->PSAlphaOutputs[i];
+			pg->regs[RI(NV_PGRAPH_COMBINECOLORI0 + i * 4)] = pPSDef->PSRGBInputs[i];
+			pg->regs[RI(NV_PGRAPH_COMBINECOLORO0 + i * 4)] = pPSDef->PSRGBOutputs[i];
+			pg->regs[RI(NV_PGRAPH_COMBINEFACTOR0 + i * 4)] = pPSDef->PSConstant0[i];
+			pg->regs[RI(NV_PGRAPH_COMBINEFACTOR1 + i * 4)] = pPSDef->PSConstant1[i];
+		}
+		pg->regs[RI(NV_PGRAPH_COMBINECTL)]      = pPSDef->PSCombinerCount;
+		pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)]  = pPSDef->PSFinalCombinerInputsABCD;
+		pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)]  = pPSDef->PSFinalCombinerInputsEFG;
+		pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR0)]   = pPSDef->PSFinalCombinerConstant0;
+		pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR1)]   = pPSDef->PSFinalCombinerConstant1;
+		pg->regs[RI(NV_PGRAPH_SHADERCLIPMODE)]   = pPSDef->PSCompareMode;
+		pg->regs[RI(NV_PGRAPH_SHADERCTL)] =
+			(pPSDef->PSDotMapping   & NV_PGRAPH_SHADERCTL_DOT_RGBMAPPING) |
+			(pPSDef->PSInputTexture & NV_PGRAPH_SHADERCTL_OTHER_STAGE_INPUT);
+		// PSTextureModes lives outside the PSDef struct in render state
+		pg->regs[RI(NV_PGRAPH_SHADERPROG)] =
+			XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+	}
+
 	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
 	if (pg) {
 		CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));

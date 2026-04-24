@@ -689,6 +689,9 @@ xbox::void_xt CxbxImpl_SetPixelShader(xbox::dword_xt Handle)
    	   	} else {
    	   		XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, g_pXbox_PixelShader->pPSDef->PSTextureModes);
    	   	}
+		// NOTE: PGRAPH combiner registers are bridged at draw time in
+		// CxbxD3D11UploadRCInterpreterState() to also catch subsequent
+		// SetPixelShaderConstant / SetRenderState changes.
    	}
 }
 
