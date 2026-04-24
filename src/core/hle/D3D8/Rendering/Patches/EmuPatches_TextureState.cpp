@@ -25,6 +25,17 @@
 #include "../EmuD3D8_common.h"
 #include "../IndexBufferConvert.h"
 
+// Mirror a texture's VRAM offset to the PGRAPH TEXOFFSET register so that
+// CxbxUpdateHostTextures() (which reads PGRAPH authoritatively) can resolve
+// the Xbox texture even when the pushbuffer hasn't been processed yet.
+static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
+{
+	if (g_NV2A && Stage < xbox::X_D3DTS_STAGECOUNT) {
+		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+		pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + Stage * 4)] = dataAddr;
+	}
+}
+
 // Variables only used in EmuPatches_State.cpp
 static xbox::X_D3DBaseTexture CxbxActiveTextureCopies[xbox::X_D3DTS_STAGECOUNT] = {}; // Set by D3DDevice_SwitchTexture. Cached active texture
 
@@ -265,8 +276,12 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture)
 	g_pXbox_SetTexture[Stage] = pTexture;
 
 	// Register in the VRAM-offset → texture side-map so PGRAPH TEXOFFSET lookups work
-	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero)
+	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero) {
 		CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
+		CxbxMirrorTexOffsetToPGRAPH(Stage, pTexture->Data);
+	} else {
+		CxbxMirrorTexOffsetToPGRAPH(Stage, 0);
+	}
 }
 
 // ******************************************************************
@@ -336,6 +351,7 @@ xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
 			g_pXbox_SetTexture[Stage] = &CxbxActiveTextureCopies[Stage];
 			// Register in the VRAM-offset → texture side-map for PGRAPH TEXOFFSET lookup
 			CxbxRegisterTextureByDataAddr(Data, &CxbxActiveTextureCopies[Stage]);
+			CxbxMirrorTexOffsetToPGRAPH(Stage, Data);
 			// Note : Since g_pXbox_SetTexture and CxbxActiveTextureCopies are host-managed,
 			// Xbox code should never alter these members (so : no reference counting, etc).
 			// As long as that's guaranteed, this is a safe way to emulate SwitchTexture.

@@ -24,6 +24,17 @@
 // ******************************************************************
 #include "../EmuD3D8_common.h"
 
+// Mirror a texture's VRAM offset to the PGRAPH TEXOFFSET register so that
+// CxbxUpdateHostTextures() can resolve the Xbox texture even when the
+// pushbuffer hasn't been processed yet.
+static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
+{
+	if (g_NV2A && Stage < xbox::X_D3DTS_STAGECOUNT) {
+		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+		pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + Stage * 4)] = dataAddr;
+	}
+}
+
 
 xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader)
 (
@@ -354,8 +365,12 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture_4__LT
    	g_pXbox_SetTexture[Stage] = pTexture;
 
    	// Register in VRAM-offset → texture side-map for PGRAPH TEXOFFSET lookup
-   	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero)
+   	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero) {
    	   	CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
+   	   	CxbxMirrorTexOffsetToPGRAPH(Stage, pTexture->Data);
+   	} else {
+   	   	CxbxMirrorTexOffsetToPGRAPH(Stage, 0);
+   	}
 
    	__asm {
    	   	LTCG_EPILOGUE
@@ -403,8 +418,12 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture_4__LT
    	g_pXbox_SetTexture[Stage] = pTexture;
 
    	// Register in VRAM-offset → texture side-map for PGRAPH TEXOFFSET lookup
-   	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero)
+   	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero) {
    	   	CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
+   	   	CxbxMirrorTexOffsetToPGRAPH(Stage, pTexture->Data);
+   	} else {
+   	   	CxbxMirrorTexOffsetToPGRAPH(Stage, 0);
+   	}
 
    	__asm {
    	   	LTCG_EPILOGUE
