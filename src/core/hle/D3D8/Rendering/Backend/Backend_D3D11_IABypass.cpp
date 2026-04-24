@@ -523,6 +523,13 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 			pCB->Attribs[a][3] = 0;  // streamBase
 		}
 
+		// TODO: Re-enable PGRAPH vertex attribute path once HLE patches are fully
+		// removed.  Currently, HLE patches intercept SetStreamSource/DrawPrimitive
+		// and populate g_Xbox_SetStreamSource[] + CxbxVertexDeclaration, but the
+		// PGRAPH vertex_attributes[] may be stale or zero because the push buffer
+		// commands that would populate them haven't been drained yet at draw time.
+		// Using the HLE fallback for all draws ensures correct vertex layout.
+#if 0
 		// PGRAPH path: read vertex layout directly from NV2A vertex attributes.
 		// Each NV2A attribute slot maps directly to a vertex shader input register.
 		// The attribute offset already includes any intra-vertex element offset,
@@ -542,7 +549,9 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 				pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
 				pCB->Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
 			}
-		} else {
+		} else
+#endif
+		{
 			// HLE fallback: walk CxbxVertexDeclaration + g_Xbox_SetStreamSource[]
 			for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
 				auto& streamInfo = pDecl->VertexStreams[s];

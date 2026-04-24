@@ -369,6 +369,29 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	// The memcpy writes to 0x80 are automatically tracked by write-watch.
 	SyncTiledPagesBack();
 
+	// TODO: The contiguous memory region (0x80000000) is NOT allocated with
+	// MEM_WRITE_WATCH by the kernel's VMManager, so GetWriteWatch cannot track
+	// dirty pages.  Until the memory allocation is changed to support
+	// MEM_WRITE_WATCH, always do a full 64 MiB upload.
+	// To avoid per-draw DISCARD stalls, this only runs once per frame
+	// (gated by a dirty flag set by CxbxPageTrackerMarkFrameDirty).
+	{
+		static bool s_bFirstFlush = true;
+		memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
+		D3D11_MAPPED_SUBRESOURCE mapped = {};
+		// First flush ever: DISCARD to establish the buffer.
+		// Subsequent: NO_OVERWRITE to avoid pipeline stalls.
+		D3D11_MAP mapType = s_bFirstFlush ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
+		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, mapType, 0, &mapped);
+		if (SUCCEEDED(hr)) {
+			memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
+			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+			s_bFirstFlush = false;
+		}
+		return PAGE_COUNT;
+	}
+
+#if 0 // Disabled: GetWriteWatch doesn't work — contiguous memory lacks MEM_WRITE_WATCH
 	// Wine fallback: always do a full upload (GetWriteWatch may not work)
 	if (s_bWineFallback) {
 		memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
@@ -428,6 +451,7 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	}
 
 	return (uint32_t)count;
+#endif // Disabled GetWriteWatch path
 }
 
 // ******************************************************************

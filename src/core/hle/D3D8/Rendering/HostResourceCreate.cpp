@@ -253,7 +253,7 @@ static HRESULT CreateGpuPixelContainerResource(
 				DXGetErrorString(hRet), DXGetErrorDescription(hRet));
 		}
 
-		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage);
+		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage, D3DUsage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
 			ResourceTypeName, pResource, pNewHostResource.Get());
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Width : %d, Height : %d, Format : %d",
@@ -370,7 +370,7 @@ static HRESULT CreateGpuPixelContainerResource(
 			CxbxrAbort("CreateTexture2D Failed!\n\n"
 				"Error: 0x%X\nFormat: %d\nDimensions: %dx%d", hRet, PCFormat, hostWidth, hostHeight);
 		}
-		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage);
+		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage, D3DUsage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
 			ResourceTypeName, pResource, pNewHostResource.Get());
 		break;
@@ -402,7 +402,7 @@ static HRESULT CreateGpuPixelContainerResource(
 			CxbxrAbort("CreateTexture3D Failed!\n\n"
 				"Error: 0x%X\nFormat: %d\nDimensions: %dx%dx%d", hRet, PCFormat, hostWidth, hostHeight, dwDepth);
 		}
-		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage);
+		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage, D3DUsage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
 			ResourceTypeName, pResource, pNewHostResource.Get());
 		break;
@@ -435,7 +435,7 @@ static HRESULT CreateGpuPixelContainerResource(
 				DXGetErrorString(hRet), DXGetErrorDescription(hRet)*/);
 		}
 
-		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage);
+		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage, D3DUsage);
 		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
 			ResourceTypeName, pResource, pNewHostResource.Get());
 		// TODO : Cube face surfaces can be used as a render-target,

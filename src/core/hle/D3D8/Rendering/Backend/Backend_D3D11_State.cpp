@@ -23,6 +23,7 @@
 
 #include "Backend_D3D11_Internal.h"
 #include "devices\video\nv2a.h"        // PGRAPHState, nv2a_regs.h, GET_MASK, RI
+#include <algorithm>                    // std::min
 
 // ******************************************************************
 // * Unified D3D11 render state mapping
@@ -421,6 +422,16 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		std::memcpy(&vpscl[i], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][i], sizeof(float));
 	}
 
+	// If the viewport scale constants are zero, PGRAPH hasn't been programmed
+	// yet (the Xbox D3D runtime hasn't issued SET_VIEWPORT_OFFSET/SCALE).
+	// This happens for pre-transformed vertices (XYZRHW/passthrough FVF) where
+	// the hardware bypasses the viewport transform.  In that case, keep the
+	// HLE-derived viewport from CxbxUpdateHostViewport() instead of overriding
+	// with zeros (which would produce a 0x0 viewport that clips everything).
+	if (vpscl[0] == 0.0f && vpscl[1] == 0.0f) {
+		return;
+	}
+
 	// Derive Xbox-style viewport rect from NV2A transform constants
 	float xboxWidth  = vpscl[0] * 2.0f;
 	float xboxHeight = fabsf(vpscl[1]) * 2.0f;
@@ -444,11 +455,12 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 	}
 
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
+		// Clamp to render target dimensions — Xbox may set 0x7FFFFFFF which overflows D3D11.
 		D3D11_VIEWPORT hostViewport;
 		hostViewport.TopLeftX = xboxX * Xscale;
 		hostViewport.TopLeftY = xboxY * Yscale;
-		hostViewport.Width    = xboxWidth * Xscale;
-		hostViewport.Height   = xboxHeight * Yscale;
+		hostViewport.Width    = std::min(xboxWidth * Xscale, (float)HostRenderTarget_Width);
+		hostViewport.Height   = std::min(xboxHeight * Yscale, (float)HostRenderTarget_Height);
 		hostViewport.MinDepth = minZ;
 		hostViewport.MaxDepth = maxZ;
 		CxbxSetViewport(&hostViewport);
@@ -472,8 +484,8 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		RECT viewportRect;
 		viewportRect.left   = static_cast<LONG>(xboxX * Xscale);
 		viewportRect.top    = static_cast<LONG>(xboxY * Yscale);
-		viewportRect.right  = static_cast<LONG>(viewportRect.left + (xboxWidth * Xscale));
-		viewportRect.bottom = static_cast<LONG>(viewportRect.top + (xboxHeight * Yscale));
+		viewportRect.right  = std::min(static_cast<LONG>(viewportRect.left + (xboxWidth * Xscale)), (LONG)HostRenderTarget_Width);
+		viewportRect.bottom = std::min(static_cast<LONG>(viewportRect.top + (xboxHeight * Yscale)), (LONG)HostRenderTarget_Height);
 		CxbxSetScissorRect(&viewportRect);
 	}
 }

@@ -23,6 +23,7 @@
 // *
 // ******************************************************************
 #include "EmuD3D8_common.h"
+#include <algorithm> // std::min
 
 // Thread-local flag: true when executing on the PFIFO puller thread.
 // When set, CxbxUpdateNativeD3DResources skips pfifo_flush_to_pgraph
@@ -391,12 +392,13 @@ void CxbxUpdateHostViewport() {
 	float Yscale = aaScaleY * g_RenderUpscaleFactor;
 
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
-		// Set viewport
+		// Set viewport — clamp to render target dimensions.
+		// Xbox games often set viewport to 0x7FFFFFFF×0x7FFFFFFF which overflows D3D11.
 		D3D11_VIEWPORT hostViewport;
 		hostViewport.TopLeftX = g_Xbox_Viewport.X * Xscale;
 		hostViewport.TopLeftY = g_Xbox_Viewport.Y * Yscale;
-		hostViewport.Width = g_Xbox_Viewport.Width * Xscale;
-		hostViewport.Height = g_Xbox_Viewport.Height * Yscale;
+		hostViewport.Width = std::min((float)(g_Xbox_Viewport.Width * Xscale), (float)HostRenderTarget_Width);
+		hostViewport.Height = std::min((float)(g_Xbox_Viewport.Height * Yscale), (float)HostRenderTarget_Height);
 		hostViewport.MinDepth = g_Xbox_Viewport.MinZ; // ?? * Zscale;
 		hostViewport.MaxDepth = g_Xbox_Viewport.MaxZ; // ?? * Zscale;
 		CxbxSetViewport(&hostViewport);
@@ -427,14 +429,14 @@ void CxbxUpdateHostViewport() {
 		CxbxSetViewport(&hostViewport);
 
 		// We still need to clip to the viewport
-		// Scissor to viewport
+		// Scissor to viewport — clamp to render target dimensions to avoid overflow
 		g_D3D11RasterizerDesc.ScissorEnable = TRUE;
 		g_bD3D11RasterizerStateDirty = true;
 		RECT viewportRect;
 		viewportRect.left = static_cast<LONG>(g_Xbox_Viewport.X * Xscale);
 		viewportRect.top = static_cast<LONG>(g_Xbox_Viewport.Y * Yscale);
-		viewportRect.right = static_cast<LONG>(viewportRect.left + (g_Xbox_Viewport.Width * Xscale));
-		viewportRect.bottom = static_cast<LONG>(viewportRect.top + (g_Xbox_Viewport.Height * Yscale));
+		viewportRect.right = std::min(static_cast<LONG>(viewportRect.left + (g_Xbox_Viewport.Width * Xscale)), (LONG)HostRenderTarget_Width);
+		viewportRect.bottom = std::min(static_cast<LONG>(viewportRect.top + (g_Xbox_Viewport.Height * Yscale)), (LONG)HostRenderTarget_Height);
 		CxbxSetScissorRect(&viewportRect);
 	}
 }
@@ -466,6 +468,19 @@ void CxbxUpdateNativeD3DResources()
 
 	CxbxUpdateHostViewport();
 
+	// TODO: Re-enable PGRAPH viewport/RT/pipeline overrides once HLE patches
+	// are fully removed (Step 9+).  Currently, the PGRAPH overrides conflict
+	// with HLE-derived state because HLE patches still set g_Xbox_Viewport,
+	// render targets, and render states.  The PGRAPH registers may be stale,
+	// zero-initialized, or out of sync with the HLE state, causing:
+	//   - Zero-size viewports (XYZRHW vertices never write VPSCL)
+	//   - Wrong render targets (surface offset side-map incomplete)
+	//   - Wrong blend/depth state (overwriting valid HLE state with stale regs)
+	//
+	// When all HLE D3D patches are removed and draws go through the puller,
+	// PGRAPH registers will be the sole source of truth and these overrides
+	// should be re-enabled.
+#if 0
 	// Override viewport/scissor from PGRAPH registers.
 	// This runs after CxbxUpdateHostViewport() so PGRAPH values take precedence
 	// over the HLE-derived g_Xbox_Viewport values.
@@ -479,6 +494,7 @@ void CxbxUpdateNativeD3DResources()
 	if (g_NV2A) {
 		CxbxD3D11UpdateRenderTargetFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
 	}
+#endif
 
 	// NOTE: Order is important here
    	// Some Texture States depend on RenderState values (Point Sprites)
@@ -488,12 +504,15 @@ void CxbxUpdateNativeD3DResources()
    	XboxRenderStates.Apply();
    	XboxTextureStates.Apply();
 
+	// TODO: Re-enable when HLE patches are fully removed (see comment above)
+#if 0
 	// Override blend/depth-stencil/rasterizer state from PGRAPH registers.
 	// This runs after XboxRenderStates.Apply() so PGRAPH values take precedence
 	// for pipeline state, while HLE still handles minor states (point sprite, line width).
 	if (g_NV2A) {
 		CxbxD3D11UpdatePipelineStateFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
 	}
+#endif
 
    	// If Pixel Shaders are not disabled, process them
    	if (!g_DisablePixelShaders) {
