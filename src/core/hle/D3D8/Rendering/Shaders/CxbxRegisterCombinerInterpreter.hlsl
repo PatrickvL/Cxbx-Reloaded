@@ -874,8 +874,9 @@ float4 main(PS_INPUT input) : SV_Target
     // --- Set vertex-derived registers ---
     // Use FRONTFACE_FACTOR to match compiled PS winding-order correction:
     // 0 = always front, +/-1 = two-sided with CW/CCW convention
-    // FrontFaceInfo.x >= 0 means "treat SV_IsFrontFace as-is"; < 0 means "flip"
-    bool isFront = (FrontFaceInfo.x >= 0.0f) == (bool)input.iFF;
+    // When FrontFaceInfo.x == 0 (no two-sided lighting), always use front face.
+    float faceSign = input.iFF ? 1.0f : -1.0f;
+    bool isFront = (faceSign * FrontFaceInfo.x) >= 0.0f;
     float4 diffuse  = isFront ? input.iD0 : input.iB0;
     float4 specular = isFront ? input.iD1 : input.iB1;
     Regs[PS_REGISTER_V0] = diffuse;
@@ -928,8 +929,6 @@ float4 main(PS_INPUT input) : SV_Target
     [branch] if (FogEnable != 0u) {
         result.rgb = lerp(PG_COLOR(NV_PGRAPH_FOGCOLOR).rgb, result.rgb, saturate(input.iFog));
     }
-
-    return result;
 
     return result;
 }
