@@ -1184,7 +1184,6 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 
   // --- RC interpreter ubershader path ---
   if (g_bUseRCInterpreter) {
-	// Lazy init: compile ubershader on first use
 	if (!g_pD3D11RCInterpreterPS) {
 		if (!CxbxD3D11InitRCInterpreter()) {
 			// Fall through to recompilation path if compile failed

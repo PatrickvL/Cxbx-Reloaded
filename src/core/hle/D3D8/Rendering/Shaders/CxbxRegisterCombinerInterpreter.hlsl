@@ -289,12 +289,16 @@ float4 ResolveStageInput(float4 Regs[16], uint regByte)
 
 float ResolveStageInputAlpha(float4 Regs[16], uint regByte)
 {
-    // Alpha path always reads .a; PS_CHANNEL_ALPHA bit is irrelevant here
-    // and is intentionally not checked (NV2A hardware behavior).
+    // NV2A alpha combiner channel selection:
+    //   PS_CHANNEL_ALPHA (bit 4) = 1 → read ALPHA channel (.a)
+    //   PS_CHANNEL_BLUE  (bit 4) = 0 → read BLUE channel (.b)
+    // This matches the NV_register_combiners spec and the recompiled PS path.
     uint regIdx  = regByte & 0x0Fu;
     uint mapping = regByte & 0xE0u;
+    bool useAlpha = (regByte & PS_CHANNEL_ALPHA) != 0u;
+    float val = useAlpha ? Regs[regIdx].a : Regs[regIdx].b;
 
-    return ApplyInputMappingScalar(mapping, Regs[regIdx].a);
+    return ApplyInputMappingScalar(mapping, val);
 }
 
 float4 ResolveFinalInput(float4 Regs[16], uint regByte, bool isFinalAB)
@@ -924,6 +928,8 @@ float4 main(PS_INPUT input) : SV_Target
     [branch] if (FogEnable != 0u) {
         result.rgb = lerp(PG_COLOR(NV_PGRAPH_FOGCOLOR).rgb, result.rgb, saturate(input.iFog));
     }
+
+    return result;
 
     return result;
 }
