@@ -156,7 +156,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetPixelShaderConstant", xbox::EMUPATCH(D3DDevice_SetPixelShaderConstant), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetPixelShaderConstant_4__LTCG_ecx1_eax3", xbox::EMUPATCH(D3DDevice_SetPixelShaderConstant_4__LTCG_ecx1_eax3), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetPixelShader_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetPixelShader_0__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderState_Simple", xbox::EMUPATCH(D3DDevice_SetRenderState_Simple), PATCH_HLE_D3D),
+	// Step 9.1: PGRAPH regs[] is authoritative for render state (Step 6.2). Xbox native code
+	// already writes D3D__RenderState[] before calling SetRenderState_Simple, so this patch
+	// was only doing a redundant write. The pushbuffer method goes to PGRAPH via the puller.
+	//PATCH_ENTRY("D3DDevice_SetRenderState_Simple", xbox::EMUPATCH(D3DDevice_SetRenderState_Simple), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetRenderTarget", xbox::EMUPATCH(D3DDevice_SetRenderTarget), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetRenderTargetFast", xbox::EMUPATCH(D3DDevice_SetRenderTargetFast), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2", xbox::EMUPATCH(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2), PATCH_HLE_D3D),
@@ -185,6 +188,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_SetVertexDataColor", xbox::EMUPATCH(D3DDevice_SetVertexDataColor), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetVertexShader", xbox::EMUPATCH(D3DDevice_SetVertexShader), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetVertexShader_0__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetVertexShader_0__LTCG_ebx1), PATCH_HLE_D3D),
+	// Step 9.1: VS constants flow through pushbuffer → puller → pg->vsh_constants[]
+	// with dirty tracking. pfifo_flush before draws ensures constants are up to date.
+	// TODO: Remove once pushbuffer path is fully validated for all samples.
 	PATCH_ENTRY("D3DDevice_SetVertexShaderConstant", xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetVertexShaderConstant1", xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetVertexShaderConstant1Fast", xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant1Fast), PATCH_HLE_D3D),
