@@ -689,3 +689,211 @@ skip_layout_upload:
 	return;
 }
 
+// ******************************************************************
+// * Draw inline buffer vertices (Begin/SetVertexData/End path)
+// *
+// * Inline buffer data is stored as float4 per attribute per vertex
+// * in pg->vertex_attributes[i].inline_buffer. This bypasses the
+// * normal vertex declaration/stream layout entirely — all 16
+// * attributes are packed as FLOAT4 at a fixed 256-byte stride.
+// * After drawing, the inline_buffer arrays are freed (same protocol
+// * as xemu's pgraph_draw_inline_buffer).
+// ******************************************************************
+void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
+{
+	if (!s_pLayoutCB || !s_pDefaultsCB)
+		return;
+
+	unsigned int vertexCount = pg->inline_buffer_length;
+	if (vertexCount == 0) return;
+
+	// ---------------------------------------------------------------
+	// Step 1: Pack inline buffer data into contiguous UP vertex buffer
+	// ---------------------------------------------------------------
+	// All 16 attributes stored as float4 (16 bytes each) = 256 bytes per vertex
+	const UINT kAttrSize = 4 * sizeof(float);  // 16 bytes
+	const UINT kStride = NV2A_VERTEXSHADER_ATTRIBUTES * kAttrSize; // 256 bytes
+	UINT totalSize = vertexCount * kStride;
+
+	EnsureUPVtxDataBuffer(totalSize);
+	if (!s_pUPVtxDataBuf || !s_pUPVtxDataSRV)
+		return;
+
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped = {};
+		HRESULT hr = g_pD3DDeviceContext->Map(s_pUPVtxDataBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (FAILED(hr)) return;
+
+		float* pDst = (float*)mapped.pData;
+		for (unsigned int v = 0; v < vertexCount; v++) {
+			for (int a = 0; a < NV2A_VERTEXSHADER_ATTRIBUTES; a++) {
+				const VertexAttribute& attr = pg->vertex_attributes[a];
+				const float* pSrc = attr.inline_buffer
+					? &attr.inline_buffer[v * 4]
+					: attr.inline_value;
+				pDst[0] = pSrc[0];
+				pDst[1] = pSrc[1];
+				pDst[2] = pSrc[2];
+				pDst[3] = pSrc[3];
+				pDst += 4;
+			}
+		}
+
+		g_pD3DDeviceContext->Unmap(s_pUPVtxDataBuf, 0);
+	}
+
+	// ---------------------------------------------------------------
+	// Step 2: Determine topology and host vertex count
+	// ---------------------------------------------------------------
+	UINT primType = CXBX_PRIM_NORMAL;
+	UINT hostVertexCount = vertexCount;
+	D3D_PRIMITIVE_TOPOLOGY hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+
+	switch ((xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode) {
+	case xbox::X_D3DPT_QUADLIST:
+		primType = CXBX_PRIM_QUAD;
+		hostVertexCount = (vertexCount / 4) * 6;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		break;
+	case xbox::X_D3DPT_QUADSTRIP:
+		primType = CXBX_PRIM_QUADSTRIP;
+		hostVertexCount = (vertexCount >= 4) ? ((vertexCount - 2) / 2) * 6 : 0;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		break;
+	case xbox::X_D3DPT_TRIANGLEFAN:
+	case xbox::X_D3DPT_POLYGON:
+		primType = CXBX_PRIM_FAN;
+		hostVertexCount = (vertexCount >= 3) ? (vertexCount - 2) * 3 : 0;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		break;
+	case xbox::X_D3DPT_TRIANGLELIST:
+		primType = CXBX_PRIM_NORMAL;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		break;
+	case xbox::X_D3DPT_TRIANGLESTRIP:
+		primType = CXBX_PRIM_NORMAL;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+		break;
+	case xbox::X_D3DPT_LINELIST:
+		primType = CXBX_PRIM_NORMAL;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+		break;
+	case xbox::X_D3DPT_LINESTRIP:
+		primType = CXBX_PRIM_NORMAL;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;
+		break;
+	case xbox::X_D3DPT_POINTLIST:
+		primType = CXBX_PRIM_NORMAL;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+		break;
+	case xbox::X_D3DPT_LINELOOP:
+		primType = CXBX_PRIM_LINELOOP;
+		hostVertexCount = vertexCount * 2;
+		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+		break;
+	default:
+		return;
+	}
+
+	if (hostVertexCount == 0)
+		return;
+
+	// ---------------------------------------------------------------
+	// Step 3: Fill layout CB with float4 layout for all 16 attributes
+	// ---------------------------------------------------------------
+	{
+		D3D11_MAPPED_SUBRESOURCE mapped = {};
+		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (FAILED(hr)) return;
+
+		IABypassLayoutCB* pCB = (IABypassLayoutCB*)mapped.pData;
+		memset(pCB, 0, sizeof(IABypassLayoutCB));
+
+		pCB->PrimType = primType;
+		pCB->IndexedDraw = 0;
+		pCB->IndexOffset = 0;
+		pCB->NumAttribs = 16;
+		pCB->NumVerts = vertexCount;
+		pCB->VertexOffset = 0;
+
+		for (UINT a = 0; a < 16; a++) {
+			pCB->Attribs[a][0] = a * kAttrSize;       // elemOffset
+			pCB->Attribs[a][1] = kStride;             // stride
+			pCB->Attribs[a][2] = CXBX_VTXFMT_FLOAT4;  // format
+			pCB->Attribs[a][3] = 0;                   // streamBase (UP data at offset 0)
+		}
+
+		g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
+	}
+
+	// Invalidate layout cache so the next regular draw refills the CB
+	s_LastLayoutCBGeneration = UINT_MAX;
+
+	// ---------------------------------------------------------------
+	// Step 4: Upload vertex defaults
+	// ---------------------------------------------------------------
+	UploadVertexDefaults();
+
+	// ---------------------------------------------------------------
+	// Step 5: Bind resources and issue draw
+	// ---------------------------------------------------------------
+	if (!s_IAAlreadyNull) {
+		g_pD3DDeviceContext->IASetInputLayout(nullptr);
+		ID3D11Buffer* nullBufs[17] = {};
+		UINT nullStrides[17] = {};
+		UINT nullOffsets[17] = {};
+		g_pD3DDeviceContext->IASetVertexBuffers(0, 17, nullBufs, nullStrides, nullOffsets);
+		g_pD3DDeviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_R16_UINT, 0);
+		s_IAAlreadyNull = true;
+	}
+	g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
+
+	// Bind UP staging SRVs to VS (t0=raw, t1=null, t2=snorm, t3=unorm)
+	{
+		ID3D11ShaderResourceView* vsSRVs[4] = {
+			s_pUPVtxDataSRV, nullptr,
+			s_pUPVtxDataSRV_SNORM16x2, s_pUPVtxDataSRV_UNORM8x4
+		};
+		g_pD3DDeviceContext->VSSetShaderResources(0, 4, vsSRVs);
+		s_pLastBoundVtxSRV = s_pUPVtxDataSRV;
+		s_pLastBoundIdxSRV = nullptr;
+		s_pLastBoundSNormSRV = s_pUPVtxDataSRV_SNORM16x2;
+		s_pLastBoundUNormSRV = s_pUPVtxDataSRV_UNORM8x4;
+	}
+
+	// Bind CBs: b1=layout, b2=defaults
+	{
+		ID3D11Buffer* vsCBs[2] = { s_pLayoutCB, s_pDefaultsCB };
+		g_pD3DDeviceContext->VSSetConstantBuffers(1, 2, vsCBs);
+		s_pLastBoundLayoutCB = s_pLayoutCB;
+		s_pLastBoundDefaultsCB = s_pDefaultsCB;
+	}
+
+	if (primType == CXBX_PRIM_NORMAL) {
+		CxbxBindThickLineGS((xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode);
+	}
+
+	g_pD3DDeviceContext->Draw(hostVertexCount, 0);
+
+	if (primType == CXBX_PRIM_NORMAL) {
+		CxbxUnbindThickLineGS((xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode);
+	}
+
+	// Unbind VS SRVs
+	ID3D11ShaderResourceView* nullSRVs[4] = { nullptr, nullptr, nullptr, nullptr };
+	g_pD3DDeviceContext->VSSetShaderResources(0, 4, nullSRVs);
+	s_pLastBoundVtxSRV = nullptr;
+	s_pLastBoundIdxSRV = nullptr;
+	s_pLastBoundSNormSRV = nullptr;
+	s_pLastBoundUNormSRV = nullptr;
+
+	// Free per-attribute inline buffers (same protocol as xemu)
+	for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
+		VertexAttribute& attr = pg->vertex_attributes[i];
+		if (attr.inline_buffer) {
+			free(attr.inline_buffer);
+			attr.inline_buffer = nullptr;
+		}
+	}
+}
+

@@ -279,9 +279,11 @@ bool CxbxD3D11ConvertVertexBufferGPU(
 // * IA bypass — manual vertex fetch from ByteAddressBuffer via SV_VertexID
 // ******************************************************************
 typedef struct _CxbxDrawContext CxbxDrawContext; // forward decl
+struct PGRAPHState; // forward decl for inline buffer draw
 void CxbxD3D11IABypassInit();
 void CxbxD3D11IABypassRelease();
 void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext);
+void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg);
 void CxbxD3D11IABypassInvalidateLayout();  // Bump layout CB generation counter
 extern bool g_bD3D11IABypassDefaultsDirty; // Set true when vertex defaults change
 

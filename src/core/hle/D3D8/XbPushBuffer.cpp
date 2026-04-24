@@ -143,11 +143,15 @@ void HLE_draw_arrays(NV2AState *d)
 
 void HLE_draw_inline_buffer(NV2AState *d)
 {
-	// PGRAPHState *pg = &d->pgraph;
+	PGRAPHState *pg = &d->pgraph;
 
-	LOG_TEST_CASE("HLE_draw_inline_buffer");
+	if (pg->inline_buffer_length == 0)
+		return;
 
-	LOG_UNIMPLEMENTED(); // TODO : Implement HLE_draw_inline_buffer
+	CxbxD3D11DrawInlineBuffer(pg);
+
+	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(
+		(xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode, pg->inline_buffer_length);
 }
 
 void HLE_draw_inline_array(NV2AState *d)

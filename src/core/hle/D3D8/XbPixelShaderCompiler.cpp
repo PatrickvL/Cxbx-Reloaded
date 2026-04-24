@@ -863,7 +863,12 @@ void UpdateFixedFunctionPixelShaderState()
 	{ D3DXCOLOR c(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_TEXTUREFACTOR)); ffPsState.TextureFactor = D3DXVECTOR4(c.r, c.g, c.b, c.a); }
 	ffPsState.SpecularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) ? 1 : 0;
 	ffPsState.FogEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1 : 0;
-	{ D3DXCOLOR c(FogColor_ABGR_to_ARGB(XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR))); ffPsState.FogColor = D3DXVECTOR3(c.r, c.g, c.b); }
+	{
+		DWORD raw = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR);
+		DWORD converted = FogColor_ABGR_to_ARGB(raw);
+		D3DXCOLOR c(converted);
+		ffPsState.FogColor = D3DXVECTOR3(c.r, c.g, c.b);
+	}
 	ffPsState.FogTableMode = XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE);
 	ffPsState.FogDensity = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY);
 	ffPsState.FogStart = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART);
@@ -979,6 +984,16 @@ void CxbxD3D11UploadRCInterpreterState()
 			pg->regs[RI(NV_PGRAPH_BUMPMAT11  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT11);
 			pg->regs[RI(NV_PGRAPH_BUMPSCALE1 + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVLSCALE);
 			pg->regs[RI(NV_PGRAPH_BUMPOFFSET1+ (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVLOFFSET);
+		}
+
+		// Bridge fog color from HLE render state (ABGR in D3D__RenderState) to PGRAPH (ARGB).
+		// The Xbox kernel stores NV2A-ready ABGR in the render state array; PGRAPH expects ARGB.
+		{
+			uint32_t fogABGR = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR);
+			uint32_t fogARGB = (fogABGR & 0xFF00FF00u)
+			                 | ((fogABGR & 0x00FF0000u) >> 16)
+			                 | ((fogABGR & 0x000000FFu) << 16);
+			pg->regs[RI(NV_PGRAPH_FOGCOLOR)] = fogARGB;
 		}
 	}
 
