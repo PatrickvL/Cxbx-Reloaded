@@ -572,6 +572,59 @@ add_custom_command(
 )
 install(DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/hlsl DESTINATION bin)
 
+# Build-time shader precache tool — compiles interpreter/passthrough shaders
+# into ShaderCache/00000000-All/ so the emulator doesn't need to compile them
+# at runtime. The tool uses the same XXH3_64bits hash key as EmuCompileShader(),
+# so the emulator picks up these .cso files automatically.
+add_executable(shader-precache
+    "${CXBXR_ROOT_DIR}/tools/shader_precache.cpp"
+)
+target_include_directories(shader-precache PRIVATE "${CXBXR_ROOT_DIR}/import/xxHash")
+target_compile_definitions(shader-precache PRIVATE XXH_INLINE_ALL)
+set_target_properties(shader-precache PROPERTIES
+    FOLDER "Cxbx-Reloaded/tools"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+)
+
+# The HLSL files that the precache tool compiles (and all their #includes).
+# When any of these change, the precache step re-runs; otherwise it's skipped.
+set(CXBXR_PRECACHE_HLSL_DEPS
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxRegisterCombinerInterpreter.hlsl"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxRegisterCombinerInterpreterState.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderInterpreter.hlsl"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderInterpreterState.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderPassthrough.hlsl"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxFixedFunctionVertexShader.hlsl"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxFixedFunctionVertexShaderState.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxPixelShaderFunctions.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxPixelShaderInput.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderCommon.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexFetch.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexOutputFooter.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxScreenspaceTransform.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxNV2AMathHelpers.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxNV2APixelShaderConstants.hlsli"
+    "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxPGRAPHRegs.hlsli"
+)
+
+# Stamp file: only re-run precache when HLSL sources or the tool itself change.
+set(CXBXR_PRECACHE_STAMP "${CMAKE_CURRENT_BINARY_DIR}/shader_precache.stamp")
+add_custom_command(
+    OUTPUT "${CXBXR_PRECACHE_STAMP}"
+    COMMENT "Precaching interpreter shaders into ShaderCache/00000000-All/..."
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/ShaderCache/00000000-All"
+    COMMAND $<TARGET_FILE:shader-precache>
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/hlsl"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/ShaderCache/00000000-All"
+    COMMAND ${CMAKE_COMMAND} -E touch "${CXBXR_PRECACHE_STAMP}"
+    DEPENDS ${CXBXR_PRECACHE_HLSL_DEPS} $<TARGET_FILE:shader-precache>
+)
+add_custom_target(shader-precache-run ALL
+    DEPENDS "${CXBXR_PRECACHE_STAMP}"
+)
+add_dependencies(shader-precache-run shader-precache misc-batch)
+set_target_properties(shader-precache-run PROPERTIES FOLDER "Cxbx-Reloaded/tools")
+
 install(PROGRAMS $<TARGET_FILE_DIR:cxbx>/${CMAKE_SHARED_LIBRARY_PREFIX}subhook${CMAKE_SHARED_LIBRARY_SUFFIX}
   DESTINATION bin
 )
