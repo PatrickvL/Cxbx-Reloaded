@@ -619,6 +619,16 @@ void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstruction
 
 	memcpy(CxbxVertexShaderSlotPtr, pTokens, NrInstructions * X_VSH_INSTRUCTION_SIZE_BYTES);
 
+	// Mirror to PGRAPH program_data so the VS interpreter can read it
+	if (g_NV2A) {
+		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+		for (DWORD i = 0; i < NrInstructions; i++) {
+			for (int j = 0; j < X_VSH_INSTRUCTION_SIZE; j++) {
+				pg->program_data[Address + i][j] = pTokens[i * X_VSH_INSTRUCTION_SIZE + j];
+			}
+		}
+	}
+
 	// Make sure slot parsing in EmuParseVshFunction (VshConvertToIntermediate) stops after the last slot;
 	// Just setting bit 0 in 3rd DWORD suffices (see XboxVertexShaderDecoder.VshGetField.FieldMapping[FLD_FINAL]) :
 	g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE) + 3] = 1;
@@ -824,6 +834,15 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 	// Either way, the given address slot is selected as the start of the current vertex shader program
 	g_Xbox_VertexShader_FunctionSlots_StartAddress = Address;
 
+	// Mirror the start address to PGRAPH so the VS interpreter can read it
+	if (g_NV2A) {
+		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+		uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
+		csv0c &= ~NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START; // Clear old start
+		csv0c |= (Address << 8) & NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START; // Set new start
+		pg->regs[RI(NV_PGRAPH_CSV0_C)] = csv0c;
+	}
+
 	g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
 
 	if (Handle) {
@@ -992,6 +1011,15 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 #endif
 		g_Xbox_VertexShader_Handle = Handle;
 		g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
+
+		// Mirror the start address to PGRAPH so the VS interpreter can read it
+		if (g_NV2A) {
+			PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+			uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
+			csv0c &= ~NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START;
+			// Address 0 — just clear the start bits
+			pg->regs[RI(NV_PGRAPH_CSV0_C)] = csv0c;
+		}
 
 		SetFixedFunctionDefaultVertexAttributes(pXboxVertexShader->Flags);
 

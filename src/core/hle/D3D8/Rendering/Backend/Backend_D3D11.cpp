@@ -547,6 +547,36 @@ bool CxbxD3D11InitVSInterpreter()
 		}
 	}
 
+	// Ensure the shared PGRegs StructuredBuffer exists (normally created by RC interpreter init,
+	// but the VS interpreter also needs it for reading PGRAPH registers like CSV0_C)
+	if (!g_pD3D11PGRegsBuf) {
+		static const UINT PGRAPH_REG_COUNT = 2048;
+		D3D11_BUFFER_DESC desc = {};
+		desc.ByteWidth = PGRAPH_REG_COUNT * sizeof(uint32_t);
+		desc.Usage = D3D11_USAGE_DYNAMIC;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		desc.StructureByteStride = sizeof(uint32_t);
+		hr = g_pD3DDevice->CreateBuffer(&desc, nullptr, &g_pD3D11PGRegsBuf);
+		if (FAILED(hr)) {
+			EmuLog(LOG_LEVEL::WARNING, "VS Interpreter CreateBuffer (PGRegs) failed: 0x%08X", hr);
+			// Non-fatal: interpreter can still work without PGRAPH regs (will use startSlot=0)
+		}
+	}
+	if (g_pD3D11PGRegsBuf && !g_pD3D11PGRegsSRV) {
+		static const UINT PGRAPH_REG_COUNT = 2048;
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = PGRAPH_REG_COUNT;
+		hr = g_pD3DDevice->CreateShaderResourceView(g_pD3D11PGRegsBuf, &srvDesc, &g_pD3D11PGRegsSRV);
+		if (FAILED(hr)) {
+			EmuLog(LOG_LEVEL::WARNING, "VS Interpreter CreateSRV (PGRegs) failed: 0x%08X", hr);
+		}
+	}
+
 	EmuLog(LOG_LEVEL::INFO, "VS Interpreter ubershader compiled successfully (%u byte XFPR SRV, shared PGRegs SRV at t%u)",
 		(unsigned)(XFPR_LENGTH * 4 * sizeof(uint32_t)),
 		(unsigned)CXBX_D3D11_VS_PGREGS_SRV_SLOT);
