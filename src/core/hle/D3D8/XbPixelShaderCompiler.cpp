@@ -967,6 +967,19 @@ void CxbxD3D11UploadRCInterpreterState()
 		// PSTextureModes lives outside the PSDef struct in render state
 		pg->regs[RI(NV_PGRAPH_SHADERPROG)] =
 			XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+
+		// Bridge BumpEnvMat and LumScale/Offset from HLE texture states to PGRAPH.
+		// These are float values stored as raw uint32_t bit patterns in both
+		// XboxTextureStates and pg->regs[].  Stages 1-3 (stage 0 has no bump env).
+		// Note: Xbox X_D3DTSS_BUMPENVMAT10/11 indices are swapped vs PGRAPH ordering.
+		for (int s = 1; s <= 3; s++) {
+			pg->regs[RI(NV_PGRAPH_BUMPMAT00  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT00);
+			pg->regs[RI(NV_PGRAPH_BUMPMAT01  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT01);
+			pg->regs[RI(NV_PGRAPH_BUMPMAT10  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT10);
+			pg->regs[RI(NV_PGRAPH_BUMPMAT11  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT11);
+			pg->regs[RI(NV_PGRAPH_BUMPSCALE1 + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVLSCALE);
+			pg->regs[RI(NV_PGRAPH_BUMPOFFSET1+ (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVLOFFSET);
+		}
 	}
 
 	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
