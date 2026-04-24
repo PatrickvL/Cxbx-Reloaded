@@ -998,10 +998,16 @@ void CxbxD3D11UploadRCInterpreterState()
 			if (texModeAdjust) {
 				if (texType == xbox::X_D3DRTYPE_NONE) {
 					switch (mode) {
+					// Modes that read from a previous stage's texture register,
+					// not from a texture bound at *this* stage:
 					case PS_TEXTUREMODES_BUMPENVMAP:
 					case PS_TEXTUREMODES_BUMPENVMAP_LUM:
 					case PS_TEXTUREMODES_DPNDNT_AR:
 					case PS_TEXTUREMODES_DPNDNT_GB:
+					// Modes that don't sample any texture at all:
+					case PS_TEXTUREMODES_PASSTHRU:
+					case PS_TEXTUREMODES_CLIPPLANE:
+					case PS_TEXTUREMODES_DOTPRODUCT:
 						break;
 					default:
 						psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_NONE << (i * 5));

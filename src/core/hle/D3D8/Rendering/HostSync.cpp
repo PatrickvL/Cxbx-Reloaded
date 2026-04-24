@@ -682,13 +682,9 @@ xbox::void_xt CxbxImpl_SetPixelShader(xbox::dword_xt Handle)
    	   	// TODO : If D3DDevice_SetPixelShader() in XDKs don't overwrite the X_D3DRS_PS_RESERVED slot with PSDef.PSTextureModes,
    	   	// store it here and restore after memcpy, or alternatively, perform two separate memcpy's (the halves before, and after the reserved slot).
    	   	memcpy(XboxRenderStates.GetPixelShaderRenderStatePointer(), g_pXbox_PixelShader->pPSDef, sizeof(xbox::X_D3DPIXELSHADERDEF) - 3 * sizeof(DWORD));
-   	   	// Copy the PSDef.PSTextureModes field to it's dedicated slot, which lies outside the range of PixelShader render state slots
-   	   	DWORD xboxTexModes = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
-   	   	if (xboxTexModes != 0) {
-   	   		XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, xboxTexModes);
-   	   	} else {
-   	   		XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, g_pXbox_PixelShader->pPSDef->PSTextureModes);
-   	   	}
+   	   	// Copy the PSDef.PSTextureModes field to its dedicated slot, which lies outside the range of PixelShader render state slots.
+   	   	// Always write from the new PSDef — a subsequent SetRenderState can override this if needed.
+   	   	XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, g_pXbox_PixelShader->pPSDef->PSTextureModes);
 		// NOTE: PGRAPH combiner registers are bridged at draw time in
 		// CxbxD3D11UploadRCInterpreterState() to also catch subsequent
 		// SetPixelShaderConstant / SetRenderState changes.

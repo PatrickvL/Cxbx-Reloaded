@@ -442,7 +442,7 @@ float4 SampleCube(uint s, float3 dir)
 // Texture stage fetch
 // ============================================================
 
-void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
+void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
 {
     // NUM_TEXTURE_STAGES is always a power of 2 (4); bitmask is faster than modulo
     stage &= (NUM_TEXTURE_STAGES - 1u);
@@ -584,9 +584,10 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode)
     {
         float3 dm = ApplyDotMappingForStage(stage, src);
         float3 N  = normalize(float3(prevReg2.x, prevReg1.x, dot(coords.xyz, dm)));
-        float3 E  = normalize(float3(Regs[PS_REGISTER_T1].w,
-                                     Regs[PS_REGISTER_T2].w,
-                                     Regs[PS_REGISTER_T3].w));
+        // Eye vector from original VS output q-components (iT1.w, iT2.w, iT3.w).
+        // Cannot read from Regs[T1/T2/T3].w here because DOTPRODUCT stages
+        // already overwrote them with float4(dot_result, 0, 0, 1).
+        float3 E  = normalize(eyeVec);
         val = SampleCube(stage, 2.0f * dot(N, E) * N - E);
         break;
     }
@@ -849,15 +850,21 @@ float4 main(PS_INPUT input) : SV_Target
     Regs[PS_REGISTER_T3] = input.iT3;
 #endif
 
-    FetchTexture(Regs, 0u, texMode.x);
+    // NV2A hardcodes the eye vector for texm3x3vspec / DOT_RFLCT_SPEC from
+    // the q (w) components of texture coordinates 1, 2, 3.  Save them before
+    // FetchTexture runs, because DOTPRODUCT stages overwrite T registers with
+    // float4(dot_result, 0, 0, 1), destroying the original .w values.
+    float3 eyeVec = float3(input.iT1.w, input.iT2.w, input.iT3.w);
+
+    FetchTexture(Regs, 0u, texMode.x, eyeVec);
 #if NUM_TEXTURE_STAGES >= 2
-    FetchTexture(Regs, 1u, texMode.y);
+    FetchTexture(Regs, 1u, texMode.y, eyeVec);
 #endif
 #if NUM_TEXTURE_STAGES >= 3
-    FetchTexture(Regs, 2u, texMode.z);
+    FetchTexture(Regs, 2u, texMode.z, eyeVec);
 #endif
 #if NUM_TEXTURE_STAGES >= 4
-    FetchTexture(Regs, 3u, texMode.w);
+    FetchTexture(Regs, 3u, texMode.w, eyeVec);
 #endif
 
     // --- Set vertex-derived registers ---
