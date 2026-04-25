@@ -957,17 +957,9 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_DeleteStateBlock)
 (
 	dword_xt Token
 );
-// ******************************************************************
-// * patch: D3DDevice_BeginPushBuffer
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_BeginPushBuffer)
-(
-	X_D3DPushBuffer *pPushBuffer
-);
-// ******************************************************************
-// * patch: D3DDevice_EndPushBuffer
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_EndPushBuffer)();
+// Moved to EmuPatches_Draw.h:
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_BeginPushBuffer)(X_D3DPushBuffer *pPushBuffer);
+// xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_EndPushBuffer)();
 // ******************************************************************
 // * patch: XMETAL_StartPush
 // ******************************************************************

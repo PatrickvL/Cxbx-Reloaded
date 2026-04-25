@@ -524,19 +524,17 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 			pCB->Attribs[a][3] = 0;  // streamBase
 		}
 
-		// TODO: Re-enable PGRAPH vertex attribute path once HLE patches are fully
-		// removed.  Currently, HLE patches intercept SetStreamSource/DrawPrimitive
-		// and populate g_Xbox_SetStreamSource[] + CxbxVertexDeclaration, but the
-		// PGRAPH vertex_attributes[] may be stale or zero because the push buffer
-		// commands that would populate them haven't been drained yet at draw time.
-		// Using the HLE fallback for all draws ensures correct vertex layout.
-#if 0
-		// PGRAPH path: read vertex layout directly from NV2A vertex attributes.
-		// Each NV2A attribute slot maps directly to a vertex shader input register.
-		// The attribute offset already includes any intra-vertex element offset,
-		// so elemOffset is always 0 in this path.
-		// For UP draws, vertex data is in a staging buffer (not the 64 MiB mirror),
-		// so we fall back to the HLE path which handles UP data upload.
+		// Two vertex layout paths:
+		// 1. PGRAPH path: reads vertex_attributes[] directly from NV2A state.
+		//    Used for push buffer draws (HLE_draw_arrays) where PGRAPH is the
+		//    authoritative source and g_Xbox_SetStreamSource[] is not populated.
+		// 2. HLE path: reads CxbxVertexDeclaration + g_Xbox_SetStreamSource[].
+		//    Used for HLE-intercepted draws where SetStreamSource patches populate
+		//    the HLE state before DrawPrimitive is called.
+		//
+		// Strategy: try PGRAPH first for non-UP draws; if no active attributes
+		// found, fall back to HLE path.
+		bool bUsedPGRAPH = false;
 		PGRAPHState* pg = (g_NV2A != nullptr) ? &g_NV2A->GetDeviceState()->pgraph : nullptr;
 
 		if (pg && !bIsUPDraw) {
@@ -549,9 +547,11 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 				pCB->Attribs[i][1] = attr.stride;
 				pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
 				pCB->Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
+				bUsedPGRAPH = true;
 			}
-		} else
-#endif
+		}
+
+		if (!bUsedPGRAPH)
 		{
 			// HLE fallback: walk CxbxVertexDeclaration + g_Xbox_SetStreamSource[]
 			for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {

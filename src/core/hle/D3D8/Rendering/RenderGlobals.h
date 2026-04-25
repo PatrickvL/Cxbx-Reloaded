@@ -301,6 +301,11 @@ extern void EmuD3DCleanup();
 
 extern xbox::dword_xt g_Xbox_VertexShader_Handle;
 
+// Push buffer recording: when true, draw function patches call through to the
+// original Xbox code (via trampoline) so that NV2A commands are written to the
+// user-allocated push buffer, and HLE host drawing is suppressed.
+extern bool g_bRecordingPushBuffer;
+
 extern xbox::X_PixelShader *g_pXbox_PixelShader;
 
 extern DXGI_FORMAT g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT];
@@ -488,6 +493,15 @@ xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2(xbox::int_xt BackBuffer);
    	XB_MACRO(xbox::void_xt,       WINAPI,     Lock3DSurface,                                      (xbox::X_D3DPixelContainer*, xbox::uint_xt, xbox::X_D3DLOCKED_BOX*, xbox::X_D3DBOX*, xbox::dword_xt)                  );  \
    	XB_MACRO(xbox::void_xt,       WINAPI,     Lock3DSurface_16__LTCG_eax4,                        (xbox::X_D3DPixelContainer*, xbox::uint_xt, xbox::X_D3DLOCKED_BOX*, xbox::dword_xt)                           );  \
    	XB_MACRO(xbox::void_xt,       WINAPI,     D3D_CommonSetRenderTarget,                          (xbox::X_D3DSurface*, xbox::X_D3DSurface*, void*)                                                     );  \
+   	XB_MACRO(xbox::void_xt,       WINAPI,     D3DDevice_BeginPushBuffer,                          (xbox::X_D3DPushBuffer*)                                                                              );  \
+   	XB_MACRO(xbox::hresult_xt,    WINAPI,     D3DDevice_EndPushBuffer,                            (xbox::void_xt)                                                                                       );  \
+   	XB_MACRO(xbox::void_xt,       WINAPI,     D3DDevice_DrawVertices,                             (xbox::X_D3DPRIMITIVETYPE, xbox::uint_xt, xbox::uint_xt)                                              );  \
+   	XB_MACRO(xbox::void_xt,       WINAPI,     D3DDevice_DrawIndexedVertices,                      (xbox::X_D3DPRIMITIVETYPE, xbox::uint_xt, CONST PWORD)                                                );  \
+   	XB_MACRO(xbox::void_xt,       WINAPI,     D3DDevice_DrawVerticesUP,                           (xbox::X_D3DPRIMITIVETYPE, xbox::uint_xt, CONST PVOID, xbox::uint_xt)                                 );  \
+   	XB_MACRO(xbox::void_xt,       WINAPI,     CDevice_SetStateVB,                                 (xbox::ulong_xt)                                                                                      );  \
+   	XB_MACRO(xbox::void_xt,       WINAPI,     CDevice_SetStateVB_8,                               (xbox::addr_xt, xbox::ulong_xt)                                                                       );  \
+   	XB_MACRO(xbox::void_xt,       WINAPI,     CDevice_SetStateUP,                                 ()                                                                                                    );  \
+   	XB_MACRO(xbox::void_xt,       WINAPI,     CDevice_SetStateUP_4,                               (xbox::addr_xt)                                                                                       );  \
 
 // Generate extern declarations for trampoline function pointers.
 // Each expands to a typedef + extern variable declaration.

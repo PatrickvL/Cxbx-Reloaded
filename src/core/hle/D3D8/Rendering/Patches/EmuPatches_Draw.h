@@ -137,6 +137,24 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_RunPushBuffer_4__LTCG_eax2)
 );
 
 // ******************************************************************
+// * patch: D3DDevice_BeginPushBuffer
+// ******************************************************************
+xbox::void_xt WINAPI EMUPATCH(D3DDevice_BeginPushBuffer)
+(
+	X_D3DPushBuffer *pPushBuffer
+);
+
+// ******************************************************************
+// * patch: D3DDevice_BeginPushBuffer_0__LTCG_edi1
+// ******************************************************************
+xbox::void_xt WINAPI EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1)();
+
+// ******************************************************************
+// * patch: D3DDevice_EndPushBuffer
+// ******************************************************************
+xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_EndPushBuffer)();
+
+// ******************************************************************
 // * patch: D3DDevice_DrawVerticesUP
 // ******************************************************************
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_DrawVerticesUP)

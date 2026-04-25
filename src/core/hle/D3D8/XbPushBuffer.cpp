@@ -171,6 +171,7 @@ void HLE_draw_inline_array(NV2AState *d)
 		DWORD dwVertexStride = CxbxGetStrideFromVertexDeclaration(CxbxGetVertexDeclaration());
 		if (dwVertexStride > 0) {
 			UINT VertexCount = (pg->inline_array_length * sizeof(DWORD)) / dwVertexStride;
+
 			CxbxDrawContext DrawContext = {};
 
 			DrawContext.XboxPrimitiveType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
@@ -296,11 +297,13 @@ float *HLE_get_NV2A_vertex_constant_float4_ptr(unsigned const_index)
 // Note 3 : Keep EmuExecutePushBufferRaw skipping all commands not intended for channel 0 (3D)
 // Note 4 : Prevent a crash during shutdown when g_NV2A gets deleted
 #define CACHE_PUSH(subc, mthd, word, ni) \
-	if (subc == 0) { \
-		if (g_NV2A) { \
-			pgraph_handle_method(d, subc, mthd << 2, word); \
+	do { \
+		if (subc == 0) { \
+			if (g_NV2A) { \
+				pgraph_handle_method(d, subc, mthd << 2, word); \
+			} \
 		} \
-	}
+	} while(0)
 
 typedef union {
 /* https://envytools.readthedocs.io/en/latest/hw/fifo/dma-pusher.html#the-commands-pre-gf100-format

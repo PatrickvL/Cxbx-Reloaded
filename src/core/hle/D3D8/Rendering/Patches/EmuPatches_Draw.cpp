@@ -1,4 +1,4 @@
-// This is an open source non-commercial project. Dear PVS-Studio, please check it.
+﻿// This is an open source non-commercial project. Dear PVS-Studio, please check it.
 // PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 // ******************************************************************
 // *
@@ -250,6 +250,65 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_End)()
 }
 
 // ******************************************************************
+// * patch: D3DDevice_BeginPushBuffer
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginPushBuffer)
+(
+	X_D3DPushBuffer *pPushBuffer
+)
+{
+	LOG_FUNC_ONE_ARG(pPushBuffer);
+
+	// Call through to original Xbox code to redirect the push buffer pointer.
+	// Only set recording flag if the trampoline was available and the original
+	// code actually ran.
+	if (XB_TRMP(D3DDevice_BeginPushBuffer) != nullptr) {
+		XB_TRMP(D3DDevice_BeginPushBuffer)(pPushBuffer);
+		g_bRecordingPushBuffer = true;
+	} else {
+		LOG_TEST_CASE("BeginPushBuffer trampoline not available");
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_BeginPushBuffer_0__LTCG_edi1
+// ******************************************************************
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1)()
+{
+	X_D3DPushBuffer* pPushBuffer;
+	__asm {
+		LTCG_PROLOGUE
+		mov  pPushBuffer, edi
+	}
+
+	EMUPATCH(D3DDevice_BeginPushBuffer)(pPushBuffer);
+
+	__asm {
+		LTCG_EPILOGUE
+		ret  0
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_EndPushBuffer
+// ******************************************************************
+xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_EndPushBuffer)()
+{
+	LOG_FUNC();
+
+	// Always clear recording flag
+	g_bRecordingPushBuffer = false;
+
+	// Call through to original Xbox code to finalize the push buffer
+	if (XB_TRMP(D3DDevice_EndPushBuffer) != nullptr) {
+		return XB_TRMP(D3DDevice_EndPushBuffer)();
+	} else {
+		LOG_TEST_CASE("EndPushBuffer trampoline not available");
+		return (HRESULT)0;
+	}
+}
+
+// ******************************************************************
 // * patch: D3DDevice_RunPushBuffer
 // ******************************************************************
 xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_RunPushBuffer)
@@ -328,6 +387,14 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawVertices)
 		return;
 	}
 
+	// During push buffer recording, call through to the original Xbox code
+	// so it writes NV2A commands to the user's push buffer. Skip HLE drawing
+	// to avoid rendering during the recording phase.
+	if (g_bRecordingPushBuffer && XB_TRMP(D3DDevice_DrawVertices) != nullptr) {
+		XB_TRMP(D3DDevice_DrawVertices)(PrimitiveType, StartVertex, VertexCount);
+		return;
+	}
+
 	// TODO : Call unpatched CDevice_SetStateVB[_8](0);
 
 	CxbxUpdateNativeD3DResources();
@@ -364,6 +431,12 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawVerticesUP)
 
 	if (!IsValidXboxVertexCount(PrimitiveType, VertexCount)) {
 		LOG_TEST_CASE("Invalid VertexCount");
+		return;
+	}
+
+	// During push buffer recording, call through to the original Xbox code
+	if (g_bRecordingPushBuffer && XB_TRMP(D3DDevice_DrawVerticesUP) != nullptr) {
+		XB_TRMP(D3DDevice_DrawVerticesUP)(PrimitiveType, VertexCount, pVertexStreamZeroData, VertexStreamZeroStride);
 		return;
 	}
 
@@ -429,6 +502,12 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawIndexedVertices)
 
 	if (!IsValidXboxVertexCount(PrimitiveType, VertexCount)) {
 		LOG_TEST_CASE("Invalid VertexCount");
+		return;
+	}
+
+	// During push buffer recording, call through to the original Xbox code
+	if (g_bRecordingPushBuffer && XB_TRMP(D3DDevice_DrawIndexedVertices) != nullptr) {
+		XB_TRMP(D3DDevice_DrawIndexedVertices)(PrimitiveType, VertexCount, pIndexData);
 		return;
 	}
 
@@ -607,8 +686,16 @@ xbox::void_xt WINAPI xbox::EMUPATCH(CDevice_SetStateVB)(ulong_xt Unknown1)
 		LOG_FUNC_ARG(Unknown1)
 		LOG_FUNC_END;
 
-	// TODO: Anything?
-//	__asm int 3;
+	// During push buffer recording, call through to the original Xbox code
+	// so that NV2A state commands are written to the user's push buffer.
+	// This is critical: DrawVertices calls SetStateVB internally, and the
+	// original DrawVertices code depends on SetStateVB to manage the push
+	// buffer write pointer and space.
+	if (g_bRecordingPushBuffer && XB_TRMP(CDevice_SetStateVB) != nullptr) {
+		__asm mov ecx, _this;
+		XB_TRMP(CDevice_SetStateVB)(Unknown1);
+		return;
+	}
 
 	LOG_UNIMPLEMENTED();
 }
@@ -620,8 +707,10 @@ xbox::void_xt WINAPI xbox::EMUPATCH(CDevice_SetStateVB_8)(addr_xt _this, ulong_x
 		LOG_FUNC_ARG(Unknown1)
 		LOG_FUNC_END;
 
-	// TODO: Anything?
-//	__asm int 3;
+	if (g_bRecordingPushBuffer && XB_TRMP(CDevice_SetStateVB_8) != nullptr) {
+		XB_TRMP(CDevice_SetStateVB_8)(_this, Unknown1);
+		return;
+	}
 
 	LOG_UNIMPLEMENTED();
 }
@@ -631,6 +720,13 @@ xbox::void_xt WINAPI xbox::EMUPATCH(CDevice_SetStateVB_8)(addr_xt _this, ulong_x
 // ******************************************************************
 xbox::void_xt CxbxrImpl_CDevice_SetStateUP(xbox::addr_xt _this)
 {
+	// During push buffer recording, call through to original Xbox code
+	if (g_bRecordingPushBuffer && XB_TRMP(CDevice_SetStateUP) != nullptr) {
+		__asm mov ecx, _this;
+		XB_TRMP(CDevice_SetStateUP)();
+		return;
+	}
+
 	LOG_UNIMPLEMENTED();
 
 	// TODO: Anything?
@@ -650,6 +746,11 @@ xbox::void_xt WINAPI xbox::EMUPATCH(CDevice_SetStateUP)()
 xbox::void_xt WINAPI xbox::EMUPATCH(CDevice_SetStateUP_4)(xbox::addr_xt _this)
 {
 	LOG_FUNC_ONE_ARG(_this);
+
+	if (g_bRecordingPushBuffer && XB_TRMP(CDevice_SetStateUP_4) != nullptr) {
+		XB_TRMP(CDevice_SetStateUP_4)(_this);
+		return;
+	}
 
 	CxbxrImpl_CDevice_SetStateUP(_this);
 }

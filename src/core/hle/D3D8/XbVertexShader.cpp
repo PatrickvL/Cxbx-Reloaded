@@ -66,6 +66,7 @@
 VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 
                 xbox::dword_xt g_Xbox_VertexShader_Handle = 0;
+                bool g_bRecordingPushBuffer = false;
 #ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER // TODO : Would this be more accurate / simpler?
       xbox::X_D3DVertexShader *g_Xbox_VertexShader_Ptr = nullptr;
 #endif
