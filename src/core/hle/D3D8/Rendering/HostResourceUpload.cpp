@@ -153,13 +153,25 @@ void UploadPixelContainerMips(
 				if (CxbxD3D11UnswizzleTexture(pTexture2D, pCsSrc, pxMipWidth, pxMipHeight, dwBPP, PCFormat)) {
 					continue; // CS handled it, skip to next mip/face
 				}
-				// CS failed (unsupported format?) — fall back to CPU unswizzle via staging buffer + UpdateSubresource
+				// CS failed (unsupported format for UAV) — fall back to CPU unswizzle
 				EmuLog(LOG_LEVEL::WARNING, "CS unswizzle failed, falling back to CPU for %ux%u bpp=%u", pxMipWidth, pxMipHeight, dwBPP);
 				DWORD fallbackRowPitch = pxMipWidth * dwBPP;
 				DWORD fallbackSize = fallbackRowPitch * pxMipHeight;
 				uint8_t* pFallbackBuf = (uint8_t*)malloc(fallbackSize);
 				EmuUnswizzleBox(pCsSrc, pxMipWidth, pxMipHeight, 1, dwBPP, pFallbackBuf, fallbackRowPitch, 0);
-				g_pD3DDeviceContext->UpdateSubresource(pNewHostResource.Get(), Subresource, nullptr, pFallbackBuf, fallbackRowPitch, 0);
+				if (bHostIsDynamic) {
+					// DYNAMIC textures require Map/Unmap (UpdateSubresource is invalid)
+					hRet = g_pD3DDeviceContext->Map(pNewHostResource.Get(), Subresource, D3D11_MAP_WRITE_DISCARD, 0, &MappedResource);
+					if (SUCCEEDED(hRet)) {
+						for (DWORD row = 0; row < pxMipHeight; row++) {
+							memcpy((uint8_t*)MappedResource.pData + row * MappedResource.RowPitch,
+								pFallbackBuf + row * fallbackRowPitch, fallbackRowPitch);
+						}
+						g_pD3DDeviceContext->Unmap(pNewHostResource.Get(), Subresource);
+					}
+				} else {
+					g_pD3DDeviceContext->UpdateSubresource(pNewHostResource.Get(), Subresource, nullptr, pFallbackBuf, fallbackRowPitch, 0);
+				}
 				free(pFallbackBuf);
 				continue;
 			}

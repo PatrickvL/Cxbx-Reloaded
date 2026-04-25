@@ -53,6 +53,11 @@ void CxbxUpdateHostTextures()
 		// all cases including direct pushbuffer writes and inlined LTCG
 		// code (e.g. XDK CXBFont/CXBHelp) — the Xbox D3D runtime always
 		// writes SET_TEXTURE_OFFSET to the pushbuffer, so PGRAPH has it.
+		// Fallback: when PGRAPH texOffset is 0, keep pXboxBaseTexture
+		// from g_pXbox_SetTexture[stage] (set by HLE patches).  The IVB
+		// (Begin/End) path draws synchronously before the puller thread
+		// processes the push buffer, so PGRAPH may not yet have the
+		// texture offset even though SetTexture was called.
 		if (g_NV2A) {
 			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 			uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
@@ -60,9 +65,11 @@ void CxbxUpdateHostTextures()
 				auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
 				if (pgTex != nullptr)
 					pXboxBaseTexture = pgTex;
-			} else {
-				pXboxBaseTexture = xbox::zeroptr;
+				// else: PGRAPH has an offset but it's not in the side-map;
+				// keep pXboxBaseTexture from g_pXbox_SetTexture as fallback
 			}
+			// When texOffset == 0 and g_pXbox_SetTexture[stage] is also null,
+			// pXboxBaseTexture stays zeroptr — the texture will be unbound.
 		}
 
 		ID3D11Resource* pHostBaseTexture = nullptr;
@@ -153,6 +160,7 @@ void CxbxUpdateHostTextures()
 				ID3D11ShaderResourceView* pSRV = nullptr;
 				HRESULT hRet = g_pD3DDevice->CreateShaderResourceView(pHostBaseTexture, &srvDesc, &pSRV);
 				DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateShaderResourceView");
+
 				if (SUCCEEDED(hRet) && pSRV != nullptr) {
 					s_CachedResource[stage] = pHostBaseTexture;
 					s_CachedSRV[stage] = pSRV; // Keep ref for cache

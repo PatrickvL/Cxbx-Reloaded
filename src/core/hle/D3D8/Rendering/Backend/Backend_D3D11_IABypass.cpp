@@ -403,10 +403,11 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	// UP draws use a per-draw staging buffer since data comes from arbitrary pointers.
 	ID3D11ShaderResourceView* pMirrorSRV = CxbxPageTrackerGetMirrorSRV();
 
-	if (!bIsUPDraw) {
-		// Normal VB draw: flush dirty pages so GPU mirror is current.
-		CxbxPageTrackerFlushToGPU();
-	}
+	// Flush dirty pages so the GPU mirror is current (for VB draws) and
+	// s_TextureDirtyBitmap is updated (for texture re-upload detection).
+	// Must run for both UP and non-UP draws: UP draws skip the mirror
+	// but still need texture dirty tracking via GetWriteWatch().
+	CxbxPageTrackerFlushToGPU();
 
 	// ---------------------------------------------------------------
 	// Step 2b: Upload UP vertex data to staging buffer
