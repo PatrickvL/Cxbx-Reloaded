@@ -39,15 +39,25 @@ uniform float4 CxbxFogInfo : register(c218); // = CXBX_D3DVS_CONSTREG_FOGINFO
 // NV2A evaluates this per-vertex; the rasterizer interpolates the result;
 // the PS clamps to [0,1] and blends with the fog color.
 // fogMode: 0=NONE (vertex fog passthrough), 1=EXP, 2=EXP2, 3=LINEAR
+//          5=EXP_ABS, 6=EXP2_ABS, 7=LINEAR_ABS (apply abs to computed factor)
+// Bit 2 (value 4) is the _ABS flag, matching NV2A PGRAPH FOG_MODE encoding.
 float CalculateFogFactor(int fogMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
 {
-    if (fogMode == 1)       // EXP
-        return 1.0f / exp(fogDepth * fogDensity);
-    if (fogMode == 2)       // EXP2
-        return 1.0f / exp(pow(fogDepth * fogDensity, 2));
-    if (fogMode == 3)       // LINEAR
-        return (fogEnd - fogDepth) / (fogEnd - fogStart);
-    return fogDepth;        // 0 = NONE (vertex fog passthrough)
+    int baseMode = fogMode & 3;
+    float f;
+    if (baseMode == 1)       // EXP
+        f = exp(-fogDepth * fogDensity);
+    else if (baseMode == 2)  // EXP2
+    {
+        float fd = fogDepth * fogDensity;
+        f = exp(-(fd * fd));
+    }
+    else if (baseMode == 3)  // LINEAR
+        f = (fogEnd - fogDepth) / (fogEnd - fogStart);
+    else
+        return fogDepth;     // 0 = NONE (vertex fog passthrough)
+
+    return (fogMode & 4) ? abs(f) : f;
 }
 
 // TEXCOORDINDEX remapping: xyzw = texcoord source index for stages 0-3.

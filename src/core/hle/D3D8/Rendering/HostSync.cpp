@@ -374,7 +374,16 @@ void CxbxUpdateHostVertexShaderConstants()
 	}
 
 	// Placed this here until we find a better place
-	const float fogTableMode = static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE));
+	float fogTableMode = static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE));
+	// When table fog is active, check PGRAPH for _ABS fog mode variants.
+	// NV2A PGRAPH fog modes 4/5/7 apply abs() to the computed fog factor;
+	// bit 2 of the PGRAPH fog mode field is the _ABS flag.
+	if (fogTableMode > 0.0f && g_NV2A) {
+		auto *pg = &g_NV2A->GetDeviceState()->pgraph;
+		if (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & 0x00040000u) { // bit 2 of FOG_MODE field
+			fogTableMode += 4.0f; // Promote to _ABS variant (5=EXP_ABS, 6=EXP2_ABS, 7=LINEAR_ABS)
+		}
+	}
 	const float fogDensity = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY);
 	const float fogStart = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART);
 	const float fogEnd = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND);
