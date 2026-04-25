@@ -194,6 +194,108 @@ int pfifo_puller_thread(NV2AState *d)
 }
 
 // ---------------------------------------------------------------------------
+// pfifo_submit_pushbuffer  --  submit a block of NV2A push buffer commands
+// through a software command parser that dispatches methods directly to
+// PGRAPH.  This replaces the old EmuExecutePushBufferRaw() which did the
+// same thing but from outside the NV2A module.
+//
+// The push buffer contains NV2A FIFO commands (method headers + data words)
+// as written by the Xbox D3D runtime during BeginPushBuffer recording.
+// We parse them using the standard NV4 DMA pusher format and feed each
+// method to pgraph_handle_method, just as the PFIFO puller would.
+// ---------------------------------------------------------------------------
+
+void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInBytes)
+{
+    if (!pPushData || uSizeInBytes < 4) return;
+
+    // Ensure PGRAPH context control has channel ID set (matches EmuExecutePushBufferRaw)
+    d->pgraph.regs[RI(NV_PGRAPH_CTX_CONTROL)] |= NV_PGRAPH_CTX_CONTROL_CHID;
+
+    uint32_t *dma_limit = (uint32_t*)((uintptr_t)pPushData + uSizeInBytes);
+    uint32_t *dma_put   = dma_limit;
+    uint32_t *dma_get   = (uint32_t*)pPushData;
+
+    // DMA pusher state
+    struct {
+        uint32_t mthd;    // Current method
+        uint32_t subc;    // Current subchannel
+        uint32_t mcnt;    // Remaining method count
+        bool     ni;      // Non-increasing flag
+    } state = {};
+
+    bool subr_active = false;
+    uint32_t *subr_return = nullptr;
+
+    while (dma_get != dma_put) {
+        if (dma_get >= dma_limit) {
+            EmuLog(LOG_LEVEL::WARNING, "pfifo_submit_pushbuffer: overran buffer");
+            return;
+        }
+
+        uint32_t word = *dma_get++;
+
+        // Data word of an active method command
+        if (state.mcnt) {
+            // Dispatch subchannel 0 methods (3D) to PGRAPH,
+            // matching the old EmuExecutePushBufferRaw behaviour.
+            if (state.subc == 0) {
+                qemu_mutex_lock(&d->pgraph.pgraph_lock);
+                pgraph_handle_method(d, state.subc, state.mthd << 2, word);
+                qemu_mutex_unlock(&d->pgraph.pgraph_lock);
+            }
+
+            if (!state.ni)
+                state.mthd++;
+
+            state.mcnt--;
+            continue;
+        }
+
+        // First word of a new command — decode type/instruction/flags
+        // Using the NV4 DMA pusher command format.
+        uint32_t type = word & 3;
+        if (type == 1) {
+            // JUMP_LONG
+            dma_get = (uint32_t*)(CONTIGUOUS_MEMORY_BASE | (word & 0xFFFFFFFC));
+            continue;
+        }
+        if (type == 2) {
+            // CALL
+            subr_return = dma_get;
+            subr_active = true;
+            dma_get = (uint32_t*)(CONTIGUOUS_MEMORY_BASE | (word & 0xFFFFFFFC));
+            continue;
+        }
+
+        // type == 0: check instruction field (bits 29-31)
+        uint32_t instruction = (word >> 29) & 7;
+        if (instruction == 1) {
+            // JUMP (short form)
+            dma_get = (uint32_t*)(CONTIGUOUS_MEMORY_BASE | (word & 0x1FFFFFFC));
+            continue;
+        }
+
+        // Check flags (bits 16-17)
+        uint32_t flags = (word >> 16) & 3;
+        if (flags == 2) {
+            // RETURN
+            if (subr_active) {
+                dma_get = subr_return;
+                subr_active = false;
+            }
+            continue;
+        }
+
+        // Increasing or non-increasing methods
+        state.ni   = (instruction == 2);
+        state.mthd = (word >> 2) & 0x7FF;          // method / 4
+        state.subc = (word >> 13) & 7;
+        state.mcnt = (word >> 18) & 0x7FF;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // pfifo_flush_to_pgraph  --  block until all pending pushbuffer commands have
 // been pushed into CACHE1 by the DMA pusher AND pulled/dispatched to PGRAPH
 // by the puller.  Called from the HLE thread before each draw.

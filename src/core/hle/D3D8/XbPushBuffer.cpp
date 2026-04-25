@@ -88,7 +88,7 @@ void EmuExecutePushBuffer
 			*/
 		}
 	}
-    EmuExecutePushBufferRaw((void*)pPushBuffer->Data, pPushBuffer->Size);
+    pfifo_submit_pushbuffer(g_NV2A->GetDeviceState(), (void*)pPushBuffer->Data, pPushBuffer->Size);
 
     return;
 }

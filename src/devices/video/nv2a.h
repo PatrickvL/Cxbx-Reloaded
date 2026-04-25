@@ -88,6 +88,11 @@ void CxbxReserveNV2AMemory(NV2AState *d);
 // before each draw to close the race between the async puller and HLE reads.
 void pfifo_flush_to_pgraph(NV2AState *d);
 
+// Submit a block of NV2A push buffer commands through the real PFIFO
+// pusher->puller->PGRAPH pipeline.  pPushData must point into contiguous
+// memory (>= 0x80000000).  Blocks until all commands have been processed.
+void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInBytes);
+
 class NV2ADevice : public PCIDevice {
 public:
 	// constructor
