@@ -175,7 +175,6 @@ ID3D11Buffer              *g_pD3D11FormatConvertCB = nullptr; // constant buffer
 // ******************************************************************
 // * Register combiner interpreter (PS ubershader) resources
 // ******************************************************************
-bool                       g_bUseRCInterpreter = true; // default on — ubershader path
 ID3D11PixelShader         *g_pD3D11RCInterpreterPS = nullptr;
 ID3D11Buffer              *g_pD3D11RCInterpreterAuxCB = nullptr; // PSAuxCBLayout (software-computed fields)
 ID3D11Buffer              *g_pD3D11PGRegsBuf = nullptr;          // pg->regs[] structured buffer

@@ -130,10 +130,6 @@ void CxbxGetVertexShaderConstants(UINT startRegister, float* pConstantData, UINT
 // * Register combiner interpreter (PS ubershader)
 // ******************************************************************
 
-// When true, use the register combiner interpreter ubershader instead of
-// per-program recompiled pixel shaders. Set via user option or debug toggle.
-extern bool g_bUseRCInterpreter;
-
 // Compile the RC interpreter ubershader and create its constant buffer.
 // Called lazily on first use.  Returns true if compilation succeeded.
 bool CxbxD3D11InitRCInterpreter();

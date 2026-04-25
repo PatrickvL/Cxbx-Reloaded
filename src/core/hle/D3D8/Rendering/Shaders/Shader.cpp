@@ -876,37 +876,6 @@ void ShaderSources::LoadShadersFromDisk() {
 		.parent_path()
 		.append("hlsl");
 
-	// Pixel Shader Template
-	{
-		std::stringstream tmp;
-		auto dir = hlslDir;
-		dir.append("CxbxPixelShaderTemplate.hlsl");
-		this->pixelShaderTemplatePath = dir.string();
-		tmp << OpenWithRetry(dir.string()).rdbuf();
-		std::string hlsl = tmp.str();
-
-		// Split the HLSL file on insertion points
-		std::array<std::string, 2> insertionPoints = {
-			"// <HARDCODED STATE GOES HERE>\n",
-			"// <XBOX SHADER PROGRAM GOES HERE>\n",
-		};
-		int pos = 0;
-		for (size_t i = 0; i < insertionPoints.size(); i++) {
-			auto insertionPoint = insertionPoints[i];
-			auto index = hlsl.find(insertionPoint, pos);
-
-			if (index == std::string::npos) {
-				// Handle broken shaders
-				this->pixelShaderTemplateHlsl[i] = "";
-			}
-			else {
-				this->pixelShaderTemplateHlsl[i] = hlsl.substr(pos, index - pos);
-				pos = index + insertionPoint.length();
-			}
-		}
-		this->pixelShaderTemplateHlsl[insertionPoints.size()] = hlsl.substr(pos);
-	}
-
 	// Fixed Function Pixel Shader
 	{
 		auto dir = hlslDir;
