@@ -849,7 +849,8 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 	// Writing from the game thread races with the puller reading CSV0_C at
 	// draw time, causing the wrong VS program to be selected.
 
-	g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
+	// g_Xbox_VertexShaderMode is derived from PGRAPH CSV0_D by the
+	// render thread in CxbxUpdateNativeD3DResources — don't race it.
 
 	if (Handle) {
 		if (!VshHandleIsVertexShader(Handle))
@@ -996,7 +997,8 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		// with the puller which reads that data at draw time.
 		// Update only the HLE-side globals that the EMUPATCH stubs set:
 		g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
-		g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
+		// g_Xbox_VertexShaderMode is derived from PGRAPH CSV0_D by the
+		// render thread in CxbxUpdateNativeD3DResources — don't race it.
 #ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
 		g_Xbox_VertexShader_Ptr = pXboxVertexShader;
 #endif
@@ -1020,12 +1022,11 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		// Switch to passthrough program, if so required
 		if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PASSTHROUGH) {
 			CxbxSetVertexShaderPassthroughProgram();
-			g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
 		} else {
 			// Test-case : Many XDK samples, Crazy taxi 3
-			//LOG_TEST_CASE("Other or no vertex shader flags");
-			g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 		}
+		// g_Xbox_VertexShaderMode is derived from PGRAPH CSV0_D + VPSCL/VPOFF
+		// by the render thread — don't write it here on the game thread.
 	}
 }
 

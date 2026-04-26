@@ -467,9 +467,9 @@ void CxbxUpdateNativeD3DResources()
 	}
 
 	// Derive the vertex shader mode entirely from PGRAPH state.
-	// g_Xbox_VertexShaderMode was previously set by the HLE SetVertexShader
-	// patch on the game thread, which runs AHEAD of the puller — a race.
-	// Now we read CSV0_D MODE for Program vs Fixed, and detect Passthrough
+	// g_Xbox_VertexShaderMode is ONLY written here on the render thread;
+	// the game-thread patches no longer touch it, eliminating the race.
+	// We read CSV0_D MODE for Program vs Fixed, and detect Passthrough
 	// (XYZRHW pre-transformed vertices) via the VPSCL/VPOFF sign: the Xbox
 	// D3D runtime maps screen coords to clip space such that the derived
 	// X,Y origin is negative (e.g. -320,-240 for 640x480).  Normal fixed-
