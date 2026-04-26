@@ -182,22 +182,8 @@ xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2
 	return pXboxBackBuffer;
 }
 
-// ******************************************************************
-// * patch: D3DDevice_SetViewport
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
-(
-	X_D3DVIEWPORT8 *pViewport
-)
-{
-	LOG_FUNC_ONE_ARG(pViewport);
-
-	// The trampoline pushes NV097_SET_VIEWPORT_OFFSET / _SCALE to the NV2A
-	// push buffer. The PFIFO puller writes these into PGRAPH VPSCL/VPOFF
-	// registers before the next draw, making PGRAPH the authority for
-	// viewport state. No CxbxImpl side-effects needed.
-	XB_TRMP(D3DDevice_SetViewport)(pViewport);
-}
+// D3DDevice_SetViewport — disabled (trampoline-only after CxbxImpl_SetViewport removal).
+// Patch disabled in Patches.cpp — Xbox code runs unpatched.
 
 // CxbxImpl_SetViewport — removed.
 // The Xbox trampoline writes viewport state to the NV2A push buffer.

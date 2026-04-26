@@ -36,21 +36,8 @@ static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
 }
 
 
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader)
-(
-   	dword_xt                       Handle,
-   	dword_xt                       Address
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Handle)
-		LOG_FUNC_ARG(Address)
-	LOG_FUNC_END;
-
-	// Call the Xbox trampoline so the NV2A push buffer gets SET_TRANSFORM_PROGRAM.
-	// Without this, push buffer processing at Swap would overwrite PGRAPH with stale data.
-	XB_TRMP(D3DDevice_LoadVertexShader)(Handle, Address);
-}
+// D3DDevice_LoadVertexShader — disabled (trampoline-only after CxbxImpl removal).
+// Patch disabled in Patches.cpp — Xbox code runs unpatched.
 
 // Overload for logging
 static void D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2

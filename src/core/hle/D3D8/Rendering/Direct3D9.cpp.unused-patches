@@ -4716,3 +4716,34 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetShaderConstantMode)
    	if(pMode)
    	   	*pMode = g_Xbox_VertexShaderConstantMode;
 }
+
+// ******************************************************************
+// * patch: D3DDevice_LoadVertexShader
+// * Disabled: trampoline-only after CxbxImpl removal
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader)
+(
+   	dword_xt Handle,
+   	dword_xt Address
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Handle)
+		LOG_FUNC_ARG(Address)
+	LOG_FUNC_END;
+
+	XB_TRMP(D3DDevice_LoadVertexShader)(Handle, Address);
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetViewport
+// * Disabled: trampoline-only after CxbxImpl_SetViewport removal
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
+(
+	X_D3DVIEWPORT8 *pViewport
+)
+{
+	LOG_FUNC_ONE_ARG(pViewport);
+	XB_TRMP(D3DDevice_SetViewport)(pViewport);
+}
