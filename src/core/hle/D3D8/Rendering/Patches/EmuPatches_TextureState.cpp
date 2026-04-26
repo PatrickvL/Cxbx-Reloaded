@@ -192,49 +192,17 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
 {
 	LOG_FUNC_ONE_ARG(pViewport);
 
-	// Always call the Xbox SetViewPort to update D3D Internal State
+	// The trampoline pushes NV097_SET_VIEWPORT_OFFSET / _SCALE to the NV2A
+	// push buffer. The PFIFO puller writes these into PGRAPH VPSCL/VPOFF
+	// registers before the next draw, making PGRAPH the authority for
+	// viewport state. No CxbxImpl side-effects needed.
 	XB_TRMP(D3DDevice_SetViewport)(pViewport);
-
-	CxbxImpl_SetViewport(pViewport);
 }
 
-// Set the viewport
-void CxbxImpl_SetViewport(xbox::X_D3DVIEWPORT8* pViewport)
-{
-	LOG_INIT;
-
-	// Unclear what to do when no viewport is passed
-	// Set the default viewport?
-	// Clamp the current viewport to the current rendertarget?
-	if (pViewport == nullptr) {
-		LOG_TEST_CASE("pViewport = null");
-		return;
-	}
-
-	// We need a rendertarget to clamp the viewport
-	// Pretty much everything hits this on boot because of the way our SetRenderTarget patch works
-	if (!g_pXbox_RenderTarget) {
-		return;
-	}
-
-	float rendertargetBaseWidth;
-	float rendertargetBaseHeight;
-	GetRenderTargetBaseDimensions(rendertargetBaseWidth, rendertargetBaseHeight);
-
-	// Update the current viewport
-	g_Xbox_Viewport = *pViewport;
-
-	// The SetRenderTarget trampoline calls SetViewport with
-	// both Width and Height set to INT_MAX
-	if ((pViewport->Width == INT_MAX) ^ (pViewport->Height == INT_MAX)) {
-		LOG_TEST_CASE("SetViewport called with only one of width/height set to INT_MAX");
-	}
-
-	// Cap width and height to screen bounds
-	// Test case: Need for Speed: HP2 (rear view mirror)
-	g_Xbox_Viewport.Width = std::min(g_Xbox_Viewport.Width, (DWORD)rendertargetBaseWidth - g_Xbox_Viewport.X);
-	g_Xbox_Viewport.Height = std::min(g_Xbox_Viewport.Height, (DWORD)rendertargetBaseHeight - g_Xbox_Viewport.Y);
-}
+// CxbxImpl_SetViewport — removed.
+// The Xbox trampoline writes viewport state to the NV2A push buffer.
+// PGRAPH VPSCL/VPOFF registers are the authority; g_Xbox_Viewport was
+// only written here and had no render-thread readers.
 
 // LTCG specific D3DDevice_SetShaderConstantMode function...
 // This uses a custom calling convention where parameter is passed in EAX

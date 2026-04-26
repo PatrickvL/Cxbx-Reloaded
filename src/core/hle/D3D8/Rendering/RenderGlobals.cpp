@@ -123,7 +123,7 @@ unsigned                     g_Xbox_Palette_Size[xbox::X_D3DTS_STAGECOUNT] = { 0
 DXGI_FORMAT               g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT]; // Updated by CxbxUpdateHostTextures(), read by CxbxCalcColorSign
 xbox::X_D3DBaseTexture       *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by our D3DDevice_SetTexture and D3DDevice_SwitchTexture patches
 
-xbox::X_D3DVIEWPORT8 g_Xbox_Viewport = { 0 };
+// g_Xbox_Viewport removed — PGRAPH VPSCL/VPOFF are the authority for viewport state.
 float g_Xbox_BackbufferScaleX = 1;
 float g_Xbox_BackbufferScaleY = 1;
 xbox::X_D3DSWAP g_LastD3DSwap = (xbox::X_D3DSWAP) -1;

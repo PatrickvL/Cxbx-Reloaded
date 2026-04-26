@@ -52,7 +52,6 @@ extern XboxRenderStateConverter  XboxRenderStates;
 extern XboxTextureStateConverter XboxTextureStates;
 extern D3D8LightState            d3d8LightState;
 extern D3D8TransformState        d3d8TransformState;
-extern xbox::X_D3DVIEWPORT8      g_Xbox_Viewport;
 extern float                     g_Xbox_BackbufferScaleX;
 extern float                     g_Xbox_BackbufferScaleY;
 extern xbox::X_D3DSWAP           g_LastD3DSwap;
@@ -270,7 +269,6 @@ inline HRESULT CxbxQueryGetData(ID3D11Query* pQuery, void* pData, DWORD dwSize, 
 }
 
 void CxbxImpl_SetRenderTarget(xbox::X_D3DSurface* pRenderTarget, xbox::X_D3DSurface* pNewZStencil);
-void CxbxImpl_SetViewport(xbox::X_D3DVIEWPORT8* pViewport);
 
 // Xbox resource type helpers (used in HostResource.cpp, HostSync.cpp, etc.)
 inline DWORD GetXboxCommonResourceType(const xbox::dword_xt XboxResource_Common)

@@ -312,17 +312,10 @@ void CxbxImpl_SetRenderTarget
 		}
    	}
 
-	// Set default viewport now we've updated the rendertarget
-	// Note the Xbox does this, but before _our_ SetRenderTarget sets up the render target
-	// Test case: Dashboard
-	static xbox::X_D3DVIEWPORT8 defaultViewport;
-	defaultViewport.X = 0;
-	defaultViewport.Y = 0;
-	defaultViewport.Width = INT_MAX;
-	defaultViewport.Height = INT_MAX;
-	defaultViewport.MinZ = 0.0f;
-	defaultViewport.MaxZ = 1.0f;
-	CxbxImpl_SetViewport(&defaultViewport);
+	// The Xbox SetRenderTarget trampoline internally calls SetViewport with
+	// INT_MAX dimensions, which pushes NV097_SET_VIEWPORT_OFFSET/_SCALE to
+	// the push buffer. PGRAPH picks this up before the next draw, so we
+	// don't need to mirror the viewport into any HLE global here.
 
 	pHostRenderTarget = GetHostSurface(pRenderTarget, D3DUSAGE_RENDERTARGET);
 
