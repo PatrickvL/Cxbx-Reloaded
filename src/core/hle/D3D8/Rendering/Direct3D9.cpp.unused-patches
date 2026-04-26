@@ -3667,6 +3667,152 @@ VOID __fastcall XTL::EMUPATCH(D3DDevice_SetRenderState_Deferred)
 (
 	DWORD State,
 	DWORD Value
+
+// ******************************************************************
+// * Step 11: LoadVertexShader/Program patches disabled — push buffer via
+// * trampoline is authoritative; HLE slot writes dead (g_NV2A always exists).
+// ******************************************************************
+
+// ******************************************************************
+// * patch: D3DDevice_LoadVertexShaderProgram
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
+(
+	CONST dword_xt *pFunction,
+	dword_xt        Address
+	)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(pFunction)
+		LOG_FUNC_ARG(Address)
+		LOG_FUNC_END;
+
+	// CxbxImpl_LoadVertexShaderProgram removed: push buffer via trampoline is
+	// authoritative; HLE slot writes are dead (g_NV2A always exists).
+	// Patch disabled in Patches.cpp — Xbox code runs unpatched via push buffer.
+}
+
+// ******************************************************************
+// * patch: D3DDevice_LoadVertexShader LTCG variants
+// ******************************************************************
+
+// Overload for logging
+static void D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2
+(
+   	xbox::dword_xt                 Handle,
+   	xbox::dword_xt                 Address
+)
+{
+   	LOG_FUNC_BEGIN
+   	   	LOG_FUNC_ARG(Handle)
+   	   	LOG_FUNC_ARG(Address)
+   	LOG_FUNC_END;
+}
+
+// LTCG specific D3DDevice_LoadVertexShader function...
+// This uses a custom calling convention where parameter is passed in EAX, ECX
+// Test-case: Aggressive Inline
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2)
+(
+)
+{
+   	dword_xt Handle;
+   	dword_xt Address;
+   	__asm {
+   	   	LTCG_PROLOGUE
+   	   	mov  Handle, ecx
+   	   	mov  Address, eax
+   	}
+
+   	// Log
+   	D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2(Handle, Address);
+
+   	// CxbxImpl_LoadVertexShader removed: push buffer via trampoline is authoritative;
+   	// HLE slot writes are dead (g_NV2A always exists, render thread reads pg->program_data).
+
+   	__asm {
+   	   	LTCG_EPILOGUE
+   	   	ret
+   	}
+}
+
+// Overload for logging
+static void D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2
+(
+   	xbox::dword_xt                 Handle,
+   	xbox::dword_xt                 Address
+)
+{
+   	LOG_FUNC_BEGIN
+   	   	LOG_FUNC_ARG(Handle)
+   	   	LOG_FUNC_ARG(Address)
+   	LOG_FUNC_END;
+}
+
+// LTCG specific D3DDevice_LoadVertexShader function...
+// This uses a custom calling convention where parameter is passed in EAX, EDX
+// Test-case: World Racing 2, Project Zero 2 (PAL)
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2)
+(
+)
+{
+   	dword_xt Handle;
+   	dword_xt Address;
+   	__asm {
+   	   	LTCG_PROLOGUE
+   	   	mov  Handle, edx
+   	   	mov  Address, eax
+   	}
+
+   	// Log
+   	D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2(Handle, Address);
+
+   	// CxbxImpl_LoadVertexShader removed: push buffer via trampoline is authoritative;
+   	// HLE slot writes are dead (g_NV2A always exists, render thread reads pg->program_data).
+
+   	__asm {
+   	   	LTCG_EPILOGUE
+   	   	ret
+   	}
+}
+
+// Overload for logging
+static void D3DDevice_LoadVertexShader_4__LTCG_eax1
+(
+   	xbox::dword_xt                 Handle,
+   	xbox::dword_xt                 Address
+)
+{
+   	LOG_FUNC_BEGIN
+   	   	LOG_FUNC_ARG(Handle)
+   	   	LOG_FUNC_ARG(Address)
+   	LOG_FUNC_END;
+}
+
+// This uses a custom calling convention where parameter is passed in EAX
+// Test-case: Ninja Gaiden
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader_4__LTCG_eax1)
+(
+   	dword_xt                       Address
+)
+{
+   	dword_xt Handle;
+   	__asm {
+   	   	LTCG_PROLOGUE
+   	   	mov  Handle, eax
+   	}
+
+   	// Log
+   	D3DDevice_LoadVertexShader_4__LTCG_eax1(Handle, Address);
+
+   	// CxbxImpl_LoadVertexShader removed: push buffer via trampoline is authoritative;
+   	// HLE slot writes are dead (g_NV2A always exists, render thread reads pg->program_data).
+
+   	__asm {
+   	   	LTCG_EPILOGUE
+   	   	ret  4
+   	}
+}
 )
 {
 	FUNC_EXPORTS

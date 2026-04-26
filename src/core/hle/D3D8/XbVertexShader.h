@@ -264,8 +264,6 @@ extern ID3DBlob* CxbxGetActiveVertexShaderBytecode();
 extern ID3DBlob* CxbxGetFixedFunctionVertexShaderBytecode();
 
 extern void CxbxImpl_SetScreenSpaceOffset(float x, float y);
-extern void CxbxImpl_LoadVertexShaderProgram(CONST DWORD* pFunction, DWORD Address);
-extern void CxbxImpl_LoadVertexShader(DWORD Handle, DWORD Address);
 extern void CxbxImpl_SetVertexShader(DWORD Handle);
 extern void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address);
 extern void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREAMINPUT* pStreamInputs);

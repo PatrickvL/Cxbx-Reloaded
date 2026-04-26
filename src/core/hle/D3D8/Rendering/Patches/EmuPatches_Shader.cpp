@@ -50,8 +50,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader)
 	// Call the Xbox trampoline so the NV2A push buffer gets SET_TRANSFORM_PROGRAM.
 	// Without this, push buffer processing at Swap would overwrite PGRAPH with stale data.
 	XB_TRMP(D3DDevice_LoadVertexShader)(Handle, Address);
-
-	CxbxImpl_LoadVertexShader(Handle, Address);
 }
 
 // Overload for logging
@@ -724,23 +722,6 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_RunVertexStateSh
 }
 
 // ******************************************************************
-// * patch: D3DDevice_LoadVertexShaderProgram
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShaderProgram)
-(
-	CONST dword_xt *pFunction,
-	dword_xt        Address
-	)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pFunction)
-		LOG_FUNC_ARG(Address)
-		LOG_FUNC_END;
-
-	CxbxImpl_LoadVertexShaderProgram((DWORD *)pFunction, Address);
-}
-
-// ******************************************************************
 // * patch: D3DDevice_SetDepthClipPlanes
 // ******************************************************************
 xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes)
@@ -805,123 +786,4 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes)
    	
 
    	return hRet;
-}
-
-// ******************************************************************
-// * patch: D3DDevice_LoadVertexShader
-// ******************************************************************
-
-// Overload for logging
-static void D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2
-(
-   	xbox::dword_xt                 Handle,
-   	xbox::dword_xt                 Address
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(Handle)
-   	   	LOG_FUNC_ARG(Address)
-   	LOG_FUNC_END;
-}
-
-// LTCG specific D3DDevice_LoadVertexShader function...
-// This uses a custom calling convention where parameter is passed in EAX, ECX
-// Test-case: Aggressive Inline
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2)
-(
-)
-{
-   	dword_xt Handle;
-   	dword_xt Address;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  Handle, ecx
-   	   	mov  Address, eax
-   	}
-
-   	// Log
-   	D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2(Handle, Address);
-
-   	CxbxImpl_LoadVertexShader(Handle, Address);
-
-   	__asm {
-   	   	LTCG_EPILOGUE
-   	   	ret
-   	}
-}
-
-// Overload for logging
-static void D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2
-(
-   	xbox::dword_xt                 Handle,
-   	xbox::dword_xt                 Address
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(Handle)
-   	   	LOG_FUNC_ARG(Address)
-   	LOG_FUNC_END;
-}
-
-// LTCG specific D3DDevice_LoadVertexShader function...
-// This uses a custom calling convention where parameter is passed in EAX, EDX
-// Test-case: World Racing 2, Project Zero 2 (PAL)
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2)
-(
-)
-{
-   	dword_xt Handle;
-   	dword_xt Address;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  Handle, edx
-   	   	mov  Address, eax
-   	}
-
-   	// Log
-   	D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2(Handle, Address);
-
-   	CxbxImpl_LoadVertexShader(Handle, Address);
-
-   	__asm {
-   	   	LTCG_EPILOGUE
-   	   	ret
-   	}
-}
-
-// Overload for logging
-static void D3DDevice_LoadVertexShader_4__LTCG_eax1
-(
-   	xbox::dword_xt                 Handle,
-   	xbox::dword_xt                 Address
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(Handle)
-   	   	LOG_FUNC_ARG(Address)
-   	LOG_FUNC_END;
-}
-
-// This uses a custom calling convention where parameter is passed in EAX
-// Test-case: Ninja Gaiden
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader_4__LTCG_eax1)
-(
-   	dword_xt                       Address
-)
-{
-   	dword_xt Handle;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  Handle, eax
-   	}
-
-   	// Log
-   	D3DDevice_LoadVertexShader_4__LTCG_eax1(Handle, Address);
-
-   	CxbxImpl_LoadVertexShader(Handle, Address);
-
-   	__asm {
-   	   	LTCG_EPILOGUE
-   	   	ret  4
-   	}
 }
