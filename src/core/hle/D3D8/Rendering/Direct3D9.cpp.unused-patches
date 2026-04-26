@@ -4671,3 +4671,48 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes)
    	}
    	return hRet;
 }
+
+// ******************************************************************
+// * patch: D3DDevice_SetShaderConstantMode
+// * Disabled: g_Xbox_VertexShaderConstantMode has no render-thread readers
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetShaderConstantMode)
+(
+   	X_VERTEXSHADERCONSTANTMODE Mode
+)
+{
+	LOG_FUNC_ONE_ARG(Mode);
+   	g_Xbox_VertexShaderConstantMode = Mode;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetShaderConstantMode_0__LTCG_eax1
+// * Disabled: LTCG variant of above
+// ******************************************************************
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetShaderConstantMode_0__LTCG_eax1)()
+{
+   	X_VERTEXSHADERCONSTANTMODE Mode;
+   	__asm {
+   	   	LTCG_PROLOGUE
+   	   	mov  Mode, eax
+   	}
+   	EMUPATCH(D3DDevice_SetShaderConstantMode)(Mode);
+   	__asm {
+   	   	LTCG_EPILOGUE
+   	   	ret
+   	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_GetShaderConstantMode
+// * Disabled: g_Xbox_VertexShaderConstantMode has no render-thread readers
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetShaderConstantMode)
+(
+   	dword_xt *pMode
+)
+{
+	LOG_FUNC_ONE_ARG(pMode);
+   	if(pMode)
+   	   	*pMode = g_Xbox_VertexShaderConstantMode;
+}

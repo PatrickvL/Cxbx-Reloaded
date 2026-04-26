@@ -204,25 +204,8 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
 // PGRAPH VPSCL/VPOFF registers are the authority; g_Xbox_Viewport was
 // only written here and had no render-thread readers.
 
-// LTCG specific D3DDevice_SetShaderConstantMode function...
-// This uses a custom calling convention where parameter is passed in EAX
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetShaderConstantMode_0__LTCG_eax1)
-(
-)
-{
-   	X_VERTEXSHADERCONSTANTMODE Mode;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  Mode, eax
-   	}
-
-   	EMUPATCH(D3DDevice_SetShaderConstantMode)(Mode);
-
-   	__asm {
-   	   	LTCG_EPILOGUE
-   	   	ret
-   	}
-}
+// D3DDevice_SetShaderConstantMode_0__LTCG_eax1 — disabled.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_SetTexture

@@ -150,17 +150,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SelectVertexShader)
 }
 
 // ******************************************************************
-// * patch: D3DDevice_SetShaderConstantMode
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetShaderConstantMode)
-(
-   	X_VERTEXSHADERCONSTANTMODE Mode
-)
-{
-	LOG_FUNC_ONE_ARG(Mode);
-
-   	g_Xbox_VertexShaderConstantMode = Mode;
-}
+// D3DDevice_SetShaderConstantMode — disabled.
+// g_Xbox_VertexShaderConstantMode has no render-thread readers.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // LTCG specific D3DDevice_SetVertexShaderConstant function...
 // This uses a custom calling convention where ConstantCount parameter is passed in EDX
@@ -561,20 +553,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DeleteVertexShader)
 
 
 // ******************************************************************
-// * patch: D3DDevice_GetShaderConstantMode
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetShaderConstantMode)
-(
-   	dword_xt *pMode
-)
-{
-	LOG_FUNC_ONE_ARG(pMode);
-   	   	
-   	if(pMode)
-   	{
-   	   	*pMode = g_Xbox_VertexShaderConstantMode;
-   	}
-}
+// D3DDevice_GetShaderConstantMode — disabled.
+// g_Xbox_VertexShaderConstantMode has no render-thread readers.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_GetVertexShader

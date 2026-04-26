@@ -184,7 +184,6 @@ xbox::X_D3DSurface* CxbxLookupSurfaceByDataAddr(xbox::addr_xt dataAddr);
 // CxbxUpdateHostTextures to resolve PGRAPH TEXOFFSET values to Xbox textures.
 void CxbxRegisterTextureByDataAddr(xbox::addr_xt dataAddr, xbox::X_D3DBaseTexture *pTexture);
 xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr);
-extern xbox::X_VERTEXSHADERCONSTANTMODE g_Xbox_VertexShaderConstantMode;
 extern xbox::dword_xt                g_Xbox_BaseVertexIndex;
 extern xbox::PVOID                   g_pXbox_Palette_Data[xbox::X_D3DTS_STAGECOUNT];
 extern unsigned                      g_Xbox_Palette_Size[xbox::X_D3DTS_STAGECOUNT];

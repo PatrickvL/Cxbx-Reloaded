@@ -112,7 +112,6 @@ xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr)
 	return (it != g_TexturesByDataAddr.end()) ? it->second : nullptr;
 }
 
-xbox::X_VERTEXSHADERCONSTANTMODE g_Xbox_VertexShaderConstantMode = X_D3DSCM_192CONSTANTS; // Set by D3DDevice_SetShaderConstantMode, TODO : Move to XbVertexShader.cpp
 xbox::dword_xt                   g_Xbox_BaseVertexIndex = 0; // Set by D3DDevice_SetIndices, read by D3DDevice_DrawIndexedVertices
 
 xbox::X_PixelShader*			g_pXbox_PixelShader = xbox::zeroptr;
