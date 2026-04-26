@@ -138,7 +138,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2", xbox::EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_PersistDisplay", xbox::EMUPATCH(D3DDevice_PersistDisplay), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Present", xbox::EMUPATCH(D3DDevice_Present), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_PrimeVertexCache", xbox::EMUPATCH(D3DDevice_PrimeVertexCache), PATCH_HLE_D3D),
+	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful
+	//PATCH_ENTRY("D3DDevice_PrimeVertexCache", xbox::EMUPATCH(D3DDevice_PrimeVertexCache), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Reset", xbox::EMUPATCH(D3DDevice_Reset), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Reset_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_Reset_0__LTCG_edi1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Reset_0__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_Reset_0__LTCG_ebx1), PATCH_HLE_D3D),
@@ -153,7 +154,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_SelectVertexShader_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SelectVertexShader_4__LTCG_eax1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetBackBufferScale", xbox::EMUPATCH(D3DDevice_SetBackBufferScale), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetBackMaterial", xbox::EMUPATCH(D3DDevice_SetBackMaterial), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetDepthClipPlanes", xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes), PATCH_HLE_D3D),
+	// Disabled: all cases are TODO stubs, intercepting does nothing useful
+	//PATCH_ENTRY("D3DDevice_SetDepthClipPlanes", xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetFlickerFilter", xbox::EMUPATCH(D3DDevice_SetFlickerFilter), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetFlickerFilter_0__LTCG_esi1", xbox::EMUPATCH(D3DDevice_SetFlickerFilter_0__LTCG_esi1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetGammaRamp", xbox::EMUPATCH(D3DDevice_SetGammaRamp), PATCH_HLE_D3D),
@@ -181,7 +183,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_SetShaderConstantMode", xbox::EMUPATCH(D3DDevice_SetShaderConstantMode), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetShaderConstantMode_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetShaderConstantMode_0__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetSoftDisplayFilter", xbox::EMUPATCH(D3DDevice_SetSoftDisplayFilter), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetStipple", xbox::EMUPATCH(D3DDevice_SetStipple), PATCH_HLE_D3D),
+	// Disabled: unimplemented stub (LOG_IGNORED), intercepting does nothing useful
+	//PATCH_ENTRY("D3DDevice_SetStipple", xbox::EMUPATCH(D3DDevice_SetStipple), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetStreamSource", xbox::EMUPATCH(D3DDevice_SetStreamSource), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3", xbox::EMUPATCH(D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2), PATCH_HLE_D3D),
@@ -231,7 +234,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3D_CommonSetRenderTarget", xbox::EMUPATCH(D3D_CommonSetRenderTarget), PATCH_HLE_D3D),
     PATCH_ENTRY("D3D_DestroyResource", xbox::EMUPATCH(D3D_DestroyResource), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_DestroyResource_0__LTCG_edi1", xbox::EMUPATCH(D3D_DestroyResource_0__LTCG_edi1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3D_LazySetPointParams", xbox::EMUPATCH(D3D_LazySetPointParams), PATCH_HLE_D3D),
+	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful
+	//PATCH_ENTRY("D3D_LazySetPointParams", xbox::EMUPATCH(D3D_LazySetPointParams), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_SetCommonDebugRegisters", xbox::EMUPATCH(D3D_SetCommonDebugRegisters), PATCH_HLE_D3D),
 	PATCH_ENTRY("Direct3D_CreateDevice", xbox::EMUPATCH(Direct3D_CreateDevice), PATCH_HLE_D3D),
 	PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ebx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ebx6), PATCH_HLE_D3D),

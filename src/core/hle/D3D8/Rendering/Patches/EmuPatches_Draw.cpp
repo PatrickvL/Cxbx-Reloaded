@@ -779,16 +779,8 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(CDevice_SetStateUP_0__LTCG
 }
 
 // ******************************************************************
-// * patch: D3DDevice_SetStipple
-// ******************************************************************
-void WINAPI xbox::EMUPATCH(D3DDevice_SetStipple)( dword_xt* pPattern )
-{
-	LOG_FUNC_ONE_ARG(pPattern);
-
-	// We need an OpenGL port... badly
-
-	LOG_IGNORED();
-}
+// D3DDevice_SetStipple — disabled (unimplemented stub, LOG_IGNORED).
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_SetSwapCallback
@@ -804,22 +796,8 @@ void WINAPI xbox::EMUPATCH(D3DDevice_SetSwapCallback)
 }
 
 // ******************************************************************
-// * patch: D3DDevice_PrimeVertexCache
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_PrimeVertexCache)
-(
-	uint_xt  VertexCount,
-	WORD *pIndexData
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(VertexCount)
-		LOG_FUNC_ARG(pIndexData)
-		LOG_FUNC_END;
-
-	// TODO: Implement
-	LOG_UNIMPLEMENTED();
-}
+// D3DDevice_PrimeVertexCache — disabled (unimplemented stub, LOG_UNIMPLEMENTED).
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_DrawRectPatch

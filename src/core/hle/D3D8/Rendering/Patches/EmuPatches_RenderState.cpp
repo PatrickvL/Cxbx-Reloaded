@@ -609,17 +609,8 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTargetFast)
 }
 
 // ******************************************************************
-// * patch: D3D_LazySetPointParams
-// ******************************************************************
-void WINAPI xbox::EMUPATCH(D3D_LazySetPointParams)
-(
-	void* Device
-)
-{
-	LOG_FUNC_ONE_ARG(Device);
-
-	LOG_UNIMPLEMENTED();
-}
+// D3D_LazySetPointParams — disabled (unimplemented stub, LOG_UNIMPLEMENTED).
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_SetRenderState_Simple

@@ -4601,3 +4601,73 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetScreenSpaceOffset)
 
 	CxbxImpl_SetScreenSpaceOffset(x, y);
 }
+
+// ******************************************************************
+// * patch: D3DDevice_SetStipple
+// * Disabled: unimplemented stub (LOG_IGNORED)
+// ******************************************************************
+void WINAPI xbox::EMUPATCH(D3DDevice_SetStipple)( dword_xt* pPattern )
+{
+	LOG_FUNC_ONE_ARG(pPattern);
+	LOG_IGNORED();
+}
+
+// ******************************************************************
+// * patch: D3DDevice_PrimeVertexCache
+// * Disabled: unimplemented stub (LOG_UNIMPLEMENTED)
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_PrimeVertexCache)
+(
+	uint_xt  VertexCount,
+	WORD *pIndexData
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(VertexCount)
+		LOG_FUNC_ARG(pIndexData)
+		LOG_FUNC_END;
+	LOG_UNIMPLEMENTED();
+}
+
+// ******************************************************************
+// * patch: D3D_LazySetPointParams
+// * Disabled: unimplemented stub (LOG_UNIMPLEMENTED)
+// ******************************************************************
+void WINAPI xbox::EMUPATCH(D3D_LazySetPointParams)
+(
+	void* Device
+)
+{
+	LOG_FUNC_ONE_ARG(Device);
+	LOG_UNIMPLEMENTED();
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetDepthClipPlanes
+// * Disabled: all cases are TODO stubs
+// ******************************************************************
+xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes)
+(
+   	float_xt Near,
+   	float_xt Far,
+   	dword_xt Flags
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Near)
+		LOG_FUNC_ARG(Far)
+		LOG_FUNC_ARG(Flags)
+		LOG_FUNC_END;
+
+   	HRESULT hRet = S_OK;
+   	switch(Flags) {
+   	   	case X_D3DSDCP_SET_VERTEXPROGRAM_PLANES:
+   	   	case X_D3DSDCP_SET_FIXEDFUNCTION_PLANES:
+   	   	case X_D3DSDCP_USE_DEFAULT_VERTEXPROGRAM_PLANES:
+   	   	case X_D3DSDCP_USE_DEFAULT_FIXEDFUNCTION_PLANES:
+   	   	   	break; // All TODO
+   	   	default:
+   	   	   	EmuLog(LOG_LEVEL::WARNING, "Unknown SetDepthClipPlanes Flags provided");
+   	}
+   	return hRet;
+}
