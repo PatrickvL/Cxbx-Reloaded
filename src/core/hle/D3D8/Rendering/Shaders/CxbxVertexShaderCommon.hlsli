@@ -44,6 +44,15 @@ uniform float4 CxbxFogInfo : register(c218); // = CXBX_D3DVS_CONSTREG_FOGINFO
 float CalculateFogFactor(int fogMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
 {
     int baseMode = fogMode & 3;
+
+    // Mode 0 = no table fog; pass through the VS fog output (vertex fog).
+    if (baseMode == 0)
+        return fogDepth;
+
+    // NV2A clamps infinite fog distances to a defined result (matching xemu).
+    if (isinf(fogDepth))
+        return (baseMode == 3) ? 1.0 : 0.0; // LINEAR→1 (fully visible), EXP/EXP2→0 (fully fogged)
+
     float f;
     if (baseMode == 1)       // EXP
         f = exp(-fogDepth * fogDensity);
@@ -52,12 +61,15 @@ float CalculateFogFactor(int fogMode, float fogDensity, float fogStart, float fo
         float fd = fogDepth * fogDensity;
         f = exp(-(fd * fd));
     }
-    else if (baseMode == 3)  // LINEAR
+    else                     // LINEAR (baseMode == 3)
         f = (fogEnd - fogDepth) / (fogEnd - fogStart);
-    else
-        return fogDepth;     // 0 = NONE (vertex fog passthrough)
 
-    return (fogMode & 4) ? abs(f) : f;
+    if (fogMode & 4)
+        f = abs(f);
+
+    // Clamp to representable range to prevent NaN/Inf from corrupting
+    // rasterizer interpolation (NV2A hardware clamps here too).
+    return isnan(f) ? 1.0 : clamp(f, -3.4e+38, 3.4e+38);
 }
 
 // TEXCOORDINDEX remapping: xyzw = texcoord source index for stages 0-3.
