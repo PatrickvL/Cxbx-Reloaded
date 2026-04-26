@@ -67,7 +67,6 @@ VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 
                 xbox::dword_xt g_Xbox_VertexShader_Handle = 0;
                 bool g_bRecordingPushBuffer = false;
-                xbox::dword_xt g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
 // Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
                 xbox::dword_xt g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT + 1) * X_VSH_INSTRUCTION_SIZE] = { 0 }; // One extra for FLD_FINAL terminator
@@ -251,25 +250,10 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 	using namespace xbox;
 
 	X_D3DVertexShader* pXboxVertexShader = xbox::zeroptr;
-#if 0 // TODO : Retrieve vertex shader from actual Xbox D3D state
-	// Only when we're sure of the location of the Xbox Device.m_pVertexShader variable
-	if (XboxVertexShaders.g_XboxAddr_pVertexShader) {
-		// read that (so that we get access to internal vertex shaders, like those generated
-		// to contain the attribute-information for FVF shaders) :
-		pXboxVertexShader = (X_D3DVertexShader*)(*XboxVertexShaders.g_XboxAddr_pVertexShader);
-	}
-	else
-	{
-		LOG_TEST_CASE("Unknown pVertexShader symbol location!");
-#endif
-		// Otherwise, we have no choice but to use what we've last stored in the
-		// g_Xbox_VertexShader_Handle variable via our D3DDevice_SetVertexShader
-		// and D3DDevice_SelectVertexShader* patches.
 
-		// Note, that once we have a fail-safe way to determine the location of the
-		// Xbox Device.m_pVertexShader symbol, the FVF and the accompanying Address,
-		// we no longer need this statement block, nor patches on D3DDevice_SetVertexShader
-		// nor D3DDevice_SelectVertexShader* !
+		// We use what we've last stored in the g_Xbox_VertexShader_Handle
+		// variable via our D3DDevice_SetVertexShader and
+		// D3DDevice_SelectVertexShader* patches.
 
 		// Now, to convert, we do need to have a valid vertex shader :
 		if (g_Xbox_VertexShader_Handle == 0) {
@@ -277,18 +261,7 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 			return nullptr;
 		}
 
-#if 0 // TODO : Retrieve vertex shader from actual Xbox D3D state
-		if (!VshHandleIsVertexShader(g_Xbox_VertexShader_Handle)) {
-			LOG_TEST_CASE("Xbox vertex shader lacks X_D3DFVF_RESERVED0 bit!");
-			return nullptr;
-		}
-#endif
-
 		pXboxVertexShader = CxbxGetXboxVertexShaderForHandle(g_Xbox_VertexShader_Handle);
-
-#if 0 // TODO : Retrieve vertex shader from actual Xbox D3D state
-	}
-#endif
 
 	return pXboxVertexShader;
 }
@@ -872,12 +845,9 @@ void CxbxImpl_DeleteVertexShader(DWORD Handle)
 		return;
 	}
 
-#if 0 // TODO : Decide and implement what parts to free
-	RegisterCxbxVertexDeclaration(pCxbxVertexDeclaration->Key, nullptr); // Remove from cache (which will free present pCxbxVertexDeclaration)
-
-	// Release the host vertex shader
-	g_VertexShaderCache.ReleaseShader(pCxbxVertexShader->Key);
-#endif
+	// TODO : Decide and implement what parts to free
+	// RegisterCxbxVertexDeclaration(pCxbxVertexDeclaration->Key, nullptr);
+	// g_VertexShaderCache.ReleaseShader(pCxbxVertexShader->Key);
 }
 
 // TODO : Remove SetVertexShaderConstant implementation and the patch once
