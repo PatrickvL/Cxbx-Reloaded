@@ -857,7 +857,10 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 	// If Handle is assigned, it becomes the new current Xbox VertexShader,
 	// which resets a bit of state (nv2a execution mode, viewport, ?)
 	// Either way, the given address slot is selected as the start of the current vertex shader program
-	g_Xbox_VertexShader_FunctionSlots_StartAddress = Address;
+	// g_Xbox_VertexShader_FunctionSlots_StartAddress is no longer written here;
+	// the render thread reads the program start from NV_PGRAPH_CSV0_C
+	// CHEOPS_PROGRAM_START, which the PFIFO puller sets from
+	// NV097_SET_TRANSFORM_PROGRAM_START in the push buffer.
 
 	// NOTE: Do NOT mirror the start address to pg->regs[CSV0_C] here.
 	// The Xbox trampoline writes SET_TRANSFORM_PROGRAM_START to the push
@@ -1012,7 +1015,8 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		// pg->program_data and pg->regs[CSV0_C] on the game thread, racing
 		// with the puller which reads that data at draw time.
 		// Update only the HLE-side globals that the EMUPATCH stubs set:
-		g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
+		// g_Xbox_VertexShader_FunctionSlots_StartAddress is read from
+		// PGRAPH CSV0_C by the render thread — don't race it.
 		// g_Xbox_VertexShaderMode is derived from PGRAPH CSV0_D by the
 		// render thread in CxbxUpdateNativeD3DResources — don't race it.
 #ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
@@ -1026,7 +1030,8 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		g_Xbox_VertexShader_Ptr = pXboxVertexShader;
 #endif
 		g_Xbox_VertexShader_Handle = Handle;
-		g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
+		// g_Xbox_VertexShader_FunctionSlots_StartAddress is read from
+		// PGRAPH CSV0_C by the render thread — don't race it.
 
 		// NOTE: Do NOT write to pg->regs[CSV0_C] here.  The Xbox
 		// SetVertexShader trampoline writes SET_TRANSFORM_EXECUTION_MODE
