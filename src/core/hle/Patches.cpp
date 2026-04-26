@@ -247,10 +247,11 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ebx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ebx6), PATCH_HLE_D3D),
 	PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ecx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ecx6), PATCH_HLE_D3D),
 	PATCH_ENTRY("Direct3D_CreateDevice_4__LTCG_eax1_ecx3", xbox::EMUPATCH(Direct3D_CreateDevice_4__LTCG_eax1_ecx3), PATCH_HLE_D3D),
-	PATCH_ENTRY("Lock2DSurface", xbox::EMUPATCH(Lock2DSurface), PATCH_HLE_D3D),
-	PATCH_ENTRY("Lock2DSurface_16__LTCG_esi4_eax5", xbox::EMUPATCH(Lock2DSurface_16__LTCG_esi4_eax5), PATCH_HLE_D3D),
-	PATCH_ENTRY("Lock3DSurface", xbox::EMUPATCH(Lock3DSurface), PATCH_HLE_D3D),
-	PATCH_ENTRY("Lock3DSurface_16__LTCG_eax4", xbox::EMUPATCH(Lock3DSurface_16__LTCG_eax4), PATCH_HLE_D3D),
+	// Disabled: trampoline-only (LOG_FUNC + XB_TRMP), no side effects
+	//PATCH_ENTRY("Lock2DSurface", xbox::EMUPATCH(Lock2DSurface), PATCH_HLE_D3D),
+	//PATCH_ENTRY("Lock2DSurface_16__LTCG_esi4_eax5", xbox::EMUPATCH(Lock2DSurface_16__LTCG_esi4_eax5), PATCH_HLE_D3D),
+	//PATCH_ENTRY("Lock3DSurface", xbox::EMUPATCH(Lock3DSurface), PATCH_HLE_D3D),
+	//PATCH_ENTRY("Lock3DSurface_16__LTCG_eax4", xbox::EMUPATCH(Lock3DSurface_16__LTCG_eax4), PATCH_HLE_D3D),
 
 	// DSOUND
 	PATCH_ENTRY("CDirectSound3DCalculator_Calculate3D", xbox::EMUPATCH(CDirectSound3DCalculator_Calculate3D), PATCH_HLE_DSOUND),
