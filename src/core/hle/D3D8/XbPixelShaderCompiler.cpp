@@ -202,8 +202,6 @@ ID3D11PixelShader* GetFixedFunctionShader()
 			auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
 			uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
 			texturePresent = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
-		} else {
-			texturePresent = (g_pXbox_SetTexture[i] != xbox::zeroptr);
 		}
 		if (!texturePresent
 			&& (XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG1) & 0x7) == X_D3DTA_TEXTURE
@@ -236,14 +234,6 @@ ID3D11PixelShader* GetFixedFunctionShader()
 				else
 					sampleType[i] = SAMPLE_2D;
 			}
-		} else if (g_pXbox_SetTexture[i]) {
-			auto format = g_pXbox_SetTexture[i]->Format;
-			if (format & X_D3DFORMAT_CUBEMAP)
-				sampleType[i] = SAMPLE_CUBE;
-			else if (((format & X_D3DFORMAT_DIMENSION_MASK) >> X_D3DFORMAT_DIMENSION_SHIFT) > 2)
-				sampleType[i] = SAMPLE_3D;
-			else
-				sampleType[i] = SAMPLE_2D;
 		}
 
 		states[i].COLORARG0 = XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG0);
