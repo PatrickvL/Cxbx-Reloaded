@@ -67,9 +67,6 @@ VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 
                 xbox::dword_xt g_Xbox_VertexShader_Handle = 0;
                 bool g_bRecordingPushBuffer = false;
-#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER // TODO : Would this be more accurate / simpler?
-      xbox::X_D3DVertexShader *g_Xbox_VertexShader_Ptr = nullptr;
-#endif
                 xbox::dword_xt g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
 // Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
@@ -287,11 +284,7 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 		}
 #endif
 
-#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
-		pXboxVertexShader = g_Xbox_VertexShader_Ptr;
-#else
 		pXboxVertexShader = CxbxGetXboxVertexShaderForHandle(g_Xbox_VertexShader_Handle);
-#endif
 
 #if 0 // TODO : Retrieve vertex shader from actual Xbox D3D state
 	}
@@ -766,9 +759,6 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 		if (!VshHandleIsVertexShader(Handle))
 			LOG_TEST_CASE("Non-zero handle must be a VertexShader!");
 
-#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
-		g_Xbox_VertexShader_Ptr = VshHandleToXboxVertexShader(Handle);
-#endif
 		g_Xbox_VertexShader_Handle = Handle;
 	}
 }
@@ -843,16 +833,9 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		// PGRAPH CSV0_C by the render thread — don't race it.
 		// g_Xbox_VertexShaderMode is derived from PGRAPH CSV0_D by the
 		// render thread in CxbxUpdateNativeD3DResources — don't race it.
-#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
-		g_Xbox_VertexShader_Ptr = pXboxVertexShader;
-#endif
 		g_Xbox_VertexShader_Handle = Handle;
 	} else {
 		// A shader without a program won't call LoadVertexShader nor SelectVertexShader
-		// 
-#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
-		g_Xbox_VertexShader_Ptr = pXboxVertexShader;
-#endif
 		g_Xbox_VertexShader_Handle = Handle;
 		// g_Xbox_VertexShader_FunctionSlots_StartAddress is read from
 		// PGRAPH CSV0_C by the render thread — don't race it.
