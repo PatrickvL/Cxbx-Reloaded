@@ -587,22 +587,9 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DeleteVertexShad
 	}
 }
 
-// ******************************************************************
-// * patch: D3DDevice_SetScreenSpaceOffset
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetScreenSpaceOffset)
-(
-   	float_xt x,
-   	float_xt y
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(x)
-		LOG_FUNC_ARG(y)
-		LOG_FUNC_END;
-
-	CxbxImpl_SetScreenSpaceOffset(x, y);
-}
+// SetScreenSpaceOffset — removed (Step 12).
+// g_Xbox_ScreenSpaceOffset was only read by dead CxbxSetVertexShaderPassthroughProgram.
+// Patch disabled in Patches.cpp — Xbox code handles it natively.
 
 // ******************************************************************
 // * patch: D3DDevice_SetRenderTargetFast

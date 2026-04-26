@@ -75,10 +75,6 @@ VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 // Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
                 xbox::dword_xt g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT + 1) * X_VSH_INSTRUCTION_SIZE] = { 0 }; // One extra for FLD_FINAL terminator
 
-// Variables set by [D3DDevice|CxbxImpl]_SetScreenSpaceOffset:
-				         float g_Xbox_ScreenSpaceOffset_x = 0.0f;
-				         float g_Xbox_ScreenSpaceOffset_y = 0.0f;
-
 
 static xbox::X_D3DVertexShader g_Xbox_VertexShader_ForFVF = {};
 
@@ -596,10 +592,9 @@ void CxbxUpdateHostVertexShader()
 			}
 		}
 		if (!pTokens) {
-			// Fallback to HLE slot buffer (g_NV2A not available)
-			pTokens = GetCxbxVertexShaderSlotPtr(g_Xbox_VertexShader_FunctionSlots_StartAddress);
+			LOG_TEST_CASE("PGRAPH program_data not available");
+			return;
 		}
-		assert(pTokens);
 
 		if (g_bUseVSInterpreter && CxbxD3D11InitVSInterpreter()) {
 			// Upload the raw NV2A microcode to the interpreter constant buffer
@@ -619,101 +614,6 @@ void CxbxUpdateHostVertexShader()
 			DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(pHostVertexShader)");
 		}
 	}
-}
-
-void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstructions, bool bWritePGRAPH = false)
-{
-	int upToSlot = Address + NrInstructions;
-	if (upToSlot > X_VSH_MAX_INSTRUCTION_COUNT) {
-		LOG_TEST_CASE("Shader does not fit in vertex shader slots");
-		return;
-	}
-
-	auto CxbxVertexShaderSlotPtr = GetCxbxVertexShaderSlotPtr(Address);
-	if (CxbxVertexShaderSlotPtr == nullptr) {
-		return;
-	}
-
-	memcpy(CxbxVertexShaderSlotPtr, pTokens, NrInstructions * X_VSH_INSTRUCTION_SIZE_BYTES);
-
-	// For program shaders, do NOT mirror to pg->program_data here.  The Xbox
-	// trampoline writes SET_TRANSFORM_PROGRAM to the push buffer, and the
-	// PFIFO puller processes it sequentially into pg->program_data before the
-	// draw.  Writing from the game thread races with the puller reading
-	// program_data at draw time (CxbxD3D11UploadVSInterpreterState), causing
-	// stale programs when multiple VS programs are loaded per frame.
-	//
-	// For passthrough/FF shaders, bWritePGRAPH=true is needed because those
-	// don't go through LoadVertexShader → push buffer.
-	if (bWritePGRAPH && g_NV2A) {
-		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
-		for (DWORD i = 0; i < NrInstructions; i++) {
-			for (int j = 0; j < X_VSH_INSTRUCTION_SIZE; j++) {
-				pg->program_data[Address + i][j] = pTokens[i * X_VSH_INSTRUCTION_SIZE + j];
-			}
-		}
-	}
-
-	// Make sure slot parsing in EmuParseVshFunction (VshConvertToIntermediate) stops after the last slot;
-	// Just setting bit 0 in 3rd DWORD suffices (see XboxVertexShaderDecoder.VshGetField.FieldMapping[FLD_FINAL]) :
-	g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT * X_VSH_INSTRUCTION_SIZE) + 3] = 1;
-}
-
-static void CxbxSetVertexShaderPassthroughProgram()
-{
-	static DWORD XboxShaderBinaryPassthrough[] = {
-		0, 0x0020001B, 0x0836106C, 0x2F100FF8,
-		0, 0x0420061B, 0x083613FC, 0x5011F818,
-		0, 0x002008FF, 0x0836106C, 0x2070F828,
-		0, 0x0240081B, 0x1436186C, 0x2F20F824,
-		0, 0x0060201B, 0x2436106C, 0x3070F800,
-		0, 0x00200200, 0x0836106C, 0x2070F830,
-		0, 0x00200E1B, 0x0836106C, 0x2070F838,
-		0, 0x0020101B, 0x0836106C, 0x2070F840,
-		0, 0x0020121B, 0x0836106C, 0x2070F848,
-		0, 0x0020141B, 0x0836106C, 0x2070F850,
-		0, 0x0020161B, 0x0836106C, 0x2070F858,
-		0, 0x0020181B, 0x0836106C, 0x2070F861 // FLD_FINAL is set here!
-	};
-
-	// LOG_TEST_CASE("Setting Xbox passthrough shader");
-	// Test cases : Many XDK samples & games
-
-	// TODO : Xbox uses three variants;
-	// one for FOGTABLEMODE NONE
-	// one for FOGSOURCEZ
-	// one for WFOG
-
-	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES, /*bWritePGRAPH=*/true);
-
-	// Passthrough programs require scale and offset to be set in constants zero and one (both minus 96)
-	// (Note, these are different from GetMultiSampleOffsetAndScale / GetViewPortOffsetAndScale)
-	float scale[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-	float offset[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-#if 0 // Based on (regular) BeginPush XDK and (multisampled) AntiAlias samples, scale and offset should just use above defaults, with both render scale factor 1, but also 2 and higher.
-	scale[0] = (float)g_RenderScaleFactor;
-	scale[1] = (float)g_RenderScaleFactor;
-	scale[2] = 1.0f; // Passthrough should not scale Z (so don't use g_ZScale)
-	scale[3] = 1.0f;
-
-	float MultiSampleBias = 0.0f;
-	if (XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_MULTISAMPLEANTIALIAS) > 0) {
-		extern float GetMultiSampleOffsetDelta(); // TMP glue
-
-		MultiSampleBias = GetMultiSampleOffsetDelta();
-	}
-
-	offset[0] = g_Xbox_ScreenSpaceOffset_x - MultiSampleBias;
-	offset[1] = g_Xbox_ScreenSpaceOffset_y - MultiSampleBias;
-	offset[2] = 0.0f;
-	offset[3] = 0.0f;
-#endif
-
-	// Test-case : XDK Ripple sample
-
-	// TODO : Apparently, offset and scale are swapped in some XDK versions, but which?
-	CxbxImpl_SetVertexShaderConstant(0 - X_D3DSCM_CORRECTION, scale, 1);
-	CxbxImpl_SetVertexShaderConstant(1 - X_D3DSCM_CORRECTION, offset, 1);
 }
 
 CxbxVertexDeclaration* CxbxGetVertexDeclaration()
@@ -798,15 +698,6 @@ void CxbxUpdateHostVertexDeclaration()
 		vertexDefaultFlags[i] = pCxbxVertexDeclaration->vRegisterInDeclaration[i] ? 0.0f : 1.0f;
 	}
 	CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_SIZE);
-}
-
-void CxbxImpl_SetScreenSpaceOffset(float x, float y)
-{
-	// See https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.3.1%20Pixel%20Coordinate%20System
-	static float PixelOffset = 0.53125f; // 0.5 for pixel center + 1/16?
-
-	g_Xbox_ScreenSpaceOffset_x = x + PixelOffset;
-	g_Xbox_ScreenSpaceOffset_y = y + PixelOffset;
 }
 
 // Note : SetVertexShaderInputDirect needs no EMUPATCH CxbxImpl_..., since it just calls SetVertexShaderInput
@@ -973,12 +864,10 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 
 		SetFixedFunctionDefaultVertexAttributes(pXboxVertexShader->Flags);
 
-		// Switch to passthrough program, if so required
-		if (pXboxVertexShader->Flags & X_VERTEXSHADER_FLAG_PASSTHROUGH) {
-			CxbxSetVertexShaderPassthroughProgram();
-		} else {
-			// Test-case : Many XDK samples, Crazy taxi 3
-		}
+		// Passthrough and fixed-function programs are pushed by the Xbox
+		// SetVertexShader trampoline through the push buffer → PFIFO →
+		// pg->program_data[].  No HLE-side upload needed.
+
 		// g_Xbox_VertexShaderMode is derived from PGRAPH CSV0_D + VPSCL/VPOFF
 		// by the render thread — don't write it here on the game thread.
 	}

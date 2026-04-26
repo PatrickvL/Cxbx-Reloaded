@@ -4582,3 +4582,22 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetMaterial)
         hRet = D3D_OK;
     }
 }
+
+// ******************************************************************
+// * patch: D3DDevice_SetScreenSpaceOffset
+// * Disabled: g_Xbox_ScreenSpaceOffset was only read by the dead
+// * CxbxSetVertexShaderPassthroughProgram. Xbox code handles it natively.
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetScreenSpaceOffset)
+(
+   	float_xt x,
+   	float_xt y
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(x)
+		LOG_FUNC_ARG(y)
+		LOG_FUNC_END;
+
+	CxbxImpl_SetScreenSpaceOffset(x, y);
+}
