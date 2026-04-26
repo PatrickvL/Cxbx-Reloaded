@@ -605,7 +605,7 @@ void CxbxUpdateHostVertexShader()
 	}
 }
 
-void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstructions)
+void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstructions, bool bWritePGRAPH = false)
 {
 	int upToSlot = Address + NrInstructions;
 	if (upToSlot > X_VSH_MAX_INSTRUCTION_COUNT) {
@@ -620,8 +620,16 @@ void CxbxSetVertexShaderSlots(DWORD* pTokens, DWORD Address, DWORD NrInstruction
 
 	memcpy(CxbxVertexShaderSlotPtr, pTokens, NrInstructions * X_VSH_INSTRUCTION_SIZE_BYTES);
 
-	// Mirror to PGRAPH program_data so the VS interpreter can read it
-	if (g_NV2A) {
+	// For program shaders, do NOT mirror to pg->program_data here.  The Xbox
+	// trampoline writes SET_TRANSFORM_PROGRAM to the push buffer, and the
+	// PFIFO puller processes it sequentially into pg->program_data before the
+	// draw.  Writing from the game thread races with the puller reading
+	// program_data at draw time (CxbxD3D11UploadVSInterpreterState), causing
+	// stale programs when multiple VS programs are loaded per frame.
+	//
+	// For passthrough/FF shaders, bWritePGRAPH=true is needed because those
+	// don't go through LoadVertexShader → push buffer.
+	if (bWritePGRAPH && g_NV2A) {
 		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 		for (DWORD i = 0; i < NrInstructions; i++) {
 			for (int j = 0; j < X_VSH_INSTRUCTION_SIZE; j++) {
@@ -660,7 +668,7 @@ static void CxbxSetVertexShaderPassthroughProgram()
 	// one for FOGSOURCEZ
 	// one for WFOG
 
-	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES);
+	CxbxSetVertexShaderSlots(&XboxShaderBinaryPassthrough[0], 0, sizeof(XboxShaderBinaryPassthrough) / X_VSH_INSTRUCTION_SIZE_BYTES, /*bWritePGRAPH=*/true);
 
 	// Passthrough programs require scale and offset to be set in constants zero and one (both minus 96)
 	// (Note, these are different from GetMultiSampleOffsetAndScale / GetViewPortOffsetAndScale)
@@ -835,14 +843,11 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 	// Either way, the given address slot is selected as the start of the current vertex shader program
 	g_Xbox_VertexShader_FunctionSlots_StartAddress = Address;
 
-	// Mirror the start address to PGRAPH so the VS interpreter can read it
-	if (g_NV2A) {
-		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
-		uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
-		csv0c &= ~NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START; // Clear old start
-		csv0c |= (Address << 8) & NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START; // Set new start
-		pg->regs[RI(NV_PGRAPH_CSV0_C)] = csv0c;
-	}
+	// NOTE: Do NOT mirror the start address to pg->regs[CSV0_C] here.
+	// The Xbox trampoline writes SET_TRANSFORM_PROGRAM_START to the push
+	// buffer, and the PFIFO puller sets CSV0_C sequentially before the draw.
+	// Writing from the game thread races with the puller reading CSV0_C at
+	// draw time, causing the wrong VS program to be selected.
 
 	g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
 
@@ -979,31 +984,23 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 	}
 
 	if (pXboxVertexShader->Flags & g_X_VERTEXSHADER_FLAG_PROGRAM) { // Global variable set from CxbxVertexShaderSetFlags
-#if 0 // Since the D3DDevice_SetVertexShader patch already called it's trampoline, these calls have already been executed :
-		CxbxImpl_LoadVertexShader(Handle, 0);
-		CxbxImpl_SelectVertexShader(Handle, 0);
-#else // So let's check if that indeed happened :
-		bool bHackCallSelectAgain = false;
-		if (g_Xbox_VertexShader_Handle != Handle) {
-			LOG_TEST_CASE("g_Xbox_VertexShader_Handle != Handle");
-			bHackCallSelectAgain = true;
-		}
-		if (g_Xbox_VertexShader_FunctionSlots_StartAddress != 0) {
-			LOG_TEST_CASE("g_Xbox_VertexShader_FunctionSlots_StartAddress != 0");
-			bHackCallSelectAgain = true;
-		}
-		if (g_Xbox_VertexShaderMode != VertexShaderMode::ShaderProgram) {
-			LOG_TEST_CASE("Not in shader program mode after SetVertexShader trampoline");
-			bHackCallSelectAgain = true;
-		}
-
-		if (bHackCallSelectAgain) {
-			// If any of the above test-cases was hit, perhaps our patch on
-			// _SelectVertexShader isn't applied;
-			// 'solve' that by calling it here instead.
-			CxbxImpl_SelectVertexShader(Handle, 0);
-		}
+		// The Xbox SetVertexShader trampoline (called above) internally calls
+		// LoadVertexShader and SelectVertexShader, which are intercepted by
+		// our EMUPATCH stubs. Those call XB_TRMP(LoadVertexShader) and
+		// XB_TRMP(SelectVertexShader), writing SET_TRANSFORM_PROGRAM and
+		// SET_TRANSFORM_PROGRAM_START to the push buffer.  The PFIFO puller
+		// processes these sequentially into PGRAPH before each draw.
+		//
+		// Do NOT call CxbxImpl_Load/Select here — they write directly to
+		// pg->program_data and pg->regs[CSV0_C] on the game thread, racing
+		// with the puller which reads that data at draw time.
+		// Update only the HLE-side globals that the EMUPATCH stubs set:
+		g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
+		g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
+#ifdef CXBX_USE_GLOBAL_VERTEXSHADER_POINTER
+		g_Xbox_VertexShader_Ptr = pXboxVertexShader;
 #endif
+		g_Xbox_VertexShader_Handle = Handle;
 	} else {
 		// A shader without a program won't call LoadVertexShader nor SelectVertexShader
 		// 
@@ -1013,14 +1010,10 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		g_Xbox_VertexShader_Handle = Handle;
 		g_Xbox_VertexShader_FunctionSlots_StartAddress = 0;
 
-		// Mirror the start address to PGRAPH so the VS interpreter can read it
-		if (g_NV2A) {
-			PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
-			uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
-			csv0c &= ~NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START;
-			// Address 0 — just clear the start bits
-			pg->regs[RI(NV_PGRAPH_CSV0_C)] = csv0c;
-		}
+		// NOTE: Do NOT write to pg->regs[CSV0_C] here.  The Xbox
+		// SetVertexShader trampoline writes SET_TRANSFORM_EXECUTION_MODE
+		// (FIXED) and SET_TRANSFORM_PROGRAM_START to the push buffer.
+		// The puller processes these sequentially before the draw.
 
 		SetFixedFunctionDefaultVertexAttributes(pXboxVertexShader->Flags);
 

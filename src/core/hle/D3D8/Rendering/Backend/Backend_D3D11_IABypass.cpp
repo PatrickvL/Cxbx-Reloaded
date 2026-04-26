@@ -532,22 +532,39 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		//    Used for HLE-intercepted draws where SetStreamSource patches populate
 		//    the HLE state before DrawPrimitive is called.
 		//
-		// Strategy: try PGRAPH first for non-UP draws; if no active attributes
-		// found, fall back to HLE path.
+		// Strategy: use PGRAPH for non-UP draws and for NV2A inline data UP draws;
+		// fall back to HLE path for HLE-patched UP draws.
 		bool bUsedPGRAPH = false;
 		PGRAPHState* pg = (g_NV2A != nullptr) ? &g_NV2A->GetDeviceState()->pgraph : nullptr;
 
-		if (pg && !bIsUPDraw) {
-			// PGRAPH path: slot index = register index, offset = physical address
-			for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
-				const VertexAttribute& attr = pg->vertex_attributes[i];
-				if (attr.count == 0) continue; // inactive attribute → use default
+		if (pg && (!bIsUPDraw || DrawContext.bNV2AInlineData)) {
+			if (DrawContext.bNV2AInlineData) {
+				// NV2A inline_array path: data is packed contiguously per vertex
+				// with enabled attributes in register order. Compute element offsets
+				// from attribute sizes rather than using physical addresses.
+				UINT packedOffset = 0;
+				for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
+					const VertexAttribute& attr = pg->vertex_attributes[i];
+				if (attr.count == 0) continue; // count 0 = disabled (format 0 is valid: UB_D3D/D3DCOLOR)
+					pCB->Attribs[i][0] = packedOffset; // elemOffset within packed vertex
+					pCB->Attribs[i][1] = DrawContext.uiXboxVertexStreamZeroStride;
+					pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
+					pCB->Attribs[i][3] = 0; // streamBase = 0 (UP staging buffer)
+					packedOffset += attr.count * attr.size;
+					bUsedPGRAPH = true;
+				}
+			} else {
+				// VB draw path: slot index = register index, offset = physical address
+				for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
+					const VertexAttribute& attr = pg->vertex_attributes[i];
+					if (attr.count == 0) continue;
 
-				pCB->Attribs[i][0] = 0;           // elemOffset (baked into offset)
-				pCB->Attribs[i][1] = attr.stride;
-				pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
-				pCB->Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
-				bUsedPGRAPH = true;
+					pCB->Attribs[i][0] = 0;           // elemOffset (baked into offset)
+					pCB->Attribs[i][1] = attr.stride;
+					pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
+					pCB->Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
+					bUsedPGRAPH = true;
+				}
 			}
 		}
 

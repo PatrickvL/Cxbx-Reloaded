@@ -424,10 +424,6 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 
 	// If the viewport scale constants are zero, PGRAPH hasn't been programmed
 	// yet (the Xbox D3D runtime hasn't issued SET_VIEWPORT_OFFSET/SCALE).
-	// This happens for pre-transformed vertices (XYZRHW/passthrough FVF) where
-	// the hardware bypasses the viewport transform.  In that case, keep the
-	// HLE-derived viewport from CxbxUpdateHostViewport() instead of overriding
-	// with zeros (which would produce a 0x0 viewport that clips everything).
 	if (vpscl[0] == 0.0f && vpscl[1] == 0.0f) {
 		return;
 	}
@@ -454,8 +450,33 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		return; // can't set viewport without RT dimensions
 	}
 
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
-		// Clamp to render target dimensions — Xbox may set 0x7FFFFFFF which overflows D3D11.
+	// For passthrough mode (XYZRHW/pre-transformed vertices), the NV2A viewport
+	// transform maps screen-space coordinates to clip space.  The VPSCL/VPOFF
+	// constants encode this mapping such that xboxX/Y come out negative (e.g.,
+	// -320, -240 for 640x480).  We don't need viewport clipping for passthrough
+	// since vertices are already in screen space — use a full render target viewport.
+	// Detect passthrough directly from VPSCL/VPOFF sign instead of reading
+	// g_Xbox_VertexShaderMode which races the game thread.
+	if (xboxX < 0.0f || xboxY < 0.0f) {
+		D3D11_VIEWPORT hostViewport;
+		hostViewport.TopLeftX = 0;
+		hostViewport.TopLeftY = 0;
+		hostViewport.Width    = static_cast<float>(HostRenderTarget_Width);
+		hostViewport.Height   = static_cast<float>(HostRenderTarget_Height);
+		hostViewport.MinDepth = 0.0f;
+		hostViewport.MaxDepth = 1.0f;
+		CxbxSetViewport(&hostViewport);
+
+		// Full render target scissor — passthrough vertices handle their own clipping
+		RECT viewportRect = { 0, 0, (LONG)HostRenderTarget_Width, (LONG)HostRenderTarget_Height };
+		CxbxSetScissorRect(&viewportRect);
+		return;
+	}
+
+	// Determine vertex shader mode from PGRAPH CSV0_D register.
+	uint32_t pgraphVSMode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
+
+	if (pgraphVSMode != NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
 		D3D11_VIEWPORT hostViewport;
 		hostViewport.TopLeftX = xboxX * Xscale;
 		hostViewport.TopLeftY = xboxY * Yscale;
@@ -516,17 +537,6 @@ void CxbxD3D11ApplyDirtyStates()
 	}
 
 	if (g_bD3D11BlendStateDirty) {
-		// Diagnostic: log blend state (first 5 occurrences only)
-		{
-			static int s_blendDiag = 0;
-			if (s_blendDiag < 5) {
-				s_blendDiag++;
-				auto& rt = g_D3D11BlendDesc.RenderTarget[0];
-				EmuLog(LOG_LEVEL::INFO, "Blend diag [%d]: Enable=%d Src=%d Dst=%d Op=%d SrcA=%d DstA=%d OpA=%d WriteMask=0x%X",
-					s_blendDiag, rt.BlendEnable, rt.SrcBlend, rt.DestBlend, rt.BlendOp,
-					rt.SrcBlendAlpha, rt.DestBlendAlpha, rt.BlendOpAlpha, rt.RenderTargetWriteMask);
-			}
-		}
 		HRESULT hr = g_pD3DDevice->CreateBlendState(&g_D3D11BlendDesc, g_pD3DBlendState.ReleaseAndGetAddressOf());
 		DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateBlendState");
 		if (SUCCEEDED(hr)) {

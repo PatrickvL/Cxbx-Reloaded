@@ -158,30 +158,33 @@ void HLE_draw_inline_array(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
-	//DWORD vertex data array, 
-	// To be used as a replacement for DrawVerticesUP, the caller needs to set the vertex format using IDirect3DDevice8::SetVertexShader before calling BeginPush.
-	// All attributes in the vertex format must be padded DWORD multiples, and the vertex attributes must be specified in the canonical FVF ordering
-	// (position followed by weight, normal, diffuse, and so on).
-	// retrieve vertex shader
-	if (g_Xbox_VertexShader_Handle == 0) {
-		LOG_TEST_CASE("FVF Vertex Shader is null");
-	}
-	// render vertices
-	else {
-		DWORD dwVertexStride = CxbxGetStrideFromVertexDeclaration(CxbxGetVertexDeclaration());
-		if (dwVertexStride > 0) {
-			UINT VertexCount = (pg->inline_array_length * sizeof(DWORD)) / dwVertexStride;
-
-			CxbxDrawContext DrawContext = {};
-
-			DrawContext.XboxPrimitiveType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
-			DrawContext.dwVertexCount = VertexCount;
-			DrawContext.pXboxVertexStreamZeroData = pg->inline_array;
-			DrawContext.uiXboxVertexStreamZeroStride = dwVertexStride;
-
-			CxbxDrawPrimitiveUP(DrawContext);
+	// Compute per-vertex stride from NV2A vertex attribute format registers.
+	// Inline array data packs all enabled attributes contiguously per vertex,
+	// unlike array-based draws which use the stride field from the format register.
+	unsigned int nv2a_stride = 0;
+	for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
+		if (pg->vertex_attributes[i].count != 0) { // count 0 = disabled (format 0 is valid: UB_D3D/D3DCOLOR)
+			nv2a_stride += pg->vertex_attributes[i].count * pg->vertex_attributes[i].size;
 		}
 	}
+
+	if (nv2a_stride == 0 || pg->inline_array_length == 0) {
+		return;
+	}
+
+	UINT VertexCount = (pg->inline_array_length * sizeof(DWORD)) / nv2a_stride;
+	if (VertexCount == 0) {
+		return;
+	}
+
+	CxbxDrawContext DrawContext = {};
+	DrawContext.XboxPrimitiveType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
+	DrawContext.dwVertexCount = VertexCount;
+	DrawContext.pXboxVertexStreamZeroData = pg->inline_array;
+	DrawContext.uiXboxVertexStreamZeroStride = nv2a_stride;
+	DrawContext.bNV2AInlineData = true;
+
+	CxbxDrawPrimitiveUP(DrawContext);
 }
 
 void HLE_draw_inline_elements(NV2AState *d)
@@ -206,6 +209,11 @@ DWORD ABGR_to_ARGB(const uint32_t color)
 void HLE_draw_state_update(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
+
+	// Vertex attribute inline_value may have changed via NV2A push buffer
+	// (SET_VERTEX_DATA4F/4UB/2S) since the last draw. Mark defaults dirty
+	// so the IA bypass re-uploads them before the next draw.
+	g_bD3D11IABypassDefaultsDirty = true;
 
 	CxbxUpdateNativeD3DResources();
 

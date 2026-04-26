@@ -189,13 +189,23 @@ ID3D11PixelShader* GetFixedFunctionShader()
 			(pointSpriteEnable && i < 3);
 
 		// When a texture stage has D3DTSS_COLORARG1 equal to D3DTA_TEXTURE
-		// and the texture pointer for the stage is NULL, this stage
-		// and all stages after it are not processed.
+		// and the texture is not enabled, this stage and all stages after
+		// it are not processed.
 		// Test cases: Red Dead Revolver, JSRF
 		// https://docs.microsoft.com/en-us/windows/win32/direct3d9/texture-blending
 		// Don't follow the D3D9 docs if SELECTARG2 is in use (PC D3D9 behaviour, nvidia quirk?)
 		// Test case: Crash Nitro Kart (engine speed UI)
-		if (!g_pXbox_SetTexture[i]
+		// Use PGRAPH TEXCTL0 enable bit when available to avoid racing
+		// g_pXbox_SetTexture[] which is written by the game thread.
+		bool texturePresent = false;
+		if (g_NV2A) {
+			auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
+			uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
+			texturePresent = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
+		} else {
+			texturePresent = (g_pXbox_SetTexture[i] != xbox::zeroptr);
+		}
+		if (!texturePresent
 			&& (XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORARG1) & 0x7) == X_D3DTA_TEXTURE
 			&& colorOp != xbox::X_D3DTOP_SELECTARG2)
 		{
@@ -212,9 +222,21 @@ ID3D11PixelShader* GetFixedFunctionShader()
 			continue;
 		}
 
-		// Get sample type
-		// TODO move XD3D8 resource query functions out of Direct3D9.cpp so we can use them here
-		if (g_pXbox_SetTexture[i]) {
+		// Get sample type from PGRAPH TEXFMT0 when available (avoids racing
+		// g_pXbox_SetTexture[] which is written by the game thread).
+		if (g_NV2A) {
+			auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
+			uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
+			if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
+				uint32_t texFmt = pg_ff->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
+				if (texFmt & NV_PGRAPH_TEXFMT0_CUBEMAPENABLE)
+					sampleType[i] = SAMPLE_CUBE;
+				else if (((texFmt & NV_PGRAPH_TEXFMT0_DIMENSIONALITY) >> 6) > 2)
+					sampleType[i] = SAMPLE_3D;
+				else
+					sampleType[i] = SAMPLE_2D;
+			}
+		} else if (g_pXbox_SetTexture[i]) {
 			auto format = g_pXbox_SetTexture[i]->Format;
 			if (format & X_D3DFORMAT_CUBEMAP)
 				sampleType[i] = SAMPLE_CUBE;
@@ -363,7 +385,19 @@ float CxbxGetTexFmtFixup(int stage_nr)
 {
 	using namespace FixedFunctionPixelShader;
 
-	auto pXboxTex = g_pXbox_SetTexture[stage_nr];
+	// Resolve texture via PGRAPH offset → side-map to avoid racing g_pXbox_SetTexture[].
+	xbox::X_D3DBaseTexture *pXboxTex = xbox::zeroptr;
+	if (g_NV2A) {
+		auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
+		uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage_nr * 4)];
+		if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
+			uint32_t texOffset = pg_ff->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage_nr * 4)];
+			if (texOffset != 0)
+				pXboxTex = CxbxLookupTextureByDataAddr(texOffset);
+		}
+	}
+	if (pXboxTex == xbox::zeroptr)
+		pXboxTex = g_pXbox_SetTexture[stage_nr]; // fallback
 	if (pXboxTex == xbox::zeroptr)
 		return TEXFMTFIXUP_IDENTITY;
 
@@ -561,10 +595,6 @@ void CxbxD3D11UploadRCInterpreterState()
 	if (!g_pD3D11RCInterpreterAuxCB || !g_pD3D11PGRegsBuf)
 		return;
 
-	// PSDef only needed for: AdjustTextureModes (texModeAdjust flag) — a D3D8-level
-	// concept with no PGRAPH register equivalent.  May be null; texModeAdjust defaults to false.
-	const xbox::X_D3DPIXELSHADERDEF *pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
-
 	// PGRAPH source (populated by the puller thread via pushbuffer methods)
 	PGRAPHState *pg = nullptr;
 	if (g_NV2A) {
@@ -572,12 +602,21 @@ void CxbxD3D11UploadRCInterpreterState()
 		pg = &nv2a->pgraph;
 	}
 
+	// PSDef is only needed for the HLE bridge path (COMBINECTL == 0).
+	// When PGRAPH is authoritative, all combiner/texture state comes from
+	// registers — we don't read g_pXbox_PixelShader which races the game thread.
+	const xbox::X_D3DPIXELSHADERDEF *pPSDef = nullptr;
+	bool pgraphHasCombinerState = pg && (pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0);
+	if (!pgraphHasCombinerState) {
+		pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
+	}
+
 	// --- Bridge HLE pixel shader render state to PGRAPH registers ---
-	// In hybrid HLE mode, the pushbuffer may not be processed, so PGRAPH
-	// combiner registers could be stale/zero.  Sync from the live HLE
-	// render state (which is always current) before uploading to GPU.
-	if (pg && pPSDef) {
-		for (int i = 0; i < 8; i++) {
+	// Only needed when PGRAPH hasn't been programmed (COMBINECTL == 0).
+	// When PGRAPH is authoritative, pPSDef is already nullptr (skipped above).
+	if (pg && pPSDef && !pgraphHasCombinerState) {
+			// PGRAPH combiner registers are uninitialized — sync from HLE state
+			for (int i = 0; i < 8; i++) {
 			pg->regs[RI(NV_PGRAPH_COMBINEALPHAI0 + i * 4)] = pPSDef->PSAlphaInputs[i];
 			pg->regs[RI(NV_PGRAPH_COMBINEALPHAO0 + i * 4)] = pPSDef->PSAlphaOutputs[i];
 			pg->regs[RI(NV_PGRAPH_COMBINECOLORI0 + i * 4)] = pPSDef->PSRGBInputs[i];
@@ -620,7 +659,7 @@ void CxbxD3D11UploadRCInterpreterState()
 			                 | ((fogABGR & 0x000000FFu) << 16);
 			pg->regs[RI(NV_PGRAPH_FOGCOLOR)] = fogARGB;
 		}
-	}
+	} // end HLE bridge
 
 	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
 	if (pg) {
@@ -637,16 +676,42 @@ void CxbxD3D11UploadRCInterpreterState()
 	                          : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
 
 	// --- AdjustTextureModes: match the compiled shader path ---
+	// When PGRAPH is authoritative (COMBINECTL != 0), SHADERPROG already
+	// contains the correctly adjusted texture modes — the Xbox D3D runtime
+	// adjusts modes before writing the push buffer.  The texModeAdjust flag
+	// is a D3D8 software concept with no PGRAPH equivalent, so we only
+	// apply it in the HLE bridge fallback path (COMBINECTL == 0).
+	// Texture type is derived from PGRAPH TEXFMT0 (CUBEMAPENABLE +
+	// DIMENSIONALITY) instead of g_pXbox_SetTexture[] to avoid racing
+	// the game thread.
 	{
-		bool texModeAdjust = pPSDef ? ((pPSDef->PSFinalCombinerConstants >> PS_GLOBALFLAGS_SHIFT) & PS_GLOBALFLAGS_TEXMODE_ADJUST) > 0 : false;
+		bool pgraphAuthoritative = pg && (pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0);
+		bool texModeAdjust = false;
+		if (!pgraphAuthoritative && pPSDef) {
+			texModeAdjust = ((pPSDef->PSFinalCombinerConstants >> PS_GLOBALFLAGS_SHIFT) & PS_GLOBALFLAGS_TEXMODE_ADJUST) > 0;
+		}
 
 		for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
 			uint32_t mode = (psTextureModes >> (i * 5)) & 0x1Fu;
 			uint32_t clearMask = ~(0x1Fu << (i * 5));
 
+			// Derive texture type from PGRAPH registers when available,
+			// falling back to HLE g_pXbox_SetTexture[] for the bridge path.
 			xbox::X_D3DRESOURCETYPE texType = xbox::X_D3DRTYPE_NONE;
-			if (g_pXbox_SetTexture[i])
+			if (pg) {
+				uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
+				if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
+					uint32_t texFmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
+					if (texFmt & NV_PGRAPH_TEXFMT0_CUBEMAPENABLE)
+						texType = xbox::X_D3DRTYPE_CUBETEXTURE;
+					else if (((texFmt & NV_PGRAPH_TEXFMT0_DIMENSIONALITY) >> 6) > 2)
+						texType = xbox::X_D3DRTYPE_VOLUMETEXTURE;
+					else
+						texType = xbox::X_D3DRTYPE_TEXTURE;
+				}
+			} else if (g_pXbox_SetTexture[i]) {
 				texType = GetXboxD3DResourceType(g_pXbox_SetTexture[i]);
+			}
 
 			if (texModeAdjust) {
 				if (texType == xbox::X_D3DRTYPE_NONE) {
@@ -787,27 +852,28 @@ void CxbxD3D11UploadRCInterpreterState()
 
 void CxbxUpdateActivePixelShader() // NOPATCH
 {
-  // The first RenderState is PSAlpha,
-  // The pixel shader is stored in pDevice->m_pPixelShader
-  // For now, we still patch SetPixelShader and read from there...
+  // Determine whether to use the RC interpreter or fixed-function pixel shader.
+  //
+  // Use PGRAPH COMBINECTL as the primary authority: if PGRAPH has been
+  // programmed with combiner state (COMBINECTL != 0), use the RC interpreter.
+  // Otherwise fall back to checking the HLE g_pXbox_PixelShader handle.
+  // When PGRAPH is authoritative, we don't read g_pXbox_PixelShader at all —
+  // it races the game thread which runs ahead of the puller.
 
-  // Use the pixel shader stored in D3D__RenderState rather than the set handle
-  // This allows changes made via SetRenderState to actually take effect!
-  // NOTE: PSTextureModes is in a different location in the X_D3DPIXELSHADERDEF than in Render State mappings
-  // All other fields are the same.
-  // We cast D3D__RenderState to a pPSDef for these fields, but
-  // manually read from D3D__RenderState[X_D3DRS_PSTEXTUREMODES] for that one field.
-  // See D3DDevice_SetPixelShaderCommon which implements this
+  bool pgraphHasCombiners = false;
+  if (g_NV2A) {
+      auto pg = &g_NV2A->GetDeviceState()->pgraph;
+      pgraphHasCombiners = pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0;
+  }
 
-  const xbox::X_D3DPIXELSHADERDEF *pPSDef = g_pXbox_PixelShader != nullptr ? (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer()) : nullptr;
-  if (pPSDef == nullptr) {
-	// No pixel shader handle set — use the fixed function pixel shader.
-	// The native D3D runtime writes a default PSDef to the render state slots,
-	// but the RC interpreter doesn't produce correct output from that default
-	// (the combiner register values don't match what the RC interpreter expects
-	// for basic texture × diffuse rendering).  The fixed function PS handles
-	// this case correctly.
-	// Test case: CubeMap XDK sample (room draws during cubemap face rendering)
+  // Only consult HLE pixel shader state when PGRAPH doesn't have combiner state.
+  const xbox::X_D3DPIXELSHADERDEF *pPSDef = nullptr;
+  if (!pgraphHasCombiners && g_pXbox_PixelShader != nullptr) {
+      pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
+  }
+
+  if (pPSDef == nullptr && !pgraphHasCombiners) {
+	// No pixel shader handle AND no PGRAPH combiner state — use fixed function.
 	ID3D11PixelShader* pShader = nullptr;
 	if (g_UseFixedFunctionPixelShader) {
 		pShader = GetFixedFunctionShader();
@@ -816,7 +882,6 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 
 	CxbxSetPixelShader(pShader);
 	g_bRCInterpreterCBActive = false;
-	// When switching away from the RC interpreter, rebind the normal PS cbuffer
 	if (g_pD3D11PSConstantBuffer)
 		g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
    	return;

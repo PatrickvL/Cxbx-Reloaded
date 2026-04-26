@@ -487,42 +487,8 @@ float GetZScaleForPixelContainer(xbox::X_D3DPixelContainer* pSurface)
    	return 1.0f;
 }
 
-// Get viewport offset and scale values intended to match the XDK calculations
-// We should remove this when we can get the real viewport values from the xbox reliably via NV2A LLE
-void GetXboxViewportOffsetAndScale(float (&vOffset)[4], float(&vScale)[4])
-{
-	// Antialiasing mode affects the viewport offset and scale
-	float aaScaleX, aaScaleY;
-	float aaOffsetX, aaOffsetY;
-	GetScreenScaleFactors(aaScaleX, aaScaleY);
-	GetMultiSampleOffset(aaOffsetX, aaOffsetY);
-
-	float scaledX = g_Xbox_Viewport.X * aaScaleX;
-	float scaledY = g_Xbox_Viewport.Y * aaScaleY;
-	float scaledWidth = g_Xbox_Viewport.Width * aaScaleX;
-	float scaledHeight = g_Xbox_Viewport.Height * aaScaleY;
-
-	// Xbox viewport offset/scale
-	// Unlike D3D9, Xbox scales by the z buffer scale
-	// Test case: GTA III
-
-	auto zRange = g_Xbox_Viewport.MaxZ - g_Xbox_Viewport.MinZ;
-	vScale[0] = scaledWidth / 2;
-	vScale[1] = -scaledHeight / 2;
-	vScale[2] = zRange * g_ZScale;
-	vScale[3] = 1;
-	vOffset[0] = scaledWidth / 2 + scaledX;
-	vOffset[1] = scaledHeight / 2 + scaledY;
-	vOffset[2] = g_Xbox_Viewport.MinZ * g_ZScale;
-	vOffset[3] = 0;
-}
-
 void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 {
-   	float vScaleOffset[2][4]; // 0 - scale 1 - offset
-   	GetXboxViewportOffsetAndScale(vScaleOffset[1], vScaleOffset[0]);
-
-
 	// Xbox outputs vertex positions in rendertarget pixel coordinate space, with non-normalized Z
 	// e.g. 0 < x < 640 and 0 < y < 480
 	// We want to scale it back to normalized device coordinates i.e. XY are (-1, +1) and Z is (0, 1)
@@ -547,22 +513,46 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 
 	// Passthrough should range 0 to 1, instead of 0 to zbuffer depth
 	// Test case: DoA3 character select
-	float zOutputScale = g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough ? 1 : g_ZScale;
+	// Detect passthrough from PGRAPH VPSCL/VPOFF sign to avoid racing
+	// g_Xbox_VertexShaderMode which the game thread writes.
+	bool isPassthrough = false;
+	if (g_NV2A) {
+		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
+		float vpoff0, vpoff1, vpscl0, vpscl1;
+		std::memcpy(&vpoff0, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][0], sizeof(float));
+		std::memcpy(&vpoff1, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][1], sizeof(float));
+		std::memcpy(&vpscl0, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][0], sizeof(float));
+		std::memcpy(&vpscl1, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][1], sizeof(float));
+		float xboxX = vpoff0 - vpscl0;
+		float xboxY = vpoff1 + vpscl1;
+		isPassthrough = (xboxX < 0.0f || xboxY < 0.0f);
+	} else {
+		isPassthrough = (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough);
+	}
+	float zOutputScale = isPassthrough ? 1 : g_ZScale;
 
 	float screenspaceScale[4] = { xboxScreenspaceWidth / 2,  -xboxScreenspaceHeight / 2, zOutputScale, 1 };
 	float screenspaceOffset[4] = { xboxScreenspaceWidth / 2 + aaOffsetX, xboxScreenspaceHeight / 2 + aaOffsetY, 0, 0 };
 	CxbxSetVertexShaderConstantF(CXBX_D3DVS_SCREENSPACE_SCALE_BASE, screenspaceScale, CXBX_D3DVS_NORMALIZE_SCALE_SIZE);
 	CxbxSetVertexShaderConstantF(CXBX_D3DVS_SCREENSPACE_OFFSET_BASE, screenspaceOffset, CXBX_D3DVS_NORMALIZE_OFFSET_SIZE);
 
-	// Store viewport offset and scale in constant registers 58 (c-38) and
-	// 59 (c-37) used for screen space transformation.
-	// We only do this if X_D3DSCM_NORESERVEDCONSTANTS is not set,
-	// since enabling this flag frees up these registers for shader use
-	// Treat this as a flag
-	// Test Case: GTA III, Soldier of Fortune II
-	if (!(g_Xbox_VertexShaderConstantMode & X_D3DSCM_NORESERVEDCONSTANTS)) {
-		CxbxSetVertexShaderConstantF(X_D3DSCM_RESERVED_CONSTANT_SCALE_CORRECTED, reinterpret_cast<float*>(vScaleOffset), 2);
-	}
+	// Reserved constants c[-38] (slot 58) and c[-37] (slot 59) hold viewport
+	// scale/offset for screen-space transformation in programmable VS programs.
+	// In the NV2A-driven path, PGRAPH already has the correct values written
+	// by NV097_SET_VIEWPORT_SCALE/OFFSET through the push buffer.  Overwriting
+	// them with HLE-computed values from g_Xbox_Viewport causes mismatches:
+	// the Xbox thread updates g_Xbox_Viewport ahead of pfifo processing, so
+	// mid-frame viewport changes produce stale overwrite values for earlier
+	// draws.  Additionally, the HLE computation may not exactly match the
+	// Xbox D3D runtime's internal NV2A register values.
+	//
+	// With draws going through pfifo, the PGRAPH values ARE the source of
+	// truth — they are written before the draw in the push buffer and
+	// processed sequentially by the puller.  CxbxUpdateHostVertexShaderConstants
+	// already uploads them from pg->vsh_constants[58/59].
+	//
+	// TODO: Re-enable this overwrite if HLE draw patches are restored.
+	// Test Case: GTA III, Soldier of Fortune II (needed when HLE draws are active)
 
 }
 

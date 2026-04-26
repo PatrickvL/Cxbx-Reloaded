@@ -47,6 +47,32 @@ void CxbxUpdateHostTextures()
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
 
+		// Check PGRAPH TEXCTL0 enable bit.  When the Xbox D3D runtime disables
+		// a texture stage, it writes CONTROL0 with the enable bit (bit 30) cleared.
+		// We must respect this: disabled stages should not have textures bound,
+		// otherwise we may create D3D11 resource hazards (e.g., the same texture
+		// bound as both RTV and SRV) or sample stale data from a previous draw.
+		bool bTextureEnabled = true; // default enabled for non-PGRAPH path
+		if (g_NV2A) {
+			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+			uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
+			bTextureEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
+		}
+
+		if (!bTextureEnabled) {
+			// Texture stage is disabled in PGRAPH — unbind and skip
+			if (s_CachedSRV[stage]) {
+				s_CachedSRV[stage]->Release();
+				s_CachedSRV[stage] = nullptr;
+			}
+			s_CachedResource[stage] = nullptr;
+			ID3D11ShaderResourceView* pNullSRV = nullptr;
+			g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pNullSRV);
+			g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pNullSRV);
+			g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pNullSRV);
+			continue;
+		}
+
 		// Authoritative: read the texture VRAM offset from PGRAPH
 		// registers and resolve to an Xbox texture via the side-map
 		// populated by SetTexture/SwitchTexture patches.  This covers
@@ -58,23 +84,45 @@ void CxbxUpdateHostTextures()
 		// (Begin/End) path draws synchronously before the puller thread
 		// processes the push buffer, so PGRAPH may not yet have the
 		// texture offset even though SetTexture was called.
+		ID3D11Resource* pHostBaseTexture = nullptr;
+		bool bNeedRelease = false;
+		bool bIsRenderTargetTexture = false;
 		if (g_NV2A) {
 			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 			uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
 			if (texOffset != 0) {
-				auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
-				if (pgTex != nullptr)
-					pXboxBaseTexture = pgTex;
-				// else: PGRAPH has an offset but it's not in the side-map;
-				// keep pXboxBaseTexture from g_pXbox_SetTexture as fallback
+				// When a render target is used as a texture, the TEXOFFSET
+				// contains the surface's Data address.  The texture side-map
+				// (populated by SetTexture) may contain a DIFFERENT Xbox
+				// object than the surface side-map (populated by SetRenderTarget).
+				// GetHostBaseTexture(pXboxTexture) creates a separate D3D11
+				// texture from Xbox memory, which has stale/uninitialized data
+				// for a render target.  Instead, look up the surface side-map
+				// and use GetHostSurface to get the D3D11 texture that holds
+				// the actual rendered content (created with both RT and SRV flags).
+				auto pXboxSurface = CxbxLookupSurfaceByDataAddr(texOffset);
+				if (pXboxSurface && pXboxSurface != g_pXbox_DepthStencil) {
+					// This surface is a known render target (not depth stencil).
+					// Use the host RT texture which has the rendered content.
+					auto pHostRT = GetHostSurface(pXboxSurface, D3DUSAGE_RENDERTARGET);
+					if (pHostRT) {
+						pHostBaseTexture = pHostRT;
+						bIsRenderTargetTexture = true;
+					}
+				}
+
+				// Fallback: use the texture side-map for non-RT textures
+				if (!bIsRenderTargetTexture) {
+					auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
+					if (pgTex != nullptr)
+						pXboxBaseTexture = pgTex;
+				}
 			}
 			// When texOffset == 0 and g_pXbox_SetTexture[stage] is also null,
 			// pXboxBaseTexture stays zeroptr — the texture will be unbound.
 		}
 
-		ID3D11Resource* pHostBaseTexture = nullptr;
-		bool bNeedRelease = false;
-		if (pXboxBaseTexture != xbox::zeroptr) {
+		if (!bIsRenderTargetTexture && pXboxBaseTexture != xbox::zeroptr) {
 			DWORD XboxResourceType = GetXboxCommonResourceType(pXboxBaseTexture);
 			switch (XboxResourceType) {
 			case X_D3DCOMMON_TYPE_TEXTURE:
@@ -391,73 +439,6 @@ void CxbxUpdateHostVertexShaderConstants()
 	CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_FOGINFO, fogStuff, 1);
 }
 
-void CxbxUpdateHostViewport() {
-	// We don't have a fixed function shader so we rely on D3D9 fixed function mode
-	// So we have to set a viewport based on the current Xbox viewport
-	// Antialiasing mode affects the viewport offset and scale
-	float aaScaleX, aaScaleY;
-	float aaOffsetX, aaOffsetY;
-	GetMultiSampleScaleRaw(aaScaleX, aaScaleY);
-	GetMultiSampleOffset(aaOffsetX, aaOffsetY);
-
-	DWORD HostRenderTarget_Width, HostRenderTarget_Height;
-	if (!GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height)) {
-		LOG_TEST_CASE("Could not get rendertarget dimensions while setting the viewport");
-	}
-
-	float Xscale = aaScaleX * g_RenderUpscaleFactor;
-	float Yscale = aaScaleY * g_RenderUpscaleFactor;
-
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
-		// Set viewport — clamp to render target dimensions.
-		// Xbox games often set viewport to 0x7FFFFFFF×0x7FFFFFFF which overflows D3D11.
-		D3D11_VIEWPORT hostViewport;
-		hostViewport.TopLeftX = g_Xbox_Viewport.X * Xscale;
-		hostViewport.TopLeftY = g_Xbox_Viewport.Y * Yscale;
-		hostViewport.Width = std::min((float)(g_Xbox_Viewport.Width * Xscale), (float)HostRenderTarget_Width);
-		hostViewport.Height = std::min((float)(g_Xbox_Viewport.Height * Yscale), (float)HostRenderTarget_Height);
-		hostViewport.MinDepth = g_Xbox_Viewport.MinZ; // ?? * Zscale;
-		hostViewport.MaxDepth = g_Xbox_Viewport.MaxZ; // ?? * Zscale;
-		CxbxSetViewport(&hostViewport);
-
-		// Reset scissor rect
-		RECT viewportRect;
-		viewportRect.left = 0;
-		viewportRect.top = 0;
-		viewportRect.right = HostRenderTarget_Width;
-		viewportRect.bottom = HostRenderTarget_Height;
-		CxbxSetScissorRect(&viewportRect);
-	}
-	else {
-		// Set default viewport over the whole screen
-		// And let the vertex shader take care of vertex placement
-		// So we can handle shaders that don't use the Xbox viewport constants and don't align
-		// with the currently set viewport
-		// Test case: ???
-
-		D3D11_VIEWPORT hostViewport;
-		hostViewport.TopLeftX = 0;
-		hostViewport.TopLeftY = 0;
-		hostViewport.Width = static_cast<float>(HostRenderTarget_Width);
-		hostViewport.Height = static_cast<float>(HostRenderTarget_Height);
-		hostViewport.MinDepth = 0.0f;
-		hostViewport.MaxDepth = 1.0f;
-
-		CxbxSetViewport(&hostViewport);
-
-		// We still need to clip to the viewport
-		// Scissor to viewport — clamp to render target dimensions to avoid overflow
-		g_D3D11RasterizerDesc.ScissorEnable = TRUE;
-		g_bD3D11RasterizerStateDirty = true;
-		RECT viewportRect;
-		viewportRect.left = static_cast<LONG>(g_Xbox_Viewport.X * Xscale);
-		viewportRect.top = static_cast<LONG>(g_Xbox_Viewport.Y * Yscale);
-		viewportRect.right = std::min(static_cast<LONG>(viewportRect.left + (g_Xbox_Viewport.Width * Xscale)), (LONG)HostRenderTarget_Width);
-		viewportRect.bottom = std::min(static_cast<LONG>(viewportRect.top + (g_Xbox_Viewport.Height * Yscale)), (LONG)HostRenderTarget_Height);
-		CxbxSetScissorRect(&viewportRect);
-	}
-}
-
 extern void CxbxUpdateHostVertexDeclaration(); // TMP glue
 extern void CxbxUpdateHostVertexShader(); // TMP glue
 
@@ -472,6 +453,50 @@ void CxbxUpdateNativeD3DResources()
 		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
 	}
 
+	// Hold pgraph_lock while reading PGRAPH registers for this draw.
+	// After pfifo_flush_to_pgraph returns, the puller thread is free to
+	// process NEW commands pushed by the game thread.  Without this lock,
+	// the puller can overwrite PGRAPH registers (VS constants, combiner
+	// state, viewport, etc.) mid-draw-setup, causing intermittent flicker
+	// (e.g., dolphin drawn at wrong position, seafloor going black).
+	// The lock is released after all PGRAPH reads and before the D3D11 draw.
+	bool pgraph_locked = false;
+	if (g_NV2A && !g_bInPullerContext) {
+		qemu_mutex_lock(&g_NV2A->GetDeviceState()->pgraph.pgraph_lock);
+		pgraph_locked = true;
+	}
+
+	// Derive the vertex shader mode entirely from PGRAPH state.
+	// g_Xbox_VertexShaderMode was previously set by the HLE SetVertexShader
+	// patch on the game thread, which runs AHEAD of the puller — a race.
+	// Now we read CSV0_D MODE for Program vs Fixed, and detect Passthrough
+	// (XYZRHW pre-transformed vertices) via the VPSCL/VPOFF sign: the Xbox
+	// D3D runtime maps screen coords to clip space such that the derived
+	// X,Y origin is negative (e.g. -320,-240 for 640x480).  Normal fixed-
+	// function viewports always produce X,Y >= 0.
+	if (g_NV2A) {
+		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+		uint32_t pgraph_mode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
+		if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
+			g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
+		} else {
+			// MODE_FIXED: distinguish true fixed-function from passthrough
+			// by checking the PGRAPH viewport constants.
+			float vpoff0, vpoff1, vpscl0, vpscl1;
+			std::memcpy(&vpoff0, &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][0], sizeof(float));
+			std::memcpy(&vpoff1, &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][1], sizeof(float));
+			std::memcpy(&vpscl0, &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][0], sizeof(float));
+			std::memcpy(&vpscl1, &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][1], sizeof(float));
+			float xboxX = vpoff0 - vpscl0;
+			float xboxY = vpoff1 + vpscl1;
+			if (xboxX < 0.0f || xboxY < 0.0f) {
+				g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
+			} else {
+				g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
+			}
+		}
+	}
+
 	// Before we start, make sure our resource cache stays limited in size
 	PrunePaletizedTexturesCache(); // TODO : Could we move this to Swap instead?
 
@@ -483,35 +508,20 @@ void CxbxUpdateNativeD3DResources()
 
 	CxbxUpdateHostVertexShaderConstants();
 
-	CxbxUpdateHostViewport();
-
-	// TODO: Re-enable PGRAPH viewport/RT/pipeline overrides once HLE patches
-	// are fully removed (Step 9+).  Currently, the PGRAPH overrides conflict
-	// with HLE-derived state because HLE patches still set g_Xbox_Viewport,
-	// render targets, and render states.  The PGRAPH registers may be stale,
-	// zero-initialized, or out of sync with the HLE state, causing:
-	//   - Zero-size viewports (XYZRHW vertices never write VPSCL)
-	//   - Wrong render targets (surface offset side-map incomplete)
-	//   - Wrong blend/depth state (overwriting valid HLE state with stale regs)
-	//
-	// When all HLE D3D patches are removed and draws go through the puller,
-	// PGRAPH registers will be the sole source of truth and these overrides
-	// should be re-enabled.
-#if 0
-	// Override viewport/scissor from PGRAPH registers.
-	// This runs after CxbxUpdateHostViewport() so PGRAPH values take precedence
-	// over the HLE-derived g_Xbox_Viewport values.
-	if (g_NV2A) {
-		CxbxD3D11UpdateViewportFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
-	}
-
-	// Verify render target binding against PGRAPH surface offsets.
-	// If the PGRAPH surface offset doesn't match the currently bound RT,
-	// rebind from the Data-address side-map populated by SetRenderTarget.
+	// Bind render target from PGRAPH surface offsets BEFORE viewport setup.
+	// The viewport dimensions are clamped to the render target size, so the
+	// correct RT must be bound first. Otherwise, if the RT switches from a
+	// small offscreen target (e.g. 256x256 caustic texture) to the backbuffer
+	// (640x480), GetHostRenderTargetDimensions returns the old (small) size,
+	// causing the scissor rect to clip the viewport incorrectly.
 	if (g_NV2A) {
 		CxbxD3D11UpdateRenderTargetFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
 	}
-#endif
+
+	// Set viewport from PGRAPH registers (authoritative).
+	if (g_NV2A) {
+		CxbxD3D11UpdateViewportFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
+	}
 
 	// NOTE: Order is important here
    	// Some Texture States depend on RenderState values (Point Sprites)
@@ -521,15 +531,13 @@ void CxbxUpdateNativeD3DResources()
    	XboxRenderStates.Apply();
    	XboxTextureStates.Apply();
 
-	// TODO: Re-enable when HLE patches are fully removed (see comment above)
-#if 0
 	// Override blend/depth-stencil/rasterizer state from PGRAPH registers.
-	// This runs after XboxRenderStates.Apply() so PGRAPH values take precedence
-	// for pipeline state, while HLE still handles minor states (point sprite, line width).
 	if (g_NV2A) {
-		CxbxD3D11UpdatePipelineStateFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
+		auto pg = &g_NV2A->GetDeviceState()->pgraph;
+		if (pg->surface_color.offset != 0) {
+			CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
+		}
 	}
-#endif
 
    	// If Pixel Shaders are not disabled, process them
    	if (!g_DisablePixelShaders) {
@@ -542,15 +550,15 @@ void CxbxUpdateNativeD3DResources()
 	// declaration) always read the latest inline_value[] data.
 	CxbxD3D11UpdateVertexDefaultsBuffer();
 
+	// Release pgraph_lock — all PGRAPH register reads for this draw are done.
+	// The puller thread is now free to process new commands for the next draw.
+	if (pgraph_locked) {
+		qemu_mutex_unlock(&g_NV2A->GetDeviceState()->pgraph.pgraph_lock);
+		pgraph_locked = false;
+	}
+
 	// Apply any pending D3D11 state object changes before drawing
 	CxbxD3D11ApplyDirtyStates();
-
-
-/* TODO : Port these :
-	DxbxUpdateDeferredStates(); // BeginPush sample shows us that this must come *after* texture update!
-	DxbxUpdateActiveVertexBufferStreams();
-	DxbxUpdateActiveRenderTarget();
-*/
 }
 
 // This function should be called in tight idle-wait loops.

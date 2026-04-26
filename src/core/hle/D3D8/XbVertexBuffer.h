@@ -46,6 +46,7 @@ typedef struct _CxbxDrawContext
     // Data if Draw...UP call
     IN PVOID                     pXboxVertexStreamZeroData;
     IN UINT                      uiXboxVertexStreamZeroStride;
+	IN bool                      bNV2AInlineData; // True when vertex data comes from NV2A inline_array (use PGRAPH attributes for layout)
 	// Values to be used on host
 	OUT PVOID                    pHostVertexStreamZeroData;
 	OUT UINT                     uiHostVertexStreamZeroStride;

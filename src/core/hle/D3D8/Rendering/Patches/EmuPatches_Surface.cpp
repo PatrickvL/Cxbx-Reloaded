@@ -369,11 +369,46 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 {
 	LOG_FUNC_ONE_ARG(Flags);
 
-	// Drain all pending push buffer commands (draw calls, state changes, VS constants)
-	// that Xbox native code wrote to the ring buffer. This ensures all rendering is
-	// complete before we present the backbuffer to the host window.
+	// Update NV2A DMA_PUT from the Xbox push buffer's current write position,
+	// then drain all pending commands through PFIFO → PGRAPH → HLE draw callbacks.
+	//
+	// Xbox native draw functions write NV2A methods into the push buffer ring
+	// (advancing CDevice's internal pPut pointer) but DMA_PUT is only updated
+	// when CDevice_KickOff runs. Normally Xbox Swap calls KickOff internally,
+	// but our Swap patch doesn't call the Xbox trampoline. We read pPut directly
+	// from the CDevice structure and write its physical address to DMA_PUT.
 	if (g_NV2A) {
-		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
+		NV2AState *d = g_NV2A->GetDeviceState();
+
+		// Read pPut from *D3D_g_pDevice + 0x00 (the first DWORD is pPut)
+		static uint32_t *pDeviceObj = nullptr;
+		static bool bLookedUp = false;
+		if (!bLookedUp) {
+			void *pDeviceGlobal = GetXboxSymbolPointer("D3D_g_pDevice");
+			if (pDeviceGlobal && !IsBadReadPtr(pDeviceGlobal, 4)) {
+				uint32_t devAddr = *(uint32_t*)pDeviceGlobal;
+				if (devAddr && !IsBadReadPtr((void*)devAddr, 4)) {
+					pDeviceObj = (uint32_t*)devAddr;
+				}
+			}
+			bLookedUp = true;
+		}
+
+		if (pDeviceObj) {
+			// CDevice+0x00 = pPut (virtual address in Xbox contiguous memory, e.g. 0x83Fxxxxx)
+			// Convert to physical by masking off the upper bits
+			uint32_t pPut_virt = pDeviceObj[0];
+			uint32_t pPut_phys = pPut_virt & 0x07FFFFFF;
+
+			// Update DMA_PUT under the PFIFO lock, then signal the pusher/puller
+			qemu_mutex_lock(&d->pfifo.pfifo_lock);
+			d->pfifo.regs[NV_PFIFO_CACHE1_DMA_PUT / 4] = pPut_phys;
+			qemu_cond_broadcast(&d->pfifo.pusher_cond);
+			qemu_cond_broadcast(&d->pfifo.puller_cond);
+			qemu_mutex_unlock(&d->pfifo.pfifo_lock);
+		}
+
+		pfifo_flush_to_pgraph(d);
 	}
 
 	// Handle swap flags

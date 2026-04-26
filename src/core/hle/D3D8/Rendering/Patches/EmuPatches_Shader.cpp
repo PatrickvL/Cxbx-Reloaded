@@ -47,6 +47,10 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_LoadVertexShader)
 		LOG_FUNC_ARG(Address)
 	LOG_FUNC_END;
 
+	// Call the Xbox trampoline so the NV2A push buffer gets SET_TRANSFORM_PROGRAM.
+	// Without this, push buffer processing at Swap would overwrite PGRAPH with stale data.
+	XB_TRMP(D3DDevice_LoadVertexShader)(Handle, Address);
+
 	CxbxImpl_LoadVertexShader(Handle, Address);
 }
 
@@ -140,6 +144,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SelectVertexShader)
    	   	LOG_FUNC_ARG(Handle)
    	   	LOG_FUNC_ARG(Address)
    	   	LOG_FUNC_END;
+
+	// Call the Xbox trampoline so the NV2A push buffer gets the program start update.
+	XB_TRMP(D3DDevice_SelectVertexShader)(Handle, Address);
 
    	CxbxImpl_SelectVertexShader(Handle, Address);
 }

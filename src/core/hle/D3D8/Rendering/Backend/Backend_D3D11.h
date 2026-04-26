@@ -107,8 +107,7 @@ struct PGRAPHState; // forward decl
 void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg);
 
 // Read viewport offset/scale and window clip from PGRAPH and set D3D11 viewport/scissor.
-// Called from CxbxUpdateNativeD3DResources() after CxbxUpdateHostViewport(), overriding
-// the HLE-derived g_Xbox_Viewport values with PGRAPH register data.
+// Called from CxbxUpdateNativeD3DResources() to set viewport from PGRAPH register data.
 void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg);
 
 // Read PGRAPH surface_color/zeta offsets and rebind D3D11 render target / depth-stencil
