@@ -70,7 +70,7 @@ typedef enum _CXBX_DATA {
 enum {
 	LLE_NONE = 0,
 	LLE_APU = 1 << 0,
-	LLE_GPU = 1 << 1,
+	LLE_GPU = 1 << 1, // Deprecated: GPU is always LLE now, kept for UI compatibility
 	LLE_JIT = 1 << 2,
 	LLE_USB = 1 << 3,
 };

@@ -233,20 +233,16 @@ void PrintCurrentConfigurationLog()
 		EmuLogInit(LOG_LEVEL::INFO, "Running under Wine Version %s", getWineVersion());
 	}
 
-	// HACK: For API TRace..
-	// bLLE_GPU = true;
-
 	// Print current LLE configuration
 	{
 		EmuLogInit(LOG_LEVEL::INFO, "---------------------------- LLE CONFIG ----------------------------");
 		EmuLogInit(LOG_LEVEL::INFO, "LLE for APU is %s", bLLE_APU ? "enabled" : "disabled");
-		EmuLogInit(LOG_LEVEL::INFO, "LLE for GPU is %s", bLLE_GPU ? "enabled" : "disabled");
 		EmuLogInit(LOG_LEVEL::INFO, "LLE for USB is %s", bLLE_USB ? "enabled" : "disabled");
 		EmuLogInit(LOG_LEVEL::INFO, "LLE for JIT is %s", bLLE_JIT ? "enabled" : "disabled");
 	}
 
-	// Print current video configuration (DirectX/HLE)
-	if (!bLLE_GPU) {
+	// Print current video configuration
+	{
 		Settings::s_video XBVideoConf;
 		g_EmuShared->GetVideoSettings(&XBVideoConf);
 
@@ -1129,10 +1125,9 @@ static void CxbxrKrnlInitHacks()
 		unsigned int CxbxLLE_Flags;
 		g_EmuShared->GetFlagsLLE(&CxbxLLE_Flags);
 		bLLE_APU = (CxbxLLE_Flags & LLE_APU) > 0;
-		bLLE_GPU = (CxbxLLE_Flags & LLE_GPU) > 0;
 		//bLLE_USB = (CxbxLLE_Flags & LLE_USB) > 0; // Reenable this when LLE USB actually works
 		bLLE_JIT = (CxbxLLE_Flags & LLE_JIT) > 0;
-		EmuLogInit(LOG_LEVEL::INFO, "LLE flags from config: CxbxLLE_Flags=0x%X, bLLE_GPU=%d", CxbxLLE_Flags, (int)bLLE_GPU);
+		EmuLogInit(LOG_LEVEL::INFO, "LLE flags from config: CxbxLLE_Flags=0x%X", CxbxLLE_Flags);
 	}
 
 	CxbxrKrnlInitHacks();
@@ -1189,7 +1184,6 @@ static void CxbxrKrnlInitHacks()
 
 	// EmuHLEIntercept must be call before MapThunkTable, otherwise scanning for symbols will not work properly.
 	EmuHLEIntercept(pXbeHeader);
-	EmuLogInit(LOG_LEVEL::INFO, "After EmuHLEIntercept: bLLE_GPU=%d", (int)bLLE_GPU);
 
 	// Decode kernel thunk table address :
 	uint32_t kt = CxbxKrnl_Xbe->m_Header.dwKernelImageThunkAddr;
@@ -1217,11 +1211,8 @@ static void CxbxrKrnlInitHacks()
 	// Now the hardware devices exist, couple the EEPROM buffer to it's device
 	g_EEPROM->SetEEPROM((uint8_t*)EEPROM);
 
-	if (!bLLE_GPU)
-	{
-		EmuLogInit(LOG_LEVEL::DEBUG, "Initializing Direct3D.");
-		EmuD3DInit();
-	}
+	EmuLogInit(LOG_LEVEL::DEBUG, "Initializing Direct3D.");
+	EmuD3DInit();
 
 	bool isEmuDisk = CxbxrIsPathInsideEmuDisk(relative_path);
 	CxbxrSetupDrives(relative_path, BootFlags);

@@ -59,7 +59,7 @@
 #include "core\hle\D3D8\XbConvert.h"
 #include "Logging.h"
 #include "..\XbD3D8Logging.h"
-#include "core\hle\Intercept.hpp" // for bLLE_GPU
+#include "core\hle\Intercept.hpp"
 #include "devices\video\nv2a.h"
 #include "gui/resource/ResCxbx.h"
 #include "RenderStates.h"

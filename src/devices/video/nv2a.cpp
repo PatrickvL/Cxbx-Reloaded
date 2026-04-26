@@ -493,7 +493,7 @@ uint32_t NV2ADevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 { 
 	switch (barIndex) {
 	case 0: {
-		// Access NV2A regardless weither HLE is disabled or not (ignoring bLLE_GPU)
+		// Access NV2A regardless of HLE/LLE mode
 		const NV2ABlockInfo* block = EmuNV2A_Block(addr);
 		if (block != nullptr) {
 			return BlockRead(block, addr, size);
@@ -557,7 +557,7 @@ void NV2ADevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned
 {
 	switch (barIndex) {
 	case 0: {
-		// Access NV2A regardless whether HLE is disabled or not (ignoring bLLE_GPU)
+		// Access NV2A regardless of HLE/LLE mode
 		const NV2ABlockInfo* block = EmuNV2A_Block(addr);
 
 		if (block != nullptr) {

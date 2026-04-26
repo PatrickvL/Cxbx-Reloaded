@@ -23,6 +23,7 @@
 // *
 // ******************************************************************
 #include "../EmuD3D8_common.h"
+#include "devices/video/nv2a.h" // For pfifo_flush_to_pgraph
 
 static DWORD g_VBLastSwap = 0;
 
@@ -367,6 +368,13 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 )
 {
 	LOG_FUNC_ONE_ARG(Flags);
+
+	// Drain all pending push buffer commands (draw calls, state changes, VS constants)
+	// that Xbox native code wrote to the ring buffer. This ensures all rendering is
+	// complete before we present the backbuffer to the host window.
+	if (g_NV2A) {
+		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
+	}
 
 	// Handle swap flags
 	// We don't maintain a swap chain, and draw everything to backbuffer 0

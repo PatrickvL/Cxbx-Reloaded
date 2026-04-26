@@ -81,7 +81,6 @@ std::map<std::string, xbox::addr_xt> g_SymbolAddresses;
 bool g_SymbolCacheUsed = false;
 
 bool bLLE_APU = false; // Set this to true for experimental APU (sound) LLE
-bool bLLE_GPU = false; // Set this to true for experimental GPU (graphics) LLE
 bool bLLE_USB = false; // Set this to true for experimental USB (input) LLE
 bool bLLE_JIT = false; // Set this to true for experimental JIT
 
@@ -302,14 +301,6 @@ void EmuUpdateLLEStatus(uint32_t XbLibScan)
 {
     unsigned int FlagsLLE;
     g_EmuShared->GetFlagsLLE(&FlagsLLE);
-
-    if ((FlagsLLE & LLE_GPU) == false
-        && !((XbLibScan & XBSDBLIB_D3D8) > 0
-            || (XbLibScan & XBSDBLIB_D3D8LTCG) > 0)) {
-        bLLE_GPU = true;
-        FlagsLLE ^= LLE_GPU;
-        EmuOutputMessage(XB_OUTPUT_MESSAGE_INFO, "Fallback to LLE GPU.");
-    }
 
     if ((FlagsLLE & LLE_APU) == false
         && (XbLibScan & XBSDBLIB_DSOUND) == 0) {

@@ -167,9 +167,6 @@ void ImGuiUI::DrawWidgets()
 				if (m_lle_flags & LLE_APU) {
 					flagString.append("A");
 				}
-				if (m_lle_flags & LLE_GPU) {
-					flagString.append("G");
-				}
 				if (m_lle_flags & LLE_USB) {
 					flagString.append("U");
 				}
