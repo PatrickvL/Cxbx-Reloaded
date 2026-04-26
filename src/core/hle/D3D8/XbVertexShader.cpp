@@ -582,7 +582,23 @@ void CxbxUpdateHostVertexShader()
 		g_D3D11HasActiveShaderKey = false; // Prevent stale programmable shader key from being used for input layout
 	}
 	else {
-		auto pTokens = GetCxbxVertexShaderSlotPtr(g_Xbox_VertexShader_FunctionSlots_StartAddress);
+		// Read program tokens from PGRAPH program_data (the authoritative
+		// source, written by the PFIFO puller from NV2A_VP_UPLOAD_INST).
+		// The start address comes from CSV0_C CHEOPS_PROGRAM_START, which
+		// the puller sets from NV097_SET_TRANSFORM_PROGRAM_START.
+		xbox::dword_xt *pTokens = nullptr;
+		if (g_NV2A) {
+			PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+			uint32_t startAddr = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
+				NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START);
+			if (startAddr < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH) {
+				pTokens = (xbox::dword_xt*)&pg->program_data[startAddr][0];
+			}
+		}
+		if (!pTokens) {
+			// Fallback to HLE slot buffer (g_NV2A not available)
+			pTokens = GetCxbxVertexShaderSlotPtr(g_Xbox_VertexShader_FunctionSlots_StartAddress);
+		}
 		assert(pTokens);
 
 		if (g_bUseVSInterpreter && CxbxD3D11InitVSInterpreter()) {
