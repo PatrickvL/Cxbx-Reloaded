@@ -209,6 +209,12 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
 {
     if (!pPushData || uSizeInBytes < 4) return;
 
+    // Mark this thread as a puller context so that draw callbacks
+    // (HLE_draw_state_update → CxbxUpdateNativeD3DResources) skip
+    // pfifo_flush_to_pgraph (registers are already current) and
+    // pgraph_lock acquisition (we already hold it per method dispatch).
+    CxbxSetPullerContext(true);
+
     // Ensure PGRAPH context control has channel ID set (matches EmuExecutePushBufferRaw)
     d->pgraph.regs[RI(NV_PGRAPH_CTX_CONTROL)] |= NV_PGRAPH_CTX_CONTROL_CHID;
 
@@ -293,6 +299,8 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
         state.subc = (word >> 13) & 7;
         state.mcnt = (word >> 18) & 0x7FF;
     }
+
+    CxbxSetPullerContext(false);
 }
 
 // ---------------------------------------------------------------------------
