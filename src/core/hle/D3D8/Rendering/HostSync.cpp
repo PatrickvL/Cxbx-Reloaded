@@ -34,6 +34,13 @@ void CxbxSetPullerContext(bool active) { g_bInPullerContext = active; }
 
 static std::queue<s_Xbox_Callback> g_Xbox_CallbackQueue;
 
+// Synthetic Xbox texture objects constructed from PGRAPH registers.
+// Used when SetTexture patches are disabled: the Xbox D3D runtime writes
+// texture format/offset/size to the NV2A pushbuffer, so PGRAPH has all
+// the information needed to reconstruct the Xbox texture descriptor.
+// One per texture stage; updated each draw by CxbxUpdateHostTextures.
+static xbox::X_D3DBaseTexture s_SyntheticTextures[xbox::X_D3DTS_STAGECOUNT] = {};
+
 void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
@@ -42,6 +49,8 @@ void CxbxUpdateHostTextures()
 	static ID3D11Resource*           s_CachedResource[xbox::X_D3DTS_STAGECOUNT] = {};
 	static ID3D11ShaderResourceView* s_CachedSRV[xbox::X_D3DTS_STAGECOUNT] = {};
 	static D3D11_SRV_DIMENSION       s_CachedDim[xbox::X_D3DTS_STAGECOUNT] = {};
+
+	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 
 	// Set the host texture for each stage
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
@@ -52,12 +61,8 @@ void CxbxUpdateHostTextures()
 		// We must respect this: disabled stages should not have textures bound,
 		// otherwise we may create D3D11 resource hazards (e.g., the same texture
 		// bound as both RTV and SRV) or sample stale data from a previous draw.
-		bool bTextureEnabled = true;
-		{
-			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
-			uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
-			bTextureEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
-		}
+		uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
+		bool bTextureEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
 
 		if (!bTextureEnabled) {
 			// Texture stage is disabled in PGRAPH — unbind and skip
@@ -73,53 +78,69 @@ void CxbxUpdateHostTextures()
 			continue;
 		}
 
-		// Authoritative: read the texture VRAM offset from PGRAPH
-		// registers and resolve to an Xbox texture via the side-map
-		// populated by SetTexture/SwitchTexture patches.  This covers
-		// all cases including direct pushbuffer writes and inlined LTCG
-		// code (e.g. XDK CXBFont/CXBHelp) — the Xbox D3D runtime always
-		// writes SET_TEXTURE_OFFSET to the pushbuffer, so PGRAPH has it.
-		// Fallback: when PGRAPH texOffset is 0, keep pXboxBaseTexture
-		// from g_pXbox_SetTexture[stage] (set by HLE patches).  The IVB
-		// (Begin/End) path draws synchronously before the puller thread
-		// processes the push buffer, so PGRAPH may not yet have the
-		// texture offset even though SetTexture was called.
+		// Read texture VRAM offset from PGRAPH — authoritative source.
+		// The Xbox D3D runtime always writes SET_TEXTURE_OFFSET to the
+		// pushbuffer, so PGRAPH has the physical address of the texture.
 		ID3D11Resource* pHostBaseTexture = nullptr;
 		bool bNeedRelease = false;
 		bool bIsRenderTargetTexture = false;
-		{
-			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
-			uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
-			if (texOffset != 0) {
-				// When a render target is used as a texture, the TEXOFFSET
-				// contains the surface's Data address.  The texture side-map
-				// (populated by SetTexture) may contain a DIFFERENT Xbox
-				// object than the surface side-map (populated by SetRenderTarget).
-				// GetHostBaseTexture(pXboxTexture) creates a separate D3D11
-				// texture from Xbox memory, which has stale/uninitialized data
-				// for a render target.  Instead, look up the surface side-map
-				// and use GetHostSurface to get the D3D11 texture that holds
-				// the actual rendered content (created with both RT and SRV flags).
-				auto pXboxSurface = CxbxLookupSurfaceByDataAddr(texOffset);
-				if (pXboxSurface && pXboxSurface != g_pXbox_DepthStencil) {
-					// This surface is a known render target (not depth stencil).
-					// Use the host RT texture which has the rendered content.
-					auto pHostRT = GetHostSurface(pXboxSurface, D3DUSAGE_RENDERTARGET);
-					if (pHostRT) {
-						pHostBaseTexture = pHostRT;
-						bIsRenderTargetTexture = true;
-					}
-				}
+		uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
 
-				// Fallback: use the texture side-map for non-RT textures
-				if (!bIsRenderTargetTexture) {
-					auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
-					if (pgTex != nullptr)
-						pXboxBaseTexture = pgTex;
+		if (texOffset != 0) {
+			// Check if this offset corresponds to a render target surface.
+			auto pXboxSurface = CxbxLookupSurfaceByDataAddr(texOffset);
+			if (pXboxSurface && pXboxSurface != g_pXbox_DepthStencil) {
+				auto pHostRT = GetHostSurface(pXboxSurface, D3DUSAGE_RENDERTARGET);
+				if (pHostRT) {
+					pHostBaseTexture = pHostRT;
+					bIsRenderTargetTexture = true;
 				}
 			}
-			// When texOffset == 0 and g_pXbox_SetTexture[stage] is also null,
-			// pXboxBaseTexture stays zeroptr — the texture will be unbound.
+
+			// For non-RT textures, try the texture side-map first (populated
+			// by SetTexture patches if they're enabled), then fall back to
+			// constructing a synthetic Xbox texture from PGRAPH registers.
+			if (!bIsRenderTargetTexture) {
+				auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
+				if (pgTex != nullptr) {
+					pXboxBaseTexture = pgTex;
+				} else if (pXboxBaseTexture == xbox::zeroptr) {
+					// No side-map entry and no HLE texture: build a synthetic
+					// X_D3DBaseTexture from PGRAPH registers.  The Xbox D3D
+					// runtime writes pTexture->Format directly as the
+					// NV097_SET_TEXTURE_FORMAT argument, so PGRAPH TEXFMT
+					// contains the exact Xbox Format field value.
+					auto& synth = s_SyntheticTextures[stage];
+					synth.Common = X_D3DCOMMON_TYPE_TEXTURE | 1; // type + refcount
+					synth.Data = texOffset;
+					synth.Lock = 0;
+					synth.Format = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
+
+					// Reconstruct the Size field for linear textures.
+					// Swizzled textures use Size=0 (dimensions from Format log2 bits).
+					xbox::X_D3DFORMAT xboxFmt = GetXboxPixelContainerFormat(synth.Format);
+					if (EmuXBFormatIsLinear(xboxFmt)) {
+						uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
+						uint32_t texCtl1 = pg->regs[RI(NV_PGRAPH_TEXCTL1_0 + stage * 4)];
+						uint32_t width = (texImageRect >> 16) & 0x1FFF;
+						uint32_t height = texImageRect & 0x1FFF;
+						uint32_t pitch = (texCtl1 >> 16) & 0xFFFF;
+						if (width > 0 && height > 0 && pitch >= 64)
+							synth.Size = ((width - 1) & 0xFFF)
+								| (((height - 1) & 0xFFF) << X_D3DSIZE_HEIGHT_SHIFT)
+								| ((((pitch / 64) - 1) & 0xFF) << X_D3DSIZE_PITCH_SHIFT);
+						else
+							synth.Size = 0;
+					} else {
+						synth.Size = 0;
+					}
+
+					pXboxBaseTexture = &synth;
+					// Publish so downstream code (CxbxGetTexFmtFixup,
+					// CxbxUpdateHostTextureScaling) can resolve this stage.
+					g_pXbox_SetTexture[stage] = &synth;
+				}
+			}
 		}
 
 		if (!bIsRenderTargetTexture && pXboxBaseTexture != xbox::zeroptr) {
