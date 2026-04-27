@@ -161,11 +161,13 @@ void HLE_draw_inline_elements(NV2AState *d)
 	unsigned int uiIndexCount = pg->inline_elements_length;
 	CxbxDrawContext DrawContext = {};
 
-		DrawContext.XboxPrimitiveType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
+	DrawContext.XboxPrimitiveType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
 	DrawContext.dwVertexCount = uiIndexCount;
 	DrawContext.pXboxIndexData = d->pgraph.inline_elements;
 
-	CxbxDrawIndexed(DrawContext);
+	CxbxD3D11IABypassDraw(DrawContext);
+	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(
+		DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 }
 
 void HLE_draw_state_update(NV2AState *d)

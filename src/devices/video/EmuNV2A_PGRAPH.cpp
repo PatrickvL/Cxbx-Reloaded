@@ -1368,42 +1368,14 @@ void pgraph_handle_method(NV2AState *d,
 			pgraph_set_surface_dirty(pg, true, depth_test || stencil_test);
 			break;
 		}
-		CASE_4(NV097_SET_TEXTURE_FORMAT, 64): {
-			slot = (method - NV097_SET_TEXTURE_FORMAT) / 64;
-
-			bool dma_select =
-				GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_CONTEXT_DMA) == 2;
-			bool cubemap =
-				parameter & NV097_SET_TEXTURE_FORMAT_CUBEMAP_ENABLE;
-			bool border_source =
-				parameter & NV097_SET_TEXTURE_FORMAT_BORDER_SOURCE;
-			unsigned int dimensionality =
-				GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_DIMENSIONALITY);
-			unsigned int color_format =
-				GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_COLOR);
-			unsigned int levels =
-				GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_MIPMAP_LEVELS);
-			unsigned int log_width =
-				GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_BASE_SIZE_U);
-			unsigned int log_height =
-				GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_BASE_SIZE_V);
-			unsigned int log_depth =
-				GET_MASK(parameter, NV097_SET_TEXTURE_FORMAT_BASE_SIZE_P);
-
-			uint32_t *reg = &pg->regs[RI(NV_PGRAPH_TEXFMT0 + slot * 4)];
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_CONTEXT_DMA, dma_select);
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_CUBEMAPENABLE, cubemap);
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_BORDER_SOURCE, border_source);
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_DIMENSIONALITY, dimensionality);
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_COLOR, color_format);
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_MIPMAP_LEVELS, levels);
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_BASE_SIZE_U, log_width);
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_BASE_SIZE_V, log_height);
-			SET_MASK(*reg, NV_PGRAPH_TEXFMT0_BASE_SIZE_P, log_depth);
-
-			// Also wrote: pg->texture_dirty[slot] = true; (field deleted)
+		// NV097_SET_TEXTURE_FORMAT: fully handled by nv097_method_table
+		// (NV097_REG_DIRECT_RANGE does a full 32-bit copy of the NV097
+		// parameter into NV_PGRAPH_TEXFMT0+slot*4).  The Xbox D3D runtime
+		// writes pTexture->Format directly as the method argument, so the
+		// register value IS the Xbox Format DWORD — bit-for-bit identical.
+		// No side effects needed.
+		CASE_4(NV097_SET_TEXTURE_FORMAT, 64):
 			break;
-		}
 		CASE_4(NV097_SET_TEXTURE_PALETTE, 64): {
 			slot = (method - NV097_SET_TEXTURE_PALETTE) / 64;
 
