@@ -387,7 +387,6 @@ inline void SetHostCubeTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture
 // HostRender.cpp
 float GetZScaleForPixelContainer(xbox::X_D3DPixelContainer* pSurface);
 bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, ID3D11Texture2D* pHostRenderTarget = nullptr);
-void ValidateRenderTargetDimensions(DWORD HostRenderTarget_Width, DWORD HostRenderTarget_Height, DWORD XboxRenderTarget_Width, DWORD XboxRenderTarget_Height);
 void UpdateFixedFunctionVertexShaderState();
 void CxbxUpdateHostViewPortOffsetAndScaleConstants();
 

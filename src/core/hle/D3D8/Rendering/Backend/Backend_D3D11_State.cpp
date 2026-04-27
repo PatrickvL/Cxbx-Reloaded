@@ -577,6 +577,108 @@ void CxbxD3D11ApplyDirtyStates()
 static xbox::addr_xt g_LastBoundColorOffset = ~0u;
 static xbox::addr_xt g_LastBoundZetaOffset  = ~0u;
 
+// Map NV097 surface color format to DXGI format for host render target creation
+static DXGI_FORMAT NV097ColorFormatToDXGI(unsigned int colorFormat)
+{
+	switch (colorFormat) {
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_Z1R5G5B5:
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_X1R5G5B5_O1R5G5B5:
+		return DXGI_FORMAT_B5G5R5A1_UNORM;
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_R5G6B5:
+		return DXGI_FORMAT_B5G6R5_UNORM;
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_Z8R8G8B8:
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_X8R8G8B8_O8R8G8B8:
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_X1A7R8G8B8_Z1A7R8G8B8:
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_X1A7R8G8B8_O1A7R8G8B8:
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_A8R8G8B8:
+		return DXGI_FORMAT_B8G8R8A8_UNORM;
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_B8:
+		return DXGI_FORMAT_R8_UNORM;
+	case NV097_SET_SURFACE_FORMAT_COLOR_LE_G8B8:
+		return DXGI_FORMAT_R8G8_UNORM;
+	default:
+		return DXGI_FORMAT_B8G8R8A8_UNORM;
+	}
+}
+
+// Map NV097 surface zeta format to DXGI format for host depth stencil creation
+static DXGI_FORMAT NV097ZetaFormatToDXGI(unsigned int zetaFormat)
+{
+	switch (zetaFormat) {
+	case NV097_SET_SURFACE_FORMAT_ZETA_Z16:
+		return DXGI_FORMAT_D16_UNORM;
+	case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8:
+	default:
+		return DXGI_FORMAT_D24_UNORM_S8_UINT;
+	}
+}
+
+// Cache key for PGRAPH-created render targets / depth stencils
+struct PgraphRTKey {
+	xbox::addr_xt offset;
+	DXGI_FORMAT format;
+	UINT width;
+	UINT height;
+
+	bool operator==(const PgraphRTKey& other) const {
+		return offset == other.offset && format == other.format
+			&& width == other.width && height == other.height;
+	}
+};
+struct PgraphRTKeyHash {
+	size_t operator()(const PgraphRTKey& k) const {
+		size_t h = std::hash<uint32_t>()(k.offset);
+		h ^= std::hash<uint32_t>()(k.format) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<uint32_t>()(k.width)  + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<uint32_t>()(k.height) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		return h;
+	}
+};
+static std::unordered_map<PgraphRTKey, Microsoft::WRL::ComPtr<ID3D11Texture2D>, PgraphRTKeyHash> g_PgraphRTCache;
+
+// Create a D3D11 render target or depth stencil directly from PGRAPH surface state
+static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
+	xbox::addr_xt offset, DXGI_FORMAT format, UINT width, UINT height, bool isDepthStencil)
+{
+	UINT hostWidth = width * g_RenderUpscaleFactor;
+	UINT hostHeight = height * g_RenderUpscaleFactor;
+
+	PgraphRTKey key = { offset, format, hostWidth, hostHeight };
+	auto it = g_PgraphRTCache.find(key);
+	if (it != g_PgraphRTCache.end())
+		return it->second.Get();
+
+	D3D11_TEXTURE2D_DESC desc = {};
+	desc.Width = hostWidth;
+	desc.Height = hostHeight;
+	desc.MipLevels = 1;
+	desc.ArraySize = 1;
+	desc.Format = format;
+	desc.SampleDesc.Count = 1;
+	desc.SampleDesc.Quality = 0;
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.CPUAccessFlags = 0;
+	desc.MiscFlags = 0;
+
+	if (isDepthStencil) {
+		desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	} else {
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+	}
+
+	Microsoft::WRL::ComPtr<ID3D11Texture2D> pTexture;
+	HRESULT hr = g_pD3DDevice->CreateTexture2D(&desc, nullptr, pTexture.GetAddressOf());
+	if (FAILED(hr)) {
+		EmuLog(LOG_LEVEL::WARNING, "CreateHostSurfaceFromPGRAPH failed (0x%08X) %ux%u fmt=%u",
+			hr, hostWidth, hostHeight, format);
+		return nullptr;
+	}
+
+	auto* pResult = pTexture.Get();
+	g_PgraphRTCache[key] = std::move(pTexture);
+	return pResult;
+}
+
 void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 {
 	xbox::addr_xt colorOffset = pg->surface_color.offset;
@@ -586,15 +688,21 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 	if (colorOffset == g_LastBoundColorOffset && zetaOffset == g_LastBoundZetaOffset)
 		return;
 
+	UINT rtWidth = pg->surface_shape.clip_width;
+	UINT rtHeight = pg->surface_shape.clip_height;
+
 	// Color render target
 	if (colorOffset != g_LastBoundColorOffset && colorOffset != 0) {
+		ID3D11Texture2D *pHostRT = nullptr;
+		UINT mipSlice = 0;
+		UINT faceIndex = 0;
+
+		// Try the side-map first (populated by CreateDevice_End for the backbuffer)
 		xbox::X_D3DSurface *pXboxRT = CxbxLookupSurfaceByDataAddr(colorOffset);
 		if (pXboxRT) {
-			ID3D11Texture2D *pHostRT = GetHostSurface(pXboxRT, D3DUSAGE_RENDERTARGET);
+			pHostRT = GetHostSurface(pXboxRT, D3DUSAGE_RENDERTARGET);
 
 			// Determine mip level and cubemap face for surfaces that are children of a texture
-			UINT mipSlice = 0;
-			UINT faceIndex = 0;
 			xbox::X_D3DBaseTexture* pParent = pXboxRT->Parent;
 			if (pParent != xbox::zeroptr && pXboxRT->Format == pParent->Format) {
 				int face = 0;
@@ -607,10 +715,14 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 					}
 				}
 			}
+		} else {
+			// No Xbox surface registered — create host RT directly from PGRAPH state
+			DXGI_FORMAT colorFmt = NV097ColorFormatToDXGI(pg->surface_shape.color_format);
+			pHostRT = CreateHostSurfaceFromPGRAPH(colorOffset, colorFmt, rtWidth, rtHeight, false);
+		}
 
-			if (pHostRT) {
-				CxbxSetRenderTarget(pHostRT, mipSlice, faceIndex);
-			}
+		if (pHostRT) {
+			CxbxSetRenderTarget(pHostRT, mipSlice, faceIndex);
 		}
 		g_LastBoundColorOffset = colorOffset;
 	}
@@ -618,10 +730,20 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 	// Depth/stencil target
 	if (zetaOffset != g_LastBoundZetaOffset) {
 		if (zetaOffset != 0) {
+			ID3D11Texture2D *pHostDS = nullptr;
+
 			xbox::X_D3DSurface *pXboxDS = CxbxLookupSurfaceByDataAddr(zetaOffset);
 			if (pXboxDS) {
-				ID3D11Texture2D *pHostDS = GetHostSurface(pXboxDS, D3DUSAGE_DEPTHSTENCIL);
+				pHostDS = GetHostSurface(pXboxDS, D3DUSAGE_DEPTHSTENCIL);
+			} else {
+				// No Xbox surface registered — create host DS directly from PGRAPH state
+				DXGI_FORMAT zetaFmt = NV097ZetaFormatToDXGI(pg->surface_shape.zeta_format);
+				pHostDS = CreateHostSurfaceFromPGRAPH(zetaOffset, zetaFmt, rtWidth, rtHeight, true);
+			}
+
+			if (pHostDS) {
 				CxbxSetDepthStencilSurface(pHostDS);
+				UpdateDepthStencilFlags(pHostDS);
 			}
 		} else {
 			CxbxSetDepthStencilSurface(nullptr);

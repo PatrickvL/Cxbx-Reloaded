@@ -427,23 +427,10 @@ DWORD ScaleDWORD(DWORD Value, DWORD FromMax, DWORD ToMax)
 	return (DWORD)tmp;
 }
 
-void ValidateRenderTargetDimensions(DWORD HostRenderTarget_Width, DWORD HostRenderTarget_Height, DWORD XboxRenderTarget_Width, DWORD XboxRenderTarget_Height)
-{
-   	// This operation is often used to change the display resolution without calling SetRenderTarget!
-   	// This works by updating the underlying Width & Height of the Xbox surface, without reallocating the data
-   	// Because of this, we need to validate that the associated host resource still matches the dimensions of the Xbox Render Target
-   	// If not, we must force them to be re-created
-   	// TEST CASE: Chihiro Factory Test Program
-   	DWORD XboxRenderTarget_Width_Scaled = XboxRenderTarget_Width * g_RenderUpscaleFactor;
-   	DWORD XboxRenderTarget_Height_Scaled = XboxRenderTarget_Height * g_RenderUpscaleFactor;
-   	if (HostRenderTarget_Width != XboxRenderTarget_Width_Scaled || HostRenderTarget_Height != XboxRenderTarget_Height_Scaled) {
-   	   	LOG_TEST_CASE("Existing RenderTarget width/height changed");
-
-   	   	FreeHostResource(GetHostResourceKey(g_pXbox_RenderTarget)); CxbxSetRenderTarget(GetHostSurface(g_pXbox_RenderTarget, D3DUSAGE_RENDERTARGET));
-		FreeHostResource(GetHostResourceKey(g_pXbox_DepthStencil));
-		CxbxSetDepthStencilSurface(GetHostSurface(g_pXbox_DepthStencil, D3DUSAGE_DEPTHSTENCIL));
-   	}
-}
+// ValidateRenderTargetDimensions removed: was dead code (never called),
+// and its g_pXbox_RenderTarget/DepthStencil reads are now obsolete.
+// PGRAPH RT path (CxbxD3D11UpdateRenderTargetFromPGRAPH) handles dimension changes
+// by creating host resources from current PGRAPH surface_shape clip dimensions.
 
 float GetZScaleForPixelContainer(xbox::X_D3DPixelContainer* pSurface)
 {

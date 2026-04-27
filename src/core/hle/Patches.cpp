@@ -199,6 +199,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// already writes D3D__RenderState[] before calling SetRenderState_Simple, so this patch
 	// was only doing a redundant write. The pushbuffer method goes to PGRAPH via the puller.
 	//PATCH_ENTRY("D3DDevice_SetRenderState_Simple", xbox::EMUPATCH(D3DDevice_SetRenderState_Simple), PATCH_HLE_D3D),
+	// CxbxImpl_SetRenderTarget now only does side-map registration + global tracking.
+	// Host resource creation is handled by CxbxD3D11UpdateRenderTargetFromPGRAPH.
 	PATCH_ENTRY("D3DDevice_SetRenderTarget", xbox::EMUPATCH(D3DDevice_SetRenderTarget), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetRenderTargetFast", xbox::EMUPATCH(D3DDevice_SetRenderTargetFast), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2", xbox::EMUPATCH(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2), PATCH_HLE_D3D),

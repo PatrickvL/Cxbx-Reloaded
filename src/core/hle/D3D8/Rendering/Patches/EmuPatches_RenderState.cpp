@@ -308,15 +308,9 @@ void CxbxImpl_SetRenderTarget
 	if (pNewZStencil != xbox::zeroptr)
 		CxbxRegisterSurfaceByDataAddr(pNewZStencil->Data, pNewZStencil);
 
-	// Host D3D11 render target binding is now handled by
-	// CxbxD3D11UpdateRenderTargetFromPGRAPH, called before each draw.
-	// We still need to create the host resource so it's ready when PGRAPH binds.
-	if (pRenderTarget != xbox::zeroptr)
-		GetHostSurface(pRenderTarget, D3DUSAGE_RENDERTARGET);
-	if (g_pXbox_DepthStencil != xbox::zeroptr) {
-		auto pHostDS = GetHostSurface(g_pXbox_DepthStencil, D3DUSAGE_DEPTHSTENCIL);
-		UpdateDepthStencilFlags(pHostDS);
-	}
+	// Host D3D11 render target and depth stencil creation + binding
+	// is now fully handled by CxbxD3D11UpdateRenderTargetFromPGRAPH,
+	// which creates host resources directly from PGRAPH surface state.
 }
 
 // ******************************************************************
