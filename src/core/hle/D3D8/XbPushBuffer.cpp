@@ -367,9 +367,6 @@ extern void EmuExecutePushBufferRaw
 
 
 	// DMA Pusher state -- see https://envytools.readthedocs.io/en/latest/hw/fifo/dma-pusher.html#pusher-state
-#if 0
-	static xbox::addr_xt dma_pushbuffer; // the pushbuffer and IB DMA object
-#endif
 	uint32_t *dma_limit; // pushbuffer size limit
 	uint32_t *dma_put; // pushbuffer current end address
 	uint32_t *dma_get; //pushbuffer current read address
@@ -418,13 +415,7 @@ extern void EmuExecutePushBufferRaw
 		if (dma_state.mcnt) {
 			/* data word of methods command */
 			data_shadow = word;
-#if 0
-			if (!PULLER_KNOWS_MTHD(dma_state.mthd)) {
-				throw DMA_PUSHER(INVALID_MTHD);				
-				return; // For now, don't even attempt to run through
-			}
 
-#endif
 			CACHE_PUSH(dma_state.subc, dma_state.mthd, word, dma_state.ni);
 			if (!dma_state.ni) {
 				dma_state.mthd++;

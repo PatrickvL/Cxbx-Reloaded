@@ -401,17 +401,6 @@ ID3D11Texture3D *GetHostVolumeTexture(xbox::X_D3DResource *pXboxResource, int iT
 
 int XboxD3DPaletteSizeToBytes(const xbox::X_D3DPALETTESIZE Size)
 {
-/*
-	static int lk[4] =
-	{
-		256 * sizeof(D3DCOLOR),    // D3DPALETTE_256
-		128 * sizeof(D3DCOLOR),    // D3DPALETTE_128
-		64 * sizeof(D3DCOLOR),     // D3DPALETTE_64
-		32 * sizeof(D3DCOLOR)      // D3DPALETTE_32
-	};
-
-	return lk[Size];
-*/
 	return (256 * sizeof(D3DCOLOR)) >> (unsigned)Size;
 }
 
@@ -436,15 +425,6 @@ int GetD3DResourceRefCount(ID3D11Resource *EmuResource)
 
 	return 0;
 }
-
-/*
-xbox::X_D3DSurface *EmuNewD3DSurface()
-{
-	xbox::X_D3DSurface *result = (xbox::X_D3DSurface *)xbox::ExAllocatePool(sizeof(xbox::X_D3DSurface));
-	result->Common = X_D3DCOMMON_D3DCREATED | X_D3DCOMMON_TYPE_SURFACE | 1; // Set refcount to 1
-	return result;
-}
-*/
 
 unsigned int CxbxGetPixelContainerDepth
 (

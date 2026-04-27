@@ -57,16 +57,6 @@ void Direct3D_CreateDevice_End
 	const xbox::X_D3DPRESENT_PARAMETERS     *pPresentationParameters
 )
 {
-#if 0 // Unused :
-   	// Set g_Xbox_D3DDevice to point to the Xbox D3D Device
-   	auto it = g_SymbolAddresses.find("D3D_g_pDevice");
-   	if (it != g_SymbolAddresses.end()) {
-   	   	g_Xbox_D3DDevice = (DWORD*)it->second;
-   	}
-   	else {
-   	   	EmuLog(LOG_LEVEL::ERROR2, "D3D_g_pDevice was not found!");
-   	}
-#endif
 
    	UpdateHostBackBufferDesc();
    	SetAspectRatioScale(pPresentationParameters);

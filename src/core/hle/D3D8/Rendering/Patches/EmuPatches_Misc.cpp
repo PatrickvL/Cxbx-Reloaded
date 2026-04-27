@@ -302,77 +302,25 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_UpdateOverlay_16
 	}
 }
 
-// ******************************************************************
-// * patch: D3DDevice_GetOverlayUpdateStatus
-// ******************************************************************
-xbox::bool_xt WINAPI xbox::EMUPATCH(D3DDevice_GetOverlayUpdateStatus)()
-{
-	LOG_FUNC();    
+// D3DDevice_GetOverlayUpdateStatus — disabled.
+// Hardcoded TRUE stub; Xbox native overlay check is correct.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	LOG_UNIMPLEMENTED();
+// D3DDevice_InsertFence — disabled.
+// Fake 0x8000BEEF stub; Xbox native fence via NV2A reference counter.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-   	// TODO: Actually check for update status
-   	return TRUE;
-}
+// D3DDevice_IsFencePending — disabled.
+// Hardcoded FALSE stub; Xbox native fence check via NV2A.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_InsertFence
-// ******************************************************************
-xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_InsertFence)()
-{
-	LOG_FUNC();
+// D3DDevice_BlockOnFence — disabled.
+// Empty stub; Xbox native fence wait via NV2A.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-   	// TODO: Actually implement this
-   	dword_xt dwRet = 0x8000BEEF;
-
-	LOG_UNIMPLEMENTED();
-
-   	return dwRet;
-}
-
-// ******************************************************************
-// * patch: D3DDevice_IsFencePending
-// ******************************************************************
-xbox::bool_xt WINAPI xbox::EMUPATCH(D3DDevice_IsFencePending)
-(
-   	dword_xt Fence
-)
-{
-	LOG_FUNC_ONE_ARG(Fence);
-
-	// TODO: Implement
-	LOG_UNIMPLEMENTED();
-
-	return FALSE;
-}
-
-// ******************************************************************
-// * patch: D3DDevice_BlockOnFence
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BlockOnFence)
-(
-   	dword_xt Fence
-)
-{
-	LOG_FUNC_ONE_ARG(Fence);
-
-   	// TODO: Implement
-	LOG_UNIMPLEMENTED();
-}
-
-// ******************************************************************
-// * patch: D3DResource_BlockUntilNotBusy
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DResource_BlockUntilNotBusy)
-(
-   	X_D3DResource *pThis
-)
-{
-	LOG_FUNC_ONE_ARG(pThis);
-
-   	// TODO: Implement
-	LOG_UNIMPLEMENTED();
-}
+// D3DResource_BlockUntilNotBusy — disabled.
+// Empty stub; Xbox native code polls resource state.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_InsertCallback
@@ -494,71 +442,19 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetModelView)
 	return S_OK;
 }
 
-// ******************************************************************
-// * patch: D3D_SetCommonDebugRegisters
-// ******************************************************************
-void WINAPI xbox::EMUPATCH(D3D_SetCommonDebugRegisters)()
-{
-	LOG_FUNC();
+// D3D_SetCommonDebugRegisters — disabled.
+// Empty LOG_UNIMPLEMENTED stub; Xbox native code writes harmless debug regs.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	// NOTE: I added this because I was too lazy to deal with emulating certain render
-	// states that use it.  
+// D3DDevice_IsBusy — disabled.
+// Hardcoded FALSE stub; Xbox native version checks NV_PGRAPH_STATUS.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	LOG_UNIMPLEMENTED();
+// D3D_BlockOnTime — disabled.
+// Empty LOG_UNIMPLEMENTED stub; Xbox native code uses NV2A time fence.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-}
-
-// ******************************************************************
-// * patch: D3DDevice_IsBusy
-// ******************************************************************
-xbox::bool_xt WINAPI xbox::EMUPATCH(D3DDevice_IsBusy)()
-{
-		LOG_FUNC();
-
-	// NOTE: This function returns FALSE when the NV2A FIFO is empty/complete, or NV_PGRAPH_STATUS = 0
-	// Otherwise, it returns true.
-
-	return FALSE;
-}
-
-// ******************************************************************
-// * patch: D3D_BlockOnTime
-// ******************************************************************
-void WINAPI xbox::EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Time)
-		LOG_FUNC_ARG(MakeSpace)
-		LOG_FUNC_END;
-
-	// NOTE: This function is not meant to be emulated.  Just use it to find out
-	// the function that is calling it, and emulate that instead!!!  If necessary,
-	// create an XRef...
-
-	//__asm int 3;
-
-	LOG_UNIMPLEMENTED();
-}
-
-// LTCG specific D3D_BlockOnTime function
-// This uses a custom calling convention where parameter is passed in EAX
-// Test case: Burnout 3
-__declspec(naked) void WINAPI xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int MakeSpace)
-{
-	xbox::dword_xt Time;
-	__asm {
-		LTCG_PROLOGUE
-		mov  Time, eax
-	}
-
-	// LOG_FORWARD requires unwinding, so carry on without it
-	EMUPATCH(D3D_BlockOnTime)(Time, MakeSpace);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret  4
-	}
-}
+// D3D_BlockOnTime_4__LTCG_eax1 — disabled (same as D3D_BlockOnTime).
 
 // ******************************************************************
 // * patch: D3D_DestroyResource

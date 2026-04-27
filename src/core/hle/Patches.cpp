@@ -73,7 +73,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_BeginPushBuffer", xbox::EMUPATCH(D3DDevice_BeginPushBuffer), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BeginPushBuffer_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BeginVisibilityTest", xbox::EMUPATCH(D3DDevice_BeginVisibilityTest), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
+	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
+	//PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
     PATCH_ENTRY("D3DDevice_CopyRects", xbox::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
@@ -107,7 +108,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_GetGammaRamp", xbox::EMUPATCH(D3DDevice_GetGammaRamp), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetMaterial", xbox::EMUPATCH(D3DDevice_GetMaterial), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetModelView", xbox::EMUPATCH(D3DDevice_GetModelView), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetOverlayUpdateStatus", xbox::EMUPATCH(D3DDevice_GetOverlayUpdateStatus), PATCH_HLE_D3D),
+	// Disabled: hardcoded TRUE stub, Xbox native overlay check is correct
+	//PATCH_ENTRY("D3DDevice_GetOverlayUpdateStatus", xbox::EMUPATCH(D3DDevice_GetOverlayUpdateStatus), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetProjectionViewportMatrix", xbox::EMUPATCH(D3DDevice_GetProjectionViewportMatrix), PATCH_HLE_D3D),
 	// Disabled: g_Xbox_VertexShaderConstantMode has no render-thread readers
 	//PATCH_ENTRY("D3DDevice_GetShaderConstantMode", xbox::EMUPATCH(D3DDevice_GetShaderConstantMode), PATCH_HLE_D3D),
@@ -123,9 +125,12 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_GetViewportOffsetAndScale_0__LTCG_edx1_ecx2", xbox::EMUPATCH(D3DDevice_GetViewportOffsetAndScale_0__LTCG_edx1_ecx2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetVisibilityTestResult", xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_InsertCallback", xbox::EMUPATCH(D3DDevice_InsertCallback), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_InsertFence", xbox::EMUPATCH(D3DDevice_InsertFence), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_IsBusy", xbox::EMUPATCH(D3DDevice_IsBusy), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_IsFencePending", xbox::EMUPATCH(D3DDevice_IsFencePending), PATCH_HLE_D3D),
+	// Disabled: fake 0x8000BEEF stub, Xbox native fence via NV2A reference counter
+	//PATCH_ENTRY("D3DDevice_InsertFence", xbox::EMUPATCH(D3DDevice_InsertFence), PATCH_HLE_D3D),
+	// Disabled: hardcoded FALSE stub, Xbox native fence check via NV2A
+	//PATCH_ENTRY("D3DDevice_IsBusy", xbox::EMUPATCH(D3DDevice_IsBusy), PATCH_HLE_D3D),
+	// Disabled: hardcoded FALSE stub, Xbox native fence check via NV2A
+	//PATCH_ENTRY("D3DDevice_IsFencePending", xbox::EMUPATCH(D3DDevice_IsFencePending), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_LightEnable", xbox::EMUPATCH(D3DDevice_LightEnable), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_LightEnable_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_LightEnable_4__LTCG_eax1), PATCH_HLE_D3D),
 	// Disabled: trampoline-only after CxbxImpl_LoadVertexShader removal.
@@ -237,15 +242,18 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_SwitchTexture", xbox::EMUPATCH(D3DDevice_SwitchTexture), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_UpdateOverlay", xbox::EMUPATCH(D3DDevice_UpdateOverlay), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_UpdateOverlay_16__LTCG_eax2", xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DResource_BlockUntilNotBusy", xbox::EMUPATCH(D3DResource_BlockUntilNotBusy), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
+	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code polls resource state
+	//PATCH_ENTRY("D3DResource_BlockUntilNotBusy", xbox::EMUPATCH(D3DResource_BlockUntilNotBusy), PATCH_HLE_D3D),
+	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code uses NV2A time fence
+	//PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_CommonSetRenderTarget", xbox::EMUPATCH(D3D_CommonSetRenderTarget), PATCH_HLE_D3D),
     PATCH_ENTRY("D3D_DestroyResource", xbox::EMUPATCH(D3D_DestroyResource), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_DestroyResource_0__LTCG_edi1", xbox::EMUPATCH(D3D_DestroyResource_0__LTCG_edi1), PATCH_HLE_D3D),
 	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful
 	//PATCH_ENTRY("D3D_LazySetPointParams", xbox::EMUPATCH(D3D_LazySetPointParams), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3D_SetCommonDebugRegisters", xbox::EMUPATCH(D3D_SetCommonDebugRegisters), PATCH_HLE_D3D),
+	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
+	//PATCH_ENTRY("D3D_SetCommonDebugRegisters", xbox::EMUPATCH(D3D_SetCommonDebugRegisters), PATCH_HLE_D3D),
 	PATCH_ENTRY("Direct3D_CreateDevice", xbox::EMUPATCH(Direct3D_CreateDevice), PATCH_HLE_D3D),
 	PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ebx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ebx6), PATCH_HLE_D3D),
 	PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ecx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ecx6), PATCH_HLE_D3D),

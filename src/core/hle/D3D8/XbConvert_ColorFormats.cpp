@@ -115,13 +115,6 @@
 // Note : Input values *must not* exceed the number of significant input bits.
 // Guarding against that is caller's responsibility.
 
-#if 0 // unused
-inline uint8_t u_expand7(const uint8_t value)
-{
-	return (value << 1) | (value >> 6);
-}
-#endif
-
 inline uint8_t u_expand6_top(const uint8_t value)
 {
 	return value | (value >> 6);
@@ -151,18 +144,6 @@ inline uint8_t u_expand4(const uint8_t value)
 {
 	return (value << 4) | value;
 }
-
-#if 0 // unused
-inline uint8_t u_expand3(const uint8_t value)
-{
-	return (value << 5) | (value << 2) || (value >> 1);
-}
-
-inline uint8_t u_expand2(const uint8_t value)
-{
-	return (value << 6) | (value << 4) || (value << 2) | value;
-}
-#endif
 
 inline uint8_t u_expand1(const uint8_t value)
 {

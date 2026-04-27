@@ -4898,3 +4898,103 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetPixelShader_0
    	   	ret
    	}
 }
+
+// ================================================================
+// Disabled stub patches — moved from EmuPatches_Misc.cpp
+// These intercepted Xbox D3D calls but did nothing useful (LOG_UNIMPLEMENTED stubs).
+// Xbox native implementations use NV2A FIFO/PGRAPH which is now functional.
+// ================================================================
+
+// ******************************************************************
+// * patch: D3DDevice_GetOverlayUpdateStatus
+// ******************************************************************
+xbox::bool_xt WINAPI xbox::EMUPATCH(D3DDevice_GetOverlayUpdateStatus)()
+{
+	LOG_FUNC();    
+	LOG_UNIMPLEMENTED();
+   	return TRUE;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_InsertFence
+// ******************************************************************
+xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_InsertFence)()
+{
+	LOG_FUNC();
+   	dword_xt dwRet = 0x8000BEEF;
+	LOG_UNIMPLEMENTED();
+   	return dwRet;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_IsFencePending
+// ******************************************************************
+xbox::bool_xt WINAPI xbox::EMUPATCH(D3DDevice_IsFencePending)(dword_xt Fence)
+{
+	LOG_FUNC_ONE_ARG(Fence);
+	LOG_UNIMPLEMENTED();
+	return FALSE;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_BlockOnFence
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BlockOnFence)(dword_xt Fence)
+{
+	LOG_FUNC_ONE_ARG(Fence);
+	LOG_UNIMPLEMENTED();
+}
+
+// ******************************************************************
+// * patch: D3DResource_BlockUntilNotBusy
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DResource_BlockUntilNotBusy)(X_D3DResource *pThis)
+{
+	LOG_FUNC_ONE_ARG(pThis);
+	LOG_UNIMPLEMENTED();
+}
+
+// ******************************************************************
+// * patch: D3D_SetCommonDebugRegisters
+// ******************************************************************
+void WINAPI xbox::EMUPATCH(D3D_SetCommonDebugRegisters)()
+{
+	LOG_FUNC();
+	LOG_UNIMPLEMENTED();
+}
+
+// ******************************************************************
+// * patch: D3DDevice_IsBusy
+// ******************************************************************
+xbox::bool_xt WINAPI xbox::EMUPATCH(D3DDevice_IsBusy)()
+{
+	LOG_FUNC();
+	return FALSE;
+}
+
+// ******************************************************************
+// * patch: D3D_BlockOnTime
+// ******************************************************************
+void WINAPI xbox::EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Time)
+		LOG_FUNC_ARG(MakeSpace)
+		LOG_FUNC_END;
+	LOG_UNIMPLEMENTED();
+}
+
+// LTCG specific D3D_BlockOnTime function
+__declspec(naked) void WINAPI xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int MakeSpace)
+{
+	xbox::dword_xt Time;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Time, eax
+	}
+	EMUPATCH(D3D_BlockOnTime)(Time, MakeSpace);
+	__asm {
+		LTCG_EPILOGUE
+		ret  4
+	}
+}
