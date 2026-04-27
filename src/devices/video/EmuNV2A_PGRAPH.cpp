@@ -56,6 +56,124 @@
 // Stub: surface management was GL-specific, now a no-op until DX11 backend takes over
 static inline void pgraph_update_surface(NV2AState *, bool, bool, bool) {}
 
+// ---- NV097 method trace infrastructure ----
+// Scans push buffer commands written by Xbox D3D API trampolines.
+// pgraph_trace_begin/end bracket a trampoline call; pgraph_trace_log_pushbuffer
+// decodes the NV097 commands that were written between old/new pPut positions.
+static FILE *pgraph_trace_file = nullptr;
+static int pgraph_trace_count = 0;
+static const int PGRAPH_TRACE_MAX = 50000; // Max trace entries
+
+extern const char *NV2AMethodToString(DWORD dwMethod); // implemented in PushBuffer.cpp
+
+// Cache the Xbox CDevice pPut pointer once, used by all trace calls
+static uint32_t **pgraph_trace_pDeviceObj = nullptr;
+static bool pgraph_trace_device_looked_up = false;
+
+static void pgraph_trace_ensure_device()
+{
+	if (pgraph_trace_device_looked_up) return;
+	pgraph_trace_device_looked_up = true;
+	void *pDeviceGlobal = GetXboxSymbolPointer("D3D_g_pDevice");
+	if (pDeviceGlobal && !IsBadReadPtr(pDeviceGlobal, 4)) {
+		uint32_t devAddr = *(uint32_t*)pDeviceGlobal;
+		if (devAddr && !IsBadReadPtr((void*)devAddr, 4)) {
+			pgraph_trace_pDeviceObj = (uint32_t**)devAddr;
+		}
+	}
+}
+
+static void pgraph_trace_ensure_file()
+{
+	if (!pgraph_trace_file) {
+		pgraph_trace_file = fopen("pgraph_trace.txt", "w");
+	}
+}
+
+uint32_t pgraph_trace_read_pput()
+{
+	pgraph_trace_ensure_device();
+	if (!pgraph_trace_pDeviceObj) return 0;
+	// CDevice+0x00 = pPut (virtual address in contiguous Xbox memory)
+	return (uint32_t)(uintptr_t)pgraph_trace_pDeviceObj[0];
+}
+
+void pgraph_trace_log_pushbuffer(const char *tag, uint32_t pPut_before, uint32_t pPut_after)
+{
+	if (pgraph_trace_count >= PGRAPH_TRACE_MAX) return;
+	if (pPut_before == pPut_after) return; // No commands written
+	pgraph_trace_ensure_file();
+	if (!pgraph_trace_file) return;
+
+	fprintf(pgraph_trace_file, ">>> %s\n", tag);
+
+	// pPut values are virtual addresses in Xbox contiguous memory (e.g. 0x83Fxxxxx)
+	// They can be read as host pointers directly (contiguous memory is identity-mapped)
+	const uint32_t *pStart = (const uint32_t*)(uintptr_t)pPut_before;
+	const uint32_t *pEnd   = (const uint32_t*)(uintptr_t)pPut_after;
+
+	// Handle ring buffer wrap-around: for now just scan forward
+	// (most API calls write small amounts, won't wrap)
+	if (pEnd <= pStart) {
+		fprintf(pgraph_trace_file, "  (wrap or empty: before=0x%08X after=0x%08X)\n",
+			pPut_before, pPut_after);
+		fprintf(pgraph_trace_file, "<<< %s\n", tag);
+		fflush(pgraph_trace_file);
+		return;
+	}
+
+	const uint32_t *p = pStart;
+	while (p < pEnd && pgraph_trace_count < PGRAPH_TRACE_MAX) {
+		uint32_t cmd = *p;
+
+		// Check for PUSH_TYPE: 0 = method submission, non-zero = jump/call
+		DWORD pushType = PUSH_TYPE(cmd);
+		if (pushType != 0) {
+			// Jump/call command — skip it for tracing
+			fprintf(pgraph_trace_file, "  [JUMP/CALL 0x%08X]\n", cmd);
+			p++;
+			pgraph_trace_count++;
+			continue;
+		}
+
+		DWORD dwMethod, dwSubCh, dwCount;
+		D3DPUSH_DECODE(cmd, dwMethod, dwSubCh, dwCount);
+
+		// Non-incrementing flag: bit 30 means all parameters go to same method
+		bool bNonInc = (cmd & 0x40000000) != 0;
+
+		for (DWORD i = 0; i < dwCount && (p + 1 + i) < pEnd; i++) {
+			uint32_t param = *(p + 1 + i);
+			DWORD meth = bNonInc ? dwMethod : (dwMethod + i * 4);
+			const char *name = NV2AMethodToString(meth);
+			if (name) {
+				fprintf(pgraph_trace_file, "  0x%04X %-40s = 0x%08X\n", meth, name, param);
+			} else {
+				fprintf(pgraph_trace_file, "  0x%04X (subchan=%d)%*s = 0x%08X\n",
+					meth, dwSubCh, 32, "", param);
+			}
+			pgraph_trace_count++;
+		}
+
+		p += 1 + dwCount; // Skip command DWORD + parameter DWORDs
+	}
+
+	fprintf(pgraph_trace_file, "<<< %s\n", tag);
+	fflush(pgraph_trace_file);
+}
+
+// Legacy begin/end no-ops (push-buffer-scan approach supersedes PGRAPH-level trace)
+void pgraph_trace_begin(const char *) {}
+void pgraph_trace_end() {}
+void pgraph_trace_close()
+{
+	if (pgraph_trace_file) {
+		fclose(pgraph_trace_file);
+		pgraph_trace_file = nullptr;
+	}
+}
+// ---- End trace infrastructure ----
+
 void (*pgraph_draw_arrays)(NV2AState *d);
 void (*pgraph_draw_inline_buffer)(NV2AState *d);
 void (*pgraph_draw_inline_array)(NV2AState *d);

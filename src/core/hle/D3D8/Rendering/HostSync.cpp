@@ -88,8 +88,10 @@ void CxbxUpdateHostTextures()
 
 		if (texOffset != 0) {
 			// Check if this offset corresponds to a render target surface.
+			// Exclude the current depth/stencil surface (identified by PGRAPH
+			// surface_zeta.offset) — it cannot be sampled while bound as depth.
 			auto pXboxSurface = CxbxLookupSurfaceByDataAddr(texOffset);
-			if (pXboxSurface && pXboxSurface != g_pXbox_DepthStencil) {
+			if (pXboxSurface && texOffset != pg->surface_zeta.offset) {
 				auto pHostRT = GetHostSurface(pXboxSurface, D3DUSAGE_RENDERTARGET);
 				if (pHostRT) {
 					pHostBaseTexture = pHostRT;

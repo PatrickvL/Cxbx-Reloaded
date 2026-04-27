@@ -71,7 +71,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource)
 
 	// Forward to Xbox implementation
 	// This should stop us having to patch GetStreamSource!
+	uint32_t pPut0 = pgraph_trace_read_pput();
 	XB_TRMP(D3DDevice_SetStreamSource)(StreamNumber, pStreamData, Stride);
+	pgraph_trace_log_pushbuffer("SetStreamSource", pPut0, pgraph_trace_read_pput());
 }
 
 // ******************************************************************
@@ -86,7 +88,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShader)
 
 	// This trampoline leads to calling D3DDevice_LoadVertexShader and D3DDevice_SelectVertexShader
 	// Please raise the alarm if this is ever not the case
+	uint32_t pPut0 = pgraph_trace_read_pput();
 	XB_TRMP(D3DDevice_SetVertexShader)(Handle);
+	pgraph_trace_log_pushbuffer("SetVertexShader", pPut0, pgraph_trace_read_pput());
 
 	CxbxImpl_SetVertexShader(Handle);
 }
@@ -142,7 +146,9 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_SetLight)
 		LOG_FUNC_ARG(pLight)
 		LOG_FUNC_END;
 
+	uint32_t pPut0 = pgraph_trace_read_pput();
 	xbox::hresult_xt hRet = XB_TRMP(D3DDevice_SetLight)(Index, pLight);
+	pgraph_trace_log_pushbuffer("SetLight", pPut0, pgraph_trace_read_pput());
 
 	d3d8LightState.Lights[Index] = *pLight;
 
@@ -159,7 +165,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetMaterial)
 {
 	LOG_FUNC_ONE_ARG(pMaterial);
 
+	uint32_t pPut0 = pgraph_trace_read_pput();
 	XB_TRMP(D3DDevice_SetMaterial)(pMaterial);
+	pgraph_trace_log_pushbuffer("SetMaterial", pPut0, pgraph_trace_read_pput());
 
 	ffShaderState.Materials[0].Ambient = toVector(pMaterial->Ambient);
 	ffShaderState.Materials[0].Diffuse = toVector(pMaterial->Diffuse);
@@ -178,7 +186,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetBackMaterial)
 {
 	LOG_FUNC_ONE_ARG(pMaterial);
 
+	uint32_t pPut0 = pgraph_trace_read_pput();
 	XB_TRMP(D3DDevice_SetBackMaterial)(pMaterial);
+	pgraph_trace_log_pushbuffer("SetBackMaterial", pPut0, pgraph_trace_read_pput());
 
 	ffShaderState.Materials[1].Ambient = toVector(pMaterial->Ambient);
 	ffShaderState.Materials[1].Diffuse = toVector(pMaterial->Diffuse);
@@ -212,7 +222,9 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_LightEnable)
 		LOG_FUNC_ARG(bEnable)
 		LOG_FUNC_END;
 
+	uint32_t pPut0 = pgraph_trace_read_pput();
 	xbox::hresult_xt hRet = XB_TRMP(D3DDevice_LightEnable)(Index, bEnable);
+	pgraph_trace_log_pushbuffer("LightEnable", pPut0, pgraph_trace_read_pput());
 
 	d3d8LightState.EnableLight(Index, bEnable);
 	// Note : LightEnable is handled in our fixed function shader  - see UpdateFixedFunctionVertexShaderState()
@@ -344,7 +356,6 @@ void CxbxImpl_SetRenderTarget
 	g_pXbox_DepthStencil = pNewZStencil;
 	if (pNewZStencil != xbox::zeroptr)
 		CxbxRegisterSurfaceByDataAddr(pNewZStencil->Data, pNewZStencil);
-	g_ZScale = GetZScaleForPixelContainer(g_pXbox_DepthStencil); // TODO : Discern between Xbox and host and do this in UpdateDepthStencilFlags?
    	pHostDepthStencil = GetHostSurface(g_pXbox_DepthStencil, D3DUSAGE_DEPTHSTENCIL);
 
 	HRESULT hRet;

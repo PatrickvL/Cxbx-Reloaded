@@ -88,6 +88,15 @@ void CxbxReserveNV2AMemory(NV2AState *d);
 // before each draw to close the race between the async puller and HLE reads.
 void pfifo_flush_to_pgraph(NV2AState *d);
 
+// NV097 method trace: scan push buffer commands written by Xbox D3D trampolines.
+// Call pgraph_trace_read_pput() before trampoline, again after, then
+// pgraph_trace_log_pushbuffer() to decode and log the commands in between.
+uint32_t pgraph_trace_read_pput();
+void pgraph_trace_log_pushbuffer(const char *tag, uint32_t pPut_before, uint32_t pPut_after);
+void pgraph_trace_begin(const char *tag);
+void pgraph_trace_end();
+void pgraph_trace_close();
+
 // Submit a block of NV2A push buffer commands through the real PFIFO
 // pusher->puller->PGRAPH pipeline.  pPushData must point into contiguous
 // memory (>= 0x80000000).  Blocks until all commands have been processed.

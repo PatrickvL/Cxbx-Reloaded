@@ -208,7 +208,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture)
 		LOG_FUNC_END;
 
 	// Call the Xbox implementation of this function, to properly handle reference counting for us
+	uint32_t pPut0 = pgraph_trace_read_pput();
 	XB_TRMP(D3DDevice_SetTexture)(Stage, pTexture);
+	pgraph_trace_log_pushbuffer("SetTexture", pPut0, pgraph_trace_read_pput());
 
 	g_pXbox_SetTexture[Stage] = pTexture;
 
@@ -314,7 +316,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTransform)
    	setTransformCount++;
 
    	// Trampoline to guest code to remove the need for a GetTransform patch
+   	uint32_t pPut0 = pgraph_trace_read_pput();
    	XB_TRMP(D3DDevice_SetTransform)(State, pMatrix);
+   	pgraph_trace_log_pushbuffer("SetTransform", pPut0, pgraph_trace_read_pput());
    	CxbxImpl_SetTransform(State, pMatrix);
 }
 

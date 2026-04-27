@@ -148,7 +148,6 @@ extern bool                          g_bSupportsFormatVolumeTexture[xbox::X_D3DF
 extern bool                          g_bSupportsFormatCubeTexture[xbox::X_D3DFMT_LAST + 1];
 extern bool                          g_bHack_UnlockFramerate;
 extern bool                          g_bHasDepth;
-extern float                         g_ZScale;
 extern bool                          g_bHasStencil;
 extern DWORD                         g_dwPrimPerFrame;
 extern float                         g_AspectRatioScale;

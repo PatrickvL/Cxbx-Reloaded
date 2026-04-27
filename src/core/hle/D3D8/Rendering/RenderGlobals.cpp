@@ -52,7 +52,6 @@ bool                         g_bSupportsFormatVolumeTexture[xbox::X_D3DFMT_LAST 
 bool                         g_bSupportsFormatCubeTexture[xbox::X_D3DFMT_LAST + 1]; // Does device support surface format?
 bool                         g_bHack_UnlockFramerate = false; // ignore the xbox presentation interval
 bool                         g_bHasDepth = false;    // Does device have a Depth Buffer?
-float                        g_ZScale = 1.0;
 bool                         g_bHasStencil = false;  // Does device have a Stencil Buffer?
 DWORD						 g_dwPrimPerFrame = 0;	// Number of primitives within one frame
 float                        g_AspectRatioScale = 1.0f;

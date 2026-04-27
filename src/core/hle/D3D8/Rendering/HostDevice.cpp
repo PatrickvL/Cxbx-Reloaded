@@ -778,7 +778,10 @@ void GetRenderTargetRawDimensions(float& x, float&y, xbox::X_D3DSurface* rt) {
 // Get the base rendertarget dimensions excluding multisample scaling
 // e.g. a raw 1280*960 rendertarget with 2x MSAA would be have a base 640*480
 void GetRenderTargetBaseDimensions(float& x, float& y) {
-	GetRenderTargetRawDimensions(x, y, g_pXbox_RenderTarget);
+	// Read render target dimensions from PGRAPH surface clip (replaces HLE g_pXbox_RenderTarget lookup)
+	auto& pg = g_NV2A->GetDeviceState()->pgraph;
+	x = (float)pg.surface_shape.clip_width;
+	y = (float)pg.surface_shape.clip_height;
 
 	float aaX, aaY;
 	GetMultiSampleScaleRaw(aaX, aaY);

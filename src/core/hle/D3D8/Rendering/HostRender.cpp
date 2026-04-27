@@ -507,6 +507,7 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	// Detect passthrough from PGRAPH VPSCL/VPOFF sign to avoid racing
 	// g_Xbox_VertexShaderMode which the game thread writes.
 	bool isPassthrough = false;
+	float zOutputScale = 1.0f;
 	{
 		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
 		float vpoff0, vpoff1, vpscl0, vpscl1;
@@ -517,8 +518,16 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 		float xboxX = vpoff0 - vpscl0;
 		float xboxY = vpoff1 + vpscl1;
 		isPassthrough = (xboxX < 0.0f || xboxY < 0.0f);
+
+		// Derive Z output scale from PGRAPH depth surface format (replaces HLE g_ZScale)
+		if (!isPassthrough) {
+			switch (pg_z->surface_shape.zeta_format) {
+				case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   zOutputScale = 65535.0f;    break;
+				case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: zOutputScale = 16777215.0f; break;
+				default:                                  zOutputScale = 65535.0f;    break;
+			}
+		}
 	}
-	float zOutputScale = isPassthrough ? 1 : g_ZScale;
 
 	float screenspaceScale[4] = { xboxScreenspaceWidth / 2,  -xboxScreenspaceHeight / 2, zOutputScale, 1 };
 	float screenspaceOffset[4] = { xboxScreenspaceWidth / 2 + aaOffsetX, xboxScreenspaceHeight / 2 + aaOffsetY, 0, 0 };
@@ -548,55 +557,6 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 // ******************************************************************
 // * patch: D3DDevice_SetViewport
 // ******************************************************************
-void UpdateFixedFunctionShaderLight(int d3dLightIndex, Light* pShaderLight, D3DXVECTOR4* pLightAmbient) {
-	if (d3dLightIndex == -1) {
-		pShaderLight->Type = 0; // Disable the light
-		return;
-	}
-
-	auto d3dLight = &d3d8LightState.Lights[d3dLightIndex];
-	auto viewTransform = (D3DXMATRIX)d3d8TransformState.Transforms[xbox::X_D3DTS_VIEW];
-
-	// TODO remove D3DX usage
-	// Pre-transform light position to viewspace
-	D3DXVECTOR4 positionV;
-	D3DXVec3Transform(&positionV, (D3DXVECTOR3*)&d3dLight->Position, &viewTransform);
-	pShaderLight->PositionV = (D3DXVECTOR3)positionV;
-
-	// Pre-transform light direction to viewspace and normalize
-	D3DXVECTOR4 directionV;
-	D3DXMATRIX viewTransform3x3;
-	D3DXMatrixIdentity(&viewTransform3x3);
-	for (int y = 0; y < 3; y++) {
-		for (int x = 0; x < 3; x++) {
-			viewTransform3x3.m[x][y] = viewTransform.m[x][y];
-		}
-	}
-
-	D3DXVec3Transform(&directionV, (D3DXVECTOR3*)&d3dLight->Direction, &viewTransform3x3);
-	D3DXVec3Normalize((D3DXVECTOR3*)&pShaderLight->DirectionVN, (D3DXVECTOR3*)&directionV);
-
-	bool SpecularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) != FALSE;
-
-	// Map D3D light to state struct
-	pShaderLight->Type = (int)d3dLight->Type;
-	pShaderLight->Diffuse = toVector(d3dLight->Diffuse);
-	pShaderLight->Specular = SpecularEnable ? toVector(d3dLight->Specular) : toVector(0);
-	pShaderLight->Range = d3dLight->Range;
-	pShaderLight->Falloff = d3dLight->Falloff;
-	pShaderLight->Attenuation.x = d3dLight->Attenuation0;
-	pShaderLight->Attenuation.y = d3dLight->Attenuation1;
-	pShaderLight->Attenuation.z = d3dLight->Attenuation2;
-
-	pLightAmbient->x += d3dLight->Ambient.r;
-	pLightAmbient->y += d3dLight->Ambient.g;
-	pLightAmbient->z += d3dLight->Ambient.b;
-
-	auto cosHalfPhi = cos(d3dLight->Phi / 2);
-	pShaderLight->CosHalfPhi = cosHalfPhi;
-	pShaderLight->SpotIntensityDivisor = cos(d3dLight->Theta / 2) - cos(d3dLight->Phi / 2);
-}
-
 void UpdateFixedFunctionVertexShaderState()
 {
 	extern xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat(); // TMP glue
@@ -788,7 +748,8 @@ void UpdateFixedFunctionVertexShaderState()
 	float pointScale_A = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSCALE_A);
 	float pointScale_B = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSCALE_B);
 	float pointScale_C = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSCALE_C);
-	float renderTargetHeight = (float)GetPixelContainerHeight(g_pXbox_RenderTarget);
+	// Read render target height from PGRAPH surface clip (replaces HLE g_pXbox_RenderTarget lookup)
+	float renderTargetHeight = (float)g_NV2A->GetDeviceState()->pgraph.surface_shape.clip_height;
 	// Make sure to disable point scaling when point sprites are not enabled
 	PointScaleEnable &= PointSpriteEnable;
 	// Set variables in shader state
