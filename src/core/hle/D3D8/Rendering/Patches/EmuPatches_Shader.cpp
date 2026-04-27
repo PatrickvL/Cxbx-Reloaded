@@ -254,57 +254,10 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture_4__LT
 
 // ******************************************************************
 // * patch: D3DDevice_SetPixelShader
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetPixelShader)
-(
-	dword_xt           Handle
-)
-{
-	LOG_FUNC_ONE_ARG(Handle);
-
-	// Call the Xbox function to make sure D3D structures get set
-	XB_TRMP(D3DDevice_SetPixelShader)(Handle);
-
-	CxbxImpl_SetPixelShader(Handle);
-}
-
-// Overload for logging
-static void D3DDevice_SetPixelShader_0__LTCG_eax1
-(
-   	xbox::dword_xt      Handle
-)
-{
-   	LOG_FUNC_ONE_ARG(Handle);
-}
-
-// LTCG specific D3DDevice_SetPixelShader function...
-// This uses a custom calling convention where parameter is passed in EAX
-// Test-case: Metal Wolf Chaos
-// Test-case: Lord of the Rings: The Third Age
-// Test-case: Midtown Madness 3
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetPixelShader_0__LTCG_eax1)()
-{
-   	dword_xt Handle;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  Handle, eax
-   	}
-
-   	// Log
-   	D3DDevice_SetPixelShader_0__LTCG_eax1(Handle);
-
-   	__asm {
-   	   	mov  eax, Handle
-   	   	call XB_TRMP(D3DDevice_SetPixelShader_0__LTCG_eax1)
-   	}
-
-   	CxbxImpl_SetPixelShader(Handle);
-
-   	__asm {
-   	   	LTCG_EPILOGUE
-   	   	ret
-   	}
-}
+// D3DDevice_SetPixelShader, D3DDevice_SetPixelShader_0__LTCG_eax1 — disabled.
+// These only called CxbxImpl_SetPixelShader (after the trampoline) to write
+// g_pXbox_PixelShader, which was only read by the COMBINECTL==0 HLE bridge
+// fallback, now removed. Bodies moved to Direct3D9.cpp.unused-patches.
 
 // D3DDevice_DrawVertices_4__LTCG_ecx2_eax3, D3DDevice_DrawVertices_8__LTCG_eax3 — disabled.
 // LTCG variants of DrawVertices; patches disabled in Patches.cpp.

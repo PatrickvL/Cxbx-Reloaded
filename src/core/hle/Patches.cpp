@@ -169,10 +169,13 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_SetModelView", xbox::EMUPATCH(D3DDevice_SetModelView), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetPalette", xbox::EMUPATCH(D3DDevice_SetPalette), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetPalette_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetPalette_4__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetPixelShader", xbox::EMUPATCH(D3DDevice_SetPixelShader), PATCH_HLE_D3D),
+	// SetPixelShader patches disabled: CxbxImpl_SetPixelShader only wrote g_pXbox_PixelShader
+	// which was only read by the COMBINECTL==0 HLE bridge fallback, now removed.
+	// Xbox native SetPixelShader pushes all combiner state through PFIFO → PGRAPH.
+	//PATCH_ENTRY("D3DDevice_SetPixelShader", xbox::EMUPATCH(D3DDevice_SetPixelShader), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetPixelShaderConstant", xbox::EMUPATCH(D3DDevice_SetPixelShaderConstant), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetPixelShaderConstant_4__LTCG_ecx1_eax3", xbox::EMUPATCH(D3DDevice_SetPixelShaderConstant_4__LTCG_ecx1_eax3), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetPixelShader_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetPixelShader_0__LTCG_eax1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetPixelShader_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetPixelShader_0__LTCG_eax1), PATCH_HLE_D3D),
 	// Step 9.1: PGRAPH regs[] is authoritative for render state (Step 6.2). Xbox native code
 	// already writes D3D__RenderState[] before calling SetRenderState_Simple, so this patch
 	// was only doing a redundant write. The pushbuffer method goes to PGRAPH via the puller.

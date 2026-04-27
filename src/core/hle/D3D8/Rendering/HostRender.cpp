@@ -693,10 +693,7 @@ void UpdateFixedFunctionVertexShaderState()
 	auto fogEnable = XboxRenderStates.GetXboxRenderState(X_D3DRS_FOGENABLE);
 	auto fogTableMode = XboxRenderStates.GetXboxRenderState(X_D3DRS_FOGTABLEMODE);
 	ffShaderState.Fog.Enable = fogEnable ? 1 : 0;
-	// FIXME remove when fixed function PS is implemented
-	// Note if we are using the fixed function pixel shader
-	// We only want to produce the fog depth value in the VS, not the fog factor
-	ffShaderState.Fog.TableMode = !g_UseFixedFunctionPixelShader ? D3DFOG_NONE : fogTableMode;
+	ffShaderState.Fog.TableMode = fogTableMode;
 
 	// Determine how fog depth is calculated
 	if (fogEnable && fogTableMode != D3DFOG_NONE) {

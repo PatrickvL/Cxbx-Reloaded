@@ -303,8 +303,6 @@ extern xbox::dword_xt g_Xbox_VertexShader_Handle;
 // user-allocated push buffer, and HLE host drawing is suppressed.
 extern bool g_bRecordingPushBuffer;
 
-extern xbox::X_PixelShader *g_pXbox_PixelShader;
-
 extern DXGI_FORMAT g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT];
 
 extern xbox::X_D3DBaseTexture *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT];
@@ -413,8 +411,6 @@ D3DXVECTOR4 toVector(xbox::X_D3DCOLORVALUE val);
 // HostSync.cpp
 void CxbxHandleXboxCallbacks();
 void CxbxImpl_InsertCallback(xbox::X_D3DCALLBACKTYPE Type, xbox::X_D3DCALLBACK pCallback, xbox::dword_xt Context);
-xbox::void_xt CxbxImpl_SetPixelShader(xbox::dword_xt Handle);
-
 // HostWindow.cpp
 void DrawUEM(HWND hWnd);
 void CxbxReleaseCursor();

@@ -687,41 +687,6 @@ void CxbxImpl_InsertCallback
 	}
 }
 
-xbox::void_xt CxbxImpl_SetPixelShader(xbox::dword_xt Handle)
-{
-   	// Cache the active shader handle
-   	g_pXbox_PixelShader = (xbox::X_PixelShader*)Handle;
-
-   	// Copy the Pixel Shader data to our RenderState handler (this includes values for pixel shader constants)
-   	// This mirrors the fact that unpatched SetPixelShader does the same thing!
-   	// This shouldn't be necessary anymore, but shaders still break if we don't do this
-	// This breakage might be caused by our push-buffer processing could be "trailing behind" what our patches do;
-	// By writing to render state during this patch, we avoid missing out on updates that push buffer commands would perform.
-	// However, any updates that occur mid-way can overwrite what we store here, and still cause problems!
-	// The only viable solution for that would be to draw entirely based on push-buffer handling (which might require removing possibly all D3D patches!)
-   	if (g_pXbox_PixelShader != nullptr) {
-   	   	// TODO : If D3DDevice_SetPixelShader() in XDKs don't overwrite the X_D3DRS_PS_RESERVED slot with PSDef.PSTextureModes,
-   	   	// store it here and restore after memcpy, or alternatively, perform two separate memcpy's (the halves before, and after the reserved slot).
-   	   	memcpy(XboxRenderStates.GetPixelShaderRenderStatePointer(), g_pXbox_PixelShader->pPSDef, sizeof(xbox::X_D3DPIXELSHADERDEF) - 3 * sizeof(DWORD));
-   	   	// Copy the PSDef.PSTextureModes field to its dedicated slot, which lies outside the range of PixelShader render state slots.
-   	   	// Always write from the new PSDef — a subsequent SetRenderState can override this if needed.
-   	   	XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, g_pXbox_PixelShader->pPSDef->PSTextureModes);
-		// NOTE: PGRAPH combiner registers are bridged at draw time in
-		// CxbxD3D11UploadRCInterpreterState() to also catch subsequent
-		// SetPixelShaderConstant / SetRenderState changes.
-   	} else {
-		// When clearing the pixel shader (handle=0), sync PSTextureModes from
-		// the PSDef area that the native trampoline just wrote (default combiner
-		// program). Without this, X_D3DRS_PSTEXTUREMODES retains the previous
-		// shader's value — e.g. CUBEMAP mode leaks into subsequent fixed-function
-		// draws, causing them to sample from the wrong SRV slot and produce black.
-		const xbox::X_D3DPIXELSHADERDEF *pRSPSDef = (const xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
-		if (pRSPSDef) {
-			XboxRenderStates.SetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES, pRSPSDef->PSTextureModes);
-		}
-	}
-}
-
 // ******************************************************************
 // * patch: D3DDevice_SetPixelShader
 // ******************************************************************

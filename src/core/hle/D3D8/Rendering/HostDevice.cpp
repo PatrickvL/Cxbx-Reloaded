@@ -342,10 +342,7 @@ LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
    	   	   	   	CxbxUpdateCursor();
    	   	   	}
-			else if (wParam == VK_F2)
-			{
-				g_UseFixedFunctionPixelShader = !g_UseFixedFunctionPixelShader;
-			}
+
    	   	   	else if (wParam == VK_F3)
    	   	   	{
    	   	   	   	g_bClipCursor = !g_bClipCursor;

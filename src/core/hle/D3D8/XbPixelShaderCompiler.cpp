@@ -574,12 +574,9 @@ void CxbxSetPixelShader(ID3D11PixelShader* pPixelShader)
 	g_pActivePixelShader = pPixelShader;
 }
 
-bool g_UseFixedFunctionPixelShader = true;
-
-// Upload Xbox register combiner state to the RC interpreter constant buffer.
-// Step 3: Core combiner registers are read from PGRAPH when available;
-// remaining fields (final combiner constants, fog, alpha, BEM, etc.) still
-// come from HLE render/texture state and will migrate in Step 3.2.
+// Upload PGRAPH register combiner state to GPU buffers.
+// PGRAPH is always authoritative — Xbox native D3D code pushes all combiner,
+// texture, and fog state through PFIFO → PGRAPH before each draw.
 void CxbxD3D11UploadRCInterpreterState()
 {
 	if (!g_pD3D11RCInterpreterAuxCB || !g_pD3D11PGRegsBuf)
@@ -588,103 +585,30 @@ void CxbxD3D11UploadRCInterpreterState()
 	// PGRAPH source (populated by the puller thread via pushbuffer methods)
 	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
-	// PSDef is only needed for the HLE bridge path (COMBINECTL == 0).
-	// When PGRAPH is authoritative, all combiner/texture state comes from
-	// registers — we don't read g_pXbox_PixelShader which races the game thread.
-	const xbox::X_D3DPIXELSHADERDEF *pPSDef = nullptr;
-	bool pgraphHasCombinerState = (pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0);
-	if (!pgraphHasCombinerState) {
-		pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
-	}
-
-	// --- Bridge HLE pixel shader render state to PGRAPH registers ---
-	// Only needed when PGRAPH hasn't been programmed (COMBINECTL == 0).
-	// When PGRAPH is authoritative, pPSDef is already nullptr (skipped above).
-	if (pg && pPSDef && !pgraphHasCombinerState) {
-			// PGRAPH combiner registers are uninitialized — sync from HLE state
-			for (int i = 0; i < 8; i++) {
-			pg->regs[RI(NV_PGRAPH_COMBINEALPHAI0 + i * 4)] = pPSDef->PSAlphaInputs[i];
-			pg->regs[RI(NV_PGRAPH_COMBINEALPHAO0 + i * 4)] = pPSDef->PSAlphaOutputs[i];
-			pg->regs[RI(NV_PGRAPH_COMBINECOLORI0 + i * 4)] = pPSDef->PSRGBInputs[i];
-			pg->regs[RI(NV_PGRAPH_COMBINECOLORO0 + i * 4)] = pPSDef->PSRGBOutputs[i];
-			pg->regs[RI(NV_PGRAPH_COMBINEFACTOR0 + i * 4)] = pPSDef->PSConstant0[i];
-			pg->regs[RI(NV_PGRAPH_COMBINEFACTOR1 + i * 4)] = pPSDef->PSConstant1[i];
-		}
-		pg->regs[RI(NV_PGRAPH_COMBINECTL)]      = pPSDef->PSCombinerCount;
-		pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)]  = pPSDef->PSFinalCombinerInputsABCD;
-		pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)]  = pPSDef->PSFinalCombinerInputsEFG;
-		pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR0)]   = pPSDef->PSFinalCombinerConstant0;
-		pg->regs[RI(NV_PGRAPH_SPECFOGFACTOR1)]   = pPSDef->PSFinalCombinerConstant1;
-		pg->regs[RI(NV_PGRAPH_SHADERCLIPMODE)]   = pPSDef->PSCompareMode;
-		pg->regs[RI(NV_PGRAPH_SHADERCTL)] =
-			(pPSDef->PSDotMapping   & NV_PGRAPH_SHADERCTL_DOT_RGBMAPPING) |
-			(pPSDef->PSInputTexture & NV_PGRAPH_SHADERCTL_OTHER_STAGE_INPUT);
-		// PSTextureModes lives outside the PSDef struct in render state
-		pg->regs[RI(NV_PGRAPH_SHADERPROG)] =
-			XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
-
-		// Bridge BumpEnvMat and LumScale/Offset from HLE texture states to PGRAPH.
-		// These are float values stored as raw uint32_t bit patterns in both
-		// XboxTextureStates and pg->regs[].  Stages 1-3 (stage 0 has no bump env).
-		// Note: Xbox X_D3DTSS_BUMPENVMAT10/11 indices are swapped vs PGRAPH ordering.
-		for (int s = 1; s <= 3; s++) {
-			pg->regs[RI(NV_PGRAPH_BUMPMAT00  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT00);
-			pg->regs[RI(NV_PGRAPH_BUMPMAT01  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT01);
-			pg->regs[RI(NV_PGRAPH_BUMPMAT10  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT10);
-			pg->regs[RI(NV_PGRAPH_BUMPMAT11  + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVMAT11);
-			pg->regs[RI(NV_PGRAPH_BUMPSCALE1 + (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVLSCALE);
-			pg->regs[RI(NV_PGRAPH_BUMPOFFSET1+ (s - 1) * 4)] = XboxTextureStates.Get(s, xbox::X_D3DTSS_BUMPENVLOFFSET);
-		}
-
-		// Bridge fog color from HLE render state (ABGR in D3D__RenderState) to PGRAPH (ARGB).
-		// The Xbox kernel stores NV2A-ready ABGR in the render state array; PGRAPH expects ARGB.
-		{
-			uint32_t fogABGR = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGCOLOR);
-			uint32_t fogARGB = (fogABGR & 0xFF00FF00u)
-			                 | ((fogABGR & 0x00FF0000u) >> 16)
-			                 | ((fogABGR & 0x000000FFu) << 16);
-			pg->regs[RI(NV_PGRAPH_FOGCOLOR)] = fogARGB;
-		}
-	} // end HLE bridge
-
 	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
-	if (pg) {
-		CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));
-	}
+	CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));
 	// Bind the regs SRV to PS t12
 	g_pD3DDeviceContext->PSSetShaderResources(CXBX_D3D11_PS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
 
 	// --- Build the auxiliary cbuffer (software-computed fields only) ---
 	PSAuxCBLayout aux = {};
 
-	// PSTextureModes: from PGRAPH or HLE render state, then adjusted
-	DWORD psTextureModes = pg ? pg->regs[RI(NV_PGRAPH_SHADERPROG)]
-	                          : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
+	// PSTextureModes: always from PGRAPH SHADERPROG
+	DWORD psTextureModes = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
 
-	// --- AdjustTextureModes: match the compiled shader path ---
-	// When PGRAPH is authoritative (COMBINECTL != 0), SHADERPROG already
-	// contains the correctly adjusted texture modes — the Xbox D3D runtime
-	// adjusts modes before writing the push buffer.  The texModeAdjust flag
-	// is a D3D8 software concept with no PGRAPH equivalent, so we only
-	// apply it in the HLE bridge fallback path (COMBINECTL == 0).
+	// --- AdjustTextureModes: fixup cubemap/volume texture modes ---
+	// PGRAPH is always authoritative — SHADERPROG already contains correctly
+	// adjusted texture modes from the Xbox D3D runtime push buffer.
 	// Texture type is derived from PGRAPH TEXFMT0 (CUBEMAPENABLE +
-	// DIMENSIONALITY) instead of g_pXbox_SetTexture[] to avoid racing
-	// the game thread.
+	// DIMENSIONALITY) to avoid racing the game thread.
 	{
-		bool pgraphAuthoritative = pg && (pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0);
-		bool texModeAdjust = false;
-		if (!pgraphAuthoritative && pPSDef) {
-			texModeAdjust = ((pPSDef->PSFinalCombinerConstants >> PS_GLOBALFLAGS_SHIFT) & PS_GLOBALFLAGS_TEXMODE_ADJUST) > 0;
-		}
-
 		for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
 			uint32_t mode = (psTextureModes >> (i * 5)) & 0x1Fu;
 			uint32_t clearMask = ~(0x1Fu << (i * 5));
 
-			// Derive texture type from PGRAPH registers when available,
-			// falling back to HLE g_pXbox_SetTexture[] for the bridge path.
+			// Derive texture type from PGRAPH registers
 			xbox::X_D3DRESOURCETYPE texType = xbox::X_D3DRTYPE_NONE;
-			if (pg) {
+			{
 				uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
 				if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
 					uint32_t texFmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
@@ -695,58 +619,13 @@ void CxbxD3D11UploadRCInterpreterState()
 					else
 						texType = xbox::X_D3DRTYPE_TEXTURE;
 				}
-			} else if (g_pXbox_SetTexture[i]) {
-				texType = GetXboxD3DResourceType(g_pXbox_SetTexture[i]);
 			}
 
-			if (texModeAdjust) {
-				if (texType == xbox::X_D3DRTYPE_NONE) {
-					switch (mode) {
-					// Modes that read from a previous stage's texture register,
-					// not from a texture bound at *this* stage:
-					case PS_TEXTUREMODES_BUMPENVMAP:
-					case PS_TEXTUREMODES_BUMPENVMAP_LUM:
-					case PS_TEXTUREMODES_DPNDNT_AR:
-					case PS_TEXTUREMODES_DPNDNT_GB:
-					// Modes that don't sample any texture at all:
-					case PS_TEXTUREMODES_PASSTHRU:
-					case PS_TEXTUREMODES_CLIPPLANE:
-					case PS_TEXTUREMODES_DOTPRODUCT:
-						break;
-					default:
-						psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_NONE << (i * 5));
-						continue;
-					}
-				}
-				switch (mode) {
-				case PS_TEXTUREMODES_PROJECT2D:
-				case PS_TEXTUREMODES_PROJECT3D:
-				case PS_TEXTUREMODES_CUBEMAP:
-					if (texType == xbox::X_D3DRTYPE_CUBETEXTURE)
-						mode = PS_TEXTUREMODES_CUBEMAP;
-					else if (texType == xbox::X_D3DRTYPE_VOLUMETEXTURE)
-						mode = PS_TEXTUREMODES_PROJECT3D;
-					else
-						mode = PS_TEXTUREMODES_PROJECT2D;
-					psTextureModes = (psTextureModes & clearMask) | (mode << (i * 5));
-					break;
-				case PS_TEXTUREMODES_DOT_STR_3D:
-				case PS_TEXTUREMODES_DOT_STR_CUBE:
-					if (texType == xbox::X_D3DRTYPE_CUBETEXTURE)
-						mode = PS_TEXTUREMODES_DOT_STR_CUBE;
-					else
-						mode = PS_TEXTUREMODES_DOT_STR_3D;
-					psTextureModes = (psTextureModes & clearMask) | (mode << (i * 5));
-					break;
-				}
+			if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_PROJECT2D) {
+				psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_CUBEMAP << (i * 5));
 			}
-			else {
-				if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_PROJECT2D) {
-					psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_CUBEMAP << (i * 5));
-				}
-				else if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_DOT_STR_3D) {
-					psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_DOT_STR_CUBE << (i * 5));
-				}
+			else if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_DOT_STR_3D) {
+				psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_DOT_STR_CUBE << (i * 5));
 			}
 		}
 	}
@@ -754,15 +633,13 @@ void CxbxD3D11UploadRCInterpreterState()
 
 	// --- AdjustFinalCombiner: synthesize final combiner when not explicitly defined ---
 	{
-		uint32_t fcABCD = pg ? pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)] : 0u;
-		uint32_t fcEFG  = pg ? pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)] : 0u;
+		uint32_t fcABCD = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)];
+		uint32_t fcEFG  = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)];
 
 		bool hasFinalCombiner = (fcABCD != 0) || (fcEFG != 0);
 		if (!hasFinalCombiner) {
-			bool fogEnable = pg ? (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & NV_PGRAPH_CONTROL_3_FOGENABLE) != 0
-			                    : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) > 0;
-			bool specularEnable = pg ? (pg->regs[RI(NV_PGRAPH_CSV0_C)] & NV_PGRAPH_CSV0_C_SPECULAR_ENABLE) != 0
-			                         : XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) > 0;
+			bool fogEnable = (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & NV_PGRAPH_CONTROL_3_FOGENABLE) != 0;
+			bool specularEnable = (pg->regs[RI(NV_PGRAPH_CSV0_C)] & NV_PGRAPH_CSV0_C_SPECULAR_ENABLE) != 0;
 
 			uint32_t regA = PS_REGISTER_FOG | PS_CHANNEL_ALPHA;
 			uint32_t regB = PS_REGISTER_R0;
@@ -807,18 +684,10 @@ void CxbxD3D11UploadRCInterpreterState()
 
 	// Fog info: x=tableMode (from PGRAPH FOG_MODE), y/z/w unused by RC interpreter.
 	// FogColor is read directly from g_PGRegs[] in the shader.
-	if (pg) {
+	{
 		unsigned int fogMode = GET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_3)], NV_PGRAPH_CONTROL_3_FOG_MODE);
 		aux.FogInfo = { static_cast<float>(fogMode), 0.0f, 0.0f, 0.0f };
 		aux.FogEnable.value = (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & NV_PGRAPH_CONTROL_3_FOGENABLE) ? 1u : 0u;
-	} else {
-		aux.FogInfo = {
-			static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE)),
-			XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY),
-			XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART),
-			XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND)
-		};
-		aux.FogEnable.value = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FOGENABLE) ? 1u : 0u;
 	}
 
 	// Front-face factor for two-sided lighting
@@ -838,42 +707,10 @@ void CxbxD3D11UploadRCInterpreterState()
 
 void CxbxUpdateActivePixelShader() // NOPATCH
 {
-  // Determine whether to use the RC interpreter or fixed-function pixel shader.
-  //
-  // Use PGRAPH COMBINECTL as the primary authority: if PGRAPH has been
-  // programmed with combiner state (COMBINECTL != 0), use the RC interpreter.
-  // Otherwise fall back to checking the HLE g_pXbox_PixelShader handle.
-  // When PGRAPH is authoritative, we don't read g_pXbox_PixelShader at all —
-  // it races the game thread which runs ahead of the puller.
+  // Always use the RC interpreter ubershader — PGRAPH combiners are authoritative.
+  // Even when COMBINECTL == 0 (no combiner stages), the RC interpreter handles
+  // this correctly as a passthrough (final combiner only).
 
-  bool pgraphHasCombiners = false;
-  {
-      auto pg = &g_NV2A->GetDeviceState()->pgraph;
-      pgraphHasCombiners = pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0;
-  }
-
-  // Only consult HLE pixel shader state when PGRAPH doesn't have combiner state.
-  const xbox::X_D3DPIXELSHADERDEF *pPSDef = nullptr;
-  if (!pgraphHasCombiners && g_pXbox_PixelShader != nullptr) {
-      pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
-  }
-
-  if (pPSDef == nullptr && !pgraphHasCombiners) {
-	// No pixel shader handle AND no PGRAPH combiner state — use fixed function.
-	ID3D11PixelShader* pShader = nullptr;
-	if (g_UseFixedFunctionPixelShader) {
-		pShader = GetFixedFunctionShader();
-		UpdateFixedFunctionPixelShaderState();
-	}
-
-	CxbxSetPixelShader(pShader);
-	g_bRCInterpreterCBActive = false;
-	if (g_pD3D11PSConstantBuffer)
-		g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
-   	return;
-  }
-
-  // --- RC interpreter ubershader path ---
   if (!g_pD3D11RCInterpreterPS) {
 	if (!CxbxD3D11InitRCInterpreter()) {
 		EmuLog(LOG_LEVEL::ERROR2, "RC Interpreter init failed");

@@ -453,9 +453,6 @@ constexpr int PSH_XBOX_MAX_R_REGISTER_COUNT = 2;
 constexpr int PSH_XBOX_MAX_T_REGISTER_COUNT = 4;
 constexpr int PSH_XBOX_MAX_V_REGISTER_COUNT = 2;
 
-
-extern bool g_UseFixedFunctionPixelShader;
-
 // PatrickvL's Dxbx pixel shader translation
 void CxbxUpdateActivePixelShader(); // NOPATCH
 
