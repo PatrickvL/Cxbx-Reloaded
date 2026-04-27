@@ -41,6 +41,13 @@ extern ID3D11Texture2D             *g_pD3DDepthStencilBuffer;
 extern ID3D11Texture2D             *g_pD3DBackBufferSurface;
 extern ID3D11Texture2D             *g_pD3DCurrentHostRenderTarget;
 
+// PGRAPH-tracked backbuffer: set by CxbxD3D11UpdateRenderTargetFromPGRAPH
+// when the first color RT is bound (which is always the backbuffer from CreateDevice).
+extern ID3D11Texture2D             *g_pHostPgraphBackBuffer;
+extern UINT                         g_PgraphBackBufferWidth;
+extern UINT                         g_PgraphBackBufferHeight;
+void CxbxResetPgraphSurfaceTracking();
+
 // ******************************************************************
 // * Constant buffer sizing
 // ******************************************************************

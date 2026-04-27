@@ -159,9 +159,12 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_Present", xbox::EMUPATCH(D3DDevice_Present), PATCH_HLE_D3D),
 	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful
 	//PATCH_ENTRY("D3DDevice_PrimeVertexCache", xbox::EMUPATCH(D3DDevice_PrimeVertexCache), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_Reset", xbox::EMUPATCH(D3DDevice_Reset), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_Reset_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_Reset_0__LTCG_edi1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_Reset_0__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_Reset_0__LTCG_ebx1), PATCH_HLE_D3D),
+	// Disabled: Xbox D3DDevice_Reset only does Xbox D3D resource cleanup.
+	// Host rendering driven by NV2A state needs no reset — host resources
+	// are managed by PGRAPH RT cache and invalidated by dirty-page detection.
+	//PATCH_ENTRY("D3DDevice_Reset", xbox::EMUPATCH(D3DDevice_Reset), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_Reset_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_Reset_0__LTCG_edi1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_Reset_0__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_Reset_0__LTCG_ebx1), PATCH_HLE_D3D),
 	// Disabled: native RunPushBuffer applies fixups and pushes commands through
 	// the real GPU FIFO.  D3D_BlockOnTime drains the FIFO when the ring fills.
 	//PATCH_ENTRY("D3DDevice_RunPushBuffer", xbox::EMUPATCH(D3DDevice_RunPushBuffer), PATCH_HLE_D3D),
@@ -199,11 +202,12 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// already writes D3D__RenderState[] before calling SetRenderState_Simple, so this patch
 	// was only doing a redundant write. The pushbuffer method goes to PGRAPH via the puller.
 	//PATCH_ENTRY("D3DDevice_SetRenderState_Simple", xbox::EMUPATCH(D3DDevice_SetRenderState_Simple), PATCH_HLE_D3D),
-	// CxbxImpl_SetRenderTarget now only does side-map registration + global tracking.
-	// Host resource creation is handled by CxbxD3D11UpdateRenderTargetFromPGRAPH.
-	PATCH_ENTRY("D3DDevice_SetRenderTarget", xbox::EMUPATCH(D3DDevice_SetRenderTarget), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderTargetFast", xbox::EMUPATCH(D3DDevice_SetRenderTargetFast), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2", xbox::EMUPATCH(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2), PATCH_HLE_D3D),
+	// Disabled: CxbxD3D11UpdateRenderTargetFromPGRAPH creates host RTs/DSs directly from PGRAPH state.
+	// Present uses g_pHostPgraphBackBuffer instead of g_pXbox_BackBufferSurface.
+	// Direct3D_CreateDevice_End still optionally populates side-map via trampolines.
+	//PATCH_ENTRY("D3DDevice_SetRenderTarget", xbox::EMUPATCH(D3DDevice_SetRenderTarget), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetRenderTargetFast", xbox::EMUPATCH(D3DDevice_SetRenderTargetFast), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2", xbox::EMUPATCH(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2), PATCH_HLE_D3D),
 	// Step 12: SetScreenSpaceOffset only wrote g_Xbox_ScreenSpaceOffset which was only
 	// read by the dead CxbxSetVertexShaderPassthroughProgram. Xbox code handles it natively.
 	//PATCH_ENTRY("D3DDevice_SetScreenSpaceOffset", xbox::EMUPATCH(D3DDevice_SetScreenSpaceOffset), PATCH_HLE_D3D),
@@ -263,7 +267,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code uses NV2A time fence
 	PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3D_CommonSetRenderTarget", xbox::EMUPATCH(D3D_CommonSetRenderTarget), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3D_CommonSetRenderTarget", xbox::EMUPATCH(D3D_CommonSetRenderTarget), PATCH_HLE_D3D),
     PATCH_ENTRY("D3D_DestroyResource", xbox::EMUPATCH(D3D_DestroyResource), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_DestroyResource_0__LTCG_edi1", xbox::EMUPATCH(D3D_DestroyResource_0__LTCG_edi1), PATCH_HLE_D3D),
 	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful

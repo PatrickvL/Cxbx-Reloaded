@@ -298,6 +298,9 @@ static void CxbxImpl_Reset(xbox::X_D3DPRESENT_PARAMETERS* pPresentationParameter
 	FreeHostResource(GetHostResourceKey(g_pXbox_BackBufferSurface));
 	FreeHostResource(GetHostResourceKey(g_pXbox_DefaultDepthStencilSurface));
 
+	// Reset PGRAPH surface tracking so the next bound RT becomes the new backbuffer
+	CxbxResetPgraphSurfaceTracking();
+
 	// Below requirement for patched function(s) in order to function properly.
 	// Perform xbox's D3DDevice_Reset call.
 

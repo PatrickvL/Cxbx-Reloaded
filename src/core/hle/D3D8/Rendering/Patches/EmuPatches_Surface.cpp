@@ -470,7 +470,8 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	const auto width = g_XBVideo.bMaintainAspect ? g_AspectRatioScaleWidth * g_AspectRatioScale : g_HostBackBufferDesc.Width;
    	   	const auto height = g_XBVideo.bMaintainAspect ? g_AspectRatioScaleHeight * g_AspectRatioScale : g_HostBackBufferDesc.Height;
 
-		auto pXboxBackBufferHostSurface = GetHostSurface(g_pXbox_BackBufferSurface, D3DUSAGE_RENDERTARGET);
+		// Use PGRAPH-tracked backbuffer host texture (set by CxbxD3D11UpdateRenderTargetFromPGRAPH)
+		auto pXboxBackBufferHostSurface = g_pHostPgraphBackBuffer;
 		// Diagnostic: log draw count per frame (first few frames only)
 		{
 			static int frameCount = 0;
@@ -569,8 +570,9 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	   	   	// Make sure to scale the values based on the difference between the Xbox and Host backbuffer
    	   	   	   	// We can't use the scale factor here because we are blitting directly to the host backbuffer
    	   	   	   	// NOT an Xbox surface!
-   	   	   	   	DWORD XboxBackBufferWidth = GetPixelContainerWidth(g_pXbox_BackBufferSurface);
-   	   	   	   	DWORD XboxBackBufferHeight = GetPixelContainerHeight(g_pXbox_BackBufferSurface);
+   	   	   	   	// Use PGRAPH-tracked backbuffer dimensions for overlay scaling
+   	   	   	   	DWORD XboxBackBufferWidth = g_PgraphBackBufferWidth;
+   	   	   	   	DWORD XboxBackBufferHeight = g_PgraphBackBufferHeight;
 
 				// We also need to account for any MSAA which may have enlarged the Xbox Backbuffer
 				float xScale, yScale;

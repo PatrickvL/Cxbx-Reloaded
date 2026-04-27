@@ -577,6 +577,15 @@ void CxbxD3D11ApplyDirtyStates()
 static xbox::addr_xt g_LastBoundColorOffset = ~0u;
 static xbox::addr_xt g_LastBoundZetaOffset  = ~0u;
 
+// PGRAPH backbuffer tracking — first color offset bound becomes the backbuffer
+static xbox::addr_xt g_PgraphBackBufferOffset = 0;
+ID3D11Texture2D* g_pHostPgraphBackBuffer = nullptr;
+UINT g_PgraphBackBufferWidth = 0;
+UINT g_PgraphBackBufferHeight = 0;
+
+// Implemented after g_PgraphRTCache is defined
+void CxbxResetPgraphSurfaceTracking();
+
 // Map NV097 surface color format to DXGI format for host render target creation
 static DXGI_FORMAT NV097ColorFormatToDXGI(unsigned int colorFormat)
 {
@@ -635,6 +644,17 @@ struct PgraphRTKeyHash {
 	}
 };
 static std::unordered_map<PgraphRTKey, Microsoft::WRL::ComPtr<ID3D11Texture2D>, PgraphRTKeyHash> g_PgraphRTCache;
+
+void CxbxResetPgraphSurfaceTracking()
+{
+	g_LastBoundColorOffset = ~0u;
+	g_LastBoundZetaOffset = ~0u;
+	g_PgraphBackBufferOffset = 0;
+	g_pHostPgraphBackBuffer = nullptr;
+	g_PgraphBackBufferWidth = 0;
+	g_PgraphBackBufferHeight = 0;
+	g_PgraphRTCache.clear();
+}
 
 // Create a D3D11 render target or depth stencil directly from PGRAPH surface state
 static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
@@ -724,6 +744,17 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		if (pHostRT) {
 			CxbxSetRenderTarget(pHostRT, mipSlice, faceIndex);
 		}
+
+		// Track the first color offset as the backbuffer; update pointer on re-bind
+		if (g_PgraphBackBufferOffset == 0 && pHostRT) {
+			g_PgraphBackBufferOffset = colorOffset;
+		}
+		if (colorOffset == g_PgraphBackBufferOffset) {
+			g_pHostPgraphBackBuffer = pHostRT;
+			g_PgraphBackBufferWidth = rtWidth;
+			g_PgraphBackBufferHeight = rtHeight;
+		}
+
 		g_LastBoundColorOffset = colorOffset;
 	}
 

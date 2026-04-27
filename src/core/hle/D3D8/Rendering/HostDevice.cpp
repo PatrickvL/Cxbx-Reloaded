@@ -769,11 +769,8 @@ void GetScreenScaleFactors(float& scaleX, float& scaleY) {
 	scaleY *= g_Xbox_BackbufferScaleY;
 }
 
-// Get the raw subpixel dimensions of the rendertarget buffer
-void GetRenderTargetRawDimensions(float& x, float&y, xbox::X_D3DSurface* rt) {
-	x = (float) GetPixelContainerWidth(rt);
-	y = (float) GetPixelContainerHeight(rt);
-}
+// GetRenderTargetRawDimensions, GetBackBufferPixelDimensions removed:
+// dead code (never called). PGRAPH surface_shape.clip_width/height is used instead.
 
 // Get the base rendertarget dimensions excluding multisample scaling
 // e.g. a raw 1280*960 rendertarget with 2x MSAA would be have a base 640*480
@@ -788,17 +785,4 @@ void GetRenderTargetBaseDimensions(float& x, float& y) {
 
 	x /= aaX;
 	y /= aaY;
-}
-
-// Get the pixel dimensions of the backbuffer, accounting for multisample mode
-void GetBackBufferPixelDimensions(float& x, float& y) {
-	GetRenderTargetRawDimensions(x, y, g_pXbox_BackBufferSurface);
-
-	// MSAA introduces subpixels, so scale them away
-	if (g_Xbox_MultiSampleType & xbox::X_D3DMULTISAMPLE_SAMPLING_MULTI) {
-		float aaX, aaY;
-		GetMultiSampleScaleRaw(aaX, aaY);
-		x /= aaX;
-		y /= aaY;
-	}
 }

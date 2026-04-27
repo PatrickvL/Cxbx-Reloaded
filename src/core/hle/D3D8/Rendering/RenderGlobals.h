@@ -322,7 +322,6 @@ void GetMultiSampleOffset(float& xOffset, float& yOffset);
 void GetMultiSampleScaleRaw(float& xScale, float& yScale);
 void GetScreenScaleFactors(float& scaleX, float& scaleY);
 void GetRenderTargetBaseDimensions(float& x, float& y);
-void GetBackBufferPixelDimensions(float& x, float& y);
 void UpdateDepthStencilFlags(ID3D11Texture2D *pDepthStencilSurface);
 void SetupPresentationParameters(const xbox::X_D3DPRESENT_PARAMETERS *pXboxPresentationParameters);
 void DetermineSupportedD3DFormats();
