@@ -149,6 +149,11 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_BlockOnFence)
 );
 
 // ******************************************************************
+// * patch: D3DDevice_BlockUntilVerticalBlank
+// ******************************************************************
+xbox::void_xt WINAPI EMUPATCH(D3DDevice_BlockUntilVerticalBlank)();
+
+// ******************************************************************
 // * patch: D3DResource_BlockUntilNotBusy
 // ******************************************************************
 xbox::void_xt WINAPI EMUPATCH(D3DResource_BlockUntilNotBusy)

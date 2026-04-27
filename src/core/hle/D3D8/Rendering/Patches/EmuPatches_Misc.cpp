@@ -23,6 +23,8 @@
 // *
 // ******************************************************************
 #include "../EmuD3D8_common.h"
+#include "devices/Xbox.h"              // For extern NV2ADevice* g_NV2A
+#include "devices/video/nv2a.h"        // For pfifo_flush_to_pgraph
 
 // Variables only used in EmuPatches_Misc.cpp
 static DWORD g_OverlaySwap = 0; // Set in D3DDevice_UpdateOverlay
@@ -318,6 +320,22 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_UpdateOverlay_16
 // Empty stub; Xbox native fence wait via NV2A.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
+// ******************************************************************
+// * patch: D3DDevice_BlockUntilVerticalBlank
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank)()
+{
+	LOG_FUNC();
+
+	// BlockUntilIdle is inlined (no symbol) and cannot be patched.
+	// BlockUntilVerticalBlank is a real symbol.  The native Xbox code
+	// waits for a VBlank interrupt, but the HLE interrupt chain may not
+	// deliver it to the Xbox kernel event the native code waits on.
+	// Sleep for approximately one VBlank period (~16 ms at 60 Hz NTSC)
+	// to avoid an infinite spin while still letting the game proceed.
+	Sleep(16);
+}
+
 // D3DResource_BlockUntilNotBusy — disabled.
 // Empty stub; Xbox native code polls resource state.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
@@ -450,11 +468,40 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetModelView)
 // Hardcoded FALSE stub; Xbox native version checks NV_PGRAPH_STATUS.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// D3D_BlockOnTime — disabled.
-// Empty LOG_UNIMPLEMENTED stub; Xbox native code uses NV2A time fence.
-// Patch disabled in Patches.cpp — let Xbox code run unpatched.
+// ******************************************************************
+// * patch: D3D_BlockOnTime
+// ******************************************************************
+void WINAPI xbox::EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Time)
+		LOG_FUNC_ARG(MakeSpace)
+		LOG_FUNC_END;
 
-// D3D_BlockOnTime_4__LTCG_eax1 — disabled (same as D3D_BlockOnTime).
+	// The native Xbox code calls this when the GPU ring buffer is full and
+	// it needs free space.  Drain pending PFIFO commands so the DMA pusher
+	// advances GET, freeing ring buffer space for the caller.
+	if (g_NV2A) {
+		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
+	}
+}
+
+// ******************************************************************
+// * patch: D3D_BlockOnTime_4__LTCG_eax1
+// ******************************************************************
+__declspec(naked) void WINAPI xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int MakeSpace)
+{
+	xbox::dword_xt Time;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Time, eax
+	}
+	EMUPATCH(D3D_BlockOnTime)(Time, MakeSpace);
+	__asm {
+		LTCG_EPILOGUE
+		ret  4
+	}
+}
 
 // ******************************************************************
 // * patch: D3D_DestroyResource

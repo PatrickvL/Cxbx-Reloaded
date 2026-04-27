@@ -42,10 +42,34 @@ typedef struct RAMHTEntry {
 } RAMHTEntry;
 
 static RAMHTEntry ramht_lookup(NV2AState *d, uint32_t handle); // forward declaration
+static void pfifo_run_puller(NV2AState *d); // forward declaration
+static void pfifo_run_pusher(NV2AState *d); // forward declaration
 
 /* PFIFO - MMIO and DMA FIFO submission to PGRAPH and VPE */
 DEVICE_READ32(PFIFO)
 {
+    // Fast path for DMA_GET reads.  When the DMA pusher cannot process
+    // (access flags not set in HLE mode), advance GET to PUT so polls
+    // like BlockUntilIdle() return immediately.  When the pusher CAN
+    // process, leave GET alone — the pusher/puller threads advance it.
+    if (addr == NV_PFIFO_CACHE1_DMA_GET) {
+        uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
+        uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
+        if (get_v != put_v) {
+            uint32_t push0    = d->pfifo.regs[RI(NV_PFIFO_CACHE1_PUSH0)];
+            uint32_t dma_push = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUSH)];
+            bool pusher_can_run = GET_MASK(push0, NV_PFIFO_CACHE1_PUSH0_ACCESS)
+                               && GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_ACCESS)
+                               && !GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_STATUS);
+            if (!pusher_can_run) {
+                d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = put_v;
+                get_v = put_v;
+            }
+        }
+        uint32_t result = get_v;
+        DEVICE_READ32_END(PFIFO);
+    }
+
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
 
 	DEVICE_READ32_SWITCH() {
@@ -315,11 +339,30 @@ void pfifo_flush_to_pgraph(NV2AState *d)
     while (true) {
         uint32_t status  = d->pfifo.regs[RI(NV_PFIFO_CACHE1_STATUS)];
         bool cache1_empty = (status & NV_PFIFO_CACHE1_STATUS_LOW_MARK) != 0;
-        bool dma_idle     = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)]
-                         == d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
+        uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
+        uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
+        bool dma_idle  = (get_v == put_v);
 
         if (cache1_empty && dma_idle)
             break;
+
+        // Check whether the DMA pusher can actually process commands.
+        // If not (access flags not set), the commands are from HLE-patched
+        // D3D calls that already set PGRAPH state — skip them.
+        if (!dma_idle) {
+            uint32_t push0    = d->pfifo.regs[RI(NV_PFIFO_CACHE1_PUSH0)];
+            uint32_t dma_push = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUSH)];
+            bool pusher_can_run = GET_MASK(push0, NV_PFIFO_CACHE1_PUSH0_ACCESS)
+                               && GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_ACCESS)
+                               && !GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_STATUS);
+            if (!pusher_can_run) {
+                // Advance GET past the unprocessable commands.
+                d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = put_v;
+                if (cache1_empty)
+                    break;
+                // Fall through to drain any remaining CACHE1 entries.
+            }
+        }
 
         // Tell the puller to signal us after its next drain cycle.
         d->pfifo.flush_requested = true;

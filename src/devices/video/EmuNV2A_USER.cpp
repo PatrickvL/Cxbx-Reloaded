@@ -39,6 +39,28 @@ DEVICE_READ32(USER)
 	unsigned int channel_id = addr >> 16;
 	assert(channel_id < NV2A_NUM_CHANNELS);
 
+	// Fast path for DMA_GET reads.  When the DMA pusher cannot process
+	// (access flags not set in HLE mode), advance GET to PUT so polls
+	// like BlockUntilIdle() return immediately.  When the pusher CAN
+	// process, leave GET alone — the pusher/puller threads advance it.
+	if ((addr & 0xFFFF) == NV_USER_DMA_GET) {
+		uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
+		uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
+		if (get_v != put_v) {
+			uint32_t push0    = d->pfifo.regs[RI(NV_PFIFO_CACHE1_PUSH0)];
+			uint32_t dma_push = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUSH)];
+			bool pusher_can_run = GET_MASK(push0, NV_PFIFO_CACHE1_PUSH0_ACCESS)
+			                   && GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_ACCESS)
+			                   && !GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_STATUS);
+			if (!pusher_can_run) {
+				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = put_v;
+				get_v = put_v;
+			}
+		}
+		uint32_t result = get_v;
+		DEVICE_READ32_END(USER);
+	}
+
 	qemu_mutex_lock(&d->pfifo.pfifo_lock);
 
 	uint32_t channel_modes = d->pfifo.regs[RI(NV_PFIFO_MODE)];
