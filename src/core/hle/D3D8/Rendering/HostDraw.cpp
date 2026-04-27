@@ -134,7 +134,7 @@ void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 
 // TODO : Move to own file
 // Drawing function specifically for rendering Xbox draw calls supplying a 'User Pointer'.
-// Called by D3DDevice_DrawVerticesUP, EmuExecutePushBufferRaw and CxbxImpl_End
+// Called by D3DDevice_DrawVerticesUP and EmuExecutePushBufferRaw
 void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 {
 	assert(DrawContext.dwStartVertex == 0);

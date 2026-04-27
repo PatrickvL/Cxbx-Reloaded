@@ -685,10 +685,9 @@ void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address)
 	// Handle can be an address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
 	// If Handle is assigned, it becomes the new current Xbox VertexShader,
 	// which resets a bit of state (nv2a execution mode, viewport, ?)
-	// Either way, the given address slot is selected as the start of the current vertex shader program
-	// g_Xbox_VertexShader_FunctionSlots_StartAddress is no longer written here;
-	// the render thread reads the program start from NV_PGRAPH_CSV0_C
-	// CHEOPS_PROGRAM_START, which the PFIFO puller sets from
+	// Either way, the given address slot is selected as the start of the current vertex shader program.
+	// The render thread reads the program start from NV_PGRAPH_CSV0_C
+	// (CHEOPS_PROGRAM_START), which the PFIFO puller sets from
 	// NV097_SET_TRANSFORM_PROGRAM_START in the push buffer.
 
 	// NOTE: Do NOT mirror the start address to pg->regs[CSV0_C] here.
@@ -733,8 +732,6 @@ void SetFixedFunctionDefaultVertexAttributes(DWORD vshFlags) {
 			value = black;
 		}
 
-		// Note : We avoid calling CxbxImpl_SetVertexData4f here, as that would
-		// start populating g_InlineVertexBuffer_Table, which is not our intent here.
 		CxbxSetVertexAttribute(i, value[0], value[1], value[2], value[3]);
 	}
 }
@@ -773,17 +770,10 @@ void CxbxImpl_SetVertexShader(DWORD Handle)
 		// Do NOT call CxbxImpl_Load/Select here — they write directly to
 		// pg->program_data and pg->regs[CSV0_C] on the game thread, racing
 		// with the puller which reads that data at draw time.
-		// Update only the HLE-side globals that the EMUPATCH stubs set:
-		// g_Xbox_VertexShader_FunctionSlots_StartAddress is read from
-		// PGRAPH CSV0_C by the render thread — don't race it.
-		// g_Xbox_VertexShaderMode is derived from PGRAPH CSV0_D by the
-		// render thread in CxbxUpdateNativeD3DResources — don't race it.
 		g_Xbox_VertexShader_Handle = Handle;
 	} else {
 		// A shader without a program won't call LoadVertexShader nor SelectVertexShader
 		g_Xbox_VertexShader_Handle = Handle;
-		// g_Xbox_VertexShader_FunctionSlots_StartAddress is read from
-		// PGRAPH CSV0_C by the render thread — don't race it.
 
 		// NOTE: Do NOT write to pg->regs[CSV0_C] here.  The Xbox
 		// SetVertexShader trampoline writes SET_TRANSFORM_EXECUTION_MODE

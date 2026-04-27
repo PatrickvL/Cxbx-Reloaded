@@ -615,10 +615,6 @@ void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	// so no constant buffer upload is needed for attribute defaults.
 }
 
-// CxbxImpl_Begin, CxbxImpl_End, CxbxImpl_SetVertexData4f — removed.
-// All callers (Begin/End/SetVertexData* patches) are now disabled.
-// Xbox native code pushes immediate-mode drawing through PFIFO → PGRAPH.
-
 void CxbxImpl_SetStreamSource(UINT StreamNumber, xbox::X_D3DVertexBuffer* pStreamData, UINT Stride)
 {
 	if (pStreamData != xbox::zeroptr && Stride == 0) {

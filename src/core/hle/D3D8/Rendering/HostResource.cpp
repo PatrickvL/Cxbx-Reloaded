@@ -97,32 +97,6 @@ inline bool IsPaletizedTexture(const xbox::dword_xt XboxPixelContainer_Format)
 	return GetXboxPixelContainerFormat(XboxPixelContainer_Format) == xbox::X_D3DFMT_P8;
 }
 
-#if 0 // unused
-inline bool IsYuvSurfaceOrTexture(const xbox::X_D3DResource* pXboxResource)
-{
-	if (GetXboxPixelContainerFormat((xbox::X_D3DPixelContainer *)pXboxResource) == xbox::X_D3DFMT_YUY2)
-		return true;
-
-	return false;
-}
-#endif
-
-#if 0 // unused
-inline bool IsXboxResourceLocked(const xbox::X_D3DResource *pXboxResource)
-{
-	bool result = !!(pXboxResource->Common & X_D3DCOMMON_ISLOCKED);
-	return result;
-}
-#endif
-
-#if 0 // unused
-inline bool IsXboxResourceD3DCreated(const xbox::X_D3DResource *pXboxResource)
-{
-	bool result = !!(pXboxResource->Common & X_D3DCOMMON_D3DCREATED);
-	return result;
-}
-#endif
-
 void *GetDataFromXboxResource(xbox::X_D3DResource *pXboxResource)
 {
 	// Don't pass in unassigned Xbox resources
@@ -418,36 +392,12 @@ ID3D11Resource *GetHostBaseTexture(xbox::X_D3DResource *pXboxResource, DWORD D3D
 	return (ID3D11Resource*)GetHostResource(pXboxResource, D3DUsage, iTextureStage);
 }
 
-#if 0 // unused
-ID3D11Texture2D *GetHostTexture(xbox::X_D3DResource *pXboxResource, int iTextureStage = 0)
-{
-	if (pXboxResource == xbox::zeroptr)
-		return nullptr;
-
-	return (ID3D11Texture2D *)GetHostBaseTexture(pXboxResource, 0, iTextureStage);
-
-	// TODO : Check for 1 face (and 2 dimensions)?
-}
-#endif
-
 ID3D11Texture3D *GetHostVolumeTexture(xbox::X_D3DResource *pXboxResource, int iTextureStage)
 {
 	return (ID3D11Texture3D *)GetHostBaseTexture(pXboxResource, 0, iTextureStage);
 
 	// TODO : Check for 1 face (and 2 dimensions)?
 }
-
-#if 0 // unused
-ID3D11Buffer *GetHostIndexBuffer(xbox::X_D3DResource *pXboxResource)
-{
-	if (pXboxResource == xbox::zeroptr)
-		return nullptr;
-
-	assert(GetXboxCommonResourceType(pXboxResource) == X_D3DCOMMON_TYPE_INDEXBUFFER);
-
-	return (ID3D11Buffer*)GetHostResource(pXboxResource);
-}
-#endif
 
 int XboxD3DPaletteSizeToBytes(const xbox::X_D3DPALETTESIZE Size)
 {
