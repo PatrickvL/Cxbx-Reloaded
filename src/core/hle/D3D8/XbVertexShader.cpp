@@ -313,16 +313,8 @@ int GetXboxVertexDataComponentCount(int d3dvsdt) {
 	}
 }
 
-extern bool g_InlineVertexBuffer_DeclarationOverride; // TMP glue
-extern xbox::X_VERTEXATTRIBUTEFORMAT g_InlineVertexBuffer_AttributeFormat; // TMP glue
-
 xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat()
 {
-	// Special case for CxbxImpl_End() based drawing
-	if (g_InlineVertexBuffer_DeclarationOverride) {
-		return &g_InlineVertexBuffer_AttributeFormat;
-	}
-
 	xbox::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
 	if (pXboxVertexShader == xbox::zeroptr) {
 		// Despite possibly not being used, the pXboxVertexShader argument must always be assigned

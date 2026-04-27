@@ -47,14 +47,6 @@
 
 CxbxVertexBufferConverter VertexBufferConverter = {};
 
-// Inline vertex buffer emulation
-xbox::X_D3DPRIMITIVETYPE      g_InlineVertexBuffer_PrimitiveType = xbox::X_D3DPT_INVALID;
-xbox::X_VERTEXATTRIBUTEFORMAT g_InlineVertexBuffer_AttributeFormat = {};
-bool                          g_InlineVertexBuffer_DeclarationOverride = false;
-std::vector<D3DIVB>           g_InlineVertexBuffer_Table;
-UINT                          g_InlineVertexBuffer_TableLength = 0;
-UINT                          g_InlineVertexBuffer_TableOffset = 0;
-
 // Copy of active Xbox D3D Vertex Streams (and strides), set by [D3DDevice|CxbxImpl]_SetStreamSource*
 xbox::X_STREAMINPUT g_Xbox_SetStreamSource[X_VSH_MAX_STREAMS] = { 0 }; // Note : .Offset member is never set (so always 0)
 

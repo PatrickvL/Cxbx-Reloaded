@@ -120,19 +120,6 @@ class CxbxVertexBufferConverter
 
 extern CxbxVertexBufferConverter VertexBufferConverter;
 
-// Inline vertex buffer emulation
-extern xbox::X_D3DPRIMITIVETYPE      g_InlineVertexBuffer_PrimitiveType;
-
-typedef struct _D3DIVB
-{
-    std::array<D3DXVECTOR4, 16> Slots;
-
-} D3DIVB;
-
-extern std::vector<D3DIVB> g_InlineVertexBuffer_Table;
-extern UINT g_InlineVertexBuffer_TableLength;
-extern UINT g_InlineVertexBuffer_TableOffset;
-
 extern void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d);
 
 extern void CxbxImpl_SetStreamSource(UINT StreamNumber, xbox::X_D3DVertexBuffer* pStreamData, UINT Stride);

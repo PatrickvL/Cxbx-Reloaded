@@ -745,7 +745,7 @@ void UpdateFixedFunctionVertexShaderState()
 	// This, because CxbxGetVertexDeclaration() can't be used, since it doesn't track VertexAttributes
 	// (plus, it contains the overhead of shader lookup).
 	// Another, GetXboxVertexShader(), can't be used, because it doesn't honor vertex attribute overrides
-	// like those that apply for g_InlineVertexBuffer_DeclarationOverride and active SetVertexShaderInput.
+	// like those that apply for active SetVertexShaderInput.
 	// Also, the xbox::X_D3DVertexShader.Dimensionality[] field contains somewhat strange values.
 	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
 		auto vertexDataFormat = pXboxVertexAttributeFormat->Slots[xbox::X_D3DVSDE_TEXCOORD0 + i].Format;
