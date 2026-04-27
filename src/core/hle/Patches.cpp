@@ -183,7 +183,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SelectVertexShaderDirect_0__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SelectVertexShaderDirect_0__LTCG_eax1_ebx2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SelectVertexShader_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SelectVertexShader_4__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetBackBufferScale", xbox::EMUPATCH(D3DDevice_SetBackBufferScale), PATCH_HLE_D3D),
+	// Disabled: Xbox native stores scale in device struct. Default 1.0 is correct for most titles.
+	// TODO: Read from Xbox device struct in Swap path if non-1.0 scale needed.
+	//PATCH_ENTRY("D3DDevice_SetBackBufferScale", xbox::EMUPATCH(D3DDevice_SetBackBufferScale), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetBackMaterial", xbox::EMUPATCH(D3DDevice_SetBackMaterial), PATCH_HLE_D3D), // Not re-enabled: Meshes sample doesn't use it
 	// Disabled: all cases are TODO stubs, intercepting does nothing useful
 	//PATCH_ENTRY("D3DDevice_SetDepthClipPlanes", xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes), PATCH_HLE_D3D),
@@ -229,7 +231,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetStreamSource_8__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetStreamSource_8__LTCG_edx1", xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_edx1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetSwapCallback", xbox::EMUPATCH(D3DDevice_SetSwapCallback), PATCH_HLE_D3D),
+	// Disabled: Xbox native stores callback in device struct. Swap callback not invoked without this.
+	// TODO: Read callback pointer from Xbox device struct in Swap path if needed.
+	//PATCH_ENTRY("D3DDevice_SetSwapCallback", xbox::EMUPATCH(D3DDevice_SetSwapCallback), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetTexture", xbox::EMUPATCH(D3DDevice_SetTexture), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetTexture_4__LTCG_eax2", xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetTexture_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax1), PATCH_HLE_D3D),
