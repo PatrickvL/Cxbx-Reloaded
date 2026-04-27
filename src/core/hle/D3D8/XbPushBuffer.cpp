@@ -93,37 +93,6 @@ void EmuExecutePushBuffer
     return;
 }
 
-DWORD CxbxGetStrideFromVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration)
-{
-	DWORD Stride = 0;
-
-	if (pCxbxVertexDeclaration) {
-		// Test-case : Crash 'n' Burn [45530014]
-		// Test-case : CrimsonSea [4B4F0002]
-		// Test-case : Freedom Fighters
-		// Test-case : Hot Wheels Stunt Track Challenge [54510089] 
-		// Test-case : Inside Pitch 2003 [4D530034]
-		// Test-case : Need for Speed Most Wanted [4541007B]
-		// Test-case : Prince of Persia: The Sands of Time [5553001d]
-		// Test-case : RPM Tuning [Top Gear RPM Tuning] [4B420007]
-		// Test-case : SpyHunter 2 [4D57001B]
-		//LOG_TEST_CASE("Non-FVF Vertex Shaders not yet (completely) supported for PushBuffer emulation!");
-
-		if (pCxbxVertexDeclaration->NumberOfVertexStreams == 1) {
-			// Note : This assumes that the only stream in use will be stream zero :
-			Stride = pCxbxVertexDeclaration->VertexStreams[0].HostVertexStride;
-		}
-		else {
-			LOG_TEST_CASE("Non-FVF Vertex Shaders with multiple streams not supported for PushBuffer emulation!");
-		}
-	}
-	else {
-		LOG_TEST_CASE("Missing Vertex Declaration not supported for PushBuffer emulation!");
-	}
-
-	return Stride;
-}
-
 void HLE_draw_arrays(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;

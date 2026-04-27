@@ -26,23 +26,9 @@
 
 static xbox::dword_xt *g_pXbox_BeginPush_Buffer = xbox::zeroptr; // primary push buffer
 
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetIndices)
-(
-	X_D3DIndexBuffer      *pIndexData,
-	uint_xt                BaseVertexIndex
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pIndexData)
-		LOG_FUNC_ARG(BaseVertexIndex)
-		LOG_FUNC_END;
-
-	// Cache the base vertex index then call the Xbox function
-	g_Xbox_BaseVertexIndex = BaseVertexIndex;
-
-	XB_TRMP(D3DDevice_SetIndices)(pIndexData, BaseVertexIndex);
-}
+// D3DDevice_SetIndices, D3DDevice_SetIndices_4__LTCG_ebx1 — disabled.
+// Trampoline-only after DrawIndexedVertices was disabled (g_Xbox_BaseVertexIndex had no readers).
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: Direct3D_CreateDevice
@@ -287,36 +273,7 @@ static void D3DDevice_SetIndices_4__LTCG_ebx1
 // ******************************************************************
 // * patch: D3DDevice_SetIndices_4__LTCG_ebx1
 // LTCG specific D3DDevice_SetIndices function...
-// This uses a custom calling convention where parameter is passed in EBX and Stack
-// Test Case: Conker
-// ******************************************************************
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetIndices_4__LTCG_ebx1)
-(
-   	uint_xt                BaseVertexIndex
-)
-{
-   	X_D3DIndexBuffer   *pIndexData;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  pIndexData, ebx
-   	}
-
-   	// Log
-   	D3DDevice_SetIndices_4__LTCG_ebx1(pIndexData, BaseVertexIndex);
-
-   	// Cache the base vertex index
-   	g_Xbox_BaseVertexIndex = BaseVertexIndex;
-
-   	// Call LTCG-specific trampoline
-   	__asm {
-   	   	mov  ebx, pIndexData
-   	   	push BaseVertexIndex
-   	   	call XB_TRMP(D3DDevice_SetIndices_4__LTCG_ebx1);
-
-   	   	LTCG_EPILOGUE
-   	   	ret  4
-   	}
-}
+// D3DDevice_SetIndices_4__LTCG_ebx1 — removed (see comment above SetIndices).
 
 // ******************************************************************
 // * patch: D3DDevice_Reset

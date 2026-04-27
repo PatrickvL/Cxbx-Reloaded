@@ -5048,3 +5048,33 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVertexShaderConstant)(
 		CxbxGetVertexShaderConstants((UINT)Register, (float*)pConstantData, copyCount);
 	}
 }
+
+// ================================================================
+// Disabled patches — moved from EmuPatches_Device.cpp
+// SetIndices: trampoline-only, only cached g_Xbox_BaseVertexIndex which had
+// no readers after DrawIndexedVertices was disabled.
+// ================================================================
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetIndices)(
+	X_D3DIndexBuffer *pIndexData, uint_xt BaseVertexIndex)
+{
+	LOG_FUNC_BEGIN LOG_FUNC_ARG(pIndexData) LOG_FUNC_ARG(BaseVertexIndex) LOG_FUNC_END;
+	g_Xbox_BaseVertexIndex = BaseVertexIndex;
+	XB_TRMP(D3DDevice_SetIndices)(pIndexData, BaseVertexIndex);
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetIndices_4__LTCG_ebx1)(
+	uint_xt BaseVertexIndex)
+{
+	X_D3DIndexBuffer *pIndexData;
+	__asm { LTCG_PROLOGUE; mov pIndexData, ebx }
+	D3DDevice_SetIndices_4__LTCG_ebx1(pIndexData, BaseVertexIndex);
+	g_Xbox_BaseVertexIndex = BaseVertexIndex;
+	__asm {
+		mov  ebx, pIndexData
+		push BaseVertexIndex
+		call XB_TRMP(D3DDevice_SetIndices_4__LTCG_ebx1);
+		LTCG_EPILOGUE
+		ret  4
+	}
+}

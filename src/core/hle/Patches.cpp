@@ -170,8 +170,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetFlickerFilter", xbox::EMUPATCH(D3DDevice_SetFlickerFilter), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetFlickerFilter_0__LTCG_esi1", xbox::EMUPATCH(D3DDevice_SetFlickerFilter_0__LTCG_esi1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetGammaRamp", xbox::EMUPATCH(D3DDevice_SetGammaRamp), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetIndices", xbox::EMUPATCH(D3DDevice_SetIndices), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetIndices_4__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetIndices_4__LTCG_ebx1), PATCH_HLE_D3D),
+	// Disabled: trampoline-only, g_Xbox_BaseVertexIndex was only reader (DrawIndexedVertices disabled)
+	//PATCH_ENTRY("D3DDevice_SetIndices", xbox::EMUPATCH(D3DDevice_SetIndices), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetIndices_4__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetIndices_4__LTCG_ebx1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetLight", xbox::EMUPATCH(D3DDevice_SetLight), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetMaterial", xbox::EMUPATCH(D3DDevice_SetMaterial), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetModelView", xbox::EMUPATCH(D3DDevice_SetModelView), PATCH_HLE_D3D),
