@@ -111,7 +111,7 @@ void Direct3D_CreateDevice_End
    	}
 }
 
-// Called by D3DDevice_DrawIndexedVertices and EmuExecutePushBufferRaw (twice)
+// Called by HLE_draw_inline_elements (XbPushBuffer.cpp)
 void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 {
 	assert(DrawContext.dwStartVertex == 0);
@@ -122,9 +122,8 @@ void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 }
 
-// TODO : Move to own file
 // Drawing function specifically for rendering Xbox draw calls supplying a 'User Pointer'.
-// Called by D3DDevice_DrawVerticesUP and EmuExecutePushBufferRaw
+// Called by HLE_draw_inline_array (XbPushBuffer.cpp)
 void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 {
 	assert(DrawContext.dwStartVertex == 0);

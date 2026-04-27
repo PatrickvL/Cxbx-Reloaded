@@ -23,7 +23,6 @@
 // *
 // ******************************************************************
 #include "../EmuD3D8_common.h"
-#include "../IndexBufferConvert.h"
 #include "../Backend\Backend_D3D11.h"
 
 // D3DDevice_Begin, D3DDevice_SetVertexData2f, D3DDevice_SetVertexData2s,

@@ -45,8 +45,6 @@ extern void CxbxUpdateHostTextures();
 
 const char *NV2AMethodToString(DWORD dwMethod); // forward
 
-static void DbgDumpMesh(WORD *pIndexData, DWORD dwCount);
-
 void EmuExecutePushBuffer
 (
 	xbox::X_D3DPushBuffer       *pPushBuffer,
