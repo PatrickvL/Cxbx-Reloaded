@@ -486,7 +486,7 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_EndPush)(dword_xt *pPush)
 	{
    	   	// Note: We don't use the count from BeginPush because that specifies the *maximum* count
    	   	// rather than the count actually in the pushbuffer. 
-		EmuExecutePushBufferRaw(g_pXbox_BeginPush_Buffer, (uintptr_t)pPush - (uintptr_t)g_pXbox_BeginPush_Buffer);
+		pfifo_submit_pushbuffer(g_NV2A->GetDeviceState(), g_pXbox_BeginPush_Buffer, (uintptr_t)pPush - (uintptr_t)g_pXbox_BeginPush_Buffer);
 
 		delete[] g_pXbox_BeginPush_Buffer;
 		g_pXbox_BeginPush_Buffer = nullptr;

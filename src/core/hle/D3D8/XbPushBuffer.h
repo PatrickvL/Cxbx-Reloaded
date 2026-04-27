@@ -41,10 +41,4 @@ extern void EmuExecutePushBuffer
 	xbox::X_D3DFixup            *pFixup
 );
 
-extern void EmuExecutePushBufferRaw
-(
-	void *pPushData,
-	uint32_t uSizeInBytes
-);
-
 #endif
