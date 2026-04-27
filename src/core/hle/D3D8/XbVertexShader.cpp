@@ -624,16 +624,33 @@ ID3DBlob* CxbxGetFixedFunctionVertexShaderBytecode()
 
 void CxbxUpdateHostVertexDeclaration()
 {
-	CxbxVertexDeclaration* pCxbxVertexDeclaration = CxbxGetVertexDeclaration();
-	CxbxSetHostVertexDeclaration(pCxbxVertexDeclaration);
-
 	// Titles can specify default values for registers via calls like SetVertexData4f
 	// HLSL shaders need to know whether to use vertex data or default vertex shader values
 	// Any register not in the vertex declaration should be set to the default value
 	float vertexDefaultFlags[X_VSH_MAX_ATTRIBUTES];
-	for (int i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
-		vertexDefaultFlags[i] = pCxbxVertexDeclaration->vRegisterInDeclaration[i] ? 0.0f : 1.0f;
+
+	// When g_Xbox_VertexShader_Handle is set, the HLE vertex declaration
+	// tells us which registers are present in the vertex buffer.
+	// When it's not set (patches disabled — Xbox native code drives NV2A),
+	// derive the flags from PGRAPH vertex_attributes[]: count > 0 means
+	// the attribute has stream data, count == 0 means use sticky default.
+	if (g_Xbox_VertexShader_Handle != 0) {
+		CxbxVertexDeclaration* pCxbxVertexDeclaration = CxbxGetVertexDeclaration();
+		CxbxSetHostVertexDeclaration(pCxbxVertexDeclaration);
+
+		for (int i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
+			vertexDefaultFlags[i] = pCxbxVertexDeclaration->vRegisterInDeclaration[i] ? 0.0f : 1.0f;
+		}
+	} else {
+		// PGRAPH-driven: read which attributes are active from NV2A state
+		CxbxSetHostVertexDeclaration(nullptr);
+		PGRAPHState* pg = (g_NV2A != nullptr) ? &g_NV2A->GetDeviceState()->pgraph : nullptr;
+		for (int i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
+			bool active = pg && (pg->vertex_attributes[i].count > 0);
+			vertexDefaultFlags[i] = active ? 0.0f : 1.0f;
+		}
 	}
+
 	CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_SIZE);
 }
 

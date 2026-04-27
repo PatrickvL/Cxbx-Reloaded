@@ -331,9 +331,10 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	if (!s_pLayoutCB || !s_pDefaultsCB)
 		return;
 
-	CxbxVertexDeclaration* pDecl = CxbxGetVertexDeclaration();
-	if (!pDecl || pDecl->NumberOfVertexStreams == 0)
-		return;
+	// pDecl is only needed by the HLE fallback path (below).
+	// Defer the call until we know PGRAPH path didn't suffice,
+	// because CxbxGetVertexDeclaration crashes when g_Xbox_VertexShader_Handle is 0.
+	CxbxVertexDeclaration* pDecl = nullptr;
 
 	// ---------------------------------------------------------------
 	// Step 1: Determine topology and host vertex count
@@ -571,6 +572,12 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		if (!bUsedPGRAPH)
 		{
 			// HLE fallback: walk CxbxVertexDeclaration + g_Xbox_SetStreamSource[]
+			// Lazy-init pDecl here to avoid crashing when g_Xbox_VertexShader_Handle is 0.
+			pDecl = CxbxGetVertexDeclaration();
+			if (!pDecl || pDecl->NumberOfVertexStreams == 0) {
+				g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
+				return; // No PGRAPH data and no HLE declaration — can't draw
+			}
 			for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
 				auto& streamInfo = pDecl->VertexStreams[s];
 				UINT streamIdx = streamInfo.XboxStreamIndex;

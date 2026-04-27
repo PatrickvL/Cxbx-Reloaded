@@ -79,8 +79,15 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
     PATCH_ENTRY("D3DDevice_CopyRects", xbox::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
 	// PATCH_ENTRY("D3DDevice_CreateVertexShader", xbox::EMUPATCH(D3DDevice_CreateVertexShader), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_DeleteVertexShader", xbox::EMUPATCH(D3DDevice_DeleteVertexShader), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_DeleteVertexShader_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_DeleteVertexShader_0__LTCG_eax1), PATCH_HLE_D3D),
+	// ================================================================
+	// BATCH DISABLE: All state-caching D3D patches disabled.
+	// Xbox native code writes NV2A commands through PFIFO → PGRAPH.
+	// Render thread reads authoritative state from PGRAPH registers.
+	// ================================================================
+
+	// Vertex shader management
+	//PATCH_ENTRY("D3DDevice_DeleteVertexShader", xbox::EMUPATCH(D3DDevice_DeleteVertexShader), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_DeleteVertexShader_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_DeleteVertexShader_0__LTCG_eax1), PATCH_HLE_D3D),
 	// Step 10: Draw calls flow through push buffer as NV097_DRAW_ARRAYS, NV097_INLINE_ARRAY,
 	// NV097_ARRAY_ELEMENT16/32 commands. PGRAPH SET_BEGIN_END triggers HLE_draw_* callbacks.
 	//PATCH_ENTRY("D3DDevice_DrawIndexedVertices", xbox::EMUPATCH(D3DDevice_DrawIndexedVertices), PATCH_HLE_D3D),
@@ -108,10 +115,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_GetDisplayFieldStatus", xbox::EMUPATCH(D3DDevice_GetDisplayFieldStatus), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetGammaRamp", xbox::EMUPATCH(D3DDevice_GetGammaRamp), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetMaterial", xbox::EMUPATCH(D3DDevice_GetMaterial), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetModelView", xbox::EMUPATCH(D3DDevice_GetModelView), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetModelView", xbox::EMUPATCH(D3DDevice_GetModelView), PATCH_HLE_D3D),
 	// Disabled: hardcoded TRUE stub, Xbox native overlay check is correct
 	//PATCH_ENTRY("D3DDevice_GetOverlayUpdateStatus", xbox::EMUPATCH(D3DDevice_GetOverlayUpdateStatus), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetProjectionViewportMatrix", xbox::EMUPATCH(D3DDevice_GetProjectionViewportMatrix), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetProjectionViewportMatrix", xbox::EMUPATCH(D3DDevice_GetProjectionViewportMatrix), PATCH_HLE_D3D),
 	// Disabled: g_Xbox_VertexShaderConstantMode has no render-thread readers
 	//PATCH_ENTRY("D3DDevice_GetShaderConstantMode", xbox::EMUPATCH(D3DDevice_GetShaderConstantMode), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetTransform", xbox::EMUPATCH(D3DDevice_GetTransform), PATCH_HLE_D3D),
@@ -134,8 +141,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_IsBusy", xbox::EMUPATCH(D3DDevice_IsBusy), PATCH_HLE_D3D),
 	// Disabled: hardcoded FALSE stub, Xbox native fence check via NV2A
 	//PATCH_ENTRY("D3DDevice_IsFencePending", xbox::EMUPATCH(D3DDevice_IsFencePending), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_LightEnable", xbox::EMUPATCH(D3DDevice_LightEnable), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_LightEnable_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_LightEnable_4__LTCG_eax1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_LightEnable", xbox::EMUPATCH(D3DDevice_LightEnable), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_LightEnable_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_LightEnable_4__LTCG_eax1), PATCH_HLE_D3D),
 	// Disabled: trampoline-only after CxbxImpl_LoadVertexShader removal.
 	// Xbox code runs unpatched and writes to push buffer directly.
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader", xbox::EMUPATCH(D3DDevice_LoadVertexShader), PATCH_HLE_D3D),
@@ -145,8 +152,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2", xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2", xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_LoadVertexShader_4__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_MultiplyTransform", xbox::EMUPATCH(D3DDevice_MultiplyTransform), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2", xbox::EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_MultiplyTransform", xbox::EMUPATCH(D3DDevice_MultiplyTransform), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2", xbox::EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_PersistDisplay", xbox::EMUPATCH(D3DDevice_PersistDisplay), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Present", xbox::EMUPATCH(D3DDevice_Present), PATCH_HLE_D3D),
 	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful
@@ -158,13 +165,13 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_RunPushBuffer_4__LTCG_eax2", xbox::EMUPATCH(D3DDevice_RunPushBuffer_4__LTCG_eax2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_RunVertexStateShader", xbox::EMUPATCH(D3DDevice_RunVertexStateShader), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_RunVertexStateShader_4__LTCG_esi2", xbox::EMUPATCH(D3DDevice_RunVertexStateShader_4__LTCG_esi2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SelectVertexShader", xbox::EMUPATCH(D3DDevice_SelectVertexShader), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SelectVertexShader", xbox::EMUPATCH(D3DDevice_SelectVertexShader), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SelectVertexShaderDirect", xbox::EMUPATCH(D3DDevice_SelectVertexShaderDirect), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SelectVertexShaderDirect_0__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SelectVertexShaderDirect_0__LTCG_eax1_ebx2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SelectVertexShader_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SelectVertexShader_4__LTCG_eax1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SelectVertexShader_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SelectVertexShader_4__LTCG_eax1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetBackBufferScale", xbox::EMUPATCH(D3DDevice_SetBackBufferScale), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetBackMaterial", xbox::EMUPATCH(D3DDevice_SetBackMaterial), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetBackMaterial", xbox::EMUPATCH(D3DDevice_SetBackMaterial), PATCH_HLE_D3D),
 	// Disabled: all cases are TODO stubs, intercepting does nothing useful
 	//PATCH_ENTRY("D3DDevice_SetDepthClipPlanes", xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetFlickerFilter", xbox::EMUPATCH(D3DDevice_SetFlickerFilter), PATCH_HLE_D3D),
@@ -173,11 +180,11 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: trampoline-only, g_Xbox_BaseVertexIndex was only reader (DrawIndexedVertices disabled)
 	//PATCH_ENTRY("D3DDevice_SetIndices", xbox::EMUPATCH(D3DDevice_SetIndices), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetIndices_4__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetIndices_4__LTCG_ebx1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetLight", xbox::EMUPATCH(D3DDevice_SetLight), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetMaterial", xbox::EMUPATCH(D3DDevice_SetMaterial), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetModelView", xbox::EMUPATCH(D3DDevice_SetModelView), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetPalette", xbox::EMUPATCH(D3DDevice_SetPalette), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetPalette_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetPalette_4__LTCG_eax1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetLight", xbox::EMUPATCH(D3DDevice_SetLight), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetMaterial", xbox::EMUPATCH(D3DDevice_SetMaterial), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetModelView", xbox::EMUPATCH(D3DDevice_SetModelView), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetPalette", xbox::EMUPATCH(D3DDevice_SetPalette), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetPalette_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetPalette_4__LTCG_eax1), PATCH_HLE_D3D),
 	// SetPixelShader patches disabled: CxbxImpl_SetPixelShader only wrote g_pXbox_PixelShader
 	// which was only read by the COMBINECTL==0 HLE bridge fallback, now removed.
 	// Xbox native SetPixelShader pushes all combiner state through PFIFO → PGRAPH.
@@ -201,17 +208,17 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetSoftDisplayFilter", xbox::EMUPATCH(D3DDevice_SetSoftDisplayFilter), PATCH_HLE_D3D),
 	// Disabled: unimplemented stub (LOG_IGNORED), intercepting does nothing useful
 	//PATCH_ENTRY("D3DDevice_SetStipple", xbox::EMUPATCH(D3DDevice_SetStipple), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetStreamSource", xbox::EMUPATCH(D3DDevice_SetStreamSource), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3", xbox::EMUPATCH(D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetStreamSource_8__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetStreamSource_8__LTCG_edx1", xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_edx1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetStreamSource", xbox::EMUPATCH(D3DDevice_SetStreamSource), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3", xbox::EMUPATCH(D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetStreamSource_8__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_eax1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetStreamSource_8__LTCG_edx1", xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_edx1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_SetSwapCallback", xbox::EMUPATCH(D3DDevice_SetSwapCallback), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTexture", xbox::EMUPATCH(D3DDevice_SetTexture), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTexture_4__LTCG_eax2", xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTexture_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTransform", xbox::EMUPATCH(D3DDevice_SetTransform), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetTransform_0__LTCG_eax1_edx2", xbox::EMUPATCH(D3DDevice_SetTransform_0__LTCG_eax1_edx2), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetTexture", xbox::EMUPATCH(D3DDevice_SetTexture), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetTexture_4__LTCG_eax2", xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax2), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetTexture_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetTransform", xbox::EMUPATCH(D3DDevice_SetTransform), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetTransform_0__LTCG_eax1_edx2", xbox::EMUPATCH(D3DDevice_SetTransform_0__LTCG_eax1_edx2), PATCH_HLE_D3D),
 	// Step 10: SetVertexData writes NV097_SET_VERTEX_DATA* push buffer commands → inline_buffer path
 	//PATCH_ENTRY("D3DDevice_SetVertexData2f", xbox::EMUPATCH(D3DDevice_SetVertexData2f), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexData2s", xbox::EMUPATCH(D3DDevice_SetVertexData2s), PATCH_HLE_D3D),
@@ -220,8 +227,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetVertexData4s", xbox::EMUPATCH(D3DDevice_SetVertexData4s), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexData4ub", xbox::EMUPATCH(D3DDevice_SetVertexData4ub), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexDataColor", xbox::EMUPATCH(D3DDevice_SetVertexDataColor), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetVertexShader", xbox::EMUPATCH(D3DDevice_SetVertexShader), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetVertexShader_0__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetVertexShader_0__LTCG_ebx1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetVertexShader", xbox::EMUPATCH(D3DDevice_SetVertexShader), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetVertexShader_0__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetVertexShader_0__LTCG_ebx1), PATCH_HLE_D3D),
 	// Step 9.2: VS constants flow through pushbuffer → puller → pg->vsh_constants[]
 	// with dirty tracking. pfifo_flush before draws ensures constants are up to date.
 	// Xbox native SetVertexShaderConstant generates NV097_SET_TRANSFORM_CONSTANT push buffer
@@ -235,7 +242,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetVertexShaderConstantNotInline_0__LTCG_ebx1_edx2_eax3", xbox::EMUPATCH(D3DDevice_SetVertexShaderConstantNotInline_0__LTCG_ebx1_edx2_eax3), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexShaderConstantNotInlineFast", xbox::EMUPATCH(D3DDevice_SetVertexShaderConstantNotInlineFast), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexShaderConstant_8__LTCG_edx3", xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant_8__LTCG_edx3), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetVertexShaderInput", xbox::EMUPATCH(D3DDevice_SetVertexShaderInput), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SetVertexShaderInput", xbox::EMUPATCH(D3DDevice_SetVertexShaderInput), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexShaderInputDirect", xbox::EMUPATCH(D3DDevice_SetVertexShaderInputDirect), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVerticalBlankCallback", xbox::EMUPATCH(D3DDevice_SetVerticalBlankCallback), PATCH_HLE_D3D),
 	// Disabled: trampoline-only after CxbxImpl_SetViewport removal.
@@ -243,7 +250,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetViewport", xbox::EMUPATCH(D3DDevice_SetViewport), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Swap", xbox::EMUPATCH(D3DDevice_Swap), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Swap_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_Swap_0__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SwitchTexture", xbox::EMUPATCH(D3DDevice_SwitchTexture), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_SwitchTexture", xbox::EMUPATCH(D3DDevice_SwitchTexture), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_UpdateOverlay", xbox::EMUPATCH(D3DDevice_UpdateOverlay), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_UpdateOverlay_16__LTCG_eax2", xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code polls resource state
