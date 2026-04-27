@@ -76,7 +76,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
 	//PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
+	// Disabled: Clear now handled by HLE_draw_clear via NV097_CLEAR_SURFACE → pgraph_handle_method
+	//PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
     PATCH_ENTRY("D3DDevice_CopyRects", xbox::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
 	// PATCH_ENTRY("D3DDevice_CreateVertexShader", xbox::EMUPATCH(D3DDevice_CreateVertexShader), PATCH_HLE_D3D),
 	// ================================================================

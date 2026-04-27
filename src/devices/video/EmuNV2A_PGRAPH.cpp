@@ -1556,7 +1556,7 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 		case NV097_CLEAR_SURFACE: {
-			// Also wrote: pg->clear_surface = parameter; (field deleted)
+			pg->clear_surface_flags = parameter;
 			if (pgraph_draw_clear != nullptr) {
 				pgraph_draw_clear(d);
 			}

@@ -186,11 +186,74 @@ void HLE_draw_state_update(NV2AState *d)
 
 void HLE_draw_clear(NV2AState *d)
 {
-	// PGRAPHState *pg = &d->pgraph;
+	PGRAPHState *pg = &d->pgraph;
 
 	CxbxUpdateNativeD3DResources();
 
-	LOG_INCOMPLETE(); // TODO : Read state from pgraph, convert to D3D (call EMUPATCH(D3DDevice_Clear)?)
+	// Read clear parameters from PGRAPH registers (set by method table dispatch
+	// of NV097_SET_CLEAR_RECT_HORIZONTAL/VERTICAL, NV097_SET_COLOR_CLEAR_VALUE,
+	// NV097_SET_ZSTENCIL_CLEAR_VALUE before NV097_CLEAR_SURFACE triggers this).
+	uint32_t flags = pg->clear_surface_flags;
+
+	// Map NV097 clear flags to host D3D flags.
+	// NV097 flags match X_D3DCLEAR values exactly, but host D3DCLEAR_TARGET
+	// is a single bit while NV097 has per-channel RGBA bits.
+	DWORD hostFlags = 0;
+	if (flags & NV097_CLEAR_SURFACE_COLOR)
+		hostFlags |= D3DCLEAR_TARGET;
+	if (flags & NV097_CLEAR_SURFACE_Z)
+		hostFlags |= D3DCLEAR_ZBUFFER;
+	if (flags & NV097_CLEAR_SURFACE_STENCIL)
+		hostFlags |= D3DCLEAR_STENCIL;
+
+	if (hostFlags == 0)
+		return;
+
+	D3DCOLOR color = pg->regs[RI(NV_PGRAPH_COLORCLEARVALUE)];
+	uint32_t zstencil = pg->regs[RI(NV_PGRAPH_ZSTENCILCLEARVALUE)];
+
+	// Decode Z and stencil based on the surface zeta format:
+	// Z16 (format 1): 16-bit depth in bits [15:0], no stencil
+	// Z24S8 (format 2): 24-bit depth in bits [31:8], 8-bit stencil in bits [7:0]
+	float z;
+	DWORD stencil;
+	unsigned int zeta_format = pg->surface_shape.zeta_format;
+	if (zeta_format == NV097_SET_SURFACE_FORMAT_ZETA_Z16) {
+		z = (float)(zstencil & 0xFFFF) / (float)0xFFFF;
+		stencil = 0;
+		// Z16 has no stencil — strip stencil clear flag
+		hostFlags &= ~D3DCLEAR_STENCIL;
+	} else {
+		// Z24S8 (default)
+		z = (float)(zstencil >> 8) / (float)0xFFFFFF;
+		stencil = zstencil & 0xFF;
+	}
+
+	// Read clear rect from PGRAPH.  Use a single rect covering the clear area.
+	uint32_t rectx = pg->regs[RI(NV_PGRAPH_CLEARRECTX)];
+	uint32_t recty = pg->regs[RI(NV_PGRAPH_CLEARRECTY)];
+
+	D3DRECT rect;
+	rect.left   = rectx & NV_PGRAPH_CLEARRECTX_XMIN;
+	rect.right  = (rectx & NV_PGRAPH_CLEARRECTX_XMAX) >> 16;
+	rect.top    = recty & NV_PGRAPH_CLEARRECTY_YMIN;
+	rect.bottom = (recty & NV_PGRAPH_CLEARRECTY_YMAX) >> 16;
+
+	// NV2A clear rect right/bottom are inclusive; D3D expects exclusive
+	rect.right  += 1;
+	rect.bottom += 1;
+
+	// Scale for upscale factor and MSAA
+	float aaX, aaY;
+	GetMultiSampleScaleRaw(aaX, aaY);
+	float Xscale = aaX * g_RenderUpscaleFactor;
+	float Yscale = aaY * g_RenderUpscaleFactor;
+	rect.left   = static_cast<LONG>(rect.left   * Xscale);
+	rect.right  = static_cast<LONG>(rect.right  * Xscale);
+	rect.top    = static_cast<LONG>(rect.top    * Yscale);
+	rect.bottom = static_cast<LONG>(rect.bottom * Yscale);
+
+	CxbxD3DClear(1, &rect, hostFlags, color, z, stencil);
 }
 
 // Import pgraph_draw_* variables, declared in EmuNV2A_PGRAPH.cpp :
