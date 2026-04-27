@@ -69,9 +69,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_Begin", xbox::EMUPATCH(D3DDevice_Begin), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BeginPush_4", xbox::EMUPATCH(D3DDevice_BeginPush_4), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BeginPush_8", xbox::EMUPATCH(D3DDevice_BeginPush_8), PATCH_HLE_D3D),
-	// TODO: Re-enable once trampoline availability is guaranteed for all XDK versions
-	PATCH_ENTRY("D3DDevice_BeginPushBuffer", xbox::EMUPATCH(D3DDevice_BeginPushBuffer), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_BeginPushBuffer_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1), PATCH_HLE_D3D),
+	// Disabled: trampoline-only, toggles unused g_bRecordingPushBuffer flag
+	//PATCH_ENTRY("D3DDevice_BeginPushBuffer", xbox::EMUPATCH(D3DDevice_BeginPushBuffer), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_BeginPushBuffer_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BeginVisibilityTest", xbox::EMUPATCH(D3DDevice_BeginVisibilityTest), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
 	//PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
@@ -96,7 +96,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_EnableOverlay_0__LTCG", xbox::EMUPATCH(D3DDevice_EnableOverlay_0__LTCG), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_End", xbox::EMUPATCH(D3DDevice_End), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_EndPush", xbox::EMUPATCH(D3DDevice_EndPush), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_EndPushBuffer", xbox::EMUPATCH(D3DDevice_EndPushBuffer), PATCH_HLE_D3D),
+	// Disabled: trampoline-only, clears unused g_bRecordingPushBuffer flag
+	//PATCH_ENTRY("D3DDevice_EndPushBuffer", xbox::EMUPATCH(D3DDevice_EndPushBuffer), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_EndVisibilityTest", xbox::EMUPATCH(D3DDevice_EndVisibilityTest), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_EndVisibilityTest_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_EndVisibilityTest_0__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_FlushVertexCache", xbox::EMUPATCH(D3DDevice_FlushVertexCache), PATCH_HLE_D3D),
@@ -114,8 +115,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: g_Xbox_VertexShaderConstantMode has no render-thread readers
 	//PATCH_ENTRY("D3DDevice_GetShaderConstantMode", xbox::EMUPATCH(D3DDevice_GetShaderConstantMode), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetTransform", xbox::EMUPATCH(D3DDevice_GetTransform), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetVertexShader", xbox::EMUPATCH(D3DDevice_GetVertexShader), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetVertexShaderConstant", xbox::EMUPATCH(D3DDevice_GetVertexShaderConstant), PATCH_HLE_D3D),
+	// Disabled: getter reads g_Xbox_VertexShader_Handle; Xbox native reads from device struct
+	//PATCH_ENTRY("D3DDevice_GetVertexShader", xbox::EMUPATCH(D3DDevice_GetVertexShader), PATCH_HLE_D3D),
+	// Disabled: getter reads HLE VS constant shadow; Xbox native reads from device constant table
+	//PATCH_ENTRY("D3DDevice_GetVertexShaderConstant", xbox::EMUPATCH(D3DDevice_GetVertexShaderConstant), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetVertexShaderDeclaration", xbox::EMUPATCH(D3DDevice_GetVertexShaderDeclaration), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetVertexShaderFunction", xbox::EMUPATCH(D3DDevice_GetVertexShaderFunction), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetVertexShaderInput", xbox::EMUPATCH(D3DDevice_GetVertexShaderInput), PATCH_HLE_D3D),

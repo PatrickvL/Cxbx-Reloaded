@@ -119,9 +119,6 @@ void CxbxD3D11ApplyDirtyStates();
 // Flush vertex shader constant buffer to GPU if dirty
 void CxbxD3D11FlushVertexShaderConstants();
 
-// Read back vertex shader constants from the shadow buffer
-void CxbxGetVertexShaderConstants(UINT startRegister, float* pConstantData, UINT Vector4fCount);
-
 // ******************************************************************
 // * Register combiner interpreter (PS ubershader)
 // ******************************************************************

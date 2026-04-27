@@ -334,20 +334,6 @@ void CxbxD3D11FlushVertexShaderConstants()
 	g_bD3D11VSConstantsDirty = false;
 }
 
-void CxbxGetVertexShaderConstants(UINT startRegister, float* pConstantData, UINT Vector4fCount)
-{
-	if (!pConstantData || Vector4fCount == 0)
-		return;
-
-	UINT endRegister = startRegister + Vector4fCount;
-	if (endRegister > CXBX_D3D11_VS_CB_COUNT)
-		endRegister = CXBX_D3D11_VS_CB_COUNT;
-
-	for (UINT i = startRegister; i < endRegister; i++) {
-		memcpy(pConstantData + (i - startRegister) * 4, g_D3D11VSConstants[i], sizeof(float) * 4);
-	}
-}
-
 // ******************************************************************
 // * Register combiner interpreter — init + compile
 // ******************************************************************

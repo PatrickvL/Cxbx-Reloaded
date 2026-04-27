@@ -286,48 +286,13 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DeleteVertexShader)
 // g_Xbox_VertexShaderConstantMode has no render-thread readers.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_GetVertexShader
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVertexShader)
-(
-   	dword_xt *pHandle
-)
-{
-	LOG_FUNC_ONE_ARG(pHandle);
+// D3DDevice_GetVertexShader — disabled.
+// Getter reads g_Xbox_VertexShader_Handle; Xbox native reads from device struct.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-   	if(pHandle)
-   	{
-   	   	(*pHandle) = g_Xbox_VertexShader_Handle;
-   	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_GetVertexShaderConstant
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVertexShaderConstant)
-(
-   	int_xt   Register,
-   	void  *pConstantData,
-   	dword_xt ConstantCount
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Register)
-		LOG_FUNC_ARG(pConstantData)
-		LOG_FUNC_ARG(ConstantCount)
-		LOG_FUNC_END;
-
-	// Xbox vertex shader constants range from -96 to 95
-	// The host does not support negative, so we adjust to 0..191
-	Register += X_D3DSCM_CORRECTION;
-
-	// For D3D11, read from our local shadow of the constants
-	if (Register >= 0 && (UINT)Register < CXBX_D3D11_VS_CB_COUNT && pConstantData != nullptr) {
-		UINT copyCount = std::min((UINT)ConstantCount, CXBX_D3D11_VS_CB_COUNT - (UINT)Register);
-		CxbxGetVertexShaderConstants((UINT)Register, (float*)pConstantData, copyCount);
-	}
-}
+// D3DDevice_GetVertexShaderConstant — disabled.
+// Getter reads HLE VS constant shadow; Xbox native reads from device constant table.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_SetVertexShaderInput

@@ -34,64 +34,11 @@
 // NV097_ARRAY_ELEMENT16 etc.) through the push buffer → PFIFO → PGRAPH.
 // Patches disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_BeginPushBuffer
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginPushBuffer)
-(
-	X_D3DPushBuffer *pPushBuffer
-)
-{
-	LOG_FUNC_ONE_ARG(pPushBuffer);
-
-	// Call through to original Xbox code to redirect the push buffer pointer.
-	// Only set recording flag if the trampoline was available and the original
-	// code actually ran.
-	if (XB_TRMP(D3DDevice_BeginPushBuffer) != nullptr) {
-		XB_TRMP(D3DDevice_BeginPushBuffer)(pPushBuffer);
-		g_bRecordingPushBuffer = true;
-	} else {
-		LOG_TEST_CASE("BeginPushBuffer trampoline not available");
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_BeginPushBuffer_0__LTCG_edi1
-// ******************************************************************
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1)()
-{
-	X_D3DPushBuffer* pPushBuffer;
-	__asm {
-		LTCG_PROLOGUE
-		mov  pPushBuffer, edi
-	}
-
-	EMUPATCH(D3DDevice_BeginPushBuffer)(pPushBuffer);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret  0
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_EndPushBuffer
-// ******************************************************************
-xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_EndPushBuffer)()
-{
-	LOG_FUNC();
-
-	// Always clear recording flag
-	g_bRecordingPushBuffer = false;
-
-	// Call through to original Xbox code to finalize the push buffer
-	if (XB_TRMP(D3DDevice_EndPushBuffer) != nullptr) {
-		return XB_TRMP(D3DDevice_EndPushBuffer)();
-	} else {
-		LOG_TEST_CASE("EndPushBuffer trampoline not available");
-		return (HRESULT)0;
-	}
-}
+// D3DDevice_BeginPushBuffer, D3DDevice_BeginPushBuffer_0__LTCG_edi1,
+// D3DDevice_EndPushBuffer — disabled.
+// These only called the trampoline and toggled g_bRecordingPushBuffer
+// which had zero readers. Xbox code runs unpatched.
+// Patch disabled in Patches.cpp.
 
 // ******************************************************************
 // * patch: D3DDevice_RunPushBuffer

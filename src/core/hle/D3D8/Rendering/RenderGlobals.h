@@ -296,11 +296,6 @@ extern void EmuD3DCleanup();
 
 extern xbox::dword_xt g_Xbox_VertexShader_Handle;
 
-// Push buffer recording: when true, draw function patches call through to the
-// original Xbox code (via trampoline) so that NV2A commands are written to the
-// user-allocated push buffer, and HLE host drawing is suppressed.
-extern bool g_bRecordingPushBuffer;
-
 extern DXGI_FORMAT g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT];
 
 extern xbox::X_D3DBaseTexture *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT];

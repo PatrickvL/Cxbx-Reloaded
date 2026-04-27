@@ -66,7 +66,6 @@
 VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 
                 xbox::dword_xt g_Xbox_VertexShader_Handle = 0;
-                bool g_bRecordingPushBuffer = false;
 
 static xbox::X_D3DVertexShader g_Xbox_VertexShader_ForFVF = {};
 

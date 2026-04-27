@@ -4998,3 +4998,53 @@ __declspec(naked) void WINAPI xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int M
 		ret  4
 	}
 }
+
+// ================================================================
+// Disabled patches — moved from EmuPatches_Draw.cpp / EmuPatches_Shader.cpp
+// BeginPushBuffer/EndPushBuffer: trampoline-only, toggled unused g_bRecordingPushBuffer
+// GetVertexShader: returned g_Xbox_VertexShader_Handle; Xbox native reads device struct
+// GetVertexShaderConstant: read HLE VS shadow; Xbox native reads device constant table
+// ================================================================
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginPushBuffer)(X_D3DPushBuffer *pPushBuffer)
+{
+	LOG_FUNC_ONE_ARG(pPushBuffer);
+	if (XB_TRMP(D3DDevice_BeginPushBuffer) != nullptr) {
+		XB_TRMP(D3DDevice_BeginPushBuffer)(pPushBuffer);
+	}
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1)()
+{
+	X_D3DPushBuffer* pPushBuffer;
+	__asm { LTCG_PROLOGUE; mov pPushBuffer, edi }
+	EMUPATCH(D3DDevice_BeginPushBuffer)(pPushBuffer);
+	__asm { LTCG_EPILOGUE; ret 0 }
+}
+
+xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_EndPushBuffer)()
+{
+	LOG_FUNC();
+	if (XB_TRMP(D3DDevice_EndPushBuffer) != nullptr) {
+		return XB_TRMP(D3DDevice_EndPushBuffer)();
+	}
+	return (HRESULT)0;
+}
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVertexShader)(dword_xt *pHandle)
+{
+	LOG_FUNC_ONE_ARG(pHandle);
+	if (pHandle) { (*pHandle) = g_Xbox_VertexShader_Handle; }
+}
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVertexShaderConstant)(
+	int_xt Register, void *pConstantData, dword_xt ConstantCount)
+{
+	LOG_FUNC_BEGIN LOG_FUNC_ARG(Register) LOG_FUNC_ARG(pConstantData)
+		LOG_FUNC_ARG(ConstantCount) LOG_FUNC_END;
+	Register += X_D3DSCM_CORRECTION;
+	if (Register >= 0 && (UINT)Register < CXBX_D3D11_VS_CB_COUNT && pConstantData != nullptr) {
+		UINT copyCount = std::min((UINT)ConstantCount, CXBX_D3D11_VS_CB_COUNT - (UINT)Register);
+		CxbxGetVertexShaderConstants((UINT)Register, (float*)pConstantData, copyCount);
+	}
+}
