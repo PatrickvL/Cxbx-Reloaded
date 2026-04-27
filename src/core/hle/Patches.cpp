@@ -95,8 +95,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// NV097_ARRAY_ELEMENT16/32 commands. PGRAPH SET_BEGIN_END triggers HLE_draw_* callbacks.
 	//PATCH_ENTRY("D3DDevice_DrawIndexedVertices", xbox::EMUPATCH(D3DDevice_DrawIndexedVertices), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_DrawIndexedVerticesUP", xbox::EMUPATCH(D3DDevice_DrawIndexedVerticesUP), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_DrawRectPatch", xbox::EMUPATCH(D3DDevice_DrawRectPatch), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_DrawTriPatch", xbox::EMUPATCH(D3DDevice_DrawTriPatch), PATCH_HLE_D3D),
+	// Disabled: Xbox CPU tessellation emits normal NV097 draw commands through push buffer.
+	//PATCH_ENTRY("D3DDevice_DrawRectPatch", xbox::EMUPATCH(D3DDevice_DrawRectPatch), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_DrawTriPatch", xbox::EMUPATCH(D3DDevice_DrawTriPatch), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_DrawVertices", xbox::EMUPATCH(D3DDevice_DrawVertices), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_DrawVertices_4__LTCG_ecx2_eax3", xbox::EMUPATCH(D3DDevice_DrawVertices_4__LTCG_ecx2_eax3), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_DrawVertices_8__LTCG_eax3", xbox::EMUPATCH(D3DDevice_DrawVertices_8__LTCG_eax3), PATCH_HLE_D3D),
