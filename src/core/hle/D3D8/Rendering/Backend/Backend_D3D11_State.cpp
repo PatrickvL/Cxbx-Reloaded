@@ -546,7 +546,6 @@ void CxbxD3D11ApplyDirtyStates()
 	}
 
 	CxbxD3D11FlushVertexShaderConstants();
-	CxbxD3D11FlushPixelShaderConstants();
 
 	// Update GS constant buffer (shared by point sprite and thick line GS)
 	// xy = inverse viewport dimensions, z = line width, w = unused

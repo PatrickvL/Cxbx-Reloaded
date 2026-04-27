@@ -217,12 +217,6 @@ void HLE_draw_state_update(NV2AState *d)
 
 	CxbxUpdateNativeD3DResources();
 
-	// NV_PGRAPH_FOGCOLOR stores fog color in ARGB format (the PGRAPH extracts
-	// individual R,G,B,A fields from the NV2A ABGR method parameter and
-	// reassembles them into ARGB-ordered bit fields). No byte swap needed.
-	uint32_t fog_color = pg->regs[RI(NV_PGRAPH_FOGCOLOR)];
-	CxbxSetFogColor(fog_color);
-
 	LOG_INCOMPLETE(); // TODO : Read state from pgraph, convert to D3D
 }
 
@@ -287,16 +281,6 @@ uint32_t HLE_read_NV2A_vertex_program_slot(unsigned program_load, unsigned slot)
 	uint32_t value = pg->program_data[program_load][slot % 4];
 
 	return value;
-}
-
-float *HLE_get_NV2A_vertex_constant_float4_ptr(unsigned const_index)
-{
-	NV2AState* dev = g_NV2A->GetDeviceState();
-	PGRAPHState* pg = &(dev->pgraph);
-
-	// See CASE_32(NV097_SET_TRANSFORM_CONSTANT, 4) in LLE pgraph_handle_method()
-	assert(const_index < NV2A_VERTEXSHADER_CONSTANTS);
-	return (float*)&(pg->vsh_constants[const_index][0]);
 }
 
 // For now, skip the cache, but handle the pgraph method directly

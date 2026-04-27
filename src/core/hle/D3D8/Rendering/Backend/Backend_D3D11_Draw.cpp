@@ -628,13 +628,6 @@ void CxbxSetHostVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration)
 	CxbxD3D11SetVertexDeclaration(pCxbxVertexDeclaration);
 }
 
-void CxbxSetFogColor(uint32_t fog_color)
-{
-	// D3D11: Set fog color in PS constant buffer at PSH_XBOX_CONSTANT_FOG (register 18)
-	D3DXCOLOR fogColorFloat(fog_color); // ARGB → correct R,G,B,A
-	CxbxSetPixelShaderConstantF(/*PSH_XBOX_CONSTANT_FOG=*/18, (const float*)&fogColorFloat, 1);
-}
-
 void CxbxGetBumpEnvMatrix(int stage, DWORD value[4])
 {
 	value[0] = XboxTextureStates.Get(stage, xbox::X_D3DTSS_BUMPENVMAT00);

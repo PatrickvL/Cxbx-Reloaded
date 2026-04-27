@@ -47,7 +47,6 @@ extern ID3D11Texture2D             *g_pD3DCurrentHostRenderTarget;
 static const UINT CXBX_D3D11_VS_CB_SLOT = 0;
 static const UINT CXBX_D3D11_VS_CB_COUNT = 256;
 static const UINT CXBX_D3D11_PS_CB_SLOT = 0;
-static const UINT CXBX_D3D11_PS_CB_COUNT = 53; // Must accommodate both programmatic PS (44 regs) and FF PS FixedFunctionPixelShaderState struct (53 regs)
 static const UINT CXBX_D3D11_PS_PGREGS_SRV_SLOT = 12; // StructuredBuffer<uint> g_PGRegs : register(t12)
 static const UINT CXBX_D3D11_VS_PGREGS_SRV_SLOT = 12; // Same g_PGRegs shared with VS : register(t12)
 static const UINT CXBX_D3D11_VS_XFPR_SRV_SLOT = 5;     // StructuredBuffer<uint4> g_XFPR : register(t5) — NV2A XFPR (Transform Program RAM)
@@ -63,7 +62,6 @@ static const UINT CXBX_D3D11_VERTEX_DEFAULTS_SLOT = 16; // Input slot for zero-s
 extern ID3D11Buffer *g_pD3D11VertexDefaultsBuffer;
 // Constant buffers (created in RenderGlobals.cpp device init, used by Backend_D3D11.cpp)
 extern ID3D11Buffer *g_pD3D11VSConstantBuffer;
-extern ID3D11Buffer *g_pD3D11PSConstantBuffer;
 
 // ******************************************************************
 // * D3D11 state descriptors (modified by RenderStates.cpp, applied by CxbxD3D11ApplyDirtyStates)
@@ -118,9 +116,8 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg);
 // Recreate D3D11 state objects that have been marked dirty, and flush constant buffers
 void CxbxD3D11ApplyDirtyStates();
 
-// Flush vertex/pixel shader constant buffers to GPU if dirty
+// Flush vertex shader constant buffer to GPU if dirty
 void CxbxD3D11FlushVertexShaderConstants();
-void CxbxD3D11FlushPixelShaderConstants();
 
 // Read back vertex shader constants from the shadow buffer
 void CxbxGetVertexShaderConstants(UINT startRegister, float* pConstantData, UINT Vector4fCount);

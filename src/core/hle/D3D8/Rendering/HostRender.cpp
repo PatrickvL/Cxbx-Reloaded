@@ -328,15 +328,6 @@ void CreateDefaultDevice
 		}
 	}
 
-	// Create the pixel shader constant buffer for D3D11
-	{
-		HRESULT cbHr = CxbxD3D11CreateConstantBuffer(CXBX_D3D11_PS_CB_COUNT * sizeof(float) * 4, true, &g_pD3D11PSConstantBuffer);
-		DEBUG_D3DRESULT(cbHr, "g_pD3DDevice->CreateBuffer (PS constant buffer)");
-		if (SUCCEEDED(cbHr)) {
-			g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
-		}
-	}
-
 	// Create the zero-stride vertex defaults buffer for NV2A sticky attribute emulation
 	CxbxD3D11CreateVertexDefaultsBuffer();
 

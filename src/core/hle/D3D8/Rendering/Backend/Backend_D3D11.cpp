@@ -110,13 +110,6 @@ float         g_D3D11VSConstants[CXBX_D3D11_VS_CB_COUNT][4] = {};
 bool          g_bD3D11VSConstantsDirty = true;
 
 // ******************************************************************
-// * Pixel shader constant buffer
-// ******************************************************************
-   	   ID3D11Buffer *g_pD3D11PSConstantBuffer = nullptr;
-float         g_D3D11PSConstants[CXBX_D3D11_PS_CB_COUNT][4] = {};
-bool          g_bD3D11PSConstantsDirty = true;
-
-// ******************************************************************
 // * Blit shader resources (StretchRect replacement)
 // ******************************************************************
 ID3D11VertexShader  *g_pD3D11BlitVS = nullptr;
@@ -179,7 +172,6 @@ ID3D11PixelShader         *g_pD3D11RCInterpreterPS = nullptr;
 ID3D11Buffer              *g_pD3D11RCInterpreterAuxCB = nullptr; // PSAuxCBLayout (software-computed fields)
 ID3D11Buffer              *g_pD3D11PGRegsBuf = nullptr;          // pg->regs[] structured buffer
 ID3D11ShaderResourceView  *g_pD3D11PGRegsSRV = nullptr;          // SRV for g_PGRegs : register(t12)
-bool                       g_bRCInterpreterCBActive = false; // true when RC cbuffer owns b0
 
 // ******************************************************************
 // * Vertex shader interpreter (VS ubershader) resources
@@ -342,21 +334,6 @@ void CxbxD3D11FlushVertexShaderConstants()
 	g_bD3D11VSConstantsDirty = false;
 }
 
-void CxbxSetPixelShaderConstantF(UINT startRegister, const float* pConstantData, UINT Vector4fCount)
-{
-	if (!g_pD3D11PSConstantBuffer || !pConstantData || Vector4fCount == 0)
-		return;
-
-	UINT endRegister = startRegister + Vector4fCount;
-	if (endRegister > CXBX_D3D11_PS_CB_COUNT)
-		endRegister = CXBX_D3D11_PS_CB_COUNT;
-
-	for (UINT i = startRegister; i < endRegister; i++) {
-		memcpy(g_D3D11PSConstants[i], pConstantData + (i - startRegister) * 4, sizeof(float) * 4);
-	}
-	g_bD3D11PSConstantsDirty = true;
-}
-
 void CxbxGetVertexShaderConstants(UINT startRegister, float* pConstantData, UINT Vector4fCount)
 {
 	if (!pConstantData || Vector4fCount == 0)
@@ -369,20 +346,6 @@ void CxbxGetVertexShaderConstants(UINT startRegister, float* pConstantData, UINT
 	for (UINT i = startRegister; i < endRegister; i++) {
 		memcpy(pConstantData + (i - startRegister) * 4, g_D3D11VSConstants[i], sizeof(float) * 4);
 	}
-}
-
-void CxbxD3D11FlushPixelShaderConstants()
-{
-	if (!g_pD3D11PSConstantBuffer || !g_bD3D11PSConstantsDirty)
-		return;
-
-	CxbxD3D11UpdateDynamicBuffer(g_pD3D11PSConstantBuffer, g_D3D11PSConstants, sizeof(g_D3D11PSConstants));
-	// Only rebind the standard PS cbuffer when the RC interpreter hasn't claimed b0.
-	// The RC interpreter uploads its own cbuffer to b0 in CxbxD3D11UploadRCInterpreterState;
-	// rebinding the standard buffer here would overwrite it with incompatible data.
-	if (!g_bRCInterpreterCBActive)
-		g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11PSConstantBuffer);
-	g_bD3D11PSConstantsDirty = false;
 }
 
 // ******************************************************************
@@ -1400,7 +1363,6 @@ void CxbxD3D11ReleaseBackendResources()
 	g_pD3DDepthStencilState.Reset();
 	g_pD3DRasterizerState.Reset();
 	if (g_pD3D11VSConstantBuffer) { g_pD3D11VSConstantBuffer->Release(); g_pD3D11VSConstantBuffer = nullptr; }
-	if (g_pD3D11PSConstantBuffer) { g_pD3D11PSConstantBuffer->Release(); g_pD3D11PSConstantBuffer = nullptr; }
 	if (g_pD3D11BlitVS) { g_pD3D11BlitVS->Release(); g_pD3D11BlitVS = nullptr; }
 	if (g_pD3D11BlitPS) { g_pD3D11BlitPS->Release(); g_pD3D11BlitPS = nullptr; }
 	if (g_pD3D11BlitSamplerLinear) { g_pD3D11BlitSamplerLinear->Release(); g_pD3D11BlitSamplerLinear = nullptr; }

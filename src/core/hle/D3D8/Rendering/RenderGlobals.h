@@ -198,7 +198,6 @@ void CxbxUpdateNativeD3DResources();
 
 // Shader constant helpers
 void CxbxSetVertexShaderConstantF(UINT startRegister, const float* pConstantData, UINT Vector4fCount);
-void CxbxSetPixelShaderConstantF(UINT startRegister, const float* pConstantData, UINT Vector4fCount);
 
 // Rendering helpers (implemented in Backend_D3D11*.cpp)
 HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice = 0, UINT arraySlice = 0);
@@ -221,7 +220,6 @@ HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader);
 ID3D11InputLayout* CxbxCreateHostVertexDeclaration(D3D11_INPUT_ELEMENT_DESC *pDeclaration);
 struct _CxbxVertexDeclaration;
 void    CxbxSetHostVertexDeclaration(struct _CxbxVertexDeclaration* pCxbxVertexDeclaration);
-void    CxbxSetFogColor(uint32_t fog_color);
 void    CxbxGetBumpEnvMatrix(int stage, DWORD value[4]);
 void    CxbxGetBumpEnvLuminance(int stage, DWORD value[2]);
 

@@ -56,8 +56,6 @@ extern ComPtr<ID3D11BlendState>        g_pD3DBlendState;
 // ******************************************************************
 extern float g_D3D11VSConstants[CXBX_D3D11_VS_CB_COUNT][4];
 extern bool  g_bD3D11VSConstantsDirty;
-extern float g_D3D11PSConstants[CXBX_D3D11_PS_CB_COUNT][4];
-extern bool  g_bD3D11PSConstantsDirty;
 
 // ******************************************************************
 // * Blit shader resources
@@ -118,7 +116,6 @@ extern ID3D11PixelShader         *g_pD3D11RCInterpreterPS;
 extern ID3D11Buffer              *g_pD3D11RCInterpreterAuxCB;  // PSAuxCBLayout (software-computed fields)
 extern ID3D11Buffer              *g_pD3D11PGRegsBuf;            // pg->regs[] raw StructuredBuffer
 extern ID3D11ShaderResourceView  *g_pD3D11PGRegsSRV;            // SRV for g_PGRegs : register(t12)
-extern bool                       g_bRCInterpreterCBActive; // true when RC cbuffer is bound at b0
 
 // RC interpreter constant buffer layout — shared with the HLSL cbuffer
 // definition in CxbxRegisterCombinerInterpreterState.hlsli.
