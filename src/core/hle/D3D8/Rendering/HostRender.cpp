@@ -625,17 +625,139 @@ void UpdateFixedFunctionVertexShaderState()
 	ffShaderState.Modes.VertexBlend_CalcLastWeight = CalcLastBlendWeight;
 
 	// Transforms
-	// Transpose row major to column major for HLSL
-	D3DXMatrixTranspose((D3DXMATRIX*)&ffShaderState.Transforms.Projection, (D3DXMATRIX*)&d3d8TransformState.Transforms[X_D3DTS_PROJECTION]);
-	D3DXMatrixTranspose((D3DXMATRIX*)&ffShaderState.Transforms.View, (D3DXMATRIX*)&d3d8TransformState.Transforms[X_D3DTS_VIEW]);
+	// Read transform matrices from PGRAPH XFCTX constants.
+	// The Xbox D3D runtime writes World*View to MMAT, Inverse(World*View) to IMMAT,
+	// and the full composite (World*View*Projection*Viewport) to CMAT.
+	// PMAT is NOT written by the Xbox D3D runtime.
+	//
+	// CMAT includes the NV2A viewport transform (baked in by the Xbox D3D runtime for FF mode).
+	// We must strip the viewport to get a pure clip-space projection matrix for D3D11.
+	//
+	// NV2A uses column-vector convention (clipPos = M * v), while our HLSL FF shader
+	// uses row-vector convention (result = mul(v, M) = v * M). For NV2A matrices stored
+	// register-per-row, a direct copy (no C++ transpose) makes the HLSL column-major
+	// interpretation give transpose(M_pgraph), and mul(v, transpose(M)) = M * v.
+	{
+		PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
 
-	for (unsigned i = 0; i < 4; i++) { // TODO : Would it help to limit this to just the active texture channels?
-		D3DXMatrixTranspose((D3DXMATRIX*)&ffShaderState.Transforms.Texture[i], (D3DXMATRIX*)&d3d8TransformState.Transforms[X_D3DTS_TEXTURE0 + i]);
-	}
+		// Helper: direct-copy a 4x4 matrix from vsh_constants[base..base+3] — NO transpose
+		auto ReadXFCTXMatrix = [&](D3DXMATRIX* pDst, int base) {
+			for (int row = 0; row < 4; row++) {
+				std::memcpy(&pDst->m[row][0], &pg->vsh_constants[base + row][0], 16);
+			}
+		};
 
-	for (unsigned i = 0; i < (unsigned)ffShaderState.Modes.VertexBlend_NrOfMatrices; i++) {
-		D3DXMatrixTranspose((D3DXMATRIX*)&ffShaderState.Transforms.WorldView[i], (D3DXMATRIX*)d3d8TransformState.GetWorldView(i));
-		D3DXMatrixTranspose((D3DXMATRIX*)&ffShaderState.Transforms.WorldViewInverseTranspose[i], (D3DXMATRIX*)d3d8TransformState.GetWorldViewInverseTranspose(i));
+		// Read MMAT0 (ModelView) and CMAT (Composite with viewport)
+		D3DXMATRIX mmat, cmat;
+		ReadXFCTXMatrix(&mmat, NV_IGRAPH_XF_XFCTX_MMAT0);
+		ReadXFCTXMatrix(&cmat, NV_IGRAPH_XF_XFCTX_CMAT0);
+
+		// Derive Projection-with-viewport = CMAT * inverse(MMAT)
+		D3DXMATRIX mmatInv, projVP;
+		bool validMMAT = (D3DXMatrixInverse(&mmatInv, nullptr, &mmat) != nullptr);
+		if (validMMAT) {
+			D3DXMatrixMultiply(&projVP, &cmat, &mmatInv);
+		} else {
+			// Singular MMAT (e.g., first few frames before state is populated)
+			D3DXMatrixIdentity(&projVP);
+			D3DXMatrixIdentity(&mmat);
+		}
+
+		// Strip the NV2A viewport from the projection.
+		// The NV2A viewport matrix (column-vector):
+		//   VP = [[sx,  0,  0, ox],  with sx = ox = W/2
+		//         [ 0, sy,  0, oy],       sy = -H/2, oy = H/2
+		//         [ 0,  0, sz, oz],       sz = z-buffer max, oz = 0
+		//         [ 0,  0,  0,  1]]
+		// PureProj = VP^-1 * projVP, computed element-by-element:
+		//   row 0: (projVP[0][j] - ox * projVP[3][j]) / sx
+		//   row 1: (projVP[1][j] - oy * projVP[3][j]) / sy
+		//   row 2: projVP[2][j] / sz  (since oz = 0)
+		//   row 3: projVP[3][j]
+		D3DXMATRIX pureProj;
+		float vpWidth = 0, vpHeight = 0;
+
+		if (validMMAT && projVP.m[3][2] != 0.0f) {
+			// Extract viewport offsets from the projection.
+			// For standard perspective: projVP[3] = [0, 0, 1, 0], so
+			// projVP[0][2] = ox (viewport X offset) and projVP[1][2] = oy (viewport Y offset).
+			float ox = projVP.m[0][2] / projVP.m[3][2]; // typically W/2
+			float oy = projVP.m[1][2] / projVP.m[3][2]; // typically H/2
+			float sx = ox;      // centered viewport: sx = ox
+			float sy = -oy;     // Y-flip: sy = -oy
+
+			vpWidth  = 2.0f * ox;
+			vpHeight = 2.0f * oy;
+
+			// Z-buffer depth scale from surface format
+			float sz = 1.0f;
+			switch (pg->surface_shape.zeta_format) {
+				case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   sz = 65535.0f;    break;
+				case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: sz = 16777215.0f; break;
+				default:                                  sz = 65535.0f;    break;
+			}
+
+			for (int j = 0; j < 4; j++) {
+				pureProj.m[0][j] = (projVP.m[0][j] - ox * projVP.m[3][j]) / sx;
+				pureProj.m[1][j] = (projVP.m[1][j] - oy * projVP.m[3][j]) / sy;
+				pureProj.m[2][j] =  projVP.m[2][j] / sz;
+				pureProj.m[3][j] =  projVP.m[3][j];
+			}
+		} else {
+			D3DXMatrixIdentity(&pureProj);
+		}
+
+		// Upload Projection (direct copy, no C++ transpose)
+		std::memcpy(&ffShaderState.Transforms.Projection, &pureProj, sizeof(pureProj));
+
+		// Set D3D11 viewport for FF mode (since VPSCL/VPOFF are zero, the
+		// normal viewport update skips FF mode — we must set it here).
+		if (vpWidth > 0 && vpHeight > 0) {
+			D3D11_VIEWPORT hostViewport;
+			hostViewport.TopLeftX = 0;
+			hostViewport.TopLeftY = 0;
+			hostViewport.Width    = vpWidth  * g_RenderUpscaleFactor;
+			hostViewport.Height   = vpHeight * g_RenderUpscaleFactor;
+			hostViewport.MinDepth = 0.0f;
+			hostViewport.MaxDepth = 1.0f;
+			CxbxSetViewport(&hostViewport);
+		}
+
+		// View matrix: PGRAPH XFCTX doesn't store View separately (only combined ModelView).
+		// Set View to identity — the WorldView matrices already include it.
+		D3DXMatrixIdentity((D3DXMATRIX*)&ffShaderState.Transforms.View);
+
+		// Texture transforms (T0MAT..T3MAT) — direct copy
+		static const int TnMAT[] = {
+			NV_IGRAPH_XF_XFCTX_T0MAT, NV_IGRAPH_XF_XFCTX_T1MAT,
+			NV_IGRAPH_XF_XFCTX_T2MAT, NV_IGRAPH_XF_XFCTX_T3MAT
+		};
+		for (unsigned i = 0; i < 4; i++) {
+			ReadXFCTXMatrix((D3DXMATRIX*)&ffShaderState.Transforms.Texture[i], TnMAT[i]);
+		}
+
+		// WorldView matrices (MMAT0..MMAT3) — already pre-combined World*View, direct copy
+		static const int MMATn[] = {
+			NV_IGRAPH_XF_XFCTX_MMAT0, NV_IGRAPH_XF_XFCTX_MMAT1,
+			NV_IGRAPH_XF_XFCTX_MMAT2, NV_IGRAPH_XF_XFCTX_MMAT3
+		};
+		for (unsigned i = 0; i < (unsigned)ffShaderState.Modes.VertexBlend_NrOfMatrices; i++) {
+			ReadXFCTXMatrix((D3DXMATRIX*)&ffShaderState.Transforms.WorldView[i], MMATn[i]);
+		}
+
+		// WorldView inverse transpose — for normal transformation in lighting.
+		// Compute from WorldView: upload = (MMAT^-1)^T so HLSL sees MMAT^-1,
+		// and mul(normal, MMAT^-1) gives the correct (M^-1)^T * n transform.
+		for (unsigned i = 0; i < (unsigned)ffShaderState.Modes.VertexBlend_NrOfMatrices; i++) {
+			D3DXMATRIX wv, wvInv, wvInvT;
+			ReadXFCTXMatrix(&wv, MMATn[i]);
+			if (D3DXMatrixInverse(&wvInv, nullptr, &wv)) {
+				D3DXMatrixTranspose(&wvInvT, &wvInv);
+			} else {
+				D3DXMatrixIdentity(&wvInvT);
+			}
+			std::memcpy(&ffShaderState.Transforms.WorldViewInverseTranspose[i], &wvInvT, sizeof(wvInvT));
+		}
 	}
 
 	// Lighting
