@@ -377,7 +377,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 	// when CDevice_KickOff runs. Normally Xbox Swap calls KickOff internally,
 	// but our Swap patch doesn't call the Xbox trampoline. We read pPut directly
 	// from the CDevice structure and write its physical address to DMA_PUT.
-	if (g_NV2A) {
+	{
 		NV2AState *d = g_NV2A->GetDeviceState();
 
 		// Read pPut from *D3D_g_pDevice + 0x00 (the first DWORD is pPut)

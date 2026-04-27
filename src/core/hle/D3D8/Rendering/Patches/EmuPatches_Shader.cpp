@@ -29,7 +29,7 @@
 // pushbuffer hasn't been processed yet.
 static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
 {
-	if (g_NV2A && Stage < xbox::X_D3DTS_STAGECOUNT) {
+	if (Stage < xbox::X_D3DTS_STAGECOUNT) {
 		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 		pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + Stage * 4)] = dataAddr;
 	}

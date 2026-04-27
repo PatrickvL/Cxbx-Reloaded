@@ -470,16 +470,10 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 
 	// PGRAPH source: upload the entire program_data[] array (XFPR mirror).
 	// The shader selects the active program via CHEOPS_PROGRAM_START.
-	PGRAPHState *pg = nullptr;
-	if (g_NV2A) {
-		NV2AState *nv2a = g_NV2A->GetDeviceState();
-		pg = &nv2a->pgraph;
-	}
+	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
-	if (pg) {
-		CxbxD3D11UpdateDynamicBuffer(g_pD3D11XFPRBuf,
-			pg->program_data, sizeof(pg->program_data));
-	}
+	CxbxD3D11UpdateDynamicBuffer(g_pD3D11XFPRBuf,
+		pg->program_data, sizeof(pg->program_data));
 
 	// Bind the shared PGRAPH regs SRV to VS t12 (same buffer, different stage)
 	g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
@@ -549,7 +543,7 @@ void CxbxUpdateHostVertexShader()
 		// The start address comes from CSV0_C CHEOPS_PROGRAM_START, which
 		// the puller sets from NV097_SET_TRANSFORM_PROGRAM_START.
 		xbox::dword_xt *pTokens = nullptr;
-		if (g_NV2A) {
+		{
 			PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 			uint32_t startAddr = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
 				NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START);

@@ -733,14 +733,12 @@ void GetScreenScaleFactors(float& scaleX, float& scaleY) {
 	// Fixed-func passthrough, title does not apply backbuffer scale:
 	// - Antialias sample(background gradient)
 	// Use PGRAPH CSV0_D MODE to avoid racing g_Xbox_VertexShaderMode.
-	if (g_NV2A) {
+	{
 		auto pg_ss = &(g_NV2A->GetDeviceState()->pgraph);
 		uint32_t pgraphMode = GET_MASK(pg_ss->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
 		if (pgraphMode != NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
 			return;
 		}
-	} else if (g_Xbox_VertexShaderMode != VertexShaderMode::ShaderProgram) {
-		return;
 	}
 
 	if (g_LastD3DSwap == xbox::X_D3DSWAP_COPY) {

@@ -516,7 +516,7 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	// Detect passthrough from PGRAPH VPSCL/VPOFF sign to avoid racing
 	// g_Xbox_VertexShaderMode which the game thread writes.
 	bool isPassthrough = false;
-	if (g_NV2A) {
+	{
 		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
 		float vpoff0, vpoff1, vpscl0, vpscl1;
 		std::memcpy(&vpoff0, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][0], sizeof(float));
@@ -526,8 +526,6 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 		float xboxX = vpoff0 - vpscl0;
 		float xboxY = vpoff1 + vpscl1;
 		isPassthrough = (xboxX < 0.0f || xboxY < 0.0f);
-	} else {
-		isPassthrough = (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough);
 	}
 	float zOutputScale = isPassthrough ? 1 : g_ZScale;
 

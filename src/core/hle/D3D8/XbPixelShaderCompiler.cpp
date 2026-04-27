@@ -198,7 +198,7 @@ ID3D11PixelShader* GetFixedFunctionShader()
 		// Use PGRAPH TEXCTL0 enable bit when available to avoid racing
 		// g_pXbox_SetTexture[] which is written by the game thread.
 		bool texturePresent = false;
-		if (g_NV2A) {
+		{
 			auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
 			uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
 			texturePresent = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
@@ -222,7 +222,7 @@ ID3D11PixelShader* GetFixedFunctionShader()
 
 		// Get sample type from PGRAPH TEXFMT0 when available (avoids racing
 		// g_pXbox_SetTexture[] which is written by the game thread).
-		if (g_NV2A) {
+		{
 			auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
 			uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
 			if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
@@ -377,7 +377,7 @@ float CxbxGetTexFmtFixup(int stage_nr)
 
 	// Resolve texture via PGRAPH offset → side-map to avoid racing g_pXbox_SetTexture[].
 	xbox::X_D3DBaseTexture *pXboxTex = xbox::zeroptr;
-	if (g_NV2A) {
+	{
 		auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
 		uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage_nr * 4)];
 		if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
@@ -586,17 +586,13 @@ void CxbxD3D11UploadRCInterpreterState()
 		return;
 
 	// PGRAPH source (populated by the puller thread via pushbuffer methods)
-	PGRAPHState *pg = nullptr;
-	if (g_NV2A) {
-		NV2AState *nv2a = g_NV2A->GetDeviceState();
-		pg = &nv2a->pgraph;
-	}
+	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
 	// PSDef is only needed for the HLE bridge path (COMBINECTL == 0).
 	// When PGRAPH is authoritative, all combiner/texture state comes from
 	// registers — we don't read g_pXbox_PixelShader which races the game thread.
 	const xbox::X_D3DPIXELSHADERDEF *pPSDef = nullptr;
-	bool pgraphHasCombinerState = pg && (pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0);
+	bool pgraphHasCombinerState = (pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0);
 	if (!pgraphHasCombinerState) {
 		pPSDef = (xbox::X_D3DPIXELSHADERDEF*)(XboxRenderStates.GetPixelShaderRenderStatePointer());
 	}
@@ -851,7 +847,7 @@ void CxbxUpdateActivePixelShader() // NOPATCH
   // it races the game thread which runs ahead of the puller.
 
   bool pgraphHasCombiners = false;
-  if (g_NV2A) {
+  {
       auto pg = &g_NV2A->GetDeviceState()->pgraph;
       pgraphHasCombiners = pg->regs[RI(NV_PGRAPH_COMBINECTL)] != 0;
   }

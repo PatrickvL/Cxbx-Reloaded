@@ -52,8 +52,8 @@ void CxbxUpdateHostTextures()
 		// We must respect this: disabled stages should not have textures bound,
 		// otherwise we may create D3D11 resource hazards (e.g., the same texture
 		// bound as both RTV and SRV) or sample stale data from a previous draw.
-		bool bTextureEnabled = true; // default enabled for non-PGRAPH path
-		if (g_NV2A) {
+		bool bTextureEnabled = true;
+		{
 			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 			uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
 			bTextureEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
@@ -87,7 +87,7 @@ void CxbxUpdateHostTextures()
 		ID3D11Resource* pHostBaseTexture = nullptr;
 		bool bNeedRelease = false;
 		bool bIsRenderTargetTexture = false;
-		if (g_NV2A) {
+		{
 			auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 			uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
 			if (texOffset != 0) {
@@ -426,7 +426,7 @@ void CxbxUpdateHostVertexShaderConstants()
 	// When table fog is active, check PGRAPH for _ABS fog mode variants.
 	// NV2A PGRAPH fog modes 4/5/7 apply abs() to the computed fog factor;
 	// bit 2 of the PGRAPH fog mode field is the _ABS flag.
-	if (fogTableMode > 0.0f && g_NV2A) {
+	if (fogTableMode > 0.0f) {
 		auto *pg = &g_NV2A->GetDeviceState()->pgraph;
 		if (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & 0x00040000u) { // bit 2 of FOG_MODE field
 			fogTableMode += 4.0f; // Promote to _ABS variant (5=EXP_ABS, 6=EXP2_ABS, 7=LINEAR_ABS)
@@ -449,7 +449,7 @@ void CxbxUpdateNativeD3DResources()
 	// interpreters that read register state at draw time.
 	// Skip when called from the puller thread itself (registers are
 	// already current, and calling flush would deadlock on pfifo_lock).
-	if (g_NV2A && !g_bInPullerContext) {
+	if (!g_bInPullerContext) {
 		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
 	}
 
@@ -461,7 +461,7 @@ void CxbxUpdateNativeD3DResources()
 	// (e.g., dolphin drawn at wrong position, seafloor going black).
 	// The lock is released after all PGRAPH reads and before the D3D11 draw.
 	bool pgraph_locked = false;
-	if (g_NV2A && !g_bInPullerContext) {
+	if (!g_bInPullerContext) {
 		qemu_mutex_lock(&g_NV2A->GetDeviceState()->pgraph.pgraph_lock);
 		pgraph_locked = true;
 	}
@@ -474,7 +474,7 @@ void CxbxUpdateNativeD3DResources()
 	// D3D runtime maps screen coords to clip space such that the derived
 	// X,Y origin is negative (e.g. -320,-240 for 640x480).  Normal fixed-
 	// function viewports always produce X,Y >= 0.
-	if (g_NV2A) {
+	{
 		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 		uint32_t pgraph_mode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
 		if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
@@ -514,14 +514,10 @@ void CxbxUpdateNativeD3DResources()
 	// small offscreen target (e.g. 256x256 caustic texture) to the backbuffer
 	// (640x480), GetHostRenderTargetDimensions returns the old (small) size,
 	// causing the scissor rect to clip the viewport incorrectly.
-	if (g_NV2A) {
-		CxbxD3D11UpdateRenderTargetFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
-	}
+	CxbxD3D11UpdateRenderTargetFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
 
 	// Set viewport from PGRAPH registers (authoritative).
-	if (g_NV2A) {
-		CxbxD3D11UpdateViewportFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
-	}
+	CxbxD3D11UpdateViewportFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
 
 	// NOTE: Order is important here
    	// Some Texture States depend on RenderState values (Point Sprites)
@@ -532,7 +528,7 @@ void CxbxUpdateNativeD3DResources()
    	XboxTextureStates.Apply();
 
 	// Override blend/depth-stencil/rasterizer state from PGRAPH registers.
-	if (g_NV2A) {
+	{
 		auto pg = &g_NV2A->GetDeviceState()->pgraph;
 		if (pg->surface_color.offset != 0) {
 			CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
