@@ -67,8 +67,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("CDevice_SetStateVB_8", xbox::EMUPATCH(CDevice_SetStateVB_8), PATCH_HLE_D3D),
 	// Step 10: Begin/End/SetVertexData flow through push buffer as inline vertex commands.
 	//PATCH_ENTRY("D3DDevice_Begin", xbox::EMUPATCH(D3DDevice_Begin), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_BeginPush_4", xbox::EMUPATCH(D3DDevice_BeginPush_4), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_BeginPush_8", xbox::EMUPATCH(D3DDevice_BeginPush_8), PATCH_HLE_D3D),
+	// Disabled: Xbox native BeginPush returns pointer into GPU ring buffer (CDevice+0x00 = pPut).
+	// KickOff writes DMA_PUT. PFIFO DMA pusher processes ring commands automatically.
+	//PATCH_ENTRY("D3DDevice_BeginPush_4", xbox::EMUPATCH(D3DDevice_BeginPush_4), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_BeginPush_8", xbox::EMUPATCH(D3DDevice_BeginPush_8), PATCH_HLE_D3D),
 	// Disabled: trampoline-only, toggles unused g_bRecordingPushBuffer flag
 	//PATCH_ENTRY("D3DDevice_BeginPushBuffer", xbox::EMUPATCH(D3DDevice_BeginPushBuffer), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_BeginPushBuffer_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1), PATCH_HLE_D3D),
@@ -103,7 +105,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_EnableOverlay", xbox::EMUPATCH(D3DDevice_EnableOverlay), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_EnableOverlay_0__LTCG", xbox::EMUPATCH(D3DDevice_EnableOverlay_0__LTCG), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_End", xbox::EMUPATCH(D3DDevice_End), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_EndPush", xbox::EMUPATCH(D3DDevice_EndPush), PATCH_HLE_D3D),
+	// Disabled: Xbox native EndPush updates pPut in CDevice. PFIFO processes commands from ring buffer.
+	//PATCH_ENTRY("D3DDevice_EndPush", xbox::EMUPATCH(D3DDevice_EndPush), PATCH_HLE_D3D),
 	// Disabled: trampoline-only, clears unused g_bRecordingPushBuffer flag
 	//PATCH_ENTRY("D3DDevice_EndPushBuffer", xbox::EMUPATCH(D3DDevice_EndPushBuffer), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_EndVisibilityTest", xbox::EMUPATCH(D3DDevice_EndVisibilityTest), PATCH_HLE_D3D),
