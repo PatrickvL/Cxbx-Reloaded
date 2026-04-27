@@ -271,8 +271,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3D_CommonSetRenderTarget", xbox::EMUPATCH(D3D_CommonSetRenderTarget), PATCH_HLE_D3D),
-    PATCH_ENTRY("D3D_DestroyResource", xbox::EMUPATCH(D3D_DestroyResource), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3D_DestroyResource_0__LTCG_edi1", xbox::EMUPATCH(D3D_DestroyResource_0__LTCG_edi1), PATCH_HLE_D3D),
+	// Disabled: host resources are NV2A-derived (PGRAPH RT cache, texture cache keyed by VRAM).
+	// Dirty page tracking invalidates stale host resources. FreeHostResource on Xbox D3D keys is vestigial.
+    //PATCH_ENTRY("D3D_DestroyResource", xbox::EMUPATCH(D3D_DestroyResource), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3D_DestroyResource_0__LTCG_edi1", xbox::EMUPATCH(D3D_DestroyResource_0__LTCG_edi1), PATCH_HLE_D3D),
 	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful
 	//PATCH_ENTRY("D3D_LazySetPointParams", xbox::EMUPATCH(D3D_LazySetPointParams), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
