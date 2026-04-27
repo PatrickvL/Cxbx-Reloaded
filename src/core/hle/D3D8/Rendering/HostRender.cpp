@@ -862,17 +862,114 @@ void UpdateFixedFunctionVertexShaderState()
 		reinterpret_cast<float*>(&ffShaderState.TexCoordComponentCount)[i] = (float)GetXboxVertexDataComponentCount(vertexDataFormat);
 	}
 
-	// Update lights
-	auto LightAmbient = D3DXVECTOR4(0.f, 0.f, 0.f, 0.f);
-	for (size_t i = 0; i < ffShaderState.Lights.size(); i++) {
-		UpdateFixedFunctionShaderLight(d3d8LightState.EnabledLights[i], &ffShaderState.Lights[i], &LightAmbient);
+	// Update lights from PGRAPH registers.
+	// The NV2A light enable mask is in CSV0_D (2 bits per light: 0=off, 1=infinite/directional, 2=local/point, 3=spot).
+	// Light colors in ltctxb[] are pre-multiplied by material by the Xbox D3D runtime, so we set
+	// material to white to let the shader's (material × light) give the correct pre-multiplied result.
+	{
+		PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
+		uint32_t lightMask = pg->regs[NV_PGRAPH_CSV0_D / 4] & NV_PGRAPH_CSV0_D_LIGHTS;
+
+		auto LightAmbient = D3DXVECTOR4(0.f, 0.f, 0.f, 0.f);
+
+		// Helper to reinterpret uint32_t bit pattern as float
+		auto AsFloat = [](uint32_t u) -> float { float f; std::memcpy(&f, &u, 4); return f; };
+
+		for (size_t i = 0; i < ffShaderState.Lights.size(); i++) {
+			Light* pShaderLight = &ffShaderState.Lights[i];
+			unsigned nv2aType = (lightMask >> (i * 2)) & 0x3;
+
+			if (nv2aType == 0) {
+				pShaderLight->Type = 0; // Disabled
+				continue;
+			}
+
+			// Map NV2A light type to shader type:
+			//   NV2A 1 (INFINITE) → shader 3 (DIRECTIONAL)
+			//   NV2A 2 (LOCAL)    → shader 1 (POINT)
+			//   NV2A 3 (SPOT)     → shader 2 (SPOT)
+			static const int typeMap[] = { 0, 3, 1, 2 };
+			pShaderLight->Type = typeMap[nv2aType];
+
+			// Diffuse color from ltctxb (3 floats stored as uint32_t bit patterns)
+			int base = NV_IGRAPH_XF_LTCTXB_L0_DIF + (int)i * 6;
+			pShaderLight->Diffuse = D3DXVECTOR4(
+				AsFloat(pg->ltctxb[base][0]),
+				AsFloat(pg->ltctxb[base][1]),
+				AsFloat(pg->ltctxb[base][2]),
+				1.0f);
+
+			// Specular color
+			bool SpecularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) != FALSE;
+			base = NV_IGRAPH_XF_LTCTXB_L0_SPC + (int)i * 6;
+			if (SpecularEnable) {
+				pShaderLight->Specular = D3DXVECTOR4(
+					AsFloat(pg->ltctxb[base][0]),
+					AsFloat(pg->ltctxb[base][1]),
+					AsFloat(pg->ltctxb[base][2]),
+					1.0f);
+			} else {
+				pShaderLight->Specular = D3DXVECTOR4(0, 0, 0, 0);
+			}
+
+			// Accumulate per-light ambient
+			base = NV_IGRAPH_XF_LTCTXB_L0_AMB + (int)i * 6;
+			LightAmbient.x += AsFloat(pg->ltctxb[base][0]);
+			LightAmbient.y += AsFloat(pg->ltctxb[base][1]);
+			LightAmbient.z += AsFloat(pg->ltctxb[base][2]);
+
+			// Direction (for directional lights — already in view-space, normalized)
+			pShaderLight->DirectionVN = D3DXVECTOR3(
+				pg->light_infinite_direction[i][0],
+				pg->light_infinite_direction[i][1],
+				pg->light_infinite_direction[i][2]);
+
+			// Position (for point/spot lights — already in view-space)
+			pShaderLight->PositionV = D3DXVECTOR3(
+				pg->light_local_position[i][0],
+				pg->light_local_position[i][1],
+				pg->light_local_position[i][2]);
+
+			// Attenuation
+			pShaderLight->Attenuation = D3DXVECTOR3(
+				pg->light_local_attenuation[i][0],
+				pg->light_local_attenuation[i][1],
+				pg->light_local_attenuation[i][2]);
+
+			// Range (stored in ltc1)
+			pShaderLight->Range = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_r0 + i][0]);
+
+			// Spot parameters from ltctxa
+			int spotBase = NV_IGRAPH_XF_LTCTXA_L0_K + (int)i * 2;
+			pShaderLight->Falloff = AsFloat(pg->ltctxa[spotBase][2]); // falloff stored in K[2]
+			pShaderLight->CosHalfPhi = AsFloat(pg->ltctxa[spotBase][0]);
+			pShaderLight->SpotIntensityDivisor = AsFloat(pg->ltctxa[spotBase][1]);
+		}
+
+		// Scene ambient from PGRAPH ltctxa[FR_AMB] (3 floats)
+		D3DXVECTOR4 SceneAmbient(
+			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][0]),
+			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][1]),
+			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][2]),
+			0.f);
+		D3DXVECTOR4 BackSceneAmbient(
+			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][0]),
+			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][1]),
+			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][2]),
+			0.f);
+
+		ffShaderState.TotalLightsAmbient.Front = (D3DXVECTOR3)(LightAmbient + SceneAmbient);
+		ffShaderState.TotalLightsAmbient.Back = (D3DXVECTOR3)(LightAmbient + BackSceneAmbient);
+
+		// Material: set to white since NV2A ltctxb values are pre-multiplied by material.
+		// The shader computes (material * light), so white material preserves the pre-multiplied values.
+		ffShaderState.Materials[0].Diffuse  = D3DXVECTOR4(1, 1, 1, 1);
+		ffShaderState.Materials[0].Ambient  = D3DXVECTOR4(1, 1, 1, 1);
+		ffShaderState.Materials[0].Specular = D3DXVECTOR4(1, 1, 1, 1);
+		ffShaderState.Materials[0].Emissive = D3DXVECTOR4(0, 0, 0, 0);
+		ffShaderState.Materials[0].Power    = 0.0f;
+		ffShaderState.Materials[1] = ffShaderState.Materials[0]; // back material
 	}
-
-	D3DXVECTOR4 Ambient = toVector(XboxRenderStates.GetXboxRenderState(X_D3DRS_AMBIENT));
-	D3DXVECTOR4 BackAmbient = toVector(XboxRenderStates.GetXboxRenderState(X_D3DRS_BACKAMBIENT));
-
-	ffShaderState.TotalLightsAmbient.Front = (D3DXVECTOR3)(LightAmbient + Ambient);
-	ffShaderState.TotalLightsAmbient.Back = (D3DXVECTOR3)(LightAmbient + BackAmbient);
 
 	// Misc flags
 	ffShaderState.Modes.NormalizeNormals = XboxRenderStates.GetXboxRenderState(X_D3DRS_NORMALIZENORMALS) ? 1 : 0;
