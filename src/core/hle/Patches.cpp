@@ -109,10 +109,12 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_EndVisibilityTest", xbox::EMUPATCH(D3DDevice_EndVisibilityTest), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_EndVisibilityTest_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_EndVisibilityTest_0__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_FlushVertexCache", xbox::EMUPATCH(D3DDevice_FlushVertexCache), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetBackBuffer", xbox::EMUPATCH(D3DDevice_GetBackBuffer), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetBackBuffer_8__LTCG_eax1", xbox::EMUPATCH(D3DDevice_GetBackBuffer_8__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetBackBuffer2", xbox::EMUPATCH(D3DDevice_GetBackBuffer2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetBackBuffer2_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_GetBackBuffer2_0__LTCG_eax1), PATCH_HLE_D3D),
+	// Disabled: Xbox native GetBackBuffer returns correct Xbox surface pointers.
+	// No HLE code depends on intercepting the returned X_D3DSurface*.
+	//PATCH_ENTRY("D3DDevice_GetBackBuffer", xbox::EMUPATCH(D3DDevice_GetBackBuffer), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetBackBuffer_8__LTCG_eax1", xbox::EMUPATCH(D3DDevice_GetBackBuffer_8__LTCG_eax1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetBackBuffer2", xbox::EMUPATCH(D3DDevice_GetBackBuffer2), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetBackBuffer2_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_GetBackBuffer2_0__LTCG_eax1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetDisplayFieldStatus", xbox::EMUPATCH(D3DDevice_GetDisplayFieldStatus), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetGammaRamp", xbox::EMUPATCH(D3DDevice_GetGammaRamp), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetMaterial", xbox::EMUPATCH(D3DDevice_GetMaterial), PATCH_HLE_D3D),
@@ -155,7 +157,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_LoadVertexShader_4__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_MultiplyTransform", xbox::EMUPATCH(D3DDevice_MultiplyTransform), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2", xbox::EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_PersistDisplay", xbox::EMUPATCH(D3DDevice_PersistDisplay), PATCH_HLE_D3D),
+	// Disabled: pure trampoline with LOG_INCOMPLETE. Xbox native runs unpatched.
+	//PATCH_ENTRY("D3DDevice_PersistDisplay", xbox::EMUPATCH(D3DDevice_PersistDisplay), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_Present", xbox::EMUPATCH(D3DDevice_Present), PATCH_HLE_D3D),
 	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful
 	//PATCH_ENTRY("D3DDevice_PrimeVertexCache", xbox::EMUPATCH(D3DDevice_PrimeVertexCache), PATCH_HLE_D3D),
