@@ -591,8 +591,25 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		xbox::X_D3DSurface *pXboxRT = CxbxLookupSurfaceByDataAddr(colorOffset);
 		if (pXboxRT) {
 			ID3D11Texture2D *pHostRT = GetHostSurface(pXboxRT, D3DUSAGE_RENDERTARGET);
+
+			// Determine mip level and cubemap face for surfaces that are children of a texture
+			UINT mipSlice = 0;
+			UINT faceIndex = 0;
+			xbox::X_D3DBaseTexture* pParent = pXboxRT->Parent;
+			if (pParent != xbox::zeroptr && pXboxRT->Format == pParent->Format) {
+				int face = 0;
+				GetSurfaceFaceAndLevelWithinTexture(pXboxRT, pParent, mipSlice, face);
+				faceIndex = static_cast<UINT>(face);
+				if (GetXboxD3DResourceType(pParent) == xbox::X_D3DRTYPE_CUBETEXTURE) {
+					auto pParentHost = (ID3D11Texture2D*)GetHostBaseTexture(pParent, D3DUSAGE_RENDERTARGET);
+					if (pParentHost) {
+						pHostRT = pParentHost;
+					}
+				}
+			}
+
 			if (pHostRT) {
-				CxbxSetRenderTarget(pHostRT);
+				CxbxSetRenderTarget(pHostRT, mipSlice, faceIndex);
 			}
 		}
 		g_LastBoundColorOffset = colorOffset;

@@ -386,9 +386,10 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetProjectionViewportMatrix)
 	g_pD3DDeviceContext->RSGetViewports(&numViewports, &Viewport);
 	hRet = S_OK;
 
-	// D3D11 doesn't have GetTransform - use our tracked transform state
-	mtxProjection = (D3DXMATRIX)d3d8TransformState.Transforms[xbox::X_D3DTS_PROJECTION];
-	hRet = S_OK;
+	// Read projection matrix from PGRAPH XFCTX composite matrix
+	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+	for (int row = 0; row < 4; row++)
+		std::memcpy(&mtxProjection.m[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
 
 	// Clear the destination matrix
 	::ZeroMemory(&Out, sizeof(Out));
@@ -437,7 +438,7 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetModelView)
 		LOG_FUNC_END;
 
 	// TODO handle other matrices
-	d3d8TransformState.SetWorldView(0, pModelView);
+	// SetModelView state now sourced from PGRAPH XFCTX registers
 	LOG_TEST_CASE("SetModelView");
 }
 
@@ -455,7 +456,12 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetModelView)
 {
 	LOG_FUNC_ONE_ARG(pModelView);
 
-	*pModelView = *d3d8TransformState.GetWorldView(0);
+	// Read WorldView[0] from PGRAPH XFCTX_MMAT0
+	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+	XMFLOAT4X4 tmp;
+	for (int row = 0; row < 4; row++)
+		std::memcpy(&tmp.m[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_MMAT0 + row][0], 16);
+	*pModelView = XMLoadFloat4x4(&tmp);
 
 	return S_OK;
 }

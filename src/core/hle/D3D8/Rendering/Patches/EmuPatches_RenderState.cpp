@@ -150,8 +150,6 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_SetLight)
 	xbox::hresult_xt hRet = XB_TRMP(D3DDevice_SetLight)(Index, pLight);
 	pgraph_trace_log_pushbuffer("SetLight", pPut0, pgraph_trace_read_pput());
 
-	d3d8LightState.Lights[Index] = *pLight;
-
    	return hRet;
 }
 
@@ -168,12 +166,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetMaterial)
 	uint32_t pPut0 = pgraph_trace_read_pput();
 	XB_TRMP(D3DDevice_SetMaterial)(pMaterial);
 	pgraph_trace_log_pushbuffer("SetMaterial", pPut0, pgraph_trace_read_pput());
-
-	ffShaderState.Materials[0].Ambient = toVector(pMaterial->Ambient);
-	ffShaderState.Materials[0].Diffuse = toVector(pMaterial->Diffuse);
-	ffShaderState.Materials[0].Specular = toVector(pMaterial->Specular);
-	ffShaderState.Materials[0].Emissive = toVector(pMaterial->Emissive);
-	ffShaderState.Materials[0].Power = pMaterial->Power;
 }
 
 // ******************************************************************
@@ -189,21 +181,13 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetBackMaterial)
 	uint32_t pPut0 = pgraph_trace_read_pput();
 	XB_TRMP(D3DDevice_SetBackMaterial)(pMaterial);
 	pgraph_trace_log_pushbuffer("SetBackMaterial", pPut0, pgraph_trace_read_pput());
-
-	ffShaderState.Materials[1].Ambient = toVector(pMaterial->Ambient);
-	ffShaderState.Materials[1].Diffuse = toVector(pMaterial->Diffuse);
-	ffShaderState.Materials[1].Specular = toVector(pMaterial->Specular);
-	ffShaderState.Materials[1].Emissive = toVector(pMaterial->Emissive);
-	ffShaderState.Materials[1].Power = pMaterial->Power;
 }
 
 static HRESULT CxbxrImpl_LightEnable(xbox::dword_xt Index, xbox::bool_xt bEnable)
 {
 	LOG_INIT;
 
-	d3d8LightState.EnableLight(Index, bEnable);
-
-	// Under D3D11, LightEnable relies on our fixed function shader
+	// LightEnable state now sourced from PGRAPH registers (NV_PGRAPH_CSV0_D)
 
 	return S_OK;
 }
@@ -225,9 +209,6 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_LightEnable)
 	uint32_t pPut0 = pgraph_trace_read_pput();
 	xbox::hresult_xt hRet = XB_TRMP(D3DDevice_LightEnable)(Index, bEnable);
 	pgraph_trace_log_pushbuffer("LightEnable", pPut0, pgraph_trace_read_pput());
-
-	d3d8LightState.EnableLight(Index, bEnable);
-	// Note : LightEnable is handled in our fixed function shader  - see UpdateFixedFunctionVertexShaderState()
 
    	return hRet;
 }
@@ -291,8 +272,6 @@ void CxbxImpl_SetRenderTarget
 {
 	LOG_INIT;
 
-	ID3D11Texture2D *pHostRenderTarget = nullptr;
-	ID3D11Texture2D *pHostDepthStencil = nullptr;
 	// In Xbox titles, CreateDevice calls SetRenderTarget for the back buffer
 	// We can use this to determine the Xbox backbuffer surface for later use!
 	if (g_pXbox_BackBufferSurface == xbox::zeroptr) {
@@ -324,67 +303,20 @@ void CxbxImpl_SetRenderTarget
 		}
    	}
 
-	// The Xbox SetRenderTarget trampoline internally calls SetViewport with
-	// INT_MAX dimensions, which pushes NV097_SET_VIEWPORT_OFFSET/_SCALE to
-	// the push buffer. PGRAPH picks this up before the next draw, so we
-	// don't need to mirror the viewport into any HLE global here.
-
-	pHostRenderTarget = GetHostSurface(pRenderTarget, D3DUSAGE_RENDERTARGET);
-
-	// Determine mip level and cubemap face for surfaces that are children of a texture
-	UINT mipSlice = 0;
-	int  faceIndex = 0;
-	if (pRenderTarget != xbox::zeroptr) {
-		xbox::X_D3DBaseTexture* pParent = ((xbox::X_D3DSurface*)pRenderTarget)->Parent;
-		if (pParent != xbox::zeroptr && pRenderTarget->Format == pParent->Format) {
-			GetSurfaceFaceAndLevelWithinTexture((xbox::X_D3DSurface*)pRenderTarget, pParent, mipSlice, faceIndex);
-			// For cubemap face surfaces, render into the parent cubemap's array slice
-			// instead of a standalone surface texture (which would be disconnected
-			// from the cubemap used for sampling).
-			if (GetXboxD3DResourceType(pParent) == xbox::X_D3DRTYPE_CUBETEXTURE) {
-				auto pParentHost = (ID3D11Texture2D*)GetHostBaseTexture(pParent, D3DUSAGE_RENDERTARGET);
-				EmuLog(LOG_LEVEL::INFO, "SetRenderTarget: cubemap face=%d mip=%d parent=%p parentHost=%p standalone=%p",
-					faceIndex, mipSlice, pParent, pParentHost, pHostRenderTarget);
-				if (pParentHost) {
-					pHostRenderTarget = pParentHost;
-				}
-			}
-		}
-	}
-
 	// The currenct depth stencil is always replaced by whats passed in here (even a null)
 	g_pXbox_DepthStencil = pNewZStencil;
 	if (pNewZStencil != xbox::zeroptr)
 		CxbxRegisterSurfaceByDataAddr(pNewZStencil->Data, pNewZStencil);
-   	pHostDepthStencil = GetHostSurface(g_pXbox_DepthStencil, D3DUSAGE_DEPTHSTENCIL);
 
-	HRESULT hRet;
-	// Mimick Direct3D 8 SetRenderTarget by only setting render target if non-null
-	if (pHostRenderTarget) {
-		hRet = CxbxSetRenderTarget(pHostRenderTarget, mipSlice, static_cast<UINT>(faceIndex));
-		if (FAILED(hRet)) {
-			// If Direct3D 9 SetRenderTarget failed, skip setting depth stencil
-			return;
-		}
+	// Host D3D11 render target binding is now handled by
+	// CxbxD3D11UpdateRenderTargetFromPGRAPH, called before each draw.
+	// We still need to create the host resource so it's ready when PGRAPH binds.
+	if (pRenderTarget != xbox::zeroptr)
+		GetHostSurface(pRenderTarget, D3DUSAGE_RENDERTARGET);
+	if (g_pXbox_DepthStencil != xbox::zeroptr) {
+		auto pHostDS = GetHostSurface(g_pXbox_DepthStencil, D3DUSAGE_DEPTHSTENCIL);
+		UpdateDepthStencilFlags(pHostDS);
 	}
-
-	CxbxSetDepthStencilSurface(pHostDepthStencil);
-	hRet = S_OK;
-
-	if (SUCCEEDED(hRet)) {
-		// Once we're sure the host depth-stencil is activated...
-		UpdateDepthStencilFlags(pHostDepthStencil);
-	}
-
-   	// Validate that our host render target is still the correct size
-   	// Skip validation for mip-level surfaces: host reports full texture size,
-   	// Xbox reports mip-level size, which is an expected mismatch.
-   	DWORD HostRenderTarget_Width, HostRenderTarget_Height;
-   	if (mipSlice == 0 && GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height, pHostRenderTarget)) {
-   	   	DWORD XboxRenderTarget_Width = GetPixelContainerWidth(g_pXbox_RenderTarget);
-   	   	DWORD XboxRenderTarget_Height = GetPixelContainerHeight(g_pXbox_RenderTarget);
-   	   	ValidateRenderTargetDimensions(HostRenderTarget_Width, HostRenderTarget_Height, XboxRenderTarget_Width, XboxRenderTarget_Height);
-   	}
 }
 
 // ******************************************************************
@@ -638,9 +570,7 @@ void CxbxImpl_SetTransform
 )
 {
    	LOG_INIT
-
-	d3d8TransformState.SetTransform(State, pMatrix);
-	// Note : SetTransform is handled in our fixed function shader  - see UpdateFixedFunctionVertexShaderState()
+	// Transform state now sourced from PGRAPH XFCTX registers (MMAT0/CMAT/TnMAT)
 }
 
 // MultiplyTransform should call SetTransform, we'd like to know if it didn't

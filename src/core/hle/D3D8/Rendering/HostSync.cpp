@@ -266,6 +266,8 @@ void CxbxUpdateHostTextures()
 
 void CxbxUpdateHostTextureScaling()
 {
+	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+
 	// Xbox works with "Linear" and "Swizzled" texture formats
 	// Linear formats are not addressed with normalized coordinates (similar to https://www.khronos.org/opengl/wiki/Rectangle_Texture?)
 	// We want to use normalized coordinates in our shaders, so need to be able to scale the coordinates back
@@ -278,12 +280,18 @@ void CxbxUpdateHostTextureScaling()
 	texcoordScales.fill({ 1, 1, 1, 1 });
 
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
-		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
+		// Read texture format directly from PGRAPH (authoritative, no HLE dependency)
+		uint32_t texFmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
+		uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
+		uint32_t texCtl0 = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
 
-		// No texture, no scaling to do
-		if (pXboxBaseTexture == xbox::zeroptr) {
+		// No texture bound or disabled — skip
+		bool texEnabled = (texCtl0 & (1 << 30)) != 0;
+		if (!texEnabled || texOffset == 0) {
 			continue;
 		}
+
+		xbox::X_D3DFORMAT XboxFormat = GetXboxPixelContainerFormat(texFmt);
 
 		// Texcoord index. Just the texture stage unless fixed function or passthrough mode
 		int texCoordIndex = stage;
@@ -307,21 +315,25 @@ void CxbxUpdateHostTextureScaling()
 		auto texCoordScale = &texcoordScales[texCoordIndex];
 
 		// Check for active linear textures.
-		xbox::X_D3DFORMAT XboxFormat = GetXboxPixelContainerFormat(pXboxBaseTexture);
 		if (EmuXBFormatIsLinear(XboxFormat)) {
 			// Test-case : This is often hit by the help screen in XDK samples.
 			// Set scaling factor for this texture, which will be applied to
 			// all texture-coordinates in CxbxVertexShaderTemplate.hlsl
 			// Note : Linear textures are two-dimensional at most (right?)
-			float width, height;
-			if ((xbox::X_D3DSurface*)pXboxBaseTexture == g_pXbox_BackBufferSurface) {
-				// Account for MSAA
+			// Read dimensions from PGRAPH TEXIMAGERECT (authoritative, replaces HLE reads)
+			uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
+			float width  = (float)((texImageRect >> 16) & 0x1FFF);
+			float height = (float)(texImageRect & 0x1FFF);
+
+			// Account for MSAA when texture is the current render target (backbuffer)
+			if (texOffset == pg->surface_color.offset) {
 				// Test case: Max Payne 2 (bullet time)
-				GetBackBufferPixelDimensions(width, height);
-			}
-			else {
-				width = (float)GetPixelContainerWidth(pXboxBaseTexture);
-				height = (float)GetPixelContainerHeight(pXboxBaseTexture);
+				if (g_Xbox_MultiSampleType & xbox::X_D3DMULTISAMPLE_SAMPLING_MULTI) {
+					float aaX, aaY;
+					GetMultiSampleScaleRaw(aaX, aaY);
+					width /= aaX;
+					height /= aaY;
+				}
 			}
 
 			*texCoordScale = {
@@ -341,7 +353,20 @@ void CxbxUpdateHostTextureScaling()
 		// - X_D3DRS_POLYGONOFFSETZSLOPESCALE
 		// - X_D3DRS_POLYGONOFFSETZOFFSET
 		if (EmuXBFormatIsDepthBuffer(XboxFormat)) {
-			(*texCoordScale)[2] = (float)GetZScaleForPixelContainer(pXboxBaseTexture);
+			// Derive Z scale from PGRAPH-sourced format (no Xbox object needed)
+			float zScale = 1.0f;
+			switch (XboxFormat) {
+				case xbox::X_D3DFMT_D16:
+				case xbox::X_D3DFMT_LIN_D16:     zScale = 65535.0f;    break;
+				case xbox::X_D3DFMT_D24S8:
+				case xbox::X_D3DFMT_LIN_D24S8:   zScale = 16777215.0f; break;
+				case xbox::X_D3DFMT_F16:
+				case xbox::X_D3DFMT_LIN_F16:     zScale = 511.9375f;   break;
+				case xbox::X_D3DFMT_F24S8:
+				case xbox::X_D3DFMT_LIN_F24S8:   zScale = 1.0e30f;     break;
+				default: break;
+			}
+			(*texCoordScale)[2] = zScale;
 		}
 	}
 	// Convert texture scales to reciprocals for GPU-side multiply (cheaper than divide).

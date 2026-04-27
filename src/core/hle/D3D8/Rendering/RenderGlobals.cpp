@@ -29,8 +29,6 @@
 XboxRenderStateConverter XboxRenderStates;
 XboxTextureStateConverter XboxTextureStates;
 
-D3D8LightState d3d8LightState = D3D8LightState();
-D3D8TransformState d3d8TransformState = D3D8TransformState();
 FixedFunctionVertexShaderState ffShaderState = {}; // TODO find a home for this and associated code
 
 // Allow use of time duration literals (making 16ms, etc possible)

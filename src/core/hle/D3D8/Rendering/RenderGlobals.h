@@ -46,12 +46,8 @@ extern ID3D11Device *g_pD3DDevice;
 // Xbox state globals (defined in RenderGlobals.cpp)
 class XboxRenderStateConverter;
 class XboxTextureStateConverter;
-class D3D8LightState;
-class D3D8TransformState;
 extern XboxRenderStateConverter  XboxRenderStates;
 extern XboxTextureStateConverter XboxTextureStates;
-extern D3D8LightState            d3d8LightState;
-extern D3D8TransformState        d3d8TransformState;
 extern float                     g_Xbox_BackbufferScaleX;
 extern float                     g_Xbox_BackbufferScaleY;
 extern xbox::X_D3DSWAP           g_LastD3DSwap;
