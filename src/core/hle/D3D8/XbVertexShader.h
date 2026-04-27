@@ -266,7 +266,6 @@ extern ID3DBlob* CxbxGetFixedFunctionVertexShaderBytecode();
 extern void CxbxImpl_SetVertexShader(DWORD Handle);
 extern void CxbxImpl_SelectVertexShader(DWORD Handle, DWORD Address);
 extern void CxbxImpl_SetVertexShaderInput(DWORD Handle, UINT StreamCount, xbox::X_STREAMINPUT* pStreamInputs);
-extern void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD ConstantCount);
 extern void CxbxImpl_DeleteVertexShader(DWORD Handle);
 extern void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT* pData);
 extern void CxbxVertexShaderSetFlags();

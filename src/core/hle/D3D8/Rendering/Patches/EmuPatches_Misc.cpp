@@ -475,15 +475,9 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetModelView)
 	LOG_TEST_CASE("SetModelView");
 }
 
-// ******************************************************************
-// * patch: D3DDevice_FlushVertexCache
-// ******************************************************************
-void WINAPI xbox::EMUPATCH(D3DDevice_FlushVertexCache)()
-{
-	LOG_FUNC();
-
-	LOG_UNIMPLEMENTED();
-}
+// D3DDevice_FlushVertexCache — disabled.
+// Unimplemented stub with no side effects.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_GetModelView
@@ -499,9 +493,6 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetModelView)
 
 	return S_OK;
 }
-
-
-DWORD PushBuffer[64 * 1024 / sizeof(DWORD)];
 
 // ******************************************************************
 // * patch: D3D_SetCommonDebugRegisters

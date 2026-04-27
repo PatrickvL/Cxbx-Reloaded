@@ -374,8 +374,8 @@ void CxbxUpdateDirtyVertexShaderConstants(const float* constants, bool* dirty) {
 	}
 }
 
-// TODO : Once we're able to flush the NV2A push buffer
-// remove our patches on D3DDevice_SetVertexShaderConstant (and CxbxImpl_SetVertexShaderConstant)
+// D3DDevice_SetVertexShaderConstant patches have been removed;
+// Xbox native code pushes NV097_SET_TRANSFORM_CONSTANT through PFIFO → PGRAPH.
 void CxbxUpdateHostVertexShaderConstants()
 {
 	// For Xbox vertex shader programs, the Xbox vertex shader constants

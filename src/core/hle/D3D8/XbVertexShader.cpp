@@ -38,7 +38,7 @@
 #include "core\hle\D3D8\Rendering\Shaders\Shader.h" // For g_ShaderSources
 #include "core\hle\D3D8\XbVertexBuffer.h" // For CxbxImpl_SetVertexData4f
 #include "core\hle\D3D8\XbVertexShader.h"
-#include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A, HLE_get_NV2A_vertex_constant_float4_ptr
+#include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Internal.h" // For g_pD3D11XFPRBuf, g_pD3D11PGRegsSRV
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
@@ -67,10 +67,6 @@ VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 
                 xbox::dword_xt g_Xbox_VertexShader_Handle = 0;
                 bool g_bRecordingPushBuffer = false;
-
-// Variable set by [D3DDevice|CxbxImpl]_LoadVertexShader() / [D3DDevice|CxbxImpl]_LoadVertexShaderProgram() (both through CxbxCopyVertexShaderFunctionSlots):
-                xbox::dword_xt g_Xbox_VertexShader_FunctionSlots[(X_VSH_MAX_INSTRUCTION_COUNT + 1) * X_VSH_INSTRUCTION_SIZE] = { 0 }; // One extra for FLD_FINAL terminator
-
 
 static xbox::X_D3DVertexShader g_Xbox_VertexShader_ForFVF = {};
 
@@ -387,16 +383,6 @@ static bool FreeCxbxVertexDeclaration(CxbxVertexDeclaration *pCxbxVertexDeclarat
 	}
 
 	return false;
-}
-
-xbox::dword_xt* GetCxbxVertexShaderSlotPtr(const DWORD SlotIndexAddress)
-{
-	if (SlotIndexAddress < X_VSH_MAX_INSTRUCTION_COUNT) {
-		return &g_Xbox_VertexShader_FunctionSlots[SlotIndexAddress * X_VSH_INSTRUCTION_SIZE];
-	} else {
-		LOG_TEST_CASE("SlotIndexAddress out of range"); // FIXME : extend with value (once supported by LOG_TEST_CASE)
-		return nullptr;
-	}
 }
 
 VertexDeclarationKey GetXboxVertexAttributesKey(xbox::X_VERTEXATTRIBUTEFORMAT* pXboxVertexAttributeFormat)
@@ -844,30 +830,6 @@ void CxbxImpl_DeleteVertexShader(DWORD Handle)
 	// g_VertexShaderCache.ReleaseShader(pCxbxVertexShader->Key);
 }
 
-// TODO : Remove SetVertexShaderConstant implementation and the patch once
-// CxbxUpdateHostVertexShaderConstants is reliable (ie. : when we're able to flush the NV2A push buffer)
-void CxbxImpl_SetVertexShaderConstant(INT Register, PVOID pConstantData, DWORD ConstantCount)
-{
-	LOG_INIT; // Allows use of DEBUG_D3DRESULT
-
-	// Xbox vertex shader constants range from -96 to 95
-	// The host does not support negative, so we adjust to 0..191
-	Register += X_D3DSCM_CORRECTION;
-
-	if (Register < 0) LOG_TEST_CASE("Register < 0");
-	if (Register + ConstantCount > X_D3DVS_CONSTREG_COUNT) LOG_TEST_CASE("Register + ConstantCount > X_D3DVS_CONSTREG_COUNT");
-
-	// Write Vertex Shader constants in nv2a
-	float* constant_floats = HLE_get_NV2A_vertex_constant_float4_ptr(Register);
-	memcpy(constant_floats, pConstantData, ConstantCount * sizeof(float) * 4);
-
-	// Mark the constant as dirty, so that CxbxUpdateHostVertexShaderConstants will pick it up
-	auto nv2a = g_NV2A->GetDeviceState();
-	for (DWORD i = 0; i < ConstantCount; i++) {
-		nv2a->pgraph.vsh_constants_dirty[Register + i] = true;
-	}
-}
-
 void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT *pData)
 {
 	// If pData is assigned, pData[0..3] is pushed towards nv2a transform data registers
@@ -887,7 +849,7 @@ void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT *pData)
 	//        and here just point program.steps to global vsh_program_steps[Address].
 	Nv2aVshParseResult result = nv2a_vsh_parse_program(
 		&program, // Note : program.steps will be malloc'ed
-		GetCxbxVertexShaderSlotPtr(Address), // TODO : At some point, use pg->program_data[Address] here instead
+		pg->program_data[Address],
 		NV2A_MAX_TRANSFORM_PROGRAM_LENGTH - Address);
 	if (result != NV2AVPR_SUCCESS) {
 		LOG_TEST_CASE("nv2a_vsh_parse_program failed");

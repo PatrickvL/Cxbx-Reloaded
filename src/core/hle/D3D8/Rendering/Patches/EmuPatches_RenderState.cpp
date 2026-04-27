@@ -612,41 +612,10 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTargetFast)
 // D3D_LazySetPointParams — disabled (unimplemented stub, LOG_UNIMPLEMENTED).
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_SetRenderState_Simple
-// ******************************************************************
-xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SetRenderState_Simple)
-(
-   	dword_xt Method,
-   	dword_xt Value
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(Method)
-   	   	LOG_FUNC_ARG(Value)
-   	   	LOG_FUNC_END;
-
-   	XB_TRMP(D3DDevice_SetRenderState_Simple)(Method, Value);
-
-   	// Fetch the RenderState conversion info for the given input
-   	int XboxRenderStateIndex = -1;
-   	for (int i = X_D3DRS_FIRST; i <= X_D3DRS_LAST; i++) {
-   	   	if (GetDxbxRenderStateInfo(i).M == PUSH_METHOD(Method)) {
-   	   	   	XboxRenderStateIndex = i;
-   	   	   	break;
-   	   	}
-   	}
-
-   	// If we could not map it, log and return
-   	if (XboxRenderStateIndex == -1) {
-   	   	EmuLog(LOG_LEVEL::WARNING, "RenderState_Simple(0x%.08X (%s), 0x%.08X) could not be found in RenderState table", Method, GetDxbxRenderStateInfo(XboxRenderStateIndex).S, Value);
-   	   	return;
-   	}
-
-	EmuLog(LOG_LEVEL::DEBUG, "RenderState_Simple: %s = 0x%08X", GetDxbxRenderStateInfo(XboxRenderStateIndex).S, Value);
-
-   	XboxRenderStates.SetXboxRenderState(XboxRenderStateIndex, Value);
-}
+// D3DDevice_SetRenderState_Simple — disabled.
+// Xbox code already writes D3D__RenderState[] and pushes NV2A methods.
+// This patch only mirrored to XboxRenderStates which is redundant.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_SetTransform

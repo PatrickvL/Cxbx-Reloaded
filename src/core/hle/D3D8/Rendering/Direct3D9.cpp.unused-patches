@@ -4747,3 +4747,99 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetViewport)
 	LOG_FUNC_ONE_ARG(pViewport);
 	XB_TRMP(D3DDevice_SetViewport)(pViewport);
 }
+// ******************************************************************
+// * patch: D3DDevice_SetVertexShaderConstant_8__LTCG_edx3
+// * Disabled: Xbox native code pushes NV097_SET_TRANSFORM_CONSTANT through PFIFO
+// ******************************************************************
+xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant_8__LTCG_edx3)
+(
+   	void*,
+   	dword_xt    ConstantCount,
+   	int_xt      Register,
+   	CONST PVOID pConstantData
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Register)
+		LOG_FUNC_ARG(pConstantData)
+		LOG_FUNC_ARG(ConstantCount)
+		LOG_FUNC_END;
+
+	CxbxImpl_SetVertexShaderConstant(Register, pConstantData, ConstantCount);
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetVertexShaderConstant
+// * Disabled: Xbox native code pushes NV097_SET_TRANSFORM_CONSTANT through PFIFO
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant)
+(
+   	int_xt         Register,
+   	CONST PVOID pConstantData,
+   	dword_xt       ConstantCount
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Register)
+		LOG_FUNC_ARG(pConstantData)
+		LOG_FUNC_ARG(ConstantCount)
+		LOG_FUNC_END;
+
+	CxbxImpl_SetVertexShaderConstant(Register, pConstantData, ConstantCount);
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetVertexShaderConstant1
+// * Disabled: Xbox native code pushes NV097_SET_TRANSFORM_CONSTANT through PFIFO
+// ******************************************************************
+xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant1)
+(
+   	int_xt         Register,
+   	CONST PVOID pConstantData
+)
+{
+	LOG_FORWARD("D3DDevice_SetVertexShaderConstant");
+   	EMUPATCH(D3DDevice_SetVertexShaderConstant)(Register - X_D3DSCM_CORRECTION, pConstantData, 1);
+}
+
+// D3DDevice_SetVertexShaderConstant1Fast, SetVertexShaderConstant4,
+// SetVertexShaderConstantNotInline, SetVertexShaderConstantNotInline_0__LTCG_ebx1_edx2_eax3,
+// SetVertexShaderConstantNotInlineFast — all forward to D3DDevice_SetVertexShaderConstant.
+
+// ******************************************************************
+// * patch: D3DDevice_SetRenderState_Simple
+// * Disabled: Xbox code already writes D3D__RenderState[] and pushes NV2A methods
+// ******************************************************************
+xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SetRenderState_Simple)
+(
+   	dword_xt Method,
+   	dword_xt Value
+)
+{
+   	LOG_FUNC_BEGIN
+   	   	LOG_FUNC_ARG(Method)
+   	   	LOG_FUNC_ARG(Value)
+   	   	LOG_FUNC_END;
+
+   	XB_TRMP(D3DDevice_SetRenderState_Simple)(Method, Value);
+
+   	int XboxRenderStateIndex = -1;
+   	for (int i = X_D3DRS_FIRST; i <= X_D3DRS_LAST; i++) {
+   	   	if (GetDxbxRenderStateInfo(i).M == PUSH_METHOD(Method)) {
+   	   	   	XboxRenderStateIndex = i;
+   	   	   	break;
+   	   	}
+   	}
+   	if (XboxRenderStateIndex == -1) return;
+   	XboxRenderStates.SetXboxRenderState(XboxRenderStateIndex, Value);
+}
+
+// ******************************************************************
+// * D3DDevice_FlushVertexCache
+// * Disabled: unimplemented stub with no side effects
+// ******************************************************************
+void WINAPI xbox::EMUPATCH(D3DDevice_FlushVertexCache)()
+{
+	LOG_FUNC();
+	LOG_UNIMPLEMENTED();
+}
