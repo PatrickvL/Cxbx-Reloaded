@@ -36,7 +36,7 @@
 #include "core\hle\D3D8\Rendering\RenderStates.h" // For XboxRenderStateConverter
 #include "core\hle\D3D8\Rendering\Shaders\VertexShaderCache.h" // For g_VertexShaderCache
 #include "core\hle\D3D8\Rendering\Shaders\Shader.h" // For g_ShaderSources
-#include "core\hle\D3D8\XbVertexBuffer.h" // For CxbxImpl_SetVertexData4f
+#include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"

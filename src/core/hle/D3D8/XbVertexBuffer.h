@@ -135,9 +135,6 @@ extern UINT g_InlineVertexBuffer_TableOffset;
 
 extern void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d);
 
-extern void CxbxImpl_Begin(xbox::X_D3DPRIMITIVETYPE PrimitiveType);
-extern void CxbxImpl_End();
 extern void CxbxImpl_SetStreamSource(UINT StreamNumber, xbox::X_D3DVertexBuffer* pStreamData, UINT Stride);
-extern void CxbxImpl_SetVertexData4f(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d);
 
 #endif

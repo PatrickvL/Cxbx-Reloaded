@@ -306,56 +306,8 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetPixelShader_0
    	}
 }
 
-// ******************************************************************
-// * patch: D3DDevice_DrawVertices_4
-// LTCG specific D3DDevice_DrawVertices function...
-// This uses a custom calling convention where parameter is passed in ECX, EAX and Stack
-// Test Case: Conker
-// ******************************************************************
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawVertices_4__LTCG_ecx2_eax3)
-(
-   	X_D3DPRIMITIVETYPE PrimitiveType
-)
-{
-   	uint_xt VertexCount;
-   	uint_xt StartVertex;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  VertexCount, eax
-   	   	mov  StartVertex, ecx
-   	}
-
-   	EMUPATCH(D3DDevice_DrawVertices)(PrimitiveType, StartVertex, VertexCount);
-
-   	__asm {
-   	   	LTCG_EPILOGUE
-   	   	ret  4
-   	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_DrawVertices_8__LTCG_eax3
-// LTCG specific D3DDevice_DrawVertices function...
-// ******************************************************************
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawVertices_8__LTCG_eax3)
-(
-   	X_D3DPRIMITIVETYPE PrimitiveType,
-   	uint_xt            StartVertex
-)
-{
-   	uint_xt VertexCount;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  VertexCount, eax
-   	}
-
-   	EMUPATCH(D3DDevice_DrawVertices)(PrimitiveType, StartVertex, VertexCount);
-
-   	__asm {
-   	   	LTCG_EPILOGUE
-   	   	ret  4
-   	}
-}
+// D3DDevice_DrawVertices_4__LTCG_ecx2_eax3, D3DDevice_DrawVertices_8__LTCG_eax3 — disabled.
+// LTCG variants of DrawVertices; patches disabled in Patches.cpp.
 
 // ******************************************************************
 // * patch: D3DDevice_DeleteVertexShader
