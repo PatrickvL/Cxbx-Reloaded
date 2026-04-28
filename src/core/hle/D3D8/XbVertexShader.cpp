@@ -79,6 +79,8 @@ static bool g_D3D11HasActiveShaderKey = false;
 static ID3DBlob* g_pD3D11FixedFunctionBytecode = nullptr;
 static ID3DBlob* g_pD3D11PassthroughBytecode = nullptr;
 
+extern bool g_bUsePassthroughHLSL; // defined in HostDevice.cpp
+
 void CxbxVertexShaderSetFlags()
 {
 	// Set an appropriate X_VERTEXSHADER_FLAG_PROGRAM version and mask off the "wrong" one
@@ -461,7 +463,6 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 
 void CxbxUpdateHostVertexShader()
 {
-	extern bool g_bUsePassthroughHLSL; // TMP glue
 	// TODO: move render state to VertexShader.cpp
 	static ID3D11VertexShader* fixedFunctionShader = nullptr; // TODO: move to shader cache
 	static ID3D11VertexShader* passthroughShader = nullptr;
@@ -507,9 +508,7 @@ void CxbxUpdateHostVertexShader()
 		if (FAILED(hRet)) CxbxrAbort("Failed to set fixed-function shader");
 		g_D3D11HasActiveShaderKey = false; // Prevent stale programmable shader key from being used for input layout
 	}
-	else if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL
-		&& false // D3D11: passthrough goes through the shader cache (NV2A binary → template)
-	) {
+	else if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL) {
 		HRESULT hRet = CxbxSetVertexShader(passthroughShader);
 		if (FAILED(hRet)) CxbxrAbort("Failed to set passthrough shader");
 		g_D3D11HasActiveShaderKey = false; // Prevent stale programmable shader key from being used for input layout
@@ -605,13 +604,16 @@ ID3DBlob* CxbxGetActiveVertexShaderBytecode()
 {
 	if (g_D3D11HasActiveShaderKey)
 		return g_VertexShaderCache.GetShaderBytecode(g_D3D11ActiveVertexShaderKey);
+	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction)
+		return g_pD3D11FixedFunctionBytecode;
+	// Return passthrough bytecode when the passthrough HLSL shader is active
+	if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL)
+		return g_pD3D11PassthroughBytecode;
 	// VS interpreter provides its own bytecode for input layout creation
 	if (g_bUseVSInterpreter && g_pD3D11VSInterpreterBytecode &&
 		(g_Xbox_VertexShaderMode == VertexShaderMode::ShaderProgram ||
 		 g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough))
 		return g_pD3D11VSInterpreterBytecode;
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction)
-		return g_pD3D11FixedFunctionBytecode;
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough)
 		return g_pD3D11PassthroughBytecode;
 	return nullptr;
