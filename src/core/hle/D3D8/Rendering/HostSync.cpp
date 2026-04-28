@@ -117,11 +117,18 @@ void CxbxUpdateHostTextures()
 
 			// For non-RT textures, try the texture side-map first (populated
 			// by SetTexture patches if they're enabled), then fall back to
-			// constructing a synthetic Xbox texture from PGRAPH registers.
+			// the HLE-tracked texture, then to constructing a synthetic
+			// Xbox texture from PGRAPH registers.
 			if (!bIsRenderTargetTexture) {
 				auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
 				if (pgTex != nullptr) {
 					pXboxBaseTexture = pgTex;
+				} else if (pXboxBaseTexture != xbox::zeroptr) {
+					// No side-map entry, but HLE has a texture for this stage.
+					// Prefer it — it may have been set via SetTexture/SwitchTexture
+					// and has the correct resource structure for host conversion.
+					// Register it in the side-map so future lookups find it.
+					CxbxRegisterTextureByDataAddr(texOffset, pXboxBaseTexture);
 				} else {
 					// No side-map entry: build/update synthetic X_D3DBaseTexture
 					// from current PGRAPH registers.  Must re-derive every draw
