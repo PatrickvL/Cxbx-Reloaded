@@ -123,11 +123,14 @@ void CxbxUpdateHostTextures()
 				auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
 				if (pgTex != nullptr) {
 					pXboxBaseTexture = pgTex;
-				} else if (pXboxBaseTexture != xbox::zeroptr) {
-					// No side-map entry, but HLE has a texture for this stage.
-					// Prefer it — it may have been set via SetTexture/SwitchTexture
-					// and has the correct resource structure for host conversion.
-					// Register it in the side-map so future lookups find it.
+				} else if (pXboxBaseTexture != xbox::zeroptr
+				           && pXboxBaseTexture != &s_SyntheticTextures[stage]) {
+					// No side-map entry, but HLE has a genuine texture for
+					// this stage (set via SetTexture/SwitchTexture patches).
+					// Prefer it and register in the side-map for future lookups.
+					// Exclude stale synthetic textures: their Data/Format fields
+					// may belong to the previous draw's texture, not the current
+					// one identified by texOffset (PGRAPH TEXOFFSET).
 					CxbxRegisterTextureByDataAddr(texOffset, pXboxBaseTexture);
 				} else {
 					// No side-map entry: build/update synthetic X_D3DBaseTexture
