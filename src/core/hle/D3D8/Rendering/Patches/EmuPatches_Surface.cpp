@@ -687,10 +687,6 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 
 	hRet = CxbxPresent();
 
-   	// RenderStates need reapplying each frame, but can be re-used between draw calls
-   	// This forces them to be reset
-   	XboxRenderStates.SetDirty();
-
    	// Check if we need to enable our frame-limiter
    	xbox::dword_xt presentationInverval = g_Xbox_PresentationInterval_Override > 0 ? g_Xbox_PresentationInterval_Override : g_Xbox_PresentationInterval_Default;
    	if ((presentationInverval != D3DPRESENT_INTERVAL_IMMEDIATE) && !g_bHack_UnlockFramerate) {

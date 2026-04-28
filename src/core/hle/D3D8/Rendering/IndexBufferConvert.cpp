@@ -24,6 +24,9 @@
 // ******************************************************************
 #include "EmuD3D8_common.h"
 #include "IndexBufferConvert.h"
+#include "devices/video/nv2a.h" // For NV2ADevice, g_NV2A
+#include "devices/video/nv2a_int.h" // For PGRAPHState
+#include "devices/video/nv2a_regs.h" // For NV_PGRAPH_SETUPRASTER
 
 // ******************************************************************
 // * Triangle fan to triangle list conversion
@@ -66,10 +69,16 @@ INDEX16* CxbxCreateTriFanToTriangleListIndexData(INDEX16* pFanIndexData, unsigne
 // * Quad list to triangle list conversion
 // ******************************************************************
 
-// Determine winding order from X_D3DRS_FRONTFACE render state
-// 0x900 = NV2A_FRONT_FACE_CW (clockwise), anything else = CCW
+// Determine winding order from NV2A PGRAPH SETUPRASTER register.
+// FRONTFACE bit 23: 0 = CW, 1 = CCW
 bool CxbxGetClockWiseWindingOrder()
 {
+	extern NV2ADevice* g_NV2A;
+	if (g_NV2A) {
+		PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
+		uint32_t setupraster = pg->regs[NV_PGRAPH_SETUPRASTER / 4];
+		return (setupraster & NV_PGRAPH_SETUPRASTER_FRONTFACE) == 0; // 0 = CW
+	}
 	return XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FRONTFACE) == 0x900;
 }
 

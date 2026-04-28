@@ -628,17 +628,4 @@ void CxbxSetHostVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration)
 	CxbxD3D11SetVertexDeclaration(pCxbxVertexDeclaration);
 }
 
-void CxbxGetBumpEnvMatrix(int stage, DWORD value[4])
-{
-	value[0] = XboxTextureStates.Get(stage, xbox::X_D3DTSS_BUMPENVMAT00);
-	value[1] = XboxTextureStates.Get(stage, xbox::X_D3DTSS_BUMPENVMAT01);
-	value[2] = XboxTextureStates.Get(stage, xbox::X_D3DTSS_BUMPENVMAT10);
-	value[3] = XboxTextureStates.Get(stage, xbox::X_D3DTSS_BUMPENVMAT11);
-}
-
-void CxbxGetBumpEnvLuminance(int stage, DWORD value[2])
-{
-	value[0] = XboxTextureStates.Get(stage, xbox::X_D3DTSS_BUMPENVLSCALE);
-	value[1] = XboxTextureStates.Get(stage, xbox::X_D3DTSS_BUMPENVLOFFSET);
-}
 

@@ -214,8 +214,7 @@ HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader);
 ID3D11InputLayout* CxbxCreateHostVertexDeclaration(D3D11_INPUT_ELEMENT_DESC *pDeclaration);
 struct _CxbxVertexDeclaration;
 void    CxbxSetHostVertexDeclaration(struct _CxbxVertexDeclaration* pCxbxVertexDeclaration);
-void    CxbxGetBumpEnvMatrix(int stage, DWORD value[4]);
-void    CxbxGetBumpEnvLuminance(int stage, DWORD value[2]);
+
 
 // Reusable grow-to-fit dynamic buffer for D3D11.
 // Avoids per-draw CreateBuffer/Release overhead for temporary vertex/index buffers.

@@ -102,14 +102,7 @@ HRESULT CxbxD3D11CreateConstantBuffer(UINT byteWidth, bool bDynamic, ID3D11Buffe
 // Release all D3D11 backend resources (blit shaders, samplers, constant buffers, state objects)
 void CxbxD3D11ReleaseBackendResources();
 
-// Unified D3D11 render state mapping — maps a PC-converted render state
-// to D3D11 state descriptor members and sets appropriate dirty flags.
-// Called from ApplySimpleRenderState and ApplyComplexRenderState.
-void CxbxD3D11SetRenderState(uint32_t State, uint32_t Value);
-
 // Read NV2A PGRAPH registers and update D3D11 blend/depth-stencil/rasterizer descriptors.
-// Called from CxbxUpdateNativeD3DResources() when g_NV2A is available, overriding any
-// values previously set by XboxRenderStates.Apply().
 struct PGRAPHState; // forward decl
 void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg);
 

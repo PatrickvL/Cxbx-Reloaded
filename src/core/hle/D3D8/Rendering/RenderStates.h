@@ -38,29 +38,16 @@ class XboxRenderStateConverter
 {
 public:
     bool Init();
-    void Apply();
 
     bool XboxRenderStateExists(uint32_t state);
     void SetXboxRenderState(uint32_t State, uint32_t Value);
     void SetWireFrameMode(int mode);
-    void SetDirty();
     uint32_t GetXboxRenderState(uint32_t State);
     float GetXboxRenderStateAsFloat(uint32_t State);
 private:
-    void VerifyAndFixDeferredRenderStateOffset();
-    void DeriveRenderStateOffsetFromDeferredRenderStateOffset();
-    void StoreInitialValues();
     void BuildRenderStateMappingTable();
-
-    bool XboxRenderStateValueChanged(uint32_t State);
-
-    void ApplySimpleRenderState(uint32_t State, uint32_t Value);
-    void ApplyDeferredRenderState(uint32_t State, uint32_t Value);
-    void ApplyComplexRenderState(uint32_t State, uint32_t Value);
 
     uint32_t* D3D__RenderState = nullptr;
     int WireFrameMode = 0;
-    // NOTE: RenderStates are 32bit values, but using a 64bit value allows the upper bits to be used as a 'force dirty' flag
-    std::array<uint64_t, xbox::X_D3DRS_LAST + 1> PreviousRenderStateValues;
     std::array<int, xbox::X_D3DRS_LAST + 1>  XboxRenderStateOffsets;
 };

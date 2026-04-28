@@ -36,7 +36,7 @@ void Direct3D_CreateDevice_Start
    	   	CxbxrAbort("Failed to init XboxRenderStates");
    	}
 
-   	if (!XboxTextureStates.Init(&XboxRenderStates)) {
+   	if (!XboxTextureStates.Init()) {
    	   	CxbxrAbort("Failed to init XboxTextureStates");
    	}
 
