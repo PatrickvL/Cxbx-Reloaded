@@ -47,6 +47,7 @@ extern ID3D11Texture2D             *g_pHostPgraphBackBuffer;
 extern UINT                         g_PgraphBackBufferWidth;
 extern UINT                         g_PgraphBackBufferHeight;
 void CxbxResetPgraphSurfaceTracking();
+ID3D11Texture2D* CxbxLookupPgraphRTByOffset(xbox::addr_xt offset);
 
 // ******************************************************************
 // * Constant buffer sizing

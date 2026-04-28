@@ -99,6 +99,19 @@ void CxbxUpdateHostTextures()
 				}
 			}
 
+			// If no Xbox surface registered (SetRenderTarget patches disabled),
+			// check the PGRAPH RT cache for render targets created directly
+			// from PGRAPH surface state.  This enables render-to-texture:
+			// the game renders caustics/shadows to an offscreen RT, then
+			// samples that RT as a texture in a later draw.
+			if (!bIsRenderTargetTexture && texOffset != pg->surface_zeta.offset) {
+				auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
+				if (pPgraphRT) {
+					pHostBaseTexture = pPgraphRT;
+					bIsRenderTargetTexture = true;
+				}
+			}
+
 			// For non-RT textures, try the texture side-map first (populated
 			// by SetTexture patches if they're enabled), then fall back to
 			// constructing a synthetic Xbox texture from PGRAPH registers.

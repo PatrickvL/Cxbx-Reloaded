@@ -656,6 +656,15 @@ void CxbxResetPgraphSurfaceTracking()
 	g_PgraphRTCache.clear();
 }
 
+ID3D11Texture2D* CxbxLookupPgraphRTByOffset(xbox::addr_xt offset)
+{
+	for (auto& entry : g_PgraphRTCache) {
+		if (entry.first.offset == offset)
+			return entry.second.Get();
+	}
+	return nullptr;
+}
+
 // Create a D3D11 render target or depth stencil directly from PGRAPH surface state
 static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 	xbox::addr_xt offset, DXGI_FORMAT format, UINT width, UINT height, bool isDepthStencil)
