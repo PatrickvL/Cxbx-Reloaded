@@ -332,11 +332,20 @@ static HRESULT CreateGpuPixelContainerResource(
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 				desc.CPUAccessFlags = 0;
 			} else {
-				// D3D11_USAGE_DYNAMIC requires MipLevels == 1
-				desc.Usage = D3D11_USAGE_DYNAMIC;
-				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-				desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-				bHostIsDynamic = true;
+				// Block-compressed formats (BC1-BC3 / DXT1-DXT5) do not support
+				// D3D11_USAGE_DYNAMIC — use DEFAULT with UpdateSubresource upload.
+				bool isBlockCompressed = (PCFormat == EMUFMT_DXT1 || PCFormat == EMUFMT_DXT3 || PCFormat == EMUFMT_DXT5);
+				if (isBlockCompressed) {
+					desc.Usage = D3D11_USAGE_DEFAULT;
+					desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+					desc.CPUAccessFlags = 0;
+				} else {
+					// D3D11_USAGE_DYNAMIC requires MipLevels == 1
+					desc.Usage = D3D11_USAGE_DYNAMIC;
+					desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+					desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+					bHostIsDynamic = true;
+				}
 			}
 		} else {
 			desc.Usage = D3D11_USAGE_DEFAULT;
