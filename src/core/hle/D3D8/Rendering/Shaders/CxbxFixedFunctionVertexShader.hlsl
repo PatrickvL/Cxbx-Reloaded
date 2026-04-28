@@ -236,9 +236,9 @@ float DoFog()
     if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_W)
         fogDepth = Projection.Position.w;
 
-    // Apply the fog table formula (shared with programmable VS footer).
-    return CalculateFogFactor(state.Fog.TableMode, state.Fog.Density,
-                              state.Fog.Start, state.Fog.End, fogDepth);
+    // Use NV2A-native FOGPARAM0/1 computation (matches xemu).
+    return CalculateFogFactor(state.Fog.FogMode, state.Fog.FogParam0,
+                              state.Fog.FogParam1, fogDepth);
 }
 
 float4 DoTexCoord(const uint stage)

@@ -1710,13 +1710,54 @@ void pgraph_handle_method(NV2AState *d,
 			// Handled by method table: NV_PGRAPH_CONTROL_3_PROVOKING_VERTEX
 			break;
 
+		case NV097_SET_COLOR_MATERIAL: {
+			// Compound write: 4 material source fields packed in parameter
+			// bits 0-1: emission, 2-3: ambient, 4-5: diffuse, 6-7: specular
+			// Values: 0=FROM_MATERIAL, 1=FROM_COLOR1, 2=FROM_COLOR2
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_EMISSION, (parameter >> 0) & 3);
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_AMBIENT,  (parameter >> 2) & 3);
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_DIFFUSE,  (parameter >> 4) & 3);
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_SPECULAR, (parameter >> 6) & 3);
+			break;
+		}
+
+		case NV097_SET_TWO_SIDED_LIGHT_EN:
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_TWO_SIDE_LIGHTING, parameter ? 1 : 0);
+			break;
+
+		case NV097_SET_POINT_PARAMS_ENABLE:
+			// Writes to BOTH CSV0_D and CONTROL_3
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_POINTPARAMSENABLE, parameter ? 1 : 0);
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_3)], NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE, parameter ? 1 : 0);
+			break;
+
+		case NV097_SET_LIGHT_CONTROL: {
+			// Extracts 3 fields into CSV0_C
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_SEPARATE_SPECULAR,
+				(parameter & NV097_SET_LIGHT_CONTROL_SEPARATE_SPECULAR) ? 1 : 0);
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_LOCALEYE,
+				(parameter & NV097_SET_LIGHT_CONTROL_LOCALEYE) ? 1 : 0);
+			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_ALPHA_FROM_MATERIAL_SPECULAR,
+				(parameter & NV097_SET_LIGHT_CONTROL_ALPHA_FROM_MATERIAL_SPECULAR) ? 1 : 0);
+			break;
+		}
+
+		CASE_8(NV097_SET_POINT_PARAMS, 4): {
+			// 8 float point attenuation parameters
+			slot = (method - NV097_SET_POINT_PARAMS) / 4;
+			pg->point_params[slot] = *(float*)&parameter;
+			break;
+		}
+
+		case NV097_SET_POINT_SIZE:
+			if (parameter > NV097_SET_POINT_SIZE_V_MAX) {
+				break;
+			}
+			pg->regs[RI(NV_PGRAPH_POINTSIZE)] = parameter;
+			break;
+
 		// TODO: Implement these methods (not table-compatible due to value remapping or multi-reg writes).
 		// See xemu pgraph.c for reference implementations.
-		//
-		// case NV097_SET_POINT_PARAMS_ENABLE:
-		//     Writes TWO registers: PG_SET_MASK(CSV0_D, POINTPARAMSENABLE, param)
-		//     AND PG_SET_MASK(CONTROL_3, POINTPARAMSENABLE, param)
-		//     break;
 		//
 		// case NV097_SET_SHADE_MODE:
 		//     Value remapping: V_FLAT(0x1D00) -> SHADEMODE_FLAT(0),
@@ -1724,21 +1765,9 @@ void pgraph_handle_method(NV2AState *d,
 		//     Target: NV_PGRAPH_CONTROL_3_SHADEMODE
 		//     break;
 		//
-		// case NV097_SET_POINT_SIZE:
-		//     Bounds check: if (param > NV097_SET_POINT_SIZE_V_MAX) return;
-		//     Then: pgraph_reg_w(pg, NV_PGRAPH_POINTSIZE, param)
-		//     break;
-		//
 		// case NV097_SET_ZMIN_MAX_CONTROL:
 		//     Extracts ZCLAMP_EN field, maps CULL->0, CLAMP->1
 		//     Target: NV_PGRAPH_ZCOMPRESSOCCLUDE_ZCLAMP_EN
-		//     break;
-		//
-		// case NV097_SET_LIGHT_CONTROL:
-		//     Extracts 3 fields from parameter into NV_PGRAPH_CSV0_C:
-		//     - SEPARATE_SPECULAR (bit 0 of param -> bit 18 of CSV0_C)
-		//     - LOCALEYE (bit 16 of param -> bit 30 of CSV0_C)
-		//     - ALPHA_FROM_MATERIAL_SPECULAR (bit 17 of param -> bit 17 of CSV0_C)
 		//     break;
 
 		// TODO: These cases wrote to PGRAPHState fields that have since been deleted.

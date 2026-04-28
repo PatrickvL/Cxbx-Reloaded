@@ -267,6 +267,8 @@ typedef struct PGRAPHState {
 	float light_local_position[NV2A_MAX_LIGHTS][3];
 	float light_local_attenuation[NV2A_MAX_LIGHTS][3];
 
+	float point_params[8]; // NV097_SET_POINT_PARAMS attenuation coefficients
+
 	VertexAttribute vertex_attributes[NV2A_VERTEXSHADER_ATTRIBUTES];
 
 	unsigned int inline_array_length;

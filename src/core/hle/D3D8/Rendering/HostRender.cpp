@@ -549,9 +549,14 @@ void UpdateFixedFunctionVertexShaderState()
 	extern xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat(); // TMP glue
 	using namespace xbox;
 
-	// Vertex blending
-	// Prepare vertex blending mode variables used in transforms, below
-	auto VertexBlend = XboxRenderStates.GetXboxRenderState(X_D3DRS_VERTEXBLEND);
+	PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
+	uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
+	uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
+	uint32_t ctl3  = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
+
+	// Vertex blending — read from PGRAPH CSV0_D SKIN field
+	// SKIN values 0..6 map directly to D3D VertexBlend (DISABLE, 1WEIGHTS, 2W2M, 2WEIGHTS, 3W3M, 3WEIGHTS, 4W4M)
+	auto VertexBlend = GET_MASK(csv0d, NV_PGRAPH_CSV0_D_SKIN);
 	// Xbox and host D3DVERTEXBLENDFLAGS :
 	//     D3DVBF_DISABLE           = 0 : 1 matrix,   0 weights => final weight 1
 	//     D3DVBF_1WEIGHTS          = 1 : 2 matrices, 1 weights => final weight calculated
@@ -585,8 +590,6 @@ void UpdateFixedFunctionVertexShaderState()
 	// register-per-row, a direct copy (no C++ transpose) makes the HLSL column-major
 	// interpretation give transpose(M_pgraph), and mul(v, transpose(M)) = M * v.
 	{
-		PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
-
 		// Helper: direct-copy a 4x4 matrix from vsh_constants[base..base+3] — NO transpose
 		auto ReadXFCTXMatrix = [&](D3DXMATRIX* pDst, int base) {
 			for (int row = 0; row < 4; row++) {
@@ -707,36 +710,36 @@ void UpdateFixedFunctionVertexShaderState()
 		}
 	}
 
-	// Lighting
-	// Point sprites aren't lit - 'each point is always rendered with constant colors.'
-	// https://docs.microsoft.com/en-us/windows/win32/direct3d9/point-sprites
-	bool PointSpriteEnable = XboxRenderStates.GetXboxRenderState(X_D3DRS_POINTSPRITEENABLE);
-	bool LightingEnable = XboxRenderStates.GetXboxRenderState(X_D3DRS_LIGHTING);
+	// Lighting — sourced from PGRAPH CSV0_C/CSV0_D/CONTROL_3
+	bool PointSpriteEnable = (ctl3 & NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE) != 0;
+	bool LightingEnable = (csv0c & NV_PGRAPH_CSV0_C_LIGHTING) != 0;
 	ffShaderState.Modes.Lighting = LightingEnable && !PointSpriteEnable;
-	ffShaderState.Modes.TwoSidedLighting = XboxRenderStates.GetXboxRenderState(X_D3DRS_TWOSIDEDLIGHTING) ? 1 : 0;
-	ffShaderState.Modes.LocalViewer = XboxRenderStates.GetXboxRenderState(X_D3DRS_LOCALVIEWER) ? 1 : 0;
+	ffShaderState.Modes.TwoSidedLighting = (csv0c & NV_PGRAPH_CSV0_C_TWO_SIDE_LIGHTING) ? 1 : 0;
+	ffShaderState.Modes.LocalViewer = (csv0c & NV_PGRAPH_CSV0_C_LOCALEYE) ? 1 : 0;
 
-	// Material sources
-	bool ColorVertex = XboxRenderStates.GetXboxRenderState(X_D3DRS_COLORVERTEX) != FALSE;
-	ffShaderState.Modes.AmbientMaterialSource = ColorVertex ? XboxRenderStates.GetXboxRenderState(X_D3DRS_AMBIENTMATERIALSOURCE) : D3DMCS_MATERIAL;
-	ffShaderState.Modes.DiffuseMaterialSource = ColorVertex ? XboxRenderStates.GetXboxRenderState(X_D3DRS_DIFFUSEMATERIALSOURCE) : D3DMCS_MATERIAL;
-	ffShaderState.Modes.SpecularMaterialSource = ColorVertex ? XboxRenderStates.GetXboxRenderState(X_D3DRS_SPECULARMATERIALSOURCE) : D3DMCS_MATERIAL;
-	ffShaderState.Modes.EmissiveMaterialSource = ColorVertex ? XboxRenderStates.GetXboxRenderState(X_D3DRS_EMISSIVEMATERIALSOURCE) : D3DMCS_MATERIAL;
-	ffShaderState.Modes.BackAmbientMaterialSource = ColorVertex ? XboxRenderStates.GetXboxRenderState(X_D3DRS_BACKAMBIENTMATERIALSOURCE) : D3DMCS_MATERIAL;
-	ffShaderState.Modes.BackDiffuseMaterialSource = ColorVertex ? XboxRenderStates.GetXboxRenderState(X_D3DRS_BACKDIFFUSEMATERIALSOURCE) : D3DMCS_MATERIAL;
-	ffShaderState.Modes.BackSpecularMaterialSource = ColorVertex ? XboxRenderStates.GetXboxRenderState(X_D3DRS_BACKSPECULARMATERIALSOURCE) : D3DMCS_MATERIAL;
-	ffShaderState.Modes.BackEmissiveMaterialSource = ColorVertex ? XboxRenderStates.GetXboxRenderState(X_D3DRS_BACKEMISSIVEMATERIALSOURCE) : D3DMCS_MATERIAL;
+	// Material sources — read from PGRAPH CSV0_C (the Xbox D3D runtime bakes ColorVertex logic
+	// into SET_COLOR_MATERIAL: when ColorVertex=FALSE, all sources are set to FROM_MATERIAL=0)
+	// NV2A source values: 0=MATERIAL, 1=COLOR1, 2=COLOR2 — matches D3DMCS_* directly
+	ffShaderState.Modes.AmbientMaterialSource  = GET_MASK(csv0c, NV_PGRAPH_CSV0_C_AMBIENT);
+	ffShaderState.Modes.DiffuseMaterialSource  = GET_MASK(csv0c, NV_PGRAPH_CSV0_C_DIFFUSE);
+	ffShaderState.Modes.SpecularMaterialSource = GET_MASK(csv0c, NV_PGRAPH_CSV0_C_SPECULAR);
+	ffShaderState.Modes.EmissiveMaterialSource = GET_MASK(csv0c, NV_PGRAPH_CSV0_C_EMISSION);
+	// NV2A has no separate back material source bits — back face uses same sources as front
+	ffShaderState.Modes.BackAmbientMaterialSource  = ffShaderState.Modes.AmbientMaterialSource;
+	ffShaderState.Modes.BackDiffuseMaterialSource  = ffShaderState.Modes.DiffuseMaterialSource;
+	ffShaderState.Modes.BackSpecularMaterialSource = ffShaderState.Modes.SpecularMaterialSource;
+	ffShaderState.Modes.BackEmissiveMaterialSource = ffShaderState.Modes.EmissiveMaterialSource;
 
-	// Point sprites; Fetch required variables
-	float pointSize = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSIZE);
-	float pointSize_Min = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSIZE_MIN);
-	float pointSize_Max = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSIZE_MAX);
-	bool PointScaleEnable = XboxRenderStates.GetXboxRenderState(X_D3DRS_POINTSCALEENABLE);
-	float pointScale_A = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSCALE_A);
-	float pointScale_B = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSCALE_B);
-	float pointScale_C = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_POINTSCALE_C);
+	// Point sprites — read from PGRAPH registers
+	float pointSize = *(float*)&pg->regs[RI(NV_PGRAPH_POINTSIZE)];
+	float pointSize_Min = pg->point_params[6];
+	float pointSize_Max = pg->point_params[7];
+	bool PointScaleEnable = PointSpriteEnable; // PGRAPH POINTPARAMSENABLE covers both
+	float pointScale_A = pg->point_params[0];
+	float pointScale_B = pg->point_params[1];
+	float pointScale_C = pg->point_params[2];
 	// Read render target height from PGRAPH surface clip (replaces HLE g_pXbox_RenderTarget lookup)
-	float renderTargetHeight = (float)g_NV2A->GetDeviceState()->pgraph.surface_shape.clip_height;
+	float renderTargetHeight = (float)pg->surface_shape.clip_height;
 	// Make sure to disable point scaling when point sprites are not enabled
 	PointScaleEnable &= PointSpriteEnable;
 	// Set variables in shader state
@@ -749,41 +752,45 @@ void UpdateFixedFunctionVertexShaderState()
 	ffShaderState.PointSprite.XboxRenderTargetHeight = PointScaleEnable ? renderTargetHeight : 1.0f;
 	ffShaderState.PointSprite.RenderUpscaleFactor = (float)g_RenderUpscaleFactor;
 
-	// Fog
-	// Determine how the fog depth is transformed into the fog factor
-	auto fogEnable = XboxRenderStates.GetXboxRenderState(X_D3DRS_FOGENABLE);
-	auto fogTableMode = XboxRenderStates.GetXboxRenderState(X_D3DRS_FOGTABLEMODE);
+	// Fog — sourced from PGRAPH registers (NV2A ground truth)
+	bool fogEnable = (ctl3 & NV_PGRAPH_CONTROL_3_FOGENABLE) != 0;
+	uint32_t fogMode = GET_MASK(ctl3, NV_PGRAPH_CONTROL_3_FOG_MODE);
 	ffShaderState.Fog.Enable = fogEnable ? 1 : 0;
-	ffShaderState.Fog.TableMode = fogTableMode;
+	ffShaderState.Fog.FogMode = fogMode;
 
-	// Determine how fog depth is calculated
-	if (fogEnable && fogTableMode != D3DFOG_NONE) {
-		D3DXMATRIX projMtx = ffShaderState.Transforms.Projection;
+	// Determine how fog depth is calculated from PGRAPH FOGGENMODE
+	if (fogEnable) {
+		uint32_t fogGenMode = GET_MASK(csv0d, NV_PGRAPH_CSV0_D_FOGGENMODE);
 
-		if (XboxRenderStates.GetXboxRenderState(X_D3DRS_RANGEFOGENABLE)) {
-			LOG_TEST_CASE("Using RANGE fog");
+		// Map NV2A foggen to our depth mode enum
+		switch (fogGenMode) {
+		case NV_PGRAPH_CSV0_D_FOGGENMODE_SPEC_ALPHA:
+			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_NONE; // specular.a
+			break;
+		case NV_PGRAPH_CSV0_D_FOGGENMODE_RADIAL:
 			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_RANGE;
-		}
-		else if (projMtx._14 == 0 &&
-			projMtx._24 == 0 &&
-			projMtx._34 == 0 &&
-			projMtx._44 == 1) {
-			LOG_TEST_CASE("Using Z fog");
-			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_Z;
-		}
-		else {
-			// Test case:
-			// Fog sample
-			// JSRF (non-compliant projection matrix)
+			break;
+		case NV_PGRAPH_CSV0_D_FOGGENMODE_PLANAR:
 			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_W;
+			break;
+		case NV_PGRAPH_CSV0_D_FOGGENMODE_ABS_PLANAR:
+			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_W; // abs applied in shader
+			break;
+		case NV_PGRAPH_CSV0_D_FOGGENMODE_FOG_X:
+		default:
+			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_NONE; // fog coord passthrough
+			break;
 		}
 
-		ffShaderState.Fog.Density = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_FOGDENSITY);
-		ffShaderState.Fog.Start = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_FOGSTART);
-		ffShaderState.Fog.End = XboxRenderStates.GetXboxRenderStateAsFloat(X_D3DRS_FOGEND);
+		float fogParam0; std::memcpy(&fogParam0, &pg->regs[RI(NV_PGRAPH_FOGPARAM0)], sizeof(float));
+		float fogParam1; std::memcpy(&fogParam1, &pg->regs[RI(NV_PGRAPH_FOGPARAM1)], sizeof(float));
+		ffShaderState.Fog.FogParam0 = fogParam0;
+		ffShaderState.Fog.FogParam1 = fogParam1;
 	}
 	else {
 		ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_NONE;
+		ffShaderState.Fog.FogParam0 = 0.0f;
+		ffShaderState.Fog.FogParam1 = 0.0f;
 	}
 
 	// Texture state
@@ -815,8 +822,7 @@ void UpdateFixedFunctionVertexShaderState()
 	// Light colors in ltctxb[] are pre-multiplied by material by the Xbox D3D runtime, so we set
 	// material to white to let the shader's (material × light) give the correct pre-multiplied result.
 	{
-		PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
-		uint32_t lightMask = pg->regs[NV_PGRAPH_CSV0_D / 4] & NV_PGRAPH_CSV0_D_LIGHTS;
+		uint32_t lightMask = pg->regs[RI(NV_PGRAPH_CSV0_D)] & NV_PGRAPH_CSV0_D_LIGHTS;
 
 		auto LightAmbient = D3DXVECTOR4(0.f, 0.f, 0.f, 0.f);
 
@@ -848,7 +854,7 @@ void UpdateFixedFunctionVertexShaderState()
 				1.0f);
 
 			// Specular color
-			bool SpecularEnable = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_SPECULARENABLE) != FALSE;
+			bool SpecularEnable = (csv0c & NV_PGRAPH_CSV0_C_SPECULAR_ENABLE) != 0;
 			base = NV_IGRAPH_XF_LTCTXB_L0_SPC + (int)i * 6;
 			if (SpecularEnable) {
 				pShaderLight->Specular = D3DXVECTOR4(
@@ -920,7 +926,7 @@ void UpdateFixedFunctionVertexShaderState()
 	}
 
 	// Misc flags
-	ffShaderState.Modes.NormalizeNormals = XboxRenderStates.GetXboxRenderState(X_D3DRS_NORMALIZENORMALS) ? 1 : 0;
+	ffShaderState.Modes.NormalizeNormals = (csv0c & NV_PGRAPH_CSV0_C_NORMALIZATION_ENABLE) ? 1 : 0;
 
 	// Write fixed function state to shader constants
 	const int slotSize = 16;

@@ -113,6 +113,10 @@ void CxbxD3D11SetRenderState(uint32_t State, uint32_t Value);
 struct PGRAPHState; // forward decl
 void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg);
 
+// Read PGRAPH texture registers (TEXADDRESS, TEXFILTER, TEXCTL0, BORDERCOLOR)
+// and create/bind D3D11 sampler states. Replaces XboxTextureStates.Apply() for samplers.
+void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg);
+
 // Read viewport offset/scale and window clip from PGRAPH and set D3D11 viewport/scissor.
 // Called from CxbxUpdateNativeD3DResources() to set viewport from PGRAPH register data.
 void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg);

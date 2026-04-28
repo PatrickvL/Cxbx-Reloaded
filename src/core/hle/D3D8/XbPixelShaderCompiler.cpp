@@ -323,12 +323,12 @@ void CxbxD3D11UploadRCInterpreterState()
 		aux.ColorKeyColor[i] = { ckc.r, ckc.g, ckc.b, ckc.a };
 	}
 
-	// Alpha kill per stage (D3DTALPHAKILL_ENABLE = 4)
+	// Alpha kill per stage — read from PGRAPH TEXCTL0 ALPHAKILLEN bit
 	aux.AlphaKill = {
-		static_cast<float>(XboxTextureStates.Get(0, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
-		static_cast<float>(XboxTextureStates.Get(1, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
-		static_cast<float>(XboxTextureStates.Get(2, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0),
-		static_cast<float>(XboxTextureStates.Get(3, xbox::X_D3DTSS_ALPHAKILL) & 4 ? 1 : 0)
+		static_cast<float>((pg->regs[RI(NV_PGRAPH_TEXCTL0_0)] & NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN) ? 1 : 0),
+		static_cast<float>((pg->regs[RI(NV_PGRAPH_TEXCTL0_1)] & NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN) ? 1 : 0),
+		static_cast<float>((pg->regs[RI(NV_PGRAPH_TEXCTL0_2)] & NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN) ? 1 : 0),
+		static_cast<float>((pg->regs[RI(NV_PGRAPH_TEXCTL0_3)] & NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN) ? 1 : 0)
 	};
 
 	// Fog info: x=tableMode (from PGRAPH FOG_MODE), y/z/w unused by RC interpreter.
@@ -339,12 +339,17 @@ void CxbxD3D11UploadRCInterpreterState()
 		aux.FogEnable.value = (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & NV_PGRAPH_CONTROL_3_FOGENABLE) ? 1u : 0u;
 	}
 
-	// Front-face factor for two-sided lighting
+	// Front-face factor for two-sided lighting — sourced from PGRAPH
 	{
 		float ff = 0.0f;
-		if (XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_TWOSIDEDLIGHTING)) {
-			bool cwFrontface = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FRONTFACE) == 0x900;
-			ff = cwFrontface ? 1.0f : -1.0f;
+		uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
+		// NV2A LIGHT_MODEL_TWO_SIDE_ENABLE: bit 29 of CSV0_C
+		bool twoSided = (csv0c & 0x20000000u) != 0;
+		if (twoSided) {
+			// NV_PGRAPH_SETUPRASTER_FRONTFACE: bit 23 — 0=CW, 1=CCW
+			uint32_t setup = pg->regs[RI(NV_PGRAPH_SETUPRASTER)];
+			bool ccwFront = (setup & NV_PGRAPH_SETUPRASTER_FRONTFACE) != 0;
+			ff = ccwFront ? -1.0f : 1.0f;
 		}
 		aux.FrontFaceInfo = { ff, 0.0f, 0.0f, 0.0f };
 	}

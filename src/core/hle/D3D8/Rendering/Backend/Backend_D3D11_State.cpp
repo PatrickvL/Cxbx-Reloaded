@@ -398,6 +398,171 @@ void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg)
 		g_D3D11RasterizerDesc.SlopeScaledDepthBias = zFactor;
 		g_D3D11RasterizerDesc.DepthBiasClamp = 0.0f;
 	}
+
+	// ---- Point sprite enable from NV_PGRAPH_CONTROL_3 ----
+	{
+		uint32_t ctl3 = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
+		g_bPointSpriteEnabled = (ctl3 & NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE) != 0;
+	}
+}
+
+// ******************************************************************
+// * Map NV2A texture address mode to D3D11 texture address mode.
+// * NV2A values: 1=WRAP 2=MIRROR 3=CLAMP_TO_EDGE 4=BORDER 5=CLAMP_OGL
+// * D3D11 values: 1=WRAP 2=MIRROR 3=CLAMP 4=BORDER 5=MIRROR_ONCE
+// ******************************************************************
+static D3D11_TEXTURE_ADDRESS_MODE MapPGRAPHTexAddress(unsigned int addr)
+{
+	switch (addr) {
+	case 1:  return D3D11_TEXTURE_ADDRESS_WRAP;
+	case 2:  return D3D11_TEXTURE_ADDRESS_MIRROR;
+	case 3:  return D3D11_TEXTURE_ADDRESS_CLAMP;
+	case 4:  return D3D11_TEXTURE_ADDRESS_BORDER;
+	case 5:  return D3D11_TEXTURE_ADDRESS_CLAMP; // CLAMP_OGL ≈ CLAMP_TO_EDGE
+	default: return D3D11_TEXTURE_ADDRESS_WRAP;
+	}
+}
+
+// ******************************************************************
+// * Map NV2A min/mag filter to D3D11 filter components.
+// * NV2A min filter: 1=BOX_LOD0(nearest) 2=TENT_LOD0(linear)
+// *   3=BOX_NEARESTLOD 4=TENT_NEARESTLOD 5=BOX_TENT_LOD 6=TENT_TENT_LOD
+// *   7=CONVOLUTION_2D_LOD0
+// * NV2A mag filter: 1=BOX(nearest) 2=TENT(linear) 4=CONVOLUTION_2D
+// ******************************************************************
+static D3D11_FILTER BuildD3D11Filter(unsigned int minFilter, unsigned int magFilter)
+{
+	// Decode NV2A filter to (min, mag, mip) triplet
+	bool minLinear = false, magLinear = false, mipLinear = false;
+	bool anisotropic = false;
+
+	switch (minFilter) {
+	case 1: // BOX_LOD0 = nearest, no mip
+		minLinear = false; mipLinear = false; break;
+	case 2: // TENT_LOD0 = linear, no mip
+		minLinear = true; mipLinear = false; break;
+	case 3: // BOX_NEARESTLOD = nearest, nearest mip
+		minLinear = false; mipLinear = false; break;
+	case 4: // TENT_NEARESTLOD = linear, nearest mip
+		minLinear = true; mipLinear = false; break;
+	case 5: // BOX_TENT_LOD = nearest, linear mip
+		minLinear = false; mipLinear = true; break;
+	case 6: // TENT_TENT_LOD = linear, linear mip (trilinear)
+		minLinear = true; mipLinear = true; break;
+	case 7: // CONVOLUTION_2D_LOD0 = anisotropic approx
+		anisotropic = true; minLinear = true; mipLinear = true; break;
+	default:
+		minLinear = false; mipLinear = false; break;
+	}
+
+	switch (magFilter) {
+	case 1: magLinear = false; break; // BOX = nearest
+	case 2: magLinear = true; break;  // TENT = linear
+	case 4: anisotropic = true; magLinear = true; break; // CONVOLUTION_2D
+	default: magLinear = false; break;
+	}
+
+	if (anisotropic) return D3D11_FILTER_ANISOTROPIC;
+
+	// D3D11 filter encoding: bit 4=minLinear, bit 2=magLinear, bit 0=mipLinear
+	return (D3D11_FILTER)((minLinear ? 0x10 : 0) | (magLinear ? 0x04 : 0) | (mipLinear ? 0x01 : 0));
+}
+
+// ******************************************************************
+// * Read PGRAPH texture registers and create D3D11 sampler states.
+// * This replaces XboxTextureStates.Apply() for sampler configuration.
+// * Registers per stage: TEXADDRESS, TEXFILTER, TEXCTL0, BORDERCOLOR
+// ******************************************************************
+void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg)
+{
+	if (!pg) return;
+
+	static ID3D11SamplerState* s_CachedSamplers[4] = {};
+	static uint32_t s_CachedTexAddress[4] = {};
+	static uint32_t s_CachedTexFilter[4] = {};
+	static uint32_t s_CachedTexCtl0[4] = {};
+	static uint32_t s_CachedBorderColor[4] = {};
+
+	for (int stage = 0; stage < 4; stage++) {
+		uint32_t texAddr   = pg->regs[RI(NV_PGRAPH_TEXADDRESS0 + stage * 4)];
+		uint32_t texFilter = pg->regs[RI(NV_PGRAPH_TEXFILTER0 + stage * 4)];
+		uint32_t texCtl0   = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
+		uint32_t borderCol = pg->regs[RI(NV_PGRAPH_BORDERCOLOR0 + stage * 4)];
+
+		// Skip if nothing changed
+		if (texAddr == s_CachedTexAddress[stage] &&
+			texFilter == s_CachedTexFilter[stage] &&
+			texCtl0 == s_CachedTexCtl0[stage] &&
+			borderCol == s_CachedBorderColor[stage] &&
+			s_CachedSamplers[stage] != nullptr) {
+			continue;
+		}
+
+		s_CachedTexAddress[stage] = texAddr;
+		s_CachedTexFilter[stage] = texFilter;
+		s_CachedTexCtl0[stage] = texCtl0;
+		s_CachedBorderColor[stage] = borderCol;
+
+		// Release old sampler
+		if (s_CachedSamplers[stage]) {
+			s_CachedSamplers[stage]->Release();
+			s_CachedSamplers[stage] = nullptr;
+		}
+
+		// Decode address modes
+		unsigned int addrU = GET_MASK(texAddr, NV_PGRAPH_TEXADDRESS0_ADDRU);
+		unsigned int addrV = GET_MASK(texAddr, NV_PGRAPH_TEXADDRESS0_ADDRV);
+		unsigned int addrP = GET_MASK(texAddr, NV_PGRAPH_TEXADDRESS0_ADDRP);
+
+		// Decode filter modes
+		unsigned int minFilter = GET_MASK(texFilter, NV_PGRAPH_TEXFILTER0_MIN);
+		unsigned int magFilter = GET_MASK(texFilter, NV_PGRAPH_TEXFILTER0_MAG);
+
+		// LOD bias: 13-bit signed fixed-point (8.5 format)
+		int lodBiasRaw = texFilter & 0x1FFF;
+		if (lodBiasRaw & 0x1000) lodBiasRaw |= ~0x1FFF; // sign-extend
+		float lodBias = lodBiasRaw / 256.0f;
+
+		// Max anisotropy from TEXCTL0 bits 4-5 (0=1x, 1=2x, 2=4x, 3=8x? or 1=2x)
+		unsigned int maxAniso = GET_MASK(texCtl0, NV_PGRAPH_TEXCTL0_0_MAX_ANISOTROPY);
+		UINT maxAnisotropy = 1 << maxAniso; // 0→1, 1→2, 2→4, 3→8
+		if (maxAnisotropy < 1) maxAnisotropy = 1;
+
+		// LOD clamp from TEXCTL0
+		unsigned int minLodRaw = GET_MASK(texCtl0, NV_PGRAPH_TEXCTL0_0_MIN_LOD_CLAMP);
+		unsigned int maxLodRaw = GET_MASK(texCtl0, NV_PGRAPH_TEXCTL0_0_MAX_LOD_CLAMP);
+		float minLod = minLodRaw / 256.0f;
+		float maxLod = maxLodRaw / 256.0f;
+		if (maxLod == 0.0f) maxLod = D3D11_FLOAT32_MAX;
+
+		// Border color: ARGB → float4
+		float borderColor[4];
+		borderColor[0] = ((borderCol >> 16) & 0xFF) / 255.0f; // R
+		borderColor[1] = ((borderCol >> 8)  & 0xFF) / 255.0f; // G
+		borderColor[2] = (borderCol & 0xFF) / 255.0f;         // B
+		borderColor[3] = ((borderCol >> 24) & 0xFF) / 255.0f; // A
+
+		D3D11_SAMPLER_DESC desc = {};
+		desc.Filter         = BuildD3D11Filter(minFilter, magFilter);
+		desc.AddressU       = MapPGRAPHTexAddress(addrU);
+		desc.AddressV       = MapPGRAPHTexAddress(addrV);
+		desc.AddressW       = MapPGRAPHTexAddress(addrP);
+		desc.MipLODBias     = lodBias;
+		desc.MaxAnisotropy  = maxAnisotropy;
+		desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		desc.MinLOD         = minLod;
+		desc.MaxLOD         = maxLod;
+		std::memcpy(desc.BorderColor, borderColor, sizeof(borderColor));
+
+		HRESULT hr = g_pD3DDevice->CreateSamplerState(&desc, &s_CachedSamplers[stage]);
+		if (SUCCEEDED(hr)) {
+			// Bind to all 3 slot groups: base (0-3), 3D (4-7), cube (8-11)
+			// All pixel shaders use separate Texture2D/3D/Cube declarations
+			g_pD3DDeviceContext->PSSetSamplers(stage, 1, &s_CachedSamplers[stage]);
+			g_pD3DDeviceContext->PSSetSamplers(4 + stage, 1, &s_CachedSamplers[stage]);
+			g_pD3DDeviceContext->PSSetSamplers(8 + stage, 1, &s_CachedSamplers[stage]);
+		}
+	}
 }
 
 // ******************************************************************

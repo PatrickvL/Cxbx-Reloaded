@@ -8,11 +8,14 @@
     xOut.oD0 = saturate(oD0);
     xOut.oD1 = saturate(oD1);
 
-    // Fog: NV2A computes the fog formula per-vertex; the rasterizer interpolates
-    // the result; the PS clamps to [0,1] and blends with the fog color.
-    // CxbxFogInfo: x=tableMode, y=density, z=start, w=end (from VS c218)
-    xOut.oFog = CalculateFogFactor((int)CxbxFogInfo.x, CxbxFogInfo.y,
-                                   CxbxFogInfo.z, CxbxFogInfo.w, oFog.x);
+    // Fog: NV2A computes the fog formula per-vertex using pre-baked FOGPARAM0/1.
+    // CxbxFogInfo: x=fogMode (PGRAPH CONTROL_3), y=fogParam0, z=fogParam1, w=unused
+    // The PS decides whether to apply fog blending (FogEnable in PGRAPH CONTROL_3).
+    // When FOGPARAM0/1 are both zero (fog never configured), just pass through oFog.x.
+    xOut.oFog = (CxbxFogInfo.y == 0.0 && CxbxFogInfo.z == 0.0)
+        ? oFog.x
+        : CalculateFogFactor((int)CxbxFogInfo.x, CxbxFogInfo.y,
+                             CxbxFogInfo.z, oFog.x);
 
     xOut.oPts = oPts.x;
     xOut.oB0 = saturate(oB0);

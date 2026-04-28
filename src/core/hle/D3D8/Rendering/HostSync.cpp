@@ -487,22 +487,18 @@ void CxbxUpdateHostVertexShaderConstants()
 		CxbxUpdateHostViewPortOffsetAndScaleConstants();
 	}
 
-	// Placed this here until we find a better place
-	float fogTableMode = static_cast<float>(XboxRenderStates.GetXboxRenderState(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGTABLEMODE));
-	// When table fog is active, check PGRAPH for _ABS fog mode variants.
-	// NV2A PGRAPH fog modes 4/5/7 apply abs() to the computed fog factor;
-	// bit 2 of the PGRAPH fog mode field is the _ABS flag.
-	if (fogTableMode > 0.0f) {
+	// Upload NV2A fog parameters from PGRAPH registers.
+	// FOG_MODE from CONTROL_3, FOGPARAM0/1 are pre-baked coefficients.
+	{
 		auto *pg = &g_NV2A->GetDeviceState()->pgraph;
-		if (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & 0x00040000u) { // bit 2 of FOG_MODE field
-			fogTableMode += 4.0f; // Promote to _ABS variant (5=EXP_ABS, 6=EXP2_ABS, 7=LINEAR_ABS)
-		}
+		uint32_t ctl3 = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
+		float fogMode = (float)GET_MASK(ctl3, NV_PGRAPH_CONTROL_3_FOG_MODE);
+		float fogParam0; std::memcpy(&fogParam0, &pg->regs[RI(NV_PGRAPH_FOGPARAM0)], sizeof(float));
+		float fogParam1; std::memcpy(&fogParam1, &pg->regs[RI(NV_PGRAPH_FOGPARAM1)], sizeof(float));
+		// CxbxFogInfo: x=fogMode, y=fogParam0, z=fogParam1, w=unused
+		float fogStuff[4] = { fogMode, fogParam0, fogParam1, 0.0f };
+		CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_FOGINFO, fogStuff, 1);
 	}
-	const float fogDensity = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGDENSITY);
-	const float fogStart = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGSTART);
-	const float fogEnd = XboxRenderStates.GetXboxRenderStateAsFloat(xbox::_X_D3DRENDERSTATETYPE::X_D3DRS_FOGEND);
-	float fogStuff[4] = {fogTableMode, fogDensity, fogStart, fogEnd};
-	CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_FOGINFO, fogStuff, 1);
 }
 
 extern void CxbxUpdateHostVertexDeclaration(); // TMP glue
@@ -585,20 +581,28 @@ void CxbxUpdateNativeD3DResources()
 	// Set viewport from PGRAPH registers (authoritative).
 	CxbxD3D11UpdateViewportFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
 
-	// NOTE: Order is important here
-   	// Some Texture States depend on RenderState values (Point Sprites)
-   	// And some Pixel Shaders depend on Texture State values (BumpEnvMat, etc)
 	CxbxUpdateHostTextures();
 	CxbxUpdateHostTextureScaling();
-   	XboxRenderStates.Apply();
-   	XboxTextureStates.Apply();
 
-	// Override blend/depth-stencil/rasterizer state from PGRAPH registers.
+	// Pipeline state and sampler states from PGRAPH registers.
+	// This replaces the former XboxRenderStates.Apply() (blend/depth/stencil/rasterizer)
+	// and XboxTextureStates.Apply() (sampler configuration) which read from Xbox D3D
+	// runtime memory. All state is now sourced from NV2A PGRAPH registers directly.
 	{
 		auto pg = &g_NV2A->GetDeviceState()->pgraph;
-		if (pg->surface_color.offset != 0) {
-			CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
-		}
+		CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
+		CxbxD3D11UpdateSamplersFromPGRAPH(pg);
+	}
+
+	// Point sprite texture swap: NV2A uses stage 3 for point sprite textures.
+	// Copy the SRV from slot 3 to slot 0 so the GS-generated UVs on TEXCOORD0
+	// sample the correct texture.
+	extern bool g_bPointSpriteEnabled;
+	if (g_bPointSpriteEnabled) {
+		ID3D11ShaderResourceView* pSRV = nullptr;
+		g_pD3DDeviceContext->PSGetShaderResources(3, 1, &pSRV);
+		g_pD3DDeviceContext->PSSetShaderResources(0, 1, &pSRV);
+		if (pSRV) pSRV->Release();
 	}
 
    	// If Pixel Shaders are not disabled, process them

@@ -32,44 +32,51 @@ uniform float4 vRegisterDefaultFlagsPacked[4]  : register(c208);
 // Uploaded from C++ as rcp(scale); multiply is cheaper than divide per vertex.
 uniform float4 xboxTextureScaleRcp[4] : register(c214);
 
-// Parameters for mapping the shader's fog output value to a fog factor
+// Parameters for the NV2A fog computation.
+// CxbxFogInfo: x=fogMode (PGRAPH CONTROL_3 FOG_MODE), y=fogParam0, z=fogParam1, w=unused
+// fogParam0/1 are pre-baked coefficients from NV_PGRAPH_FOGPARAM0/1 (set by Xbox D3D
+// via NV097_SET_FOG_PARAMS). Their meaning depends on the fog mode:
+//   LINEAR: fogParam0 = 1 - end/(end-start), fogParam1 = -1/(end-start)
+//   EXP:    fogParam0 = 1.5, fogParam1 = -density/(2*ln(256))
+//   EXP2:   fogParam0 = 1.5, fogParam1 = -density/(2*sqrt(ln(256)))
 uniform float4 CxbxFogInfo : register(c218); // = CXBX_D3DVS_CONSTREG_FOGINFO
 
-// Fog table formula — shared by all VS paths (programmable footer + FF DoFog).
-// NV2A evaluates this per-vertex; the rasterizer interpolates the result;
-// the PS clamps to [0,1] and blends with the fog color.
-// fogMode: 0=NONE (vertex fog passthrough), 1=EXP, 2=EXP2, 3=LINEAR
-//          5=EXP_ABS, 6=EXP2_ABS, 7=LINEAR_ABS (apply abs to computed factor)
-// Bit 2 (value 4) is the _ABS flag, matching NV2A PGRAPH FOG_MODE encoding.
-float CalculateFogFactor(int fogMode, float fogDensity, float fogStart, float fogEnd, float fogDepth)
+// NV2A-native fog factor computation using FOGPARAM0/1 pre-baked coefficients.
+// Matches xemu's implementation exactly.
+// fogMode: NV2A PGRAPH FOG_MODE (0=LINEAR, 1=EXP, 3=EXP2, 4=LINEAR_ABS, 5=EXP_ABS, 7=EXP2_ABS)
+// fogParam0/1: Pre-baked coefficients from NV_PGRAPH_FOGPARAM0/1
+// fogDistance: The fog coordinate (oFog.x from VS, or computed from position for FF)
+float CalculateFogFactor(int fogMode, float fogParam0, float fogParam1, float fogDistance)
 {
+    // Mode 0 with fogParam1 == 0 means no table fog — pass through VS fog output
+    // (This happens when fog is disabled or using vertex fog only)
     int baseMode = fogMode & 3;
 
-    // Mode 0 = no table fog; pass through the VS fog output (vertex fog).
-    if (baseMode == 0)
-        return fogDepth;
-
-    // NV2A clamps infinite fog distances to a defined result (matching xemu).
-    if (isinf(fogDepth))
-        return (baseMode == 3) ? 1.0 : 0.0; // LINEAR→1 (fully visible), EXP/EXP2→0 (fully fogged)
-
-    float f;
-    if (baseMode == 1)       // EXP
-        f = exp(-fogDepth * fogDensity);
-    else if (baseMode == 2)  // EXP2
-    {
-        float fd = fogDepth * fogDensity;
-        f = exp(-(fd * fd));
+    float fogFactor;
+    if (baseMode == 0) {
+        // LINEAR / LINEAR_ABS
+        fogFactor = fogParam0 + fogDistance * fogParam1;
+        fogFactor -= 1.0;
+        if (isinf(fogDistance)) fogFactor = 0.0; // fully fogged
+    } else if (baseMode == 1) {
+        // EXP / EXP_ABS
+        if (isinf(fogDistance)) return 1.0; // signed EXP: infinite = fully visible
+        fogFactor = fogParam0 + exp2(fogDistance * fogParam1 * 16.0);
+        fogFactor -= 1.5;
+    } else {
+        // EXP2 / EXP2_ABS (baseMode == 3)
+        if (isinf(fogDistance)) return 1.0;
+        fogFactor = fogParam0 + exp2(-fogDistance * fogDistance * fogParam1 * fogParam1 * 32.0);
+        fogFactor -= 1.5;
     }
-    else                     // LINEAR (baseMode == 3)
-        f = (fogEnd - fogDepth) / (fogEnd - fogStart);
 
+    // _ABS variants: bit 2 of fogMode
     if (fogMode & 4)
-        f = abs(f);
+        fogFactor = abs(fogFactor);
 
     // Clamp to representable range to prevent NaN/Inf from corrupting
     // rasterizer interpolation (NV2A hardware clamps here too).
-    return isnan(f) ? 1.0 : clamp(f, -3.4e+38, 3.4e+38);
+    return isnan(fogFactor) ? 1.0 : clamp(fogFactor, -3.4e+38, 3.4e+38);
 }
 
 // TEXCOORDINDEX remapping: xyzw = texcoord source index for stages 0-3.

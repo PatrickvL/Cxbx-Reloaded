@@ -44,12 +44,6 @@ namespace FixedFunctionVertexShader {
     const CXBX_STEERING_INT FOG_DEPTH_W = 2;
 	// Fog depth is based distance of the vertex from the eye position
     const CXBX_STEERING_INT FOG_DEPTH_RANGE = 3;
-
-    // https://docs.microsoft.com/en-us/windows/win32/direct3d9/fog-formulas
-    const CXBX_STEERING_INT FOG_TABLE_NONE = 0;
-    const CXBX_STEERING_INT FOG_TABLE_EXP = 1;
-    const CXBX_STEERING_INT FOG_TABLE_EXP2 = 2;
-    const CXBX_STEERING_INT FOG_TABLE_LINEAR = 3;
 }
 
 // Shared HLSL structures
@@ -144,10 +138,9 @@ struct TextureState {
 struct Fog {
     PADDED_INT(Enable);
     PADDED_INT(DepthMode);
-    PADDED_INT(TableMode);
-    PADDED_FLOAT(Density); // EXP fog density
-    PADDED_FLOAT(Start); // LINEAR fog start
-    PADDED_FLOAT(End); // LINEAR fog end
+    PADDED_INT(FogMode);    // NV2A PGRAPH CONTROL_3 FOG_MODE (0=LINEAR, 1=EXP, 3=EXP2, +4 for _ABS)
+    PADDED_FLOAT(FogParam0); // NV_PGRAPH_FOGPARAM0 (pre-baked coefficient)
+    PADDED_FLOAT(FogParam1); // NV_PGRAPH_FOGPARAM1 (pre-baked coefficient)
 };
 
 // Vertex lighting

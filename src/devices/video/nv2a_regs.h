@@ -402,6 +402,7 @@
 #   define NV_PGRAPH_CSV0_C_AMBIENT                             (3 << 23)
 #   define NV_PGRAPH_CSV0_C_EMISSION                            (3 << 25)
 #   define NV_PGRAPH_CSV0_C_NORMALIZATION_ENABLE                (1 << 27)
+#   define NV_PGRAPH_CSV0_C_TWO_SIDE_LIGHTING                   (1 << 29)
 #   define NV_PGRAPH_CSV0_C_LOCALEYE                            (1 << 30)
 #   define NV_PGRAPH_CSV0_C_LIGHTING                            (1 << 31)
 #define NV_PGRAPH_CSV1_B                                 0x00000FBC
@@ -1234,6 +1235,9 @@
 #       define NV097_SET_CONTROL0_Z_PERSPECTIVE_ENABLE            (1 << 16)
 #       define NV097_SET_CONTROL0_COLOR_SPACE_CONVERT             (0xF << 28)
 #   define NV097_SET_LIGHT_CONTROL                            0x00000294
+#       define NV097_SET_LIGHT_CONTROL_SEPARATE_SPECULAR          (1 << 0)
+#       define NV097_SET_LIGHT_CONTROL_LOCALEYE                   (1 << 16)
+#       define NV097_SET_LIGHT_CONTROL_ALPHA_FROM_MATERIAL_SPECULAR (1 << 17)
 #   define NV097_SET_COLOR_MATERIAL                           0x00000298
 #   define NV097_SET_FOG_MODE                                 0x0000029C
 #       define NV097_SET_FOG_MODE_V_LINEAR                        0x2601
