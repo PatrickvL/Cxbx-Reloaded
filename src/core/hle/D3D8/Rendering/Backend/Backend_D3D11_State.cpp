@@ -665,6 +665,15 @@ ID3D11Texture2D* CxbxLookupPgraphRTByOffset(xbox::addr_xt offset)
 	return nullptr;
 }
 
+void CxbxInvalidatePgraphRTBinding()
+{
+	// Force CxbxD3D11UpdateRenderTargetFromPGRAPH to rebind on the next draw.
+	// Must be called after binding a PGRAPH RT as a texture (SRV), because
+	// D3D11 automatically unbinds the RTV when the same resource is bound as SRV.
+	g_LastBoundColorOffset = ~0u;
+	g_LastBoundZetaOffset = ~0u;
+}
+
 // Create a D3D11 render target or depth stencil directly from PGRAPH surface state
 static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 	xbox::addr_xt offset, DXGI_FORMAT format, UINT width, UINT height, bool isDepthStencil)
@@ -705,6 +714,25 @@ static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 
 	auto* pResult = pTexture.Get();
 	g_PgraphRTCache[key] = std::move(pTexture);
+
+	// Clear newly created depth stencil surfaces to 1.0 (far plane).
+	// On real NV2A hardware, newly allocated depth memory contains
+	// whatever was there before.  Many games (e.g. MotionBlur) rely on the
+	// offscreen RT's depth buffer not being cleared to 0, since they only
+	// issue color clears before drawing with depth test LEQUAL.  A D3D11
+	// texture starts as all-zeros, causing LEQUAL to reject all fragments.
+	if (isDepthStencil && pResult) {
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+		dsvDesc.Format = format;
+		dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+		dsvDesc.Texture2D.MipSlice = 0;
+		ID3D11DepthStencilView* pInitDSV = nullptr;
+		if (SUCCEEDED(g_pD3DDevice->CreateDepthStencilView(pResult, &dsvDesc, &pInitDSV))) {
+			g_pD3DDeviceContext->ClearDepthStencilView(pInitDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+			pInitDSV->Release();
+		}
+	}
+
 	return pResult;
 }
 

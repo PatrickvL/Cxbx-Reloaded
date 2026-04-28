@@ -289,7 +289,7 @@ void CreateDefaultDevice
 	g_D3D11RasterizerDesc.DepthBias = 0;
 	g_D3D11RasterizerDesc.SlopeScaledDepthBias = 0.0f;
 	g_D3D11RasterizerDesc.DepthBiasClamp = 0.0f;
-	g_D3D11RasterizerDesc.DepthClipEnable = TRUE;
+	g_D3D11RasterizerDesc.DepthClipEnable = FALSE; // NV2A has no depth clipping, only depth testing
 	g_D3D11RasterizerDesc.ScissorEnable = FALSE;
 	g_D3D11RasterizerDesc.MultisampleEnable = FALSE;
 	g_D3D11RasterizerDesc.AntialiasedLineEnable = FALSE;

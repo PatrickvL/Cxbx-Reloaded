@@ -109,6 +109,9 @@ void CxbxUpdateHostTextures()
 				if (pPgraphRT) {
 					pHostBaseTexture = pPgraphRT;
 					bIsRenderTargetTexture = true;
+					// D3D11 will unbind the RTV when this resource is bound as SRV.
+					// Invalidate RT tracking so the next draw rebinds the RTV.
+					CxbxInvalidatePgraphRTBinding();
 				}
 			}
 

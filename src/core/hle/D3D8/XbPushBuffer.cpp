@@ -135,11 +135,13 @@ void HLE_draw_inline_array(NV2AState *d)
 		}
 	}
 
+	UINT VertexCount = (nv2a_stride > 0 && pg->inline_array_length > 0)
+		? (pg->inline_array_length * sizeof(DWORD)) / nv2a_stride : 0;
+
 	if (nv2a_stride == 0 || pg->inline_array_length == 0) {
 		return;
 	}
 
-	UINT VertexCount = (pg->inline_array_length * sizeof(DWORD)) / nv2a_stride;
 	if (VertexCount == 0) {
 		return;
 	}
