@@ -8,7 +8,7 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 1. Alpha Test Not Implemented in D3D11 Shaders
 - [x] Fixed
-- **Files**: `Backend_D3D11.cpp:475`, `CxbxFixedFunctionPixelShader.hlsl`, `CxbxPixelShaderTemplate.hlsl`
+- **Files**: `Backend_D3D11.cpp:475` (CxbxPixelShaderTemplate.hlsl removed)
 - **Description**: `X_D3DRS_ALPHATESTENABLE`, `X_D3DRS_ALPHAREF`, `X_D3DRS_ALPHAFUNC` are grouped under "states handled as shader constants" at Backend_D3D11.cpp:475, but neither pixel shader reads or applies them. D3D11 has no fixed-function alpha test. The existing `AlphaKill` and `ColorKey` operations are per-texture-stage mechanisms, not the global alpha test. Any game using `D3DRS_ALPHATESTENABLE` will render all fragments regardless of alpha comparison.
 - **Impact**: 100% of titles using alpha test (vegetation, fences, HUD elements, etc.)
 
@@ -79,19 +79,19 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 11. Front/Back Face Detection: D3D11 bool vs D3D9 float
 - [ ] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl:487`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: D3D11 `SV_IsFrontFace` is a `bool`, converted via `(xIn.iFF ? 1.0f : -1.0f) * FRONTFACE_FACTOR >= 0`. This works for normal cases but edge behavior around degenerate triangles may differ from D3D9's float VFACE semantic.
 - **Impact**: Potential wrong front/back color on degenerate triangles
 
 ### 12. PS Register Combiner: Input Modifier Precision (8-bit vs float32)
 - [x] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl:35-43`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: NV2A register combiners operate at 8-bit color precision (per-channel clamp, quantized). The shader operates at float32. Operations like `s_bx2(x) = 2*max(0,x) - 1` and `s_bias(x) = max(0,x) - 0.5` produce slightly different results without 8-bit quantization between stages. Comment: "TODO : Should all these 'max(0, x)' actually be 'saturate(x)'?"
 - **Impact**: Subtle color banding/precision differences in combiner-heavy shaders
 
 ### 13. PS: Complement Operator Post-Clamping Wrong
 - [x] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl:37`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: `s_comp(x) = 1 - max(0, x)` — NV2A does `1 - clamp(x, 0, 1)` (saturate). If x > 1, the shader produces a negative result; NV2A would produce 0.
 - **Impact**: Incorrect color values when combiner inputs exceed 1.0
 
@@ -123,14 +123,14 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 18. ~~DOT_PRODUCT3 Bias/Scale Timing~~ (N/A)
 - [x] Fixed
-- **Files**: `CxbxFixedFunctionPixelShader.hlsl:189`
+- **Files**: (removed — CxbxFixedFunctionPixelShader.hlsl deleted)
 - **Description**: Bias/scale may be applied at the wrong point in the DOT_PRODUCT3 calculation relative to NV2A hardware order.
 - **Resolution**: N/A — Per D3D9/Xbox SDK docs, `D3DTOP_DOTPRODUCT3` is defined to automatically expand inputs from [0,1] to [-1,1]. The bias/scale at DOT_PRODUCT3 time is the correct and intended behavior. Misleading TODO comment cleaned up.
 - **Impact**: None
 
 ### 19. ~~BUMPENVMAP Source Register Uncertain~~ (N/A)
 - [x] Fixed
-- **Files**: `CxbxFixedFunctionPixelShader.hlsl:199-209`
+- **Files**: (removed — CxbxFixedFunctionPixelShader.hlsl deleted)
 - **Description**: Comment "TODO : Verify" on which register provides the bump environment map source.
 - **Resolution**: N/A — Using `ctx.CURRENT` (previous stage result) is correct per D3D9/Xbox SDK. Bump perturbation data comes from the processed pipeline result. Misleading TODO comment cleaned up.
 - **Impact**: None
@@ -148,7 +148,7 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 21. Fog Calculation: `if` Instead of `else if`
 - [x] Fixed
-- **Files**: `CxbxFixedFunctionPixelShader.hlsl:329`, `CxbxPixelShaderTemplate.hlsl:449`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: Both pixel shaders use chained `if` for fog mode instead of `else if`. Functionally correct since only one mode matches at a time, but `fogFactor` would be uninitialized if `FogTableMode` has an unexpected value. The FF PS also has a redundant `FogEnable == 0` check inside the else branch.
 - **Impact**: Cosmetic code issue; potential uninitialized value on invalid fog mode
 
@@ -168,19 +168,19 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 24. BRDF Texture Mode Incomplete
 - [ ] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl:398`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: "TODO : Complete 16 bit phi/sigma retrieval" — BRDF texture mode not fully implemented.
 - **Impact**: Titles using BRDF-based lighting via texture combiners
 
 ### 25. DOT_ST / DOT_ZW Texture Modes Untested
 - [x] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl`, `XbPixelShader.cpp:255-256`
+- **Files**: `XbPixelShader.cpp:255-256` (CxbxPixelShaderTemplate.hlsl removed)
 - **Description**: Both modes marked `LOG_TEST_CASE`, never verified against hardware. DOT_ZW also has a potential division-by-zero (float == 0 comparison unreliable).
 - **Impact**: Titles using dot-product texture addressing
 
 ### 26. HILO Dot Mapping Questionable
 - [ ] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl:245`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: Comment: "TODO : Verify whether this works at all!"
 - **Impact**: Titles using HILO texture format with dot product mapping
 
@@ -241,21 +241,21 @@ Comprehensive audit of every D3D11 code path that could produce different visual
 
 ### 35. ~~LSB Mux Correctness~~ (Verified)
 - [x] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl:141`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: "TODO : Verify correctness" comment on LSB-based mux selection in register combiners.
 - **Resolution**: Math is correct: `(r0.a * 255) % 2 >= 1` extracts the LSB of an 8-bit value. May have float precision issues near integer boundaries but zero known test-cases use LSB mode. TODO comment cleaned up.
 - **Impact**: Theoretical float precision edge case only
 
 ### 36. ~~Eye Register Mapping~~ (N/A)
 - [x] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl:401`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: "TODO : Map iT[1/2/3] through PS_INPUTTEXTURE_[]?" — eye vector register may not be correctly sourced.
 - **Resolution**: N/A — NV2A `texm3x3vspec` instruction hardcodes the eye vector from the q components of texture coordinates 1, 2, 3. It does NOT route through PS_INPUTTEXTURE mapping. Direct indexing is correct. TODO comment cleaned up.
 - **Impact**: None
 
 ### 37. Project2D/Project3D Perspective Divide
 - [ ] Fixed
-- **Files**: `CxbxPixelShaderTemplate.hlsl:409`
+- **Files**: (removed — CxbxPixelShaderTemplate.hlsl deleted)
 - **Description**: Comment asks "are x/w and y/w implicit?" — unclear if perspective division matches NV2A.
 - **Impact**: Projected texture coordinates may be wrong
 

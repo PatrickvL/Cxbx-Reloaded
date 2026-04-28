@@ -1,7 +1,6 @@
 // CxbxPixelShaderFunctions.hlsli — pure math helper functions for pixel shaders
 //
-// Shared by CxbxPixelShaderTemplate.hlsl (compiled PS), CxbxFixedFunctionPixelShader.hlsl,
-// and CxbxRegisterCombinerInterpreter.hlsl (RC interpreter ubershader).
+// Shared by CxbxRegisterCombinerInterpreter.hlsl (RC interpreter ubershader).
 //
 // This file must NOT declare any I/O structs, samplers, or texture objects
 // so that it can be included from shaders with different I/O declarations.

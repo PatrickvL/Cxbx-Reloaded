@@ -35,7 +35,13 @@
 #include "core\hle\D3D8\XbD3D8Logging.h"
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\kernel\init\CxbxKrnl.h"
-#include "core\hle\D3D8\Rendering\Shaders\CxbxFixedFunctionPixelShader.hlsli"
+// Texture format fixup constants (must match ApplyTexFmtFixup() in CxbxPixelShaderFunctions.hlsli)
+static constexpr float TEXFMTFIXUP_IDENTITY = 0.0f;
+static constexpr float TEXFMTFIXUP_GBAR     = 1.0f; // B8G8R8A8 uploaded as R8G8B8A8
+static constexpr float TEXFMTFIXUP_ABGR     = 2.0f; // A8B8G8R8 uploaded as R8G8B8A8
+static constexpr float TEXFMTFIXUP_LUM      = 3.0f; // Luminance: R8→(R,R,R,1)
+static constexpr float TEXFMTFIXUP_ALUM     = 4.0f; // Alpha-luminance: R8G8→(R,R,R,G)
+static constexpr float TEXFMTFIXUP_OPAQUEA  = 5.0f; // X8R8G8B8/X1R5G5B5: force alpha to 1.0
 #include "devices\Xbox.h"              // For extern NV2ADevice* g_NV2A
 #include "devices\video\nv2a.h"        // For NV2ADevice::GetDeviceState(), NV2AState, PGRAPHState, nv2a_regs.h
 #include <assert.h>
@@ -70,7 +76,6 @@ float CxbxComponentColorSignFromXboxAndHost(bool XboxMarksComponentSigned, bool 
 
 float CxbxGetTexFmtFixup(int stage_nr)
 {
-	using namespace FixedFunctionPixelShader;
 
 	// Resolve texture via PGRAPH offset → side-map to avoid racing g_pXbox_SetTexture[].
 	xbox::X_D3DBaseTexture *pXboxTex = xbox::zeroptr;

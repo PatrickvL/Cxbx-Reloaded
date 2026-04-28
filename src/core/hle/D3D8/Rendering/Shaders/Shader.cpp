@@ -876,15 +876,6 @@ void ShaderSources::LoadShadersFromDisk() {
 		.parent_path()
 		.append("hlsl");
 
-	// Fixed Function Pixel Shader
-	{
-		auto dir = hlslDir;
-		this->fixedFunctionPixelShaderPath = dir.append("CxbxFixedFunctionPixelShader.hlsl").string();
-		std::stringstream tmp;
-		tmp << OpenWithRetry(this->fixedFunctionPixelShaderPath).rdbuf();
-		this->fixedFunctionPixelShaderHlsl = tmp.str();
-	}
-
 	// Vertex Shader Template
 	{
 		std::stringstream tmp;

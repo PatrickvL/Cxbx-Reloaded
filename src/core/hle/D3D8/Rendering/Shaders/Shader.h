@@ -42,10 +42,6 @@ extern HRESULT EmuCompileShader
 extern void ShaderCacheShutdown();
 
 struct ShaderSources {
-	// Pixel Shader
-	std::string fixedFunctionPixelShaderHlsl;
-	std::string fixedFunctionPixelShaderPath;
-
 	// Vertex Shader
 	std::string vertexShaderTemplateHlsl[2];
 	std::string vertexShaderTemplatePath;

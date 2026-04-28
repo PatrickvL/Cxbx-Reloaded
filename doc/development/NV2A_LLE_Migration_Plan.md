@@ -335,7 +335,6 @@ Some patches handle CPU-side concerns that don't go through the pushbuffer:
   - `CxbxVertexShaderInterpreter.hlsl` → SPIR-V compute/vertex shader
   - `CxbxRegisterCombinerInterpreter.hlsl` → SPIR-V fragment shader
   - `CxbxVertexFetch.hlsli` → SPIR-V vertex shader (buffer device address for vertex pull)
-  - `CxbxFixedFunctionPixelShader.hlsl` → SPIR-V fragment shader
 - **Alternative**: Keep HLSL and use `spirv-cross` or DXC for runtime compilation
 
 ### 4.3 — Vulkan Render Pass & Pipeline Setup
