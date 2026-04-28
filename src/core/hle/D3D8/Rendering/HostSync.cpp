@@ -106,11 +106,13 @@ void CxbxUpdateHostTextures()
 				auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
 				if (pgTex != nullptr) {
 					pXboxBaseTexture = pgTex;
-				} else if (pXboxBaseTexture == xbox::zeroptr) {
-					// No side-map entry and no HLE texture: build a synthetic
-					// X_D3DBaseTexture from PGRAPH registers.  The Xbox D3D
-					// runtime writes pTexture->Format directly as the
-					// NV097_SET_TEXTURE_FORMAT argument, so PGRAPH TEXFMT
+				} else {
+					// No side-map entry: build/update synthetic X_D3DBaseTexture
+					// from current PGRAPH registers.  Must re-derive every draw
+					// because the same stage may bind different textures across
+					// draws (e.g., ocean floor then font overlay in Dolphin).
+					// The Xbox D3D runtime writes pTexture->Format directly as
+					// the NV097_SET_TEXTURE_FORMAT argument, so PGRAPH TEXFMT
 					// contains the exact Xbox Format field value.
 					auto& synth = s_SyntheticTextures[stage];
 					synth.Common = X_D3DCOMMON_TYPE_TEXTURE | 1; // type + refcount
