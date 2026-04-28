@@ -542,10 +542,12 @@ void CxbxUpdateNativeD3DResources()
 	// g_Xbox_VertexShaderMode is ONLY written here on the render thread;
 	// the game-thread patches no longer touch it, eliminating the race.
 	// We read CSV0_D MODE for Program vs Fixed, and detect Passthrough
-	// (XYZRHW pre-transformed vertices) via the VPSCL/VPOFF sign: the Xbox
-	// D3D runtime maps screen coords to clip space such that the derived
-	// X,Y origin is negative (e.g. -320,-240 for 640x480).  Normal fixed-
-	// function viewports always produce X,Y >= 0.
+	// (XYZRHW pre-transformed vertices) by checking whether the composite
+	// matrix (CMAT) is approximately identity.  Passthrough means the game
+	// supplies screen-space positions, so CMAT is identity (no transform).
+	// Normal fixed-function has CMAT = World*View*Proj*Viewport with large
+	// values.  The old VPSCL/VPOFF sign heuristic was broken because
+	// vpscl.y is always negative (Y-flip) even for normal FF viewports.
 	{
 		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 		uint32_t pgraph_mode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
@@ -553,15 +555,23 @@ void CxbxUpdateNativeD3DResources()
 			g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
 		} else {
 			// MODE_FIXED: distinguish true fixed-function from passthrough
-			// by checking the PGRAPH viewport constants.
-			float vpoff0, vpoff1, vpscl0, vpscl1;
-			std::memcpy(&vpoff0, &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][0], sizeof(float));
-			std::memcpy(&vpoff1, &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][1], sizeof(float));
-			std::memcpy(&vpscl0, &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][0], sizeof(float));
-			std::memcpy(&vpscl1, &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][1], sizeof(float));
-			float xboxX = vpoff0 - vpscl0;
-			float xboxY = vpoff1 + vpscl1;
-			if (xboxX < 0.0f || xboxY < 0.0f) {
+			// by checking CMAT (composite matrix).  For passthrough (XYZRHW),
+			// CMAT ≈ identity.  For normal FF, CMAT has large viewport values.
+			float cmat[4][4];
+			for (int row = 0; row < 4; row++)
+				std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
+
+			// Check if CMAT is approximately identity
+			bool isIdentity = true;
+			for (int r = 0; r < 4 && isIdentity; r++) {
+				for (int c = 0; c < 4 && isIdentity; c++) {
+					float expected = (r == c) ? 1.0f : 0.0f;
+					if (fabsf(cmat[r][c] - expected) > 0.01f)
+						isIdentity = false;
+				}
+			}
+
+			if (isIdentity) {
 				g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
 			} else {
 				g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;

@@ -22,7 +22,7 @@
 // ******************************************************************
 
 #include "Backend_D3D11_Internal.h"
-#include "core\hle\D3D8\XbPushBuffer.h" // HLE_get_NV2A_vertex_attribute_value_pointer
+#include "core\hle\D3D8\XbPushBuffer.h" // NV2A_get_vertex_attribute_value_pointer
 
 // ******************************************************************
 // * Rendering helpers (D3D11 implementations)
@@ -298,7 +298,7 @@ void CxbxD3D11UpdateVertexDefaultsBuffer()
 		// (NV097_SET_VERTEX_DATA4F etc.), not by the streamed vertex path.  To fix
 		// this, after each draw we'd need to read back the last vertex's attribute
 		// values from the CPU-side vertex data and write them to inline_value[].
-		float* pSrc = HLE_get_NV2A_vertex_attribute_value_pointer(i);
+		float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
 		pDst[i * 4 + 0] = pSrc[0];
 		pDst[i * 4 + 1] = pSrc[1];
 		pDst[i * 4 + 2] = pSrc[2];

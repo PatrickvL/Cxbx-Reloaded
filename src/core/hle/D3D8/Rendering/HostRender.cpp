@@ -491,20 +491,25 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 
 	// Passthrough should range 0 to 1, instead of 0 to zbuffer depth
 	// Test case: DoA3 character select
-	// Detect passthrough from PGRAPH VPSCL/VPOFF sign to avoid racing
-	// g_Xbox_VertexShaderMode which the game thread writes.
+	// Detect passthrough by checking CMAT ≈ identity (passthrough means
+	// the game provides screen-space coords, so CMAT is identity).
 	bool isPassthrough = false;
 	float zOutputScale = 1.0f;
 	{
 		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
-		float vpoff0, vpoff1, vpscl0, vpscl1;
-		std::memcpy(&vpoff0, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][0], sizeof(float));
-		std::memcpy(&vpoff1, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][1], sizeof(float));
-		std::memcpy(&vpscl0, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][0], sizeof(float));
-		std::memcpy(&vpscl1, &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][1], sizeof(float));
-		float xboxX = vpoff0 - vpscl0;
-		float xboxY = vpoff1 + vpscl1;
-		isPassthrough = (xboxX < 0.0f || xboxY < 0.0f);
+
+		// Check if CMAT is approximately identity
+		float cmat[4][4];
+		for (int row = 0; row < 4; row++)
+			std::memcpy(&cmat[row][0], &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
+		isPassthrough = true;
+		for (int r = 0; r < 4 && isPassthrough; r++) {
+			for (int c = 0; c < 4 && isPassthrough; c++) {
+				float expected = (r == c) ? 1.0f : 0.0f;
+				if (fabsf(cmat[r][c] - expected) > 0.01f)
+					isPassthrough = false;
+			}
+		}
 
 		// Derive Z output scale from PGRAPH depth surface format (replaces HLE g_ZScale)
 		if (!isPassthrough) {
@@ -579,11 +584,17 @@ void UpdateFixedFunctionVertexShaderState()
 	// Transforms
 	// Read transform matrices from PGRAPH XFCTX constants.
 	// The Xbox D3D runtime writes World*View to MMAT, Inverse(World*View) to IMMAT,
-	// and the full composite (World*View*Projection*Viewport) to CMAT.
-	// PMAT is NOT written by the Xbox D3D runtime.
+	// and the full composite to CMAT.  PMAT is NOT written by the Xbox D3D runtime.
 	//
-	// CMAT includes the NV2A viewport transform (baked in by the Xbox D3D runtime for FF mode).
-	// We must strip the viewport to get a pure clip-space projection matrix for D3D11.
+	// CMAT contents depend on whether vertex blending (skinning) is active:
+	//   Skinning OFF:  CMAT = VP * Proj * View * World  (everything baked in)
+	//   Skinning ON:   CMAT = VP * Proj                 (MV is per-bone in MMAT0..3)
+	// (This matches xemu's vsh-ff.c: "If skinning is off the composite matrix
+	// already includes the MV matrix".)
+	//
+	// We need projVP = VP * Proj to strip the viewport and get pure projection.
+	//   Skinning OFF:  projVP = CMAT * inv(MMAT)
+	//   Skinning ON:   projVP = CMAT  (already VP * Proj)
 	//
 	// NV2A uses column-vector convention (clipPos = M * v), while our HLSL FF shader
 	// uses row-vector convention (result = mul(v, M) = v * M). For NV2A matrices stored
@@ -602,15 +613,23 @@ void UpdateFixedFunctionVertexShaderState()
 		ReadXFCTXMatrix(&mmat, NV_IGRAPH_XF_XFCTX_MMAT0);
 		ReadXFCTXMatrix(&cmat, NV_IGRAPH_XF_XFCTX_CMAT0);
 
-		// Derive Projection-with-viewport = CMAT * inverse(MMAT)
-		D3DXMATRIX mmatInv, projVP;
-		bool validMMAT = (D3DXMatrixInverse(&mmatInv, nullptr, &mmat) != nullptr);
-		if (validMMAT) {
-			D3DXMatrixMultiply(&projVP, &cmat, &mmatInv);
+		// Derive Projection-with-viewport (VP * Proj)
+		D3DXMATRIX projVP;
+		bool validProjVP = false;
+
+		if (VertexBlend != xbox::X_D3DVBF_DISABLE) {
+			// Skinning active: CMAT is already VP * Proj (no ModelView baked in)
+			projVP = cmat;
+			validProjVP = (cmat.m[3][2] != 0.0f); // sanity: perspective w-row should have non-zero z
 		} else {
-			// Singular MMAT (e.g., first few frames before state is populated)
-			D3DXMatrixIdentity(&projVP);
-			D3DXMatrixIdentity(&mmat);
+			// No skinning: CMAT = VP * Proj * ModelView → strip MV via inv(MMAT)
+			D3DXMATRIX mmatInv;
+			if (D3DXMatrixInverse(&mmatInv, nullptr, &mmat) != nullptr) {
+				D3DXMatrixMultiply(&projVP, &cmat, &mmatInv);
+				validProjVP = true;
+			} else {
+				D3DXMatrixIdentity(&projVP);
+			}
 		}
 
 		// Strip the NV2A viewport from the projection.
@@ -627,7 +646,7 @@ void UpdateFixedFunctionVertexShaderState()
 		D3DXMATRIX pureProj;
 		float vpWidth = 0, vpHeight = 0;
 
-		if (validMMAT && projVP.m[3][2] != 0.0f) {
+		if (validProjVP && projVP.m[3][2] != 0.0f) {
 			// Extract viewport offsets from the projection.
 			// For standard perspective: projVP[3] = [0, 0, 1, 0], so
 			// projVP[0][2] = ox (viewport X offset) and projVP[1][2] = oy (viewport Y offset).

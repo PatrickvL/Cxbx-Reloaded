@@ -131,7 +131,7 @@ xbox::void_xt WINAPI EMUPATCH(Lock3DSurface_16__LTCG_eax4)
    	dword_xt             Flags
 );
 
-// D3DDevice_Clear: patch disabled — clear now handled by HLE_draw_clear via
+// D3DDevice_Clear: patch disabled — clear now handled by D3D11_draw_clear via
 // NV097_CLEAR_SURFACE → pgraph_handle_method. Declaration kept for compilation.
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_Clear)
 (

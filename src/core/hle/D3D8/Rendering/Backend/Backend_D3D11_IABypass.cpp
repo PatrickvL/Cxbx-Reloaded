@@ -32,7 +32,7 @@
 #include "common/AddressRanges.h"
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
-#include "core\hle\D3D8\XbPushBuffer.h" // HLE_get_NV2A_vertex_attribute_value_pointer
+#include "core\hle\D3D8\XbPushBuffer.h" // NV2A_get_vertex_attribute_value_pointer
 #include "devices\Xbox.h"              // For extern NV2ADevice* g_NV2A
 #include "devices\video\nv2a.h"        // For NV2AState, PGRAPHState, VertexAttribute, nv2a_regs.h
 
@@ -309,7 +309,7 @@ static void UploadVertexDefaults()
 
 	float* pDst = (float*)mapped.pData;
 	for (int i = 0; i < 16; i++) {
-		const float* pSrc = HLE_get_NV2A_vertex_attribute_value_pointer(i);
+		const float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
 		pDst[i * 4 + 0] = pSrc[0];
 		pDst[i * 4 + 1] = pSrc[1];
 		pDst[i * 4 + 2] = pSrc[2];

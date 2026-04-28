@@ -162,6 +162,15 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Patches/EmuPatches_State.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Patches/EmuPatches_Surface.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Patches/EmuPatches_Unused.h"
+ # TODO: Remove CxbxFixedFunctionPixelShader — now unused since Xbox D3D API
+ # fixed-function pixel state is emitted as register combiner programs, which
+ # the interpreter shader (CxbxRegisterCombinerInterpreter.hlsl) handles.
+ # Remnants to clean up:
+ #   - CxbxFixedFunctionPixelShader.hlsl / .hlsli (shader files)
+ #   - Shader.h: fixedFunctionPixelShaderHlsl, fixedFunctionPixelShaderPath
+ #   - Shader.cpp: loading of CxbxFixedFunctionPixelShader.hlsl
+ #   - XbPixelShaderCompiler.cpp: #include and FixedFunctionPixelShader namespace usage
+ #   - References in dx11-nv2a-audit.md and NV2A_LLE_Migration_Plan.md
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxFixedFunctionPixelShader.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxFixedFunctionPixelShader.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxNV2AMathHelpers.hlsli"

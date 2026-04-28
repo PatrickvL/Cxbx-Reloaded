@@ -98,7 +98,7 @@ void Direct3D_CreateDevice_End
    	}
 }
 
-// Called by HLE_draw_inline_elements (XbPushBuffer.cpp)
+// Called by D3D11_draw_inline_elements (XbPushBuffer.cpp)
 void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 {
 	assert(DrawContext.dwStartVertex == 0);
@@ -110,7 +110,7 @@ void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 }
 
 // Drawing function specifically for rendering Xbox draw calls supplying a 'User Pointer'.
-// Called by HLE_draw_inline_array (XbPushBuffer.cpp)
+// Called by D3D11_draw_inline_array (XbPushBuffer.cpp)
 void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 {
 	assert(DrawContext.dwStartVertex == 0);

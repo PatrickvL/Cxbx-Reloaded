@@ -78,7 +78,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
 	//PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
-	// Disabled: Clear now handled by HLE_draw_clear via NV097_CLEAR_SURFACE → pgraph_handle_method
+	// Disabled: Clear now handled by D3D11_draw_clear via NV097_CLEAR_SURFACE → pgraph_handle_method
 	//PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
     PATCH_ENTRY("D3DDevice_CopyRects", xbox::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
 	// PATCH_ENTRY("D3DDevice_CreateVertexShader", xbox::EMUPATCH(D3DDevice_CreateVertexShader), PATCH_HLE_D3D),
@@ -92,7 +92,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_DeleteVertexShader", xbox::EMUPATCH(D3DDevice_DeleteVertexShader), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_DeleteVertexShader_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_DeleteVertexShader_0__LTCG_eax1), PATCH_HLE_D3D),
 	// Step 10: Draw calls flow through push buffer as NV097_DRAW_ARRAYS, NV097_INLINE_ARRAY,
-	// NV097_ARRAY_ELEMENT16/32 commands. PGRAPH SET_BEGIN_END triggers HLE_draw_* callbacks.
+	// NV097_ARRAY_ELEMENT16/32 commands. PGRAPH SET_BEGIN_END triggers D3D11_draw_* callbacks.
 	//PATCH_ENTRY("D3DDevice_DrawIndexedVertices", xbox::EMUPATCH(D3DDevice_DrawIndexedVertices), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_DrawIndexedVerticesUP", xbox::EMUPATCH(D3DDevice_DrawIndexedVerticesUP), PATCH_HLE_D3D),
 	// Disabled: Xbox CPU tessellation emits normal NV097 draw commands through push buffer.

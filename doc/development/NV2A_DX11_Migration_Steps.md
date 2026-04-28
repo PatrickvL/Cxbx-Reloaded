@@ -404,7 +404,7 @@ Xbox memory address that indexes into the 64MB SRV.
 ### 5.2 — Read inline/sticky vertex attributes from PGRAPH
 
 `VertexAttribute.inline_value[4]` provides the NV2A "sticky" per-attribute defaults.
-Replace `HLE_get_NV2A_vertex_attribute_value_pointer()` with direct PGRAPH read.
+Replace `NV2A_get_vertex_attribute_value_pointer()` with direct PGRAPH read.
 
 **Test:** Fur, SphereMap (multiple vertex streams).
 

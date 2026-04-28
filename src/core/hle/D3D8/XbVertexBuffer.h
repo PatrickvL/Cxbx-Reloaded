@@ -39,7 +39,7 @@ typedef struct _CxbxDrawContext
     IN     xbox::X_D3DPRIMITIVETYPE    XboxPrimitiveType;
     IN     DWORD                 dwVertexCount;
     IN     DWORD                 dwStartVertex; // Only D3DDevice_DrawVertices sets this (potentially higher than default 0)
-	IN	   PWORD				 pXboxIndexData; // Set by D3DDevice_DrawIndexedVertices, D3DDevice_DrawIndexedVerticesUP and HLE_draw_inline_elements
+	IN	   PWORD				 pXboxIndexData; // Set by D3DDevice_DrawIndexedVertices, D3DDevice_DrawIndexedVerticesUP and D3D11_draw_inline_elements
 	IN	   DWORD				 dwBaseVertexIndex; // Always 0 now (D3DDevice_SetIndices/DrawIndexedVertices patches disabled)
 	IN	   INDEX16               LowIndex, HighIndex; // Set when pXboxIndexData is set
 	IN	   UINT 				 NumVerticesToUse; // Set by CxbxVertexBufferConverter::Apply

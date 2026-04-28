@@ -34,11 +34,11 @@ bool g_bUsePassthroughHLSL = true;
 LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 // Forward declarations (defined in XbPushBuffer.cpp)
-extern void HLE_init_pgraph_plugins();
+extern void D3D11_init_pgraph_plugins();
 
 void EmuD3DInit()
 {
-	HLE_init_pgraph_plugins(); // TODO : Hook more nv_dma_map() result uses in EmuNV2A_PGRAPH.cpp
+	D3D11_init_pgraph_plugins(); // TODO : Hook more nv_dma_map() result uses in EmuNV2A_PGRAPH.cpp
 
 	// Initialise CreateDevice Proxy Data struct
 	{

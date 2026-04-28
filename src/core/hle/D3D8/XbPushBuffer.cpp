@@ -91,7 +91,7 @@ void EmuExecutePushBuffer
     return;
 }
 
-void HLE_draw_arrays(NV2AState *d)
+void D3D11_draw_arrays(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -108,7 +108,7 @@ void HLE_draw_arrays(NV2AState *d)
 	}
 }
 
-void HLE_draw_inline_buffer(NV2AState *d)
+void D3D11_draw_inline_buffer(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -121,7 +121,7 @@ void HLE_draw_inline_buffer(NV2AState *d)
 		(xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode, pg->inline_buffer_length);
 }
 
-void HLE_draw_inline_array(NV2AState *d)
+void D3D11_draw_inline_array(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -156,7 +156,7 @@ void HLE_draw_inline_array(NV2AState *d)
 	CxbxDrawPrimitiveUP(DrawContext);
 }
 
-void HLE_draw_inline_elements(NV2AState *d)
+void D3D11_draw_inline_elements(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -172,7 +172,7 @@ void HLE_draw_inline_elements(NV2AState *d)
 		DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 }
 
-void HLE_draw_state_update(NV2AState *d)
+void D3D11_draw_state_update(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -181,12 +181,18 @@ void HLE_draw_state_update(NV2AState *d)
 	// so the IA bypass re-uploads them before the next draw.
 	g_bD3D11IABypassDefaultsDirty = true;
 
+	// With SetStreamSource/SetVertexShader patches disabled, the layout CB
+	// generation counter is never bumped externally.  Invalidate every
+	// BEGIN/END pair so the IA bypass always re-uploads attribute descriptors
+	// from the current PGRAPH vertex_attributes[] state.
+	CxbxD3D11IABypassInvalidateLayout();
+
 	CxbxUpdateNativeD3DResources();
 
 	LOG_INCOMPLETE(); // TODO : Read state from pgraph, convert to D3D
 }
 
-void HLE_draw_clear(NV2AState *d)
+void D3D11_draw_clear(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -266,15 +272,15 @@ extern void(*pgraph_draw_inline_elements)(NV2AState *d);
 extern void(*pgraph_draw_state_update)(NV2AState *d);
 extern void(*pgraph_draw_clear)(NV2AState *d);
 
-void HLE_init_pgraph_plugins()
+void D3D11_init_pgraph_plugins()
 {
 	/* attach HLE Direct3D render plugins */
-	pgraph_draw_arrays = HLE_draw_arrays;
-	pgraph_draw_inline_buffer = HLE_draw_inline_buffer;
-	pgraph_draw_inline_array = HLE_draw_inline_array;
-	pgraph_draw_inline_elements = HLE_draw_inline_elements;
-	pgraph_draw_state_update = HLE_draw_state_update;
-	pgraph_draw_clear = HLE_draw_clear;
+	pgraph_draw_arrays = D3D11_draw_arrays;
+	pgraph_draw_inline_buffer = D3D11_draw_inline_buffer;
+	pgraph_draw_inline_array = D3D11_draw_inline_array;
+	pgraph_draw_inline_elements = D3D11_draw_inline_elements;
+	pgraph_draw_state_update = D3D11_draw_state_update;
+	pgraph_draw_clear = D3D11_draw_clear;
 }
 
 extern void pgraph_handle_method(
@@ -283,14 +289,14 @@ extern void pgraph_handle_method(
 	unsigned int method,
 	uint32_t parameter);
 
-uint32_t HLE_read_NV2A_pgraph_register(const int reg)
+uint32_t NV2A_read_pgraph_register(const int reg)
 {
 	NV2AState* dev = g_NV2A->GetDeviceState();
 	PGRAPHState *pg = &(dev->pgraph);
 	return pg->regs[RI(reg)];
 }
 
-float *HLE_get_NV2A_vertex_attribute_value_pointer(unsigned slot)
+float *NV2A_get_vertex_attribute_value_pointer(unsigned slot)
 {
 	NV2AState* dev = g_NV2A->GetDeviceState();
 	PGRAPHState *pg = &(dev->pgraph);
@@ -298,18 +304,6 @@ float *HLE_get_NV2A_vertex_attribute_value_pointer(unsigned slot)
 	// See CASE_16(NV097_SET_VERTEX_DATA4UB, 4) in LLE pgraph_handle_method()
 	VertexAttribute *vertex_attribute = &pg->vertex_attributes[slot];
 	return vertex_attribute->inline_value;
-}
-
-uint32_t HLE_read_NV2A_vertex_program_slot(unsigned program_load, unsigned slot)
-{
-	NV2AState* dev = g_NV2A->GetDeviceState();
-	PGRAPHState* pg = &(dev->pgraph);
-
-	// See CASE_32(NV097_SET_TRANSFORM_PROGRAM, 4) in LLE pgraph_handle_method()
-	assert(program_load < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
-	uint32_t value = pg->program_data[program_load][slot % 4];
-
-	return value;
 }
 
 const char *NV2AMethodToString(DWORD dwMethod)

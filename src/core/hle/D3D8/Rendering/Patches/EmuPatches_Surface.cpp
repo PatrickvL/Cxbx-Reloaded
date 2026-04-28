@@ -528,7 +528,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 			// as either YUV or RGB format (note that either one must be a 3 bytes per pixel format)
 			DXGI_FORMAT PCFormat;
 			// TODO : Before reading from pgraph, flush all pending push-buffer commands
-			switch (GET_MASK(HLE_read_NV2A_pgraph_register(NV_PGRAPH_CONTROL_0), NV_PGRAPH_CONTROL_0_CSCONVERT)) {
+			switch (GET_MASK(NV2A_read_pgraph_register(NV_PGRAPH_CONTROL_0), NV_PGRAPH_CONTROL_0_CSCONVERT)) {
 			case 0:  // = pass-through
 				PCFormat = EMUFMT_YUY2;
 				break;

@@ -457,46 +457,52 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		return; // can't set viewport without RT dimensions
 	}
 
-	// For passthrough mode (XYZRHW/pre-transformed vertices), the NV2A viewport
-	// transform maps screen-space coordinates to clip space.  The VPSCL/VPOFF
-	// constants encode this mapping such that xboxX/Y come out negative (e.g.,
-	// -320, -240 for 640x480).  We don't need viewport clipping for passthrough
-	// since vertices are already in screen space — use a full render target viewport.
-	// Detect passthrough directly from VPSCL/VPOFF sign instead of reading
-	// g_Xbox_VertexShaderMode which races the game thread.
-	if (xboxX < 0.0f || xboxY < 0.0f) {
-		D3D11_VIEWPORT hostViewport;
-		hostViewport.TopLeftX = 0;
-		hostViewport.TopLeftY = 0;
-		hostViewport.Width    = static_cast<float>(HostRenderTarget_Width);
-		hostViewport.Height   = static_cast<float>(HostRenderTarget_Height);
-		hostViewport.MinDepth = 0.0f;
-		hostViewport.MaxDepth = 1.0f;
-		CxbxSetViewport(&hostViewport);
+	// For passthrough mode (XYZRHW/pre-transformed vertices), CMAT is identity
+	// because the game provides screen-space positions directly.  For normal FF,
+	// CMAT = World*View*Proj*Viewport with large values.  Detect passthrough by
+	// checking CMAT ≈ identity rather than VPSCL/VPOFF sign (which is always
+	// negative in Y due to the Y-flip, even for normal FF viewports).
+	{
+		float cmat[4][4];
+		for (int row = 0; row < 4; row++)
+			std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
+		bool isPassthrough = true;
+		for (int r = 0; r < 4 && isPassthrough; r++) {
+			for (int c = 0; c < 4 && isPassthrough; c++) {
+				float expected = (r == c) ? 1.0f : 0.0f;
+				if (fabsf(cmat[r][c] - expected) > 0.01f)
+					isPassthrough = false;
+			}
+		}
+		if (isPassthrough) {
+			D3D11_VIEWPORT hostViewport;
+			hostViewport.TopLeftX = 0;
+			hostViewport.TopLeftY = 0;
+			hostViewport.Width    = static_cast<float>(HostRenderTarget_Width);
+			hostViewport.Height   = static_cast<float>(HostRenderTarget_Height);
+			hostViewport.MinDepth = 0.0f;
+			hostViewport.MaxDepth = 1.0f;
+			CxbxSetViewport(&hostViewport);
 
-		// Full render target scissor — passthrough vertices handle their own clipping
-		RECT viewportRect = { 0, 0, (LONG)HostRenderTarget_Width, (LONG)HostRenderTarget_Height };
-		CxbxSetScissorRect(&viewportRect);
-		return;
+			RECT viewportRect = { 0, 0, (LONG)HostRenderTarget_Width, (LONG)HostRenderTarget_Height };
+			CxbxSetScissorRect(&viewportRect);
+			return;
+		}
 	}
 
 	// Determine vertex shader mode from PGRAPH CSV0_D register.
 	uint32_t pgraphVSMode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
 
+	// For FF mode (FIXED and not passthrough), the viewport is already set by
+	// UpdateFixedFunctionVertexShaderState() which derives it from CMAT.
+	// VPSCL/VPOFF are NOT meaningful for FF mode (the viewport transform is
+	// baked into CMAT), so we must not overwrite the FF viewport here.
 	if (pgraphVSMode != NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-		D3D11_VIEWPORT hostViewport;
-		hostViewport.TopLeftX = xboxX * Xscale;
-		hostViewport.TopLeftY = xboxY * Yscale;
-		hostViewport.Width    = std::min(xboxWidth * Xscale, (float)HostRenderTarget_Width);
-		hostViewport.Height   = std::min(xboxHeight * Yscale, (float)HostRenderTarget_Height);
-		hostViewport.MinDepth = minZ;
-		hostViewport.MaxDepth = maxZ;
-		CxbxSetViewport(&hostViewport);
+		return;
+	}
 
-		RECT viewportRect = { 0, 0, (LONG)HostRenderTarget_Width, (LONG)HostRenderTarget_Height };
-		CxbxSetScissorRect(&viewportRect);
-	} else {
-		// Programmable VS: full-screen viewport, scissor clips to viewport bounds
+	// Programmable VS: full-screen viewport, scissor clips to viewport bounds
+	{
 		D3D11_VIEWPORT hostViewport;
 		hostViewport.TopLeftX = 0;
 		hostViewport.TopLeftY = 0;

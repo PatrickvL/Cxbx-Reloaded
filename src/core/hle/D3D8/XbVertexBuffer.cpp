@@ -603,7 +603,7 @@ void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	}
 
 	// Write these values to the NV2A registers, so that we read them back when needed
-	float* attribute_floats = HLE_get_NV2A_vertex_attribute_value_pointer(Register);
+	float* attribute_floats = NV2A_get_vertex_attribute_value_pointer(Register);
 	attribute_floats[0] = a;
 	attribute_floats[1] = b;
 	attribute_floats[2] = c;
