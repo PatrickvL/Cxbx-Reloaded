@@ -38,27 +38,17 @@ extern HRESULT EmuCompileShader
 	bool useSharedCache = false
 );
 
+// Load a precompiled .cso shader from the executable directory.
+// The file must exist at <exe_dir>/<csoName>.cso.
+extern bool LoadPrecompiledCSO(const char* csoName, ID3DBlob** ppBlob);
+
 // Flush pending cache writes and close log file. Call before process exit.
 extern void ShaderCacheShutdown();
 
 struct ShaderSources {
-	// Vertex Shader
+	// Vertex Shader Template (per-game, still compiled at runtime)
 	std::string vertexShaderTemplateHlsl[2];
 	std::string vertexShaderTemplatePath;
-
-	std::string fixedFunctionVertexShaderHlsl;
-	std::string fixedFunctionVertexShaderPath;
-
-	std::string vertexShaderPassthroughHlsl;
-	std::string vertexShaderPassthroughPath;
-
-	// Register Combiner Interpreter (PS ubershader)
-	std::string registerCombinerInterpreterHlsl;
-	std::string registerCombinerInterpreterPath;
-
-	// Vertex Shader Interpreter (VS ubershader)
-	std::string vertexShaderInterpreterHlsl;
-	std::string vertexShaderInterpreterPath;
 
 	// Load shaders from disk (if out-of-date)
 	// and return the current loaded shader version

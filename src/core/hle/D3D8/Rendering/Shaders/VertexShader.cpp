@@ -329,12 +329,10 @@ extern HRESULT EmuCompileVertexShader
 
 extern void EmuCompileFixedFunction(ID3DBlob** ppHostShader)
 {
-	EmuCompileShader(g_ShaderSources.fixedFunctionVertexShaderHlsl, g_vs_model, ppHostShader, g_ShaderSources.fixedFunctionVertexShaderPath.c_str(),
-		/*asyncAllowed=*/false, /*useSharedCache=*/true);
+	LoadPrecompiledCSO("CxbxFixedFunctionVS", ppHostShader);
 };
 
 extern void EmuCompileXboxPassthrough(ID3DBlob** ppHostShader)
 {
-	EmuCompileShader(g_ShaderSources.vertexShaderPassthroughHlsl, g_vs_model, ppHostShader, g_ShaderSources.vertexShaderPassthroughPath.c_str(),
-		/*asyncAllowed=*/false, /*useSharedCache=*/true);
+	LoadPrecompiledCSO("CxbxVSPassthroughVS", ppHostShader);
 }

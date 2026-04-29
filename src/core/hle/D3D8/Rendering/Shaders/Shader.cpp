@@ -824,6 +824,60 @@ extern HRESULT EmuCompileShader
 	return compileResult;
 }
 
+// ============================================================================
+// Precompiled CSO loading — loads build-time compiled shaders from exe dir
+// ============================================================================
+bool LoadPrecompiledCSO(const char* csoName, ID3DBlob** ppBlob)
+{
+	*ppBlob = nullptr;
+
+	// Build path: <exe_dir>/<csoName>.cso
+	char exePath[MAX_PATH] = {};
+	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+	std::string path(exePath);
+	auto lastSlash = path.find_last_of("\\/");
+	if (lastSlash != std::string::npos)
+		path = path.substr(0, lastSlash + 1);
+	path += csoName;
+	path += ".cso";
+
+	FILE* fp = fopen(path.c_str(), "rb");
+	if (!fp) {
+		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: file not found: %s", path.c_str());
+		return false;
+	}
+
+	fseek(fp, 0, SEEK_END);
+	long size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+
+	if (size < 8) {
+		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: file too small: %s (%ld bytes)", path.c_str(), size);
+		fclose(fp);
+		return false;
+	}
+
+	HRESULT hr = D3DCreateBlob(size, ppBlob);
+	if (FAILED(hr)) {
+		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: D3DCreateBlob failed (size=%ld)", size);
+		fclose(fp);
+		return false;
+	}
+
+	size_t readBytes = fread((*ppBlob)->GetBufferPointer(), 1, size, fp);
+	fclose(fp);
+
+	if ((long)readBytes != size) {
+		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: partial read %s (%zu / %ld)", path.c_str(), readBytes, size);
+		(*ppBlob)->Release();
+		*ppBlob = nullptr;
+		return false;
+	}
+
+	EmuLog(LOG_LEVEL::INFO, "LoadPrecompiledCSO: loaded %s (%ld bytes)", csoName, size);
+	return true;
+}
+
 std::ifstream OpenWithRetry(const std::string& path) {
 	auto fstream = std::ifstream(path);
 	int failures = 0;
@@ -900,41 +954,8 @@ void ShaderSources::LoadShadersFromDisk() {
 		}
 	}
 
-	// Fixed Function Vertex Shader
-	{
-		auto dir = hlslDir;
-		this->fixedFunctionVertexShaderPath = dir.append("CxbxFixedFunctionVertexShader.hlsl").string();
-		std::stringstream tmp;
-		tmp << OpenWithRetry(this->fixedFunctionVertexShaderPath).rdbuf();
-		this->fixedFunctionVertexShaderHlsl = tmp.str();
-	}
-
-	// Passthrough Vertex Shader
-	{
-		auto dir = hlslDir;
-		this->vertexShaderPassthroughPath = dir.append("CxbxVertexShaderPassthrough.hlsl").string();
-		std::stringstream tmp;
-		tmp << OpenWithRetry(this->vertexShaderPassthroughPath).rdbuf();
-		this->vertexShaderPassthroughHlsl = tmp.str();
-	}
-
-	// Register Combiner Interpreter (PS ubershader)
-	{
-		auto dir = hlslDir;
-		this->registerCombinerInterpreterPath = dir.append("CxbxRegisterCombinerInterpreter.hlsl").string();
-		std::stringstream tmp;
-		tmp << OpenWithRetry(this->registerCombinerInterpreterPath).rdbuf();
-		this->registerCombinerInterpreterHlsl = tmp.str();
-	}
-
-	// Vertex Shader Interpreter (VS ubershader)
-	{
-		auto dir = hlslDir;
-		this->vertexShaderInterpreterPath = dir.append("CxbxVertexShaderInterpreter.hlsl").string();
-		std::stringstream tmp;
-		tmp << OpenWithRetry(this->vertexShaderInterpreterPath).rdbuf();
-		this->vertexShaderInterpreterHlsl = tmp.str();
-	}
+	// Fixed-function, passthrough, RC interpreter, and VS interpreter shaders
+	// are now precompiled at build time — no HLSL loading needed for those.
 }
 
 void ShaderSources::InitShaderHotloading() {
