@@ -95,9 +95,6 @@ void CxbxInitWindow()
 	g_renderbase->SetWindowRelease([] {
 		ImGui_ImplWin32_Shutdown();
 	});
-
-	(void) g_ShaderSources.Update();
-	g_ShaderSources.InitShaderHotloading();
 	
 }
 

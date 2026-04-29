@@ -21,7 +21,7 @@
 #include "CxbxVertexShaderCommon.hlsli"
 #include "CxbxVertexFetch.hlsli"
 
-// Xbox constant registers (same as in CxbxVertexShaderTemplate.hlsl)
+// Xbox constant registers
 #define X_D3DSCM_CORRECTION 96
 #define X_D3DVS_CONSTREG_COUNT 192
 uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
@@ -480,7 +480,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
     }
 
     // ============================================================
-    // Copy to output struct (same footer as CxbxVertexShaderTemplate.hlsl).
+    // Copy to output struct (same footer as other vertex shaders).
     // Footer expects these named variables in scope.
     // ============================================================
     float4 oPos = s_oRegs[OUTPUT_REG_OPOS];

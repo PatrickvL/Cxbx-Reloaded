@@ -382,7 +382,6 @@ void CreateDefaultDevice
 	CxbxD3D11InitBlit();
    	g_renderbase->SetDeviceRelease([] {
    	   	ImGui_ImplDX11_Shutdown();
-   	   	g_VertexShaderCache.Clear();
    	   	CxbxD3D11ReleaseBackendResources(); // Also resets g_pD3DCurrentRTV for cached entries
    	   	if (g_pD3DDepthStencilView) { g_pD3DDepthStencilView->Release(); g_pD3DDepthStencilView = nullptr; }
    	   	if (g_pD3DDepthStencilBuffer) { g_pD3DDepthStencilBuffer->Release(); g_pD3DDepthStencilBuffer = nullptr; }

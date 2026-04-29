@@ -34,8 +34,8 @@
 #include "core\kernel\support\Emu.h"
 #include "core\hle\D3D8\Rendering\RenderGlobals.h" // For g_Xbox_VertexShader_Handle
 #include "core\hle\D3D8\Rendering\RenderStates.h" // For XboxRenderStateConverter
-#include "core\hle\D3D8\Rendering\Shaders\VertexShaderCache.h" // For g_VertexShaderCache
-#include "core\hle\D3D8\Rendering\Shaders\Shader.h" // For g_ShaderSources
+#include "core\hle\D3D8\Rendering\Shaders\Shader.h" // For LoadPrecompiledCSO
+
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A
@@ -72,9 +72,7 @@ static xbox::X_D3DVertexShader g_Xbox_VertexShader_ForFVF = {};
 static uint32_t                g_X_VERTEXSHADER_FLAG_PROGRAM; // X_VERTEXSHADER_FLAG_PROGRAM flag varies per XDK, so it is set on runtime
 static uint32_t                g_X_VERTEXSHADER_FLAG_VALID_MASK; // For a test case
 
-// Track the current active vertex shader key (used to retrieve bytecode for input layout creation)
-static ShaderKey g_D3D11ActiveVertexShaderKey = 0;
-static bool g_D3D11HasActiveShaderKey = false;
+
 // Retained bytecode for FixedFunction and Passthrough vertex shaders (needed for input layout creation)
 static ID3DBlob* g_pD3D11FixedFunctionBytecode = nullptr;
 static ID3DBlob* g_pD3D11PassthroughBytecode = nullptr;
@@ -412,13 +410,34 @@ CxbxVertexDeclaration* FetchCachedCxbxVertexDeclaration(VertexDeclarationKey Cac
 	return nullptr;
 }
 
-extern ID3D11VertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const char *shader_category); // Implemented in VertexShaderCache.cpp
+extern ID3D11VertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const char *shader_category)
+{
+	ID3D11VertexShader* pHostVertexShader = nullptr;
 
-ID3D11VertexShader* InitShader(void (*compileFunc)(ID3DBlob**), const char* label, ID3DBlob** ppRetainedBytecode = nullptr) {
+	if (g_pD3DDevice == nullptr) {
+		EmuLog(LOG_LEVEL::WARNING, "Can't create %s vertex shader - no D3D device is set!", shader_category);
+	}
+	else {
+		assert(pCompiledShader);
+
+		HRESULT hRet;
+		hRet = g_pD3DDevice->CreateVertexShader(
+			(const void*)pCompiledShader->GetBufferPointer(),
+			pCompiledShader->GetBufferSize(),
+			nullptr,
+			&pHostVertexShader
+		);
+		if (FAILED(hRet)) CxbxrAbort("Failed to create %s vertex shader", shader_category);
+	}
+
+	return pHostVertexShader;
+}
+
+ID3D11VertexShader* InitShader(const char* csoName, const char* label, ID3DBlob** ppRetainedBytecode = nullptr) {
 	ID3D11VertexShader* shader = nullptr;
 
 	ID3DBlob* pBlob = nullptr;
-	compileFunc(&pBlob);
+	LoadPrecompiledCSO(csoName, &pBlob);
 	if (pBlob) {
 		shader = CxbxCreateVertexShader(pBlob, label);
 		if (ppRetainedBytecode) {
@@ -467,30 +486,27 @@ void CxbxUpdateHostVertexShader()
 	// TODO: move render state to VertexShader.cpp
 	static ID3D11VertexShader* fixedFunctionShader = nullptr; // TODO: move to shader cache
 	static ID3D11VertexShader* passthroughShader = nullptr;
-	static int vertexShaderVersion = -1;
+	static bool shadersLoaded = false;
 
-	int shaderVersion = g_ShaderSources.Update();
-	if (vertexShaderVersion != shaderVersion) {
-		vertexShaderVersion = shaderVersion;
+	if (!shadersLoaded) {
+		shadersLoaded = true;
 		CxbxSetVertexShader(nullptr);
 
 		EmuLog(LOG_LEVEL::INFO, "Loading vertex shaders...");
-
-		g_VertexShaderCache.Clear();
 
 		if (fixedFunctionShader) {
 			fixedFunctionShader->Release();
 			fixedFunctionShader = nullptr;
 		}
 		if (g_pD3D11FixedFunctionBytecode) { g_pD3D11FixedFunctionBytecode->Release(); g_pD3D11FixedFunctionBytecode = nullptr; }
-		fixedFunctionShader = InitShader(EmuCompileFixedFunction, "Fixed Function Vertex Shader", &g_pD3D11FixedFunctionBytecode);
+		fixedFunctionShader = InitShader("CxbxFixedFunctionVS", "Fixed Function Vertex Shader", &g_pD3D11FixedFunctionBytecode);
 
 		if (passthroughShader) {
 			passthroughShader->Release();
 			passthroughShader = nullptr;
 		}
 		if (g_pD3D11PassthroughBytecode) { g_pD3D11PassthroughBytecode->Release(); g_pD3D11PassthroughBytecode = nullptr; }
-		passthroughShader = InitShader(EmuCompileXboxPassthrough, "Passthrough Vertex Shader", &g_pD3D11PassthroughBytecode);
+		passthroughShader = InitShader("CxbxVSPassthroughVS", "Passthrough Vertex Shader", &g_pD3D11PassthroughBytecode);
 
 		// Invalidate the VS interpreter so it recompiles from updated sources
 		if (g_pD3D11VSInterpreterVS) { g_pD3D11VSInterpreterVS->Release(); g_pD3D11VSInterpreterVS = nullptr; }
@@ -507,12 +523,10 @@ void CxbxUpdateHostVertexShader()
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
 		HRESULT hRet = CxbxSetVertexShader(fixedFunctionShader);
 		if (FAILED(hRet)) CxbxrAbort("Failed to set fixed-function shader");
-		g_D3D11HasActiveShaderKey = false; // Prevent stale programmable shader key from being used for input layout
 	}
 	else if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL) {
 		HRESULT hRet = CxbxSetVertexShader(passthroughShader);
 		if (FAILED(hRet)) CxbxrAbort("Failed to set passthrough shader");
-		g_D3D11HasActiveShaderKey = false; // Prevent stale programmable shader key from being used for input layout
 	}
 	else {
 		// Read program tokens from PGRAPH program_data (the authoritative
@@ -537,18 +551,7 @@ void CxbxUpdateHostVertexShader()
 			// Upload the raw NV2A microcode to the interpreter constant buffer
 			CxbxD3D11UploadVSInterpreterState(pTokens);
 			HRESULT hRet = CxbxSetVertexShader(g_pD3D11VSInterpreterVS);
-			g_D3D11HasActiveShaderKey = false;
 			DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(VSInterpreter)");
-		} else {
-			// Fallback: compile pipeline
-			DWORD shaderSize;
-			auto VertexShaderKey = g_VertexShaderCache.CreateShader(pTokens, &shaderSize);
-			ID3D11VertexShader* pHostVertexShader = g_VertexShaderCache.GetShader(VertexShaderKey);
-			// Track the active shader key so CxbxUpdateHostVertexDeclaration can create the input layout
-			g_D3D11ActiveVertexShaderKey = VertexShaderKey;
-			g_D3D11HasActiveShaderKey = true;
-			HRESULT hRet = CxbxSetVertexShader(pHostVertexShader);
-			DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(pHostVertexShader)");
 		}
 	}
 }
@@ -608,8 +611,6 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 
 ID3DBlob* CxbxGetActiveVertexShaderBytecode()
 {
-	if (g_D3D11HasActiveShaderKey)
-		return g_VertexShaderCache.GetShaderBytecode(g_D3D11ActiveVertexShaderKey);
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction)
 		return g_pD3D11FixedFunctionBytecode;
 	// Return passthrough bytecode when the passthrough HLSL shader is active
@@ -833,7 +834,6 @@ void CxbxImpl_DeleteVertexShader(DWORD Handle)
 
 	// TODO : Decide and implement what parts to free
 	// RegisterCxbxVertexDeclaration(pCxbxVertexDeclaration->Key, nullptr);
-	// g_VertexShaderCache.ReleaseShader(pCxbxVertexShader->Key);
 }
 
 void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT *pData)

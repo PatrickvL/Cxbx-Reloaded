@@ -356,7 +356,7 @@ void CxbxUpdateHostTextureScaling()
 		if (EmuXBFormatIsLinear(XboxFormat)) {
 			// Test-case : This is often hit by the help screen in XDK samples.
 			// Set scaling factor for this texture, which will be applied to
-			// all texture-coordinates in CxbxVertexShaderTemplate.hlsl
+			// all texture-coordinates in the vertex shader
 			// Note : Linear textures are two-dimensional at most (right?)
 			// Read dimensions from PGRAPH TEXIMAGERECT (authoritative, replaces HLE reads)
 			uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
