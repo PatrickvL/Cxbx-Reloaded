@@ -293,13 +293,15 @@ void CxbxImpl_SetRenderTarget
 		g_pXbox_RenderTarget = pRenderTarget;
 		CxbxRegisterSurfaceByDataAddr(pRenderTarget->Data, pRenderTarget);
 	}
-	else {
-		// If non is given, use the current Xbox render target
-		pRenderTarget = g_pXbox_RenderTarget;
-		// If there's no Xbox render target yet, fallback to the Xbox back buffer
-		if (pRenderTarget == xbox::zeroptr) {
-			LOG_TEST_CASE("SetRenderTarget fallback to backbuffer");
-			pRenderTarget = g_pXbox_BackBufferSurface;
+	else if (g_pXbox_RenderTarget == xbox::zeroptr) {
+		// No explicit render target and none was set yet.
+		// Try the backbuffer (set by the first SetRenderTarget from CreateDevice).
+		// When SetRenderTarget patches are disabled and trampolines aren't found,
+		// g_pXbox_BackBufferSurface may also be null — that's fine because
+		// CxbxD3D11UpdateRenderTargetFromPGRAPH creates host resources directly.
+		if (g_pXbox_BackBufferSurface != xbox::zeroptr) {
+			g_pXbox_RenderTarget = g_pXbox_BackBufferSurface;
+			CxbxRegisterSurfaceByDataAddr(g_pXbox_BackBufferSurface->Data, g_pXbox_BackBufferSurface);
 		}
    	}
 
