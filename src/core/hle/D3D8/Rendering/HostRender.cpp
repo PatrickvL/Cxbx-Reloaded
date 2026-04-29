@@ -823,17 +823,28 @@ void UpdateFixedFunctionVertexShaderState()
 		ffShaderState.TextureStates[i].TexCoordIndexGen = texCoordIndex >> 16; // D3DTSS_TCI flags
 	}
 
-	// Read current TexCoord component counts
-	xbox::X_VERTEXATTRIBUTEFORMAT* pXboxVertexAttributeFormat = GetXboxVertexAttributeFormat();
-	// Note : There seem to be other ways to access this, but we can use only this one;
-	// This, because CxbxGetVertexDeclaration() can't be used, since it doesn't track VertexAttributes
-	// (plus, it contains the overhead of shader lookup).
-	// Another, GetXboxVertexShader(), can't be used, because it doesn't honor vertex attribute overrides
-	// like those that apply for active SetVertexShaderInput.
-	// Also, the xbox::X_D3DVertexShader.Dimensionality[] field contains somewhat strange values.
+	// Read current TexCoord component counts from PGRAPH vertex attributes.
+	// PGRAPH is the authoritative source since the puller processes attribute
+	// format commands from the push buffer before each draw. The HLE
+	// GetXboxVertexAttributeFormat() only works when SetVertexShader was
+	// intercepted, which doesn't happen for push-buffer-only games.
 	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
-		auto vertexDataFormat = pXboxVertexAttributeFormat->Slots[xbox::X_D3DVSDE_TEXCOORD0 + i].Format;
-		reinterpret_cast<float*>(&ffShaderState.TexCoordComponentCount)[i] = (float)GetXboxVertexDataComponentCount(vertexDataFormat);
+		int attrIdx = xbox::X_D3DVSDE_TEXCOORD0 + i; // PGRAPH attribute indices match Xbox VSDE
+		const VertexAttribute& attr = pg->vertex_attributes[attrIdx];
+		float componentCount;
+		if (attr.count > 0) {
+			componentCount = (float)attr.count;
+		} else {
+			// Attribute not set in PGRAPH — fall back to HLE vertex shader if available
+			xbox::X_VERTEXATTRIBUTEFORMAT* pFmt = GetXboxVertexAttributeFormat();
+			if (pFmt) {
+				auto vertexDataFormat = pFmt->Slots[attrIdx].Format;
+				componentCount = (float)GetXboxVertexDataComponentCount(vertexDataFormat);
+			} else {
+				componentCount = 2.0f; // Safe default (2D texcoords)
+			}
+		}
+		reinterpret_cast<float*>(&ffShaderState.TexCoordComponentCount)[i] = componentCount;
 	}
 
 	// Update lights from PGRAPH registers.

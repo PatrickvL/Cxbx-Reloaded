@@ -254,7 +254,8 @@ xbox::X_D3DVertexShader* GetXboxVertexShader()
 
 		// Now, to convert, we do need to have a valid vertex shader :
 		if (g_Xbox_VertexShader_Handle == 0) {
-			LOG_TEST_CASE("Unassigned Xbox vertex shader!");
+			// Expected when SetVertexShader patches are disabled — PGRAPH
+			// vertex_attributes[] is the authoritative source instead.
 			return nullptr;
 		}
 
@@ -318,9 +319,9 @@ xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat()
 {
 	xbox::X_D3DVertexShader* pXboxVertexShader = GetXboxVertexShader();
 	if (pXboxVertexShader == xbox::zeroptr) {
-		// Despite possibly not being used, the pXboxVertexShader argument must always be assigned
-		LOG_TEST_CASE("Xbox should always have a VertexShader set (even for FVF's)");
-		return &g_Xbox_SetVertexShaderInput_Attributes; // WRONG result, but it's already strange this happens
+		// With SetVertexShader patches disabled, g_Xbox_VertexShader_Handle is
+		// never set. Return nullptr so callers can fall back to PGRAPH state.
+		return nullptr;
 	}
 
 	// If SetVertexShaderInput is active, its arguments overrule those of the active vertex shader
@@ -557,6 +558,11 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
 	xbox::X_VERTEXATTRIBUTEFORMAT *pXboxVertexAttributeFormat = GetXboxVertexAttributeFormat();
+	if (pXboxVertexAttributeFormat == nullptr) {
+		// With SetVertexShader patches disabled, HLE attribute format is
+		// unavailable. The IA bypass draw path reads PGRAPH directly instead.
+		return nullptr;
+	}
 
 	auto XboxVertexAttributesKey = GetXboxVertexAttributesKey(pXboxVertexAttributeFormat);
 	CxbxVertexDeclaration* pCxbxVertexDeclaration = FetchCachedCxbxVertexDeclaration(XboxVertexAttributesKey);
