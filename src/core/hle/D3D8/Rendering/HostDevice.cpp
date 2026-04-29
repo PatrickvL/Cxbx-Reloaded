@@ -610,7 +610,11 @@ void DetermineSupportedD3DFormats
    	   	   	   	g_bSupportsFormatSurfaceRenderTarget[X_Format] = FormatSupport & D3D11_FORMAT_SUPPORT_RENDER_TARGET;
    	   	   	   	g_bSupportsFormatSurfaceDepthStencil[X_Format] = FormatSupport & D3D11_FORMAT_SUPPORT_DEPTH_STENCIL;
    	   	   	   	// In D3D11, surfaces are textures, so the same format support applies
-   	   	   	   	g_bSupportsFormatTexture[X_Format] = FormatSupport & D3D11_FORMAT_SUPPORT_TEXTURE2D;
+   	   	   	   	// Regular textures must support both creation AND shader sampling;
+   	   	   	   	// formats like YUY2 may support TEXTURE2D but not SHADER_SAMPLE on some hardware,
+   	   	   	   	// which causes CreateShaderResourceView to fail later.
+   	   	   	   	g_bSupportsFormatTexture[X_Format] = (FormatSupport & D3D11_FORMAT_SUPPORT_TEXTURE2D)
+   	   	   	   	   	&& (FormatSupport & D3D11_FORMAT_SUPPORT_SHADER_SAMPLE);
    	   	   	   	g_bSupportsFormatTextureRenderTarget[X_Format] = FormatSupport & D3D11_FORMAT_SUPPORT_RENDER_TARGET;
    	   	   	   	g_bSupportsFormatTextureDepthStencil[X_Format] = FormatSupport & D3D11_FORMAT_SUPPORT_DEPTH_STENCIL;
 

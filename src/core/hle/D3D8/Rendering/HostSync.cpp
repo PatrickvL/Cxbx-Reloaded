@@ -265,6 +265,10 @@ void CxbxUpdateHostTextures()
 				ID3D11ShaderResourceView* pSRV = nullptr;
 				HRESULT hRet = g_pD3DDevice->CreateShaderResourceView(pHostBaseTexture, &srvDesc, &pSRV);
 				DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateShaderResourceView");
+				if (FAILED(hRet)) {
+					EmuLog(LOG_LEVEL::WARNING, "CxbxUpdateHostTextures : g_pD3DDevice->CreateShaderResourceView "
+						"D3D error (0x%08X: format=%u)", hRet, srvDesc.Format);
+				}
 
 				if (SUCCEEDED(hRet) && pSRV != nullptr) {
 					s_CachedResource[stage] = pHostBaseTexture;
