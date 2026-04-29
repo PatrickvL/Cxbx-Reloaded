@@ -446,6 +446,44 @@ float4 SampleCube(uint s, float3 dir)
 }
 
 // ============================================================
+// NV2A shadow compare (TX_RCOMP)
+// When a depth texture is sampled with shadow compare enabled,
+// the sampled depth is compared against the projected R texcoord.
+// NV2A convention: depth <op> ref  (texture depth on LEFT, fragment Z on RIGHT).
+// Result: 1.0 (pass) or 0.0 (fail), replicated to all channels.
+//
+// SHADOWCTL shadow_zfunc encoding (matches NV097_SET_SHADOW_DEPTH_FUNC):
+//   0 = NEVER   1 = LESS   2 = EQUAL  3 = LEQUAL
+//   4 = GREATER 5 = NOTEQUAL 6 = GEQUAL 7 = ALWAYS
+// ============================================================
+
+float4 ApplyShadowCompare(uint stage, float4 sampled, float3 coords)
+{
+    // Static swizzle -- avoids dynamic vector index / movc chain in SM5.0
+    float sc = (stage == 0) ? ShadowCompare.x
+             : (stage == 1) ? ShadowCompare.y
+             : (stage == 2) ? ShadowCompare.z
+                            : ShadowCompare.w;
+    if (sc == 0.0f) return sampled;
+
+    uint shadowFunc = PG_UINT(NV_PGRAPH_SHADOWCTL) & NV_PGRAPH_SHADOWCTL_SHADOW_ZFUNC;
+    if (shadowFunc == 0u) return sampled;   // NEVER
+    if (shadowFunc == 7u) return 1.0f.xxxx; // ALWAYS
+
+    float depth = sampled.r;    // sampled depth from shadow map
+    float ref   = coords.z;     // projected fragment Z (R/Q)
+
+    // NV2A comparison: depth <op> ref
+    // Bitmask matches hardware encoding: bit0=LESS, bit1=EQUAL, bit2=GREATER
+    uint cmp = (depth <  ref ? 1u : 0u)
+             | (depth == ref ? 2u : 0u)
+             | (depth >  ref ? 4u : 0u);
+
+    float r = (cmp & shadowFunc) != 0u ? 1.0f : 0.0f;
+    return r.xxxx;
+}
+
+// ============================================================
 // Texture stage fetch
 // ============================================================
 
@@ -459,8 +497,13 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
 
     // Hot paths: early-out before any register pre-loading
     if (mode <= PS_TEXTUREMODES_PROJECT2D) {
-        if (mode == PS_TEXTUREMODES_PROJECT2D)
-            Regs[tBase] = PostProcessTexel(stage, Sample2D(stage, coords.xy));
+        if (mode == PS_TEXTUREMODES_PROJECT2D) {
+            // NV2A PROJECT2D: texture unit divides S,T,R by Q before lookup.
+            // Essential for projective texturing (shadow maps, projected lights).
+            float3 projected = coords.xyz / coords.w;
+            float4 sampled = Sample2D(stage, projected.xy);
+            Regs[tBase] = ApplyShadowCompare(stage, PostProcessTexel(stage, sampled), projected);
+        }
 
         return; // NONE falls through here too
     }
@@ -508,8 +551,25 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
     switch (mode)
     {
     case PS_TEXTUREMODES_PROJECT3D:
-        val = Sample3D(stage, coords.xyz);
+    {
+        // NV2A PROJECT3D: divides S,T,R by Q before lookup.
+        // The hardware selects the sampler based on the actual texture type,
+        // not the mode.  For 2D depth textures (shadow maps), this means
+        // sample 2D at (S/Q, T/Q) with R/Q as the shadow compare reference.
+        float3 projected = coords.xyz / coords.w;
+        float sc = (stage == 0) ? ShadowCompare.x
+                 : (stage == 1) ? ShadowCompare.y
+                 : (stage == 2) ? ShadowCompare.z
+                                : ShadowCompare.w;
+        if (sc != 0.0f) {
+            // Depth texture is always 2D — sample as 2D and apply shadow compare
+            float4 sampled = Sample2D(stage, projected.xy);
+            Regs[tBase] = ApplyShadowCompare(stage, PostProcessTexel(stage, sampled), projected);
+            return;
+        }
+        val = Sample3D(stage, projected);
         break;
+    }
 
     case PS_TEXTUREMODES_CUBEMAP:
         val = SampleCube(stage, coords.xyz);
@@ -630,7 +690,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
     }
 
     // Post-process: format fixup, color sign, color key (matches compiled PS pipeline)
-    Regs[tBase] = PostProcessTexel(stage, val);
+    // Shadow compare: if this stage has a depth texture, compare R texcoord against depth
+    Regs[tBase] = ApplyShadowCompare(stage, PostProcessTexel(stage, val), coords.xyz);
 }
 
 // NV2A-accurate multiply helpers are in CxbxNV2AMathHelpers.hlsli

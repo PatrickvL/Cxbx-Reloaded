@@ -230,8 +230,9 @@ static HRESULT CreateGpuPixelContainerResource(
 		desc.SampleDesc.Count = 1; // No MSAA for now; enabling requires resolve pass infrastructure
 		desc.SampleDesc.Quality = 0;
 		desc.Usage = D3D11_USAGE_DYNAMIC;
-		if (D3DUsage & D3DUSAGE_DEPTHSTENCIL) {
-			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+		if ((D3DUsage & D3DUSAGE_DEPTHSTENCIL) || IsDepthFormat(PCFormat)) {
+			desc.Format = GetTypelessDepthFormat(PCFormat);
+			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
 			desc.Usage = D3D11_USAGE_DEFAULT;
 			desc.CPUAccessFlags = 0;
 		} else if (D3DUsage & D3DUSAGE_RENDERTARGET) {
@@ -298,8 +299,13 @@ static HRESULT CreateGpuPixelContainerResource(
 		desc.Format = PCFormat;
 		desc.SampleDesc.Count = 1;
 		desc.SampleDesc.Quality = 0;
-		if (D3DUsage & D3DUSAGE_DEPTHSTENCIL) {
-			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+		if ((D3DUsage & D3DUSAGE_DEPTHSTENCIL) || IsDepthFormat(PCFormat)) {
+			// Depth textures need typeless format + dual bind flags so they can
+			// serve as both depth stencil (DSV) and shader resource (SRV).
+			// Games like ShadowBuffer create D16 textures without DEPTHSTENCIL
+			// usage, then set them as depth targets via SetRenderTarget.
+			desc.Format = GetTypelessDepthFormat(PCFormat);
+			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
 			desc.Usage = D3D11_USAGE_DEFAULT;
 			desc.CPUAccessFlags = 0;
 		} else if (D3DUsage & D3DUSAGE_RENDERTARGET) {

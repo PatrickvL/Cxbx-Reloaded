@@ -70,6 +70,10 @@ float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs[byteOff >> 2]); }
 #define NV_PGRAPH_SHADERCTL                 0x1998
 #define NV_PGRAPH_SHADERPROG                0x199C
 
+// Shadow mapping control
+#define NV_PGRAPH_SHADOWCTL                 0x19A4
+#define NV_PGRAPH_SHADOWCTL_SHADOW_ZFUNC    0x00000007
+
 // Specular fog factors (final combiner constants, ABGR packed)
 #define NV_PGRAPH_SPECFOGFACTOR0            0x19AC
 #define NV_PGRAPH_SPECFOGFACTOR1            0x19B0

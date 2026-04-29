@@ -23,6 +23,7 @@
 // *
 // ******************************************************************
 #include "EmuD3D8_common.h"
+#include "Backend\Backend_D3D11.h"
 #include <algorithm> // std::min
 
 // Thread-local flag: true when executing on the PFIFO puller thread.
@@ -87,12 +88,16 @@ void CxbxUpdateHostTextures()
 		uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
 
 		if (texOffset != 0) {
-			// Check if this offset corresponds to a render target surface.
+			// Check if this offset corresponds to a render target or depth stencil surface.
 			// Exclude the current depth/stencil surface (identified by PGRAPH
 			// surface_zeta.offset) — it cannot be sampled while bound as depth.
 			auto pXboxSurface = CxbxLookupSurfaceByDataAddr(texOffset);
 			if (pXboxSurface && texOffset != pg->surface_zeta.offset) {
 				auto pHostRT = GetHostSurface(pXboxSurface, D3DUSAGE_RENDERTARGET);
+				if (!pHostRT) {
+					// Also try depth stencil — shadow mapping binds a depth surface as texture
+					pHostRT = GetHostSurface(pXboxSurface, D3DUSAGE_DEPTHSTENCIL);
+				}
 				if (pHostRT) {
 					pHostBaseTexture = pHostRT;
 					bIsRenderTargetTexture = true;
@@ -229,7 +234,8 @@ void CxbxUpdateHostTextures()
 				case D3D11_RESOURCE_DIMENSION_TEXTURE2D: {
 					D3D11_TEXTURE2D_DESC texDesc = {};
 					((ID3D11Texture2D*)pHostBaseTexture)->GetDesc(&texDesc);
-					srvDesc.Format = texDesc.Format;
+					// Depth textures use typeless format — map to SRV-compatible format for sampling
+					srvDesc.Format = IsDepthFormat(texDesc.Format) ? GetDepthSRVFormat(texDesc.Format) : texDesc.Format;
 					if (texDesc.ArraySize == 6) {
 						srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
 						srvDesc.TextureCube.MipLevels = texDesc.MipLevels;

@@ -359,6 +359,24 @@ void CxbxD3D11UploadRCInterpreterState()
 		aux.FrontFaceInfo = { ff, 0.0f, 0.0f, 0.0f };
 	}
 
+	// Shadow compare: per-stage flag indicating a depth texture is bound.
+	// When active, the pixel shader compares the R texcoord against the
+	// sampled depth value using NV_PGRAPH_SHADOWCTL as the comparison function.
+	{
+		float sc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		for (int i = 0; i < 4; i++) {
+			uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
+			if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
+				uint32_t texFmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
+				xbox::X_D3DFORMAT xboxFmt = GetXboxPixelContainerFormat(texFmt);
+				if (EmuXBFormatIsDepthBuffer(xboxFmt)) {
+					sc[i] = 1.0f;
+				}
+			}
+		}
+		aux.ShadowCompare = { sc[0], sc[1], sc[2], sc[3] };
+	}
+
 	// Upload aux cbuffer and bind to b0
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterAuxCB, &aux, sizeof(aux));
 	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterAuxCB);

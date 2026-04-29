@@ -198,7 +198,7 @@ void CxbxSetDepthStencilSurface(ID3D11Texture2D* pHostDepthStencil)
 		D3D11_TEXTURE2D_DESC texDesc = {};
 		pHostDepthStencil->GetDesc(&texDesc);
 		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-		dsvDesc.Format = texDesc.Format;
+		dsvDesc.Format = GetDepthDSVFormat(texDesc.Format);
 		dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 		dsvDesc.Texture2D.MipSlice = 0;
 		g_pD3DDevice->CreateDepthStencilView(pHostDepthStencil, &dsvDesc, &pDSV);

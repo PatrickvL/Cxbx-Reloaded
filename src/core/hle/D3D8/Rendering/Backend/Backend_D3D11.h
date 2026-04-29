@@ -90,6 +90,52 @@ extern FLOAT g_D3D11BlendFactor[4];
 extern UINT  g_D3D11SampleMask;
 
 // ******************************************************************
+// * Depth format helpers for typeless creation + SRV/DSV views
+// ******************************************************************
+
+// Map a depth format to its typeless equivalent for dual-bind (DSV+SRV) texture creation.
+inline DXGI_FORMAT GetTypelessDepthFormat(DXGI_FORMAT depthFormat) {
+	switch (depthFormat) {
+		case DXGI_FORMAT_D16_UNORM:           return DXGI_FORMAT_R16_TYPELESS;
+		case DXGI_FORMAT_D24_UNORM_S8_UINT:   return DXGI_FORMAT_R24G8_TYPELESS;
+		default: return depthFormat;
+	}
+}
+
+// Map a typeless or depth format to the SRV-compatible format for sampling depth textures.
+inline DXGI_FORMAT GetDepthSRVFormat(DXGI_FORMAT format) {
+	switch (format) {
+		case DXGI_FORMAT_R16_TYPELESS:
+		case DXGI_FORMAT_D16_UNORM:           return DXGI_FORMAT_R16_UNORM;
+		case DXGI_FORMAT_R24G8_TYPELESS:
+		case DXGI_FORMAT_D24_UNORM_S8_UINT:   return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+		default: return format;
+	}
+}
+
+// Map a typeless format back to the typed depth format for DSV creation.
+inline DXGI_FORMAT GetDepthDSVFormat(DXGI_FORMAT format) {
+	switch (format) {
+		case DXGI_FORMAT_R16_TYPELESS:        return DXGI_FORMAT_D16_UNORM;
+		case DXGI_FORMAT_R24G8_TYPELESS:      return DXGI_FORMAT_D24_UNORM_S8_UINT;
+		default: return format;
+	}
+}
+
+// Check if a format is a depth/stencil or typeless-depth format.
+inline bool IsDepthFormat(DXGI_FORMAT format) {
+	switch (format) {
+		case DXGI_FORMAT_D16_UNORM:
+		case DXGI_FORMAT_D24_UNORM_S8_UINT:
+		case DXGI_FORMAT_R16_TYPELESS:
+		case DXGI_FORMAT_R24G8_TYPELESS:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// ******************************************************************
 // * D3D11 backend functions
 // ******************************************************************
 

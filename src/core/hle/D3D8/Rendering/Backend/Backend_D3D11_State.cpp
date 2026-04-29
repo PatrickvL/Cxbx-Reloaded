@@ -712,7 +712,8 @@ static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 	desc.MiscFlags = 0;
 
 	if (isDepthStencil) {
-		desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+		desc.Format = GetTypelessDepthFormat(format);
+		desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
 	} else {
 		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 	}
@@ -736,7 +737,7 @@ static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 	// texture starts as all-zeros, causing LEQUAL to reject all fragments.
 	if (isDepthStencil && pResult) {
 		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-		dsvDesc.Format = format;
+		dsvDesc.Format = GetDepthDSVFormat(format);
 		dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 		dsvDesc.Texture2D.MipSlice = 0;
 		ID3D11DepthStencilView* pInitDSV = nullptr;
@@ -823,6 +824,25 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 			}
 
 			if (pHostDS) {
+				// D3D11 requires RTV and DSV dimensions to match.
+				// If the new DS has different dimensions from the current color RT
+				// (e.g. depth-only shadow pass with 512x512 DS vs 640x480 backbuffer),
+				// unbind the color RT and invalidate tracking so it gets rebound
+				// when the color offset changes on the next pass.
+				if (g_pD3DCurrentHostRenderTarget) {
+					D3D11_TEXTURE2D_DESC dsDesc = {}, rtDesc = {};
+					pHostDS->GetDesc(&dsDesc);
+					g_pD3DCurrentHostRenderTarget->GetDesc(&rtDesc);
+					if (dsDesc.Width != rtDesc.Width || dsDesc.Height != rtDesc.Height) {
+						// Unbind color RT — depth-only rendering
+						if (g_pD3DCurrentRTV && g_pD3DCurrentRTV != g_pD3DBackBufferView) {
+							g_pD3DCurrentRTV->Release();
+						}
+						g_pD3DCurrentRTV = nullptr;
+						g_pD3DCurrentHostRenderTarget = nullptr;
+						g_LastBoundColorOffset = ~0u; // Force rebind on next color change
+					}
+				}
 				CxbxSetDepthStencilSurface(pHostDS);
 				UpdateDepthStencilFlags(pHostDS);
 			}
