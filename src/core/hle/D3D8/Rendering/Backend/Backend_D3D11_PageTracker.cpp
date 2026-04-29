@@ -47,6 +47,7 @@
 #include "common/AddressRanges.h"
 #include "common/win32/WineEnv.h"
 
+#include <algorithm>
 #include <cstring>
 
 // Wine may not reliably support MEM_WRITE_WATCH / GetWriteWatch.
@@ -82,6 +83,15 @@ static uint32_t s_TextureDirtyBitmap[BITMAP_DWORDS] = {};
 // * Tiled committed bitmap — tracks which 0xF0 pages are committed
 // ******************************************************************
 static uint32_t s_TiledCommittedBitmap[BITMAP_DWORDS] = {};
+
+// Quick flag: true when any tiled page is committed (avoids scanning bitmap)
+static bool s_bHasTiledPages = false;
+
+// Frame boundary flag: true for the first flush after Present.
+// Only the first flush of a frame may use MAP_WRITE_DISCARD (which orphans
+// the buffer). Subsequent mid-frame flushes use MAP_WRITE_NO_OVERWRITE so
+// that earlier draw calls in the same frame still see their data.
+static bool s_bFirstFlushOfFrame = true;
 
 // ******************************************************************
 // * GPU mirror buffer (64 MiB ByteAddressBuffer + typed SRV views)
@@ -148,6 +158,7 @@ static bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 			       (void*)(CONTIG_BASE + pageOffset), PAGE_SIZE_);
 
 			SetBit(s_TiledCommittedBitmap, pageIdx);
+			s_bHasTiledPages = true;
 		}
 		return true;
 	}
@@ -195,6 +206,9 @@ static long WINAPI PageTrackerVEH(EXCEPTION_POINTERS* e)
 // ******************************************************************
 static void SyncTiledPagesBack()
 {
+	if (!s_bHasTiledPages)
+		return;
+
 	for (uint32_t dw = 0; dw < BITMAP_DWORDS; dw++) {
 		uint32_t bits = s_TiledCommittedBitmap[dw];
 		if (bits == 0) continue;
@@ -218,6 +232,8 @@ static void SyncTiledPagesBack()
 
 		s_TiledCommittedBitmap[dw] = 0;
 	}
+
+	s_bHasTiledPages = false;
 }
 
 // ******************************************************************
@@ -386,15 +402,20 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	// The memcpy writes to 0x80 are automatically tracked by write-watch.
 	SyncTiledPagesBack();
 
-	// Wine / broken-write-watch fallback: always do a full upload
+	// Wine / broken-write-watch fallback: always do a full upload.
+	// Use DISCARD only on the first flush of the frame to avoid orphaning
+	// the buffer while earlier draws in this frame are still referencing it.
 	if (s_bWineFallback) {
 		memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
+		D3D11_MAP mapType = s_bFirstFlushOfFrame
+			? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, mapType, 0, &mapped);
 		if (SUCCEEDED(hr)) {
 			memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
 			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
 		}
+		s_bFirstFlushOfFrame = false;
 		return PAGE_COUNT;
 	}
 
@@ -422,29 +443,66 @@ uint32_t CxbxPageTrackerFlushToGPU()
 		}
 	}
 
-	if (count > PAGE_COUNT / 4) {
-		// Many pages dirty — full DISCARD + memcpy is cheaper
+	// Many pages dirty AND first flush of frame: safe to DISCARD + full memcpy.
+	// DISCARD orphans the GPU buffer — any draw calls issued earlier in this frame
+	// that haven't completed yet would read from the orphaned (old) buffer, which is
+	// fine because DISCARD gives us a fresh allocation. But mid-frame DISCARD would
+	// lose updates from earlier flushes, so we only allow it on the first flush.
+	if (count > PAGE_COUNT / 4 && s_bFirstFlushOfFrame) {
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
 		if (SUCCEEDED(hr)) {
 			memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
 			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
 		}
+		s_bFirstFlushOfFrame = false;
 	} else {
-		// Few pages dirty — update only dirty pages via NO_OVERWRITE
+		// Incremental update: NO_OVERWRITE preserves prior flush data in the same frame.
+		// Coalesce consecutive dirty pages into contiguous runs to minimize memcpy calls
+		// and maximize throughput (large memcpy uses REP MOVSB / AVX at full bandwidth).
+
+		// GetWriteWatch returns pages in ascending address order per MSDN, but sort
+		// defensively to guarantee correctness of the coalescing algorithm.
+		std::sort(s_WriteWatchPages, s_WriteWatchPages + count);
+
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
 		if (SUCCEEDED(hr)) {
 			uint8_t* pDst = (uint8_t*)mapped.pData;
-			for (ULONG_PTR i = 0; i < count; i++) {
-				uint32_t offset = (uint32_t)((uintptr_t)s_WriteWatchPages[i] - CONTIG_BASE);
-				memcpy(pDst + offset, s_WriteWatchPages[i], PAGE_SIZE_);
+
+			// Walk the sorted page list and merge consecutive pages into runs
+			ULONG_PTR runStart = 0;
+			while (runStart < count) {
+				uintptr_t startAddr = (uintptr_t)s_WriteWatchPages[runStart];
+				ULONG_PTR runEnd = runStart + 1;
+
+				// Extend run while next page is contiguous
+				while (runEnd < count &&
+					(uintptr_t)s_WriteWatchPages[runEnd] == startAddr + (runEnd - runStart) * PAGE_SIZE_) {
+					runEnd++;
+				}
+
+				uint32_t offset = (uint32_t)(startAddr - CONTIG_BASE);
+				uint32_t runBytes = (uint32_t)(runEnd - runStart) * PAGE_SIZE_;
+				memcpy(pDst + offset, (const void*)startAddr, runBytes);
+
+				runStart = runEnd;
 			}
+
 			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
 		}
+		s_bFirstFlushOfFrame = false;
 	}
 
 	return (uint32_t)count;
+}
+
+// ******************************************************************
+// * Public: Notify frame boundary (called from CxbxPresent)
+// ******************************************************************
+void CxbxPageTrackerOnPresent()
+{
+	s_bFirstFlushOfFrame = true;
 }
 
 // ******************************************************************
@@ -452,10 +510,8 @@ uint32_t CxbxPageTrackerFlushToGPU()
 // ******************************************************************
 bool CxbxPageTrackerHasDirtyPages()
 {
-	// Check for committed tiled pages that need sync
-	for (uint32_t dw = 0; dw < BITMAP_DWORDS; dw++) {
-		if (s_TiledCommittedBitmap[dw] != 0) return true;
-	}
+	// Quick check for committed tiled pages
+	if (s_bHasTiledPages) return true;
 
 	// Peek at write-watch (do not reset)
 	// On Wine, always report dirty since we can't reliably check

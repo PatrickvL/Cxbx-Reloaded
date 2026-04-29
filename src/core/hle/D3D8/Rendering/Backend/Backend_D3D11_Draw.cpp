@@ -22,6 +22,7 @@
 // ******************************************************************
 
 #include "Backend_D3D11_Internal.h"
+#include "Backend_D3D11_PageTracker.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // NV2A_get_vertex_attribute_value_pointer
 
 // ******************************************************************
@@ -187,6 +188,9 @@ HRESULT CxbxPresent()
 	CxbxEndScene();
 	HRESULT hRet = g_pSwapChain->Present(0, 0);
 	DEBUG_D3DRESULT(hRet, "g_pSwapChain->Present");
+	// Allow the next page tracker flush to use DISCARD (safe at frame boundary
+	// since no draw calls from this frame are still referencing the buffer)
+	CxbxPageTrackerOnPresent();
 	CxbxBeginScene();
 	return hRet;
 }

@@ -76,6 +76,10 @@ uint32_t CxbxPageTrackerFlushToGPU();
 // Check if any pages are CPU-dirty (quick early-out for draw path).
 bool CxbxPageTrackerHasDirtyPages();
 
+// Notify frame boundary — allows the next flush to use MAP_WRITE_DISCARD
+// for efficient full-buffer upload. Must be called from CxbxPresent().
+void CxbxPageTrackerOnPresent();
+
 // ******************************************************************
 // * GPU→CPU: Render target tracking
 // ******************************************************************
