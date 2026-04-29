@@ -74,7 +74,7 @@ LightingOutput DoLight(const Light l, const float2 powers)
 	float spotIntensity = 1;
 	
 	if (l.Type == LIGHT_TYPE_DIRECTIONAL) {
-		toLight = toLightN = -l.DirectionVN;
+		toLight = toLightN = l.DirectionVN; // NV2A stores direction TO light (pre-negated by D3D runtime)
 	}
 	else {
 		toLight = l.PositionV - View.Position.xyz;
