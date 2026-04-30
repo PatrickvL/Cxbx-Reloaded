@@ -561,10 +561,14 @@ add_custom_command(
 )
 install(DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/hlsl DESTINATION bin)
 
-# Build-time HLSL compilation — compile interpreter/passthrough shaders
-# directly to named .cso files next to the executable using fxc.exe.
-# No runtime shader compilation or shader cache needed for these.
+# Build-time HLSL compilation — compile shaders with fxc then embed the
+# compiled bytecode directly into cxbxr-emu.dll via generated C headers.
+# Dependency chain: .hlsl/.hlsli -> fxc -> .cso -> gen_cso_header -> .h -> .dll
+# Editing ANY .hlsl or .hlsli triggers a full recompile+relink automatically.
 set(CXBXR_HLSL_DIR "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders")
+set(CSO_HEADER_SCRIPT "${CXBXR_HLSL_DIR}/gen_cso_header.cmake")
+set(SHADER_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
+file(MAKE_DIRECTORY "${SHADER_OUT_DIR}")
 
 # All .hlsli headers that the HLSL files #include (for dependency tracking)
 set(CXBXR_HLSLI_DEPS
@@ -582,43 +586,97 @@ set(CXBXR_HLSLI_DEPS
     "${CXBXR_HLSL_DIR}/CxbxPGRAPHRegs.hlsli"
 )
 
-# Macro: compile one HLSL file to a named .cso at build time
-# Usage: cxbxr_compile_hlsl(<hlsl_file> <profile> <output_name>)
-macro(cxbxr_compile_hlsl HLSL_FILE PROFILE OUTPUT_NAME)
-    set(_CSO_OUTPUT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/${OUTPUT_NAME}.cso")
+# Map shader files to their fxc profile and array names
+set(SHADER_SOURCES
+    CxbxRegisterCombinerInterpreter.hlsl
+    CxbxVertexShaderInterpreter.hlsl
+    CxbxVertexShaderPassthrough.hlsl
+    CxbxFixedFunctionVertexShader.hlsl
+    CxbxBlitVS.hlsl
+    CxbxBlitPS.hlsl
+    CxbxPointSpriteGS.hlsl
+    CxbxThickLineGS.hlsl
+    CxbxUnswizzleCS.hlsl
+    CxbxIndexConvertCS.hlsl
+    CxbxPaletteExpandCS.hlsl
+    CxbxFormatConvertCS.hlsl
+    CxbxVertexConvertCS.hlsl
+)
+set(SHADER_PROFILES
+    ps_5_0
+    vs_5_0
+    vs_5_0
+    vs_5_0
+    vs_5_0
+    ps_5_0
+    gs_5_0
+    gs_5_0
+    cs_5_0
+    cs_5_0
+    cs_5_0
+    cs_5_0
+    cs_5_0
+)
+set(SHADER_ARRAY_NAMES
+    cso_CxbxRCInterpreterPS
+    cso_CxbxVSInterpreterVS
+    cso_CxbxVSPassthroughVS
+    cso_CxbxFixedFunctionVS
+    cso_CxbxBlitVS
+    cso_CxbxBlitPS
+    cso_CxbxPointSpriteGS
+    cso_CxbxThickLineGS
+    cso_CxbxUnswizzleCS
+    cso_CxbxIndexConvertCS
+    cso_CxbxPaletteExpandCS
+    cso_CxbxFormatConvertCS
+    cso_CxbxVertexConvertCS
+)
+
+set(CSO_HEADERS)
+list(LENGTH SHADER_SOURCES SHADER_COUNT)
+math(EXPR SHADER_LAST "${SHADER_COUNT} - 1")
+foreach(I RANGE 0 ${SHADER_LAST})
+    list(GET SHADER_SOURCES ${I} SHADER_FILE)
+    list(GET SHADER_PROFILES ${I} PROFILE)
+    list(GET SHADER_ARRAY_NAMES ${I} ARRAY_NAME)
+    set(HLSL_PATH "${CXBXR_HLSL_DIR}/${SHADER_FILE}")
+    set(CSO_PATH "${SHADER_OUT_DIR}/${ARRAY_NAME}.cso")
+    set(HDR_PATH "${SHADER_OUT_DIR}/${ARRAY_NAME}.h")
+
+    # Step 1: HLSL -> CSO (fxc)
     add_custom_command(
-        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${OUTPUT_NAME}.cso.stamp"
-        COMMENT "Compiling ${OUTPUT_NAME}.cso (${PROFILE})..."
+        OUTPUT "${CSO_PATH}"
         COMMAND fxc /nologo /T ${PROFILE} /E main /O1
                 /I "${CXBXR_HLSL_DIR}"
-                /Fo "${_CSO_OUTPUT}"
-                "${HLSL_FILE}"
-        COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_CURRENT_BINARY_DIR}/${OUTPUT_NAME}.cso.stamp"
-        DEPENDS "${HLSL_FILE}" ${CXBXR_HLSLI_DEPS}
+                /Fo "${CSO_PATH}"
+                "${HLSL_PATH}"
+        DEPENDS "${HLSL_PATH}" ${CXBXR_HLSLI_DEPS}
+        COMMENT "HLSL->CSO: ${SHADER_FILE} (${PROFILE})"
         VERBATIM
     )
-    list(APPEND CXBXR_COMPILED_SHADER_STAMPS "${CMAKE_CURRENT_BINARY_DIR}/${OUTPUT_NAME}.cso.stamp")
-endmacro()
 
-set(CXBXR_COMPILED_SHADER_STAMPS "")
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxRegisterCombinerInterpreter.hlsl" ps_5_0 CxbxRCInterpreterPS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxVertexShaderInterpreter.hlsl"     vs_5_0 CxbxVSInterpreterVS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxVertexShaderPassthrough.hlsl"     vs_5_0 CxbxVSPassthroughVS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxFixedFunctionVertexShader.hlsl"   vs_5_0 CxbxFixedFunctionVS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxBlitVS.hlsl"                      vs_5_0 CxbxBlitVS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxBlitPS.hlsl"                      ps_5_0 CxbxBlitPS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxPointSpriteGS.hlsl"               gs_5_0 CxbxPointSpriteGS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxThickLineGS.hlsl"                 gs_5_0 CxbxThickLineGS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxUnswizzleCS.hlsl"                 cs_5_0 CxbxUnswizzleCS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxIndexConvertCS.hlsl"              cs_5_0 CxbxIndexConvertCS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxPaletteExpandCS.hlsl"             cs_5_0 CxbxPaletteExpandCS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxFormatConvertCS.hlsl"             cs_5_0 CxbxFormatConvertCS)
-cxbxr_compile_hlsl("${CXBXR_HLSL_DIR}/CxbxVertexConvertCS.hlsl"             cs_5_0 CxbxVertexConvertCS)
+    # Step 2: CSO -> C header
+    add_custom_command(
+        OUTPUT "${HDR_PATH}"
+        COMMAND ${CMAKE_COMMAND}
+                -DCSO_FILE=${CSO_PATH}
+                -DHEADER_FILE=${HDR_PATH}
+                -DARRAY_NAME=${ARRAY_NAME}
+                -P "${CSO_HEADER_SCRIPT}"
+        DEPENDS "${CSO_PATH}" "${CSO_HEADER_SCRIPT}"
+        COMMENT "CSO->header: ${ARRAY_NAME}.h"
+        VERBATIM
+    )
 
-add_custom_target(compile-shaders ALL
-    DEPENDS ${CXBXR_COMPILED_SHADER_STAMPS}
-)
+    list(APPEND CSO_HEADERS "${HDR_PATH}")
+endforeach()
+
+add_custom_target(compile-shaders ALL DEPENDS ${CSO_HEADERS})
 set_target_properties(compile-shaders PROPERTIES FOLDER "Cxbx-Reloaded/tools")
+
+# Export include directory for cxbxr-emu
+set(CXBXR_SHADER_GEN_INCLUDE_DIR "${SHADER_OUT_DIR}" CACHE INTERNAL "")
 
 install(PROGRAMS $<TARGET_FILE_DIR:cxbx>/${CMAKE_SHARED_LIBRARY_PREFIX}subhook${CMAKE_SHARED_LIBRARY_SUFFIX}
   DESTINATION bin

@@ -1,4 +1,4 @@
-﻿// This is an open source non-commercial project. Dear PVS-Studio, please check it.
+// This is an open source non-commercial project. Dear PVS-Studio, please check it.
 // PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 // ******************************************************************
 // *
@@ -29,60 +29,30 @@
 
 #include <d3dcompiler.h>
 #include "Shader.h"
+#include "EmbeddedShaders.h"
 #include "core\kernel\support\Emu.h" // EmuLog
 
-#include <string>
-
 // ============================================================================
-// Precompiled CSO loading â€” loads build-time compiled shaders from exe dir
+// Precompiled CSO loading - uses bytecode embedded at compile time
 // ============================================================================
 bool LoadPrecompiledCSO(const char* csoName, ID3DBlob** ppBlob)
 {
 	*ppBlob = nullptr;
 
-	// Build path: <exe_dir>/<csoName>.cso
-	char exePath[MAX_PATH] = {};
-	GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-	std::string path(exePath);
-	auto lastSlash = path.find_last_of("\\/");
-	if (lastSlash != std::string::npos)
-		path = path.substr(0, lastSlash + 1);
-	path += csoName;
-	path += ".cso";
-
-	FILE* fp = fopen(path.c_str(), "rb");
-	if (!fp) {
-		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: file not found: %s", path.c_str());
-		return false;
-	}
-
-	fseek(fp, 0, SEEK_END);
-	long size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-
-	if (size < 8) {
-		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: file too small: %s (%ld bytes)", path.c_str(), size);
-		fclose(fp);
+	const void* data = nullptr;
+	size_t size = 0;
+	if (!GetEmbeddedShaderData(csoName, &data, &size)) {
+		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: no embedded shader '%s'", csoName);
 		return false;
 	}
 
 	HRESULT hr = D3DCreateBlob(size, ppBlob);
 	if (FAILED(hr)) {
-		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: D3DCreateBlob failed (size=%ld)", size);
-		fclose(fp);
+		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: D3DCreateBlob failed (size=%zu)", size);
 		return false;
 	}
 
-	size_t readBytes = fread((*ppBlob)->GetBufferPointer(), 1, size, fp);
-	fclose(fp);
-
-	if ((long)readBytes != size) {
-		EmuLog(LOG_LEVEL::WARNING, "LoadPrecompiledCSO: partial read %s (%zu / %ld)", path.c_str(), readBytes, size);
-		(*ppBlob)->Release();
-		*ppBlob = nullptr;
-		return false;
-	}
-
-	EmuLog(LOG_LEVEL::INFO, "LoadPrecompiledCSO: loaded %s (%ld bytes)", csoName, size);
+	memcpy((*ppBlob)->GetBufferPointer(), data, size);
+	EmuLog(LOG_LEVEL::INFO, "LoadPrecompiledCSO: loaded embedded '%s' (%zu bytes)", csoName, size);
 	return true;
 }

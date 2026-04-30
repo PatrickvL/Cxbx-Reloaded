@@ -21,6 +21,7 @@ include_directories(
  "${CXBXR_ROOT_DIR}/import/simpleini"
  "${CXBXR_ROOT_DIR}/import/winpcap/Include"
  "${CXBXR_ROOT_DIR}/import/xxHash"
+ "${CXBXR_SHADER_GEN_INCLUDE_DIR}"
 )
 
 link_directories(
@@ -180,7 +181,7 @@ install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION bin
 )
 
-add_dependencies(${PROJECT_NAME} cxbxr-ldr misc-batch)
+add_dependencies(${PROJECT_NAME} cxbxr-ldr misc-batch compile-shaders)
 
 # Try to stop cmake from building hlsl files
 # Which are all currently loaded at runtime only
