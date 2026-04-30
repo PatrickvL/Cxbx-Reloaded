@@ -335,15 +335,15 @@ void CxbxD3D11FlushVertexShaderConstants()
 }
 
 // ******************************************************************
-// * Register combiner interpreter — init + compile
+// * Register combiner interpreter — init (loads precompiled CSO)
 // ******************************************************************
 
 bool CxbxD3D11InitRCInterpreter()
 {
 	if (g_pD3D11RCInterpreterPS)
-		return true; // Already compiled
+		return true; // Already initialized
 
-	// Load precompiled shader from build-time CSO
+	// Load precompiled shader from embedded CSO blob
 	ID3DBlob* pBlob = nullptr;
 	if (!LoadPrecompiledCSO("CxbxRCInterpreterPS", &pBlob)) {
 		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter: failed to load precompiled CSO");
@@ -396,7 +396,7 @@ bool CxbxD3D11InitRCInterpreter()
 		}
 	}
 
-	EmuLog(LOG_LEVEL::INFO, "RC Interpreter ubershader compiled successfully (%u byte aux cbuffer, %u byte regs SRV)",
+	EmuLog(LOG_LEVEL::INFO, "RC Interpreter ubershader loaded successfully (%u byte aux cbuffer, %u byte regs SRV)",
 		(unsigned)sizeof(PSAuxCBLayout), (unsigned)(PGRAPH_REG_COUNT * sizeof(uint32_t)));
 	return true;
 
@@ -409,15 +409,15 @@ fail:
 }
 
 // ******************************************************************
-// * Vertex shader interpreter — init + compile
+// * Vertex shader interpreter — init (loads precompiled CSO)
 // ******************************************************************
 
 bool CxbxD3D11InitVSInterpreter()
 {
 	if (g_pD3D11VSInterpreterVS)
-		return true; // Already compiled
+		return true; // Already initialized
 
-	// Load precompiled shader from build-time CSO
+	// Load precompiled shader from embedded CSO blob
 	ID3DBlob* pBlob = nullptr;
 	if (!LoadPrecompiledCSO("CxbxVSInterpreterVS", &pBlob)) {
 		EmuLog(LOG_LEVEL::WARNING, "VS Interpreter: failed to load precompiled CSO");
@@ -503,7 +503,7 @@ bool CxbxD3D11InitVSInterpreter()
 		}
 	}
 
-	EmuLog(LOG_LEVEL::INFO, "VS Interpreter ubershader compiled successfully (%u byte XFPR SRV, shared PGRegs SRV at t%u)",
+	EmuLog(LOG_LEVEL::INFO, "VS Interpreter ubershader loaded successfully (%u byte XFPR SRV, shared PGRegs SRV at t%u)",
 		(unsigned)(XFPR_LENGTH * 4 * sizeof(uint32_t)),
 		(unsigned)CXBX_D3D11_VS_PGREGS_SRV_SLOT);
 	return true;

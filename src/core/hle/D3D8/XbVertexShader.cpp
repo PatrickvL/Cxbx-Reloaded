@@ -483,8 +483,10 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 
 void CxbxUpdateHostVertexShader()
 {
-	// TODO: move render state to VertexShader.cpp
-	static ID3D11VertexShader* fixedFunctionShader = nullptr; // TODO: move to shader cache
+	// Vertex shaders are loaded once from embedded precompiled blobs (CSOs).
+	// They persist for the lifetime of the D3D11 device; teardown is handled
+	// by CxbxD3D11ReleaseBackendResources() on device release.
+	static ID3D11VertexShader* fixedFunctionShader = nullptr;
 	static ID3D11VertexShader* passthroughShader = nullptr;
 	static bool shadersLoaded = false;
 
@@ -493,30 +495,13 @@ void CxbxUpdateHostVertexShader()
 		CxbxSetVertexShader(nullptr);
 
 		EmuLog(LOG_LEVEL::INFO, "Loading vertex shaders...");
-
-		if (fixedFunctionShader) {
-			fixedFunctionShader->Release();
-			fixedFunctionShader = nullptr;
-		}
-		if (g_pD3D11FixedFunctionBytecode) { g_pD3D11FixedFunctionBytecode->Release(); g_pD3D11FixedFunctionBytecode = nullptr; }
 		fixedFunctionShader = InitShader("CxbxFixedFunctionVS", "Fixed Function Vertex Shader", &g_pD3D11FixedFunctionBytecode);
-
-		if (passthroughShader) {
-			passthroughShader->Release();
-			passthroughShader = nullptr;
-		}
-		if (g_pD3D11PassthroughBytecode) { g_pD3D11PassthroughBytecode->Release(); g_pD3D11PassthroughBytecode = nullptr; }
 		passthroughShader = InitShader("CxbxVSPassthroughVS", "Passthrough Vertex Shader", &g_pD3D11PassthroughBytecode);
-
-		// Invalidate the VS interpreter so it recompiles from updated sources
-		if (g_pD3D11VSInterpreterVS) { g_pD3D11VSInterpreterVS->Release(); g_pD3D11VSInterpreterVS = nullptr; }
-		if (g_pD3D11VSInterpreterBytecode) { g_pD3D11VSInterpreterBytecode->Release(); g_pD3D11VSInterpreterBytecode = nullptr; }
-		if (g_pD3D11XFPRSRV) { g_pD3D11XFPRSRV->Release(); g_pD3D11XFPRSRV = nullptr; }
-		if (g_pD3D11XFPRBuf) { g_pD3D11XFPRBuf->Release(); g_pD3D11XFPRBuf = nullptr; }
+		// VS interpreter is initialized lazily on first ShaderProgram draw via CxbxD3D11InitVSInterpreter()
 	}
 
-	// TODO Call this when state is dirty
-	// Rather than every time state changes
+	// Select the active vertex shader based on current PGRAPH mode.
+	// Called every draw; the actual shader objects are already loaded above.
 
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
