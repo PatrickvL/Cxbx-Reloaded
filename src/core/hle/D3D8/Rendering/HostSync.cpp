@@ -551,27 +551,42 @@ void CxbxUpdateNativeD3DResources()
 	// Derive the vertex shader mode entirely from PGRAPH state.
 	// g_Xbox_VertexShaderMode is ONLY written here on the render thread;
 	// the game-thread patches no longer touch it, eliminating the race.
-	// We read CSV0_D MODE for Program vs Fixed, and detect Passthrough
-	// (XYZRHW pre-transformed vertices) by checking whether the composite
-	// matrix (CMAT) is approximately identity.  Passthrough means the game
-	// supplies screen-space positions, so CMAT is identity (no transform).
-	// Normal fixed-function has CMAT = World*View*Proj*Viewport with large
-	// values.  The old VPSCL/VPOFF sign heuristic was broken because
-	// vpscl.y is always negative (Y-flip) even for normal FF viewports.
+	//
+	// Detection strategy:
+	// - FIXED mode + CMAT ≈ identity → Passthrough (XYZRHW in fixed pipeline)
+	// - FIXED mode + CMAT ≠ identity → FixedFunction (normal W*V*P transform)
+	// - PROGRAM mode + VPSCL ≈ (1, ±1, ...) → Passthrough (XYZRHW via VS program)
+	// - PROGRAM mode + VPSCL has large values → ShaderProgram (real VS program)
+	//
+	// Rationale: On Xbox, SetVertexShader(D3DFVF_XYZRHW|...) sets MODE=PROGRAM
+	// and loads a trivial passthrough VS.  CMAT is NOT updated (stale from
+	// previous draws), so we cannot use CMAT for PROGRAM mode.  Instead, the
+	// runtime sets VPSCL to identity (1,1,1,0) since the VS outputs screen-space
+	// positions directly.  Normal VS programs have VPSCL = (W/2, -H/2, zScale, 0).
 	{
 		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 		uint32_t pgraph_mode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
+
 		if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-			g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
+			// For PROGRAM mode, use VPSCL to distinguish passthrough from real VS.
+			// XYZRHW passthrough: VPSCL.x ≈ 1, VPSCL.y ≈ ±1
+			// Real VS programs:   VPSCL.x = Width/2 (≥ 4), VPSCL.y = -Height/2
+			float vpscl[4];
+			std::memcpy(vpscl, pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL], 16);
+
+			if (fabsf(vpscl[0]) <= 1.5f && fabsf(vpscl[1]) <= 1.5f) {
+				g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
+			} else {
+				g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
+			}
 		} else {
-			// MODE_FIXED: distinguish true fixed-function from passthrough
-			// by checking CMAT (composite matrix).  For passthrough (XYZRHW),
-			// CMAT ≈ identity.  For normal FF, CMAT has large viewport values.
+			// FIXED mode: distinguish passthrough from normal FF via CMAT.
+			// For passthrough (XYZRHW), CMAT ≈ identity.
+			// For normal FF, CMAT = World*View*Proj*Viewport with large values.
 			float cmat[4][4];
 			for (int row = 0; row < 4; row++)
 				std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
 
-			// Check if CMAT is approximately identity
 			bool isIdentity = true;
 			for (int r = 0; r < 4 && isIdentity; r++) {
 				for (int c = 0; c < 4 && isIdentity; c++) {

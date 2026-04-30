@@ -457,23 +457,34 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		return; // can't set viewport without RT dimensions
 	}
 
-	// For passthrough mode (XYZRHW/pre-transformed vertices), CMAT is identity
-	// because the game provides screen-space positions directly.  For normal FF,
-	// CMAT = World*View*Proj*Viewport with large values.  Detect passthrough by
-	// checking CMAT ≈ identity rather than VPSCL/VPOFF sign (which is always
-	// negative in Y due to the Y-flip, even for normal FF viewports).
+	// For passthrough mode (XYZRHW/pre-transformed vertices), detect using
+	// the same logic as HostSync mode detection:
+	// - FIXED mode: CMAT ≈ identity
+	// - PROGRAM mode: VPSCL ≈ (1, ±1, ...) i.e. no viewport scaling
 	{
-		float cmat[4][4];
-		for (int row = 0; row < 4; row++)
-			std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
-		bool isPassthrough = true;
-		for (int r = 0; r < 4 && isPassthrough; r++) {
-			for (int c = 0; c < 4 && isPassthrough; c++) {
-				float expected = (r == c) ? 1.0f : 0.0f;
-				if (fabsf(cmat[r][c] - expected) > 0.01f)
-					isPassthrough = false;
+		uint32_t pgraph_mode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
+		bool isPassthrough = false;
+
+		if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
+			// PROGRAM mode: check VPSCL for identity (small magnitudes)
+			if (fabsf(vpscl[0]) <= 1.5f && fabsf(vpscl[1]) <= 1.5f) {
+				isPassthrough = true;
+			}
+		} else {
+			// FIXED mode: check CMAT for identity
+			float cmat[4][4];
+			for (int row = 0; row < 4; row++)
+				std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
+			isPassthrough = true;
+			for (int r = 0; r < 4 && isPassthrough; r++) {
+				for (int c = 0; c < 4 && isPassthrough; c++) {
+					float expected = (r == c) ? 1.0f : 0.0f;
+					if (fabsf(cmat[r][c] - expected) > 0.01f)
+						isPassthrough = false;
+				}
 			}
 		}
+
 		if (isPassthrough) {
 			D3D11_VIEWPORT hostViewport;
 			hostViewport.TopLeftX = 0;

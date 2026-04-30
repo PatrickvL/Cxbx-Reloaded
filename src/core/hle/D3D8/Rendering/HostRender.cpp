@@ -490,23 +490,34 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 
 	// Passthrough should range 0 to 1, instead of 0 to zbuffer depth
 	// Test case: DoA3 character select
-	// Detect passthrough by checking CMAT ≈ identity (passthrough means
-	// the game provides screen-space coords, so CMAT is identity).
+	// Detect passthrough using the same logic as HostSync mode detection:
+	// - FIXED mode: CMAT ≈ identity
+	// - PROGRAM mode: VPSCL ≈ (1, ±1, ...) i.e. no viewport scaling
 	bool isPassthrough = false;
 	float zOutputScale = 1.0f;
 	{
 		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
+		uint32_t pgraph_mode = GET_MASK(pg_z->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
 
-		// Check if CMAT is approximately identity
-		float cmat[4][4];
-		for (int row = 0; row < 4; row++)
-			std::memcpy(&cmat[row][0], &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
-		isPassthrough = true;
-		for (int r = 0; r < 4 && isPassthrough; r++) {
-			for (int c = 0; c < 4 && isPassthrough; c++) {
-				float expected = (r == c) ? 1.0f : 0.0f;
-				if (fabsf(cmat[r][c] - expected) > 0.01f)
-					isPassthrough = false;
+		if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
+			// PROGRAM mode: check VPSCL for identity (small magnitudes)
+			float vpscl[4];
+			std::memcpy(vpscl, pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL], 16);
+			if (fabsf(vpscl[0]) <= 1.5f && fabsf(vpscl[1]) <= 1.5f) {
+				isPassthrough = true;
+			}
+		} else {
+			// FIXED mode: check CMAT for identity
+			float cmat[4][4];
+			for (int row = 0; row < 4; row++)
+				std::memcpy(&cmat[row][0], &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
+			isPassthrough = true;
+			for (int r = 0; r < 4 && isPassthrough; r++) {
+				for (int c = 0; c < 4 && isPassthrough; c++) {
+					float expected = (r == c) ? 1.0f : 0.0f;
+					if (fabsf(cmat[r][c] - expected) > 0.01f)
+						isPassthrough = false;
+				}
 			}
 		}
 
