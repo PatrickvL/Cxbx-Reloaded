@@ -1969,6 +1969,25 @@ void pgraph_init(NV2AState *d)
 	qemu_cond_init(&pg->fifo_access_cond);
 	qemu_cond_init(&pg->flip_3d);
 
+	// Initialize vertex attribute defaults (inline_value / sticky registers).
+	// On NV2A hardware reset, diffuse (slot 3) and specular (slot 4) default
+	// to white (1,1,1,1).  All others default to (0,0,0,1).  This matches
+	// D3D semantics: unset vertex colors are opaque white, positions/texcoords
+	// are zero with w=1.
+	for (i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
+		pg->vertex_attributes[i].inline_value[0] = 0.0f;
+		pg->vertex_attributes[i].inline_value[1] = 0.0f;
+		pg->vertex_attributes[i].inline_value[2] = 0.0f;
+		pg->vertex_attributes[i].inline_value[3] = 1.0f;
+	}
+	// Diffuse and specular default to opaque white
+	pg->vertex_attributes[3].inline_value[0] = 1.0f;
+	pg->vertex_attributes[3].inline_value[1] = 1.0f;
+	pg->vertex_attributes[3].inline_value[2] = 1.0f;
+	pg->vertex_attributes[4].inline_value[0] = 1.0f;
+	pg->vertex_attributes[4].inline_value[1] = 1.0f;
+	pg->vertex_attributes[4].inline_value[2] = 1.0f;
+
 	// In HLE mode, the puller processes pushbuffer methods into PGRAPH
 	// register state (so RC/VS interpreters can read from it) but does
 	// not render.  Initialize minimum context so pgraph_handle_method()
