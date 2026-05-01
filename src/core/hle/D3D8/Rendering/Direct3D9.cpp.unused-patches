@@ -5817,3 +5817,567 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawTriPatch)
 
 	return hRet;
 }
+
+// ******************************************************************
+// * patch: D3DDevice_SetBackBufferScale
+// * Disabled: Host-only concept (upscale factor).
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetBackBufferScale)(float_xt x, float_xt y)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(x)
+		LOG_FUNC_ARG(y)
+		LOG_FUNC_END;
+
+	g_Xbox_BackbufferScaleX = x;
+	g_Xbox_BackbufferScaleY = y;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetTexture
+// * Disabled: Xbox native SetTexture pushes NV097_SET_TEXTURE_OFFSET.
+// * Host texture lookup uses PGRAPH TEXOFFSET registers.
+// ******************************************************************
+
+// Mirror a texture's VRAM offset to the PGRAPH TEXOFFSET register so that
+// CxbxUpdateHostTextures() (which reads PGRAPH authoritatively) can resolve
+// the Xbox texture even when the pushbuffer hasn't been processed yet.
+static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
+{
+	if (Stage < xbox::X_D3DTS_STAGECOUNT) {
+		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+		pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + Stage * 4)] = dataAddr;
+	}
+}
+
+static xbox::X_D3DBaseTexture CxbxActiveTextureCopies[xbox::X_D3DTS_STAGECOUNT] = {};
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture)
+(
+	dword_xt           Stage,
+	X_D3DBaseTexture  *pTexture
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Stage)
+		LOG_FUNC_ARG(pTexture)
+		LOG_FUNC_END;
+
+	uint32_t pPut0 = pgraph_trace_read_pput();
+	XB_TRMP(D3DDevice_SetTexture)(Stage, pTexture);
+	pgraph_trace_log_pushbuffer("SetTexture", pPut0, pgraph_trace_read_pput());
+
+	g_pXbox_SetTexture[Stage] = pTexture;
+
+	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero) {
+		CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
+		CxbxMirrorTexOffsetToPGRAPH(Stage, pTexture->Data);
+	} else {
+		CxbxMirrorTexOffsetToPGRAPH(Stage, 0);
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SwitchTexture
+// * Disabled: Xbox native SwitchTexture updates texture offset
+// * mid-draw via push buffer.
+// ******************************************************************
+xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
+(
+	dword_xt           Method,
+	dword_xt           Data,
+	dword_xt           Format
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Method)
+		LOG_FUNC_ARG(Data)
+		LOG_FUNC_ARG(Format)
+		LOG_FUNC_END;
+
+	DWORD Stage = -1;
+
+	switch (Method) {
+	case 0x00081b00: Stage = 0; break;
+	case 0x00081b40: Stage = 1; break;
+	case 0x00081b80: Stage = 2; break;
+	case 0x00081bc0: Stage = 3; break;
+	default:
+		LOG_TEST_CASE("D3DDevice_SwitchTexture Unknown Method");
+		EmuLog(LOG_LEVEL::WARNING, "Unknown Method (0x%.08X)", Method);
+	}
+
+	if (Stage >= 0) {
+		if (g_pXbox_SetTexture[Stage] == xbox::zeroptr) {
+			LOG_TEST_CASE("D3DDevice_SwitchTexture without an active texture");
+		}
+		else {
+			CxbxActiveTextureCopies[Stage].Common = g_pXbox_SetTexture[Stage]->Common;
+			CxbxActiveTextureCopies[Stage].Data = Data;
+			CxbxActiveTextureCopies[Stage].Format = Format;
+			CxbxActiveTextureCopies[Stage].Lock = 0;
+			CxbxActiveTextureCopies[Stage].Size = g_pXbox_SetTexture[Stage]->Size;
+
+			g_pXbox_SetTexture[Stage] = &CxbxActiveTextureCopies[Stage];
+			CxbxRegisterTextureByDataAddr(Data, &CxbxActiveTextureCopies[Stage]);
+			CxbxMirrorTexOffsetToPGRAPH(Stage, Data);
+		}
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3
+// * Disabled: Xbox native SetStreamSource writes
+// * NV097_SET_VERTEX_DATA_ARRAY_OFFSET/FORMAT to push buffer.
+// ******************************************************************
+static void D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3
+(
+	xbox::uint_xt            StreamNumber,
+	xbox::X_D3DVertexBuffer *pStreamData,
+	xbox::uint_xt            Stride
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(StreamNumber)
+		LOG_FUNC_ARG(pStreamData)
+		LOG_FUNC_ARG(Stride)
+		LOG_FUNC_END;
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3)()
+{
+	uint_xt StreamNumber;
+	X_D3DVertexBuffer *pStreamData;
+	uint_xt Stride;
+	__asm {
+		LTCG_PROLOGUE
+		mov  StreamNumber, eax
+		mov  pStreamData, edi
+		mov  Stride, ebx
+	}
+
+	D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3(StreamNumber, pStreamData, Stride);
+	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
+
+	__asm {
+		mov  eax, StreamNumber
+		mov  edi, pStreamData
+		mov  ebx, Stride
+		call XB_TRMP(D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3)
+
+		LTCG_EPILOGUE
+		ret
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2
+// * Disabled: Same as above.
+// ******************************************************************
+static void D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2
+(
+	xbox::uint_xt            StreamNumber,
+	xbox::X_D3DVertexBuffer *pStreamData,
+	xbox::uint_xt            Stride
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(StreamNumber)
+		LOG_FUNC_ARG(pStreamData)
+		LOG_FUNC_ARG(Stride)
+		LOG_FUNC_END;
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2)
+(
+	uint_xt                Stride
+)
+{
+	uint_xt StreamNumber;
+	X_D3DVertexBuffer *pStreamData;
+	__asm {
+		LTCG_PROLOGUE
+		mov  StreamNumber, eax
+		mov  pStreamData, ebx
+	}
+
+	D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2(StreamNumber, pStreamData, Stride);
+	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
+
+	__asm {
+		push Stride
+		mov  ebx, pStreamData
+		mov  eax, StreamNumber
+		call XB_TRMP(D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2)
+
+		LTCG_EPILOGUE
+		ret  4
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetStreamSource_8__LTCG_eax1
+// * Disabled: Same as above.
+// ******************************************************************
+static void D3DDevice_SetStreamSource_8__LTCG_eax1
+(
+	xbox::uint_xt            StreamNumber,
+	xbox::X_D3DVertexBuffer *pStreamData,
+	xbox::uint_xt            Stride
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(StreamNumber)
+		LOG_FUNC_ARG(pStreamData)
+		LOG_FUNC_ARG(Stride)
+		LOG_FUNC_END;
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_eax1)
+(
+	X_D3DVertexBuffer  *pStreamData,
+	uint_xt             Stride
+)
+{
+	uint_xt StreamNumber;
+	__asm {
+		LTCG_PROLOGUE
+		mov  StreamNumber, eax
+	}
+
+	D3DDevice_SetStreamSource_8__LTCG_eax1(StreamNumber, pStreamData, Stride);
+	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
+
+	__asm {
+		push Stride
+		push pStreamData
+		mov  eax, StreamNumber
+		call XB_TRMP(D3DDevice_SetStreamSource_8__LTCG_eax1)
+
+		LTCG_EPILOGUE
+		ret  8
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetStreamSource_8__LTCG_edx1
+// * Disabled: Same as above. Test-case: NASCAR Heat 2002
+// ******************************************************************
+xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_edx1)
+(
+	void*,
+	uint_xt                StreamNumber,
+	X_D3DVertexBuffer  *pStreamData,
+	uint_xt                Stride
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(StreamNumber)
+		LOG_FUNC_ARG(pStreamData)
+		LOG_FUNC_ARG(Stride)
+		LOG_FUNC_END;
+
+	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
+
+	XB_TRMP(D3DDevice_SetStreamSource_8__LTCG_edx1)(nullptr, StreamNumber, pStreamData, Stride);
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetStreamSource
+// * Disabled: Same as above.
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource)
+(
+	uint_xt                StreamNumber,
+	X_D3DVertexBuffer  *pStreamData,
+	uint_xt                Stride
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(StreamNumber)
+		LOG_FUNC_ARG(pStreamData)
+		LOG_FUNC_ARG(Stride)
+		LOG_FUNC_END;
+
+	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
+
+	uint32_t pPut0 = pgraph_trace_read_pput();
+	XB_TRMP(D3DDevice_SetStreamSource)(StreamNumber, pStreamData, Stride);
+	pgraph_trace_log_pushbuffer("SetStreamSource", pPut0, pgraph_trace_read_pput());
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetVertexShader
+// * Disabled: Xbox native calls LoadVertexShader + SelectVertexShader
+// * which push NV097_SET_TRANSFORM_PROGRAM/START.
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShader)
+(
+	dword_xt Handle
+)
+{
+	LOG_FUNC_ONE_ARG(Handle);
+
+	// This trampoline leads to calling D3DDevice_LoadVertexShader and D3DDevice_SelectVertexShader
+	uint32_t pPut0 = pgraph_trace_read_pput();
+	XB_TRMP(D3DDevice_SetVertexShader)(Handle);
+	pgraph_trace_log_pushbuffer("SetVertexShader", pPut0, pgraph_trace_read_pput());
+
+	CxbxImpl_SetVertexShader(Handle);
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetVertexShader_0__LTCG_ebx1
+// * Disabled: Same as above. Test-case: NASCAR Heat 2002
+// ******************************************************************
+static void D3DDevice_SetVertexShader_0__LTCG_ebx1
+(
+	xbox::dword_xt Handle
+)
+{
+	LOG_FUNC_ONE_ARG(Handle);
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShader_0__LTCG_ebx1)()
+{
+	dword_xt Handle;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Handle, ebx
+	}
+
+	D3DDevice_SetVertexShader_0__LTCG_ebx1(Handle);
+
+	__asm {
+		mov  ebx, Handle
+		call XB_TRMP(D3DDevice_SetVertexShader_0__LTCG_ebx1)
+	}
+
+	CxbxImpl_SetVertexShader(Handle);
+
+	__asm {
+		LTCG_EPILOGUE
+		ret
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetRenderTarget
+// * Disabled: Xbox native writes NV097_SET_SURFACE_COLOR_OFFSET.
+// * Host RT created from PGRAPH surface state.
+// ******************************************************************
+// SetRenderTarget can call CommonSetRenderTarget, nested call detection is required
+// Test case: Midtown Madness 3
+static thread_local uint32_t setRenderTargetCount = 0;
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget)
+(
+	X_D3DSurface    *pRenderTarget,
+	X_D3DSurface    *pNewZStencil
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(pRenderTarget)
+		LOG_FUNC_ARG(pNewZStencil)
+		LOG_FUNC_END;
+
+	NestedPatchCounter call(setRenderTargetCount);
+
+	XB_TRMP(D3DDevice_SetRenderTarget)(pRenderTarget, pNewZStencil);
+
+	CxbxImpl_SetRenderTarget(pRenderTarget, pNewZStencil);
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2
+// * Disabled: Same as above.
+// ******************************************************************
+static void D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2
+(
+	xbox::X_D3DSurface    *pRenderTarget,
+	xbox::X_D3DSurface    *pNewZStencil
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(pRenderTarget)
+		LOG_FUNC_ARG(pNewZStencil)
+		LOG_FUNC_END;
+
+	NestedPatchCounter call(setRenderTargetCount);
+
+	__asm {
+		mov  ecx, pRenderTarget
+		mov  eax, pNewZStencil
+		call XB_TRMP(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2)
+	}
+
+	CxbxImpl_SetRenderTarget(pRenderTarget, pNewZStencil);
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2)()
+{
+	X_D3DSurface *pRenderTarget;
+	X_D3DSurface *pNewZStencil;
+	__asm {
+		LTCG_PROLOGUE
+		mov  pRenderTarget, ecx
+		mov  pNewZStencil, eax
+	}
+
+	D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2(pRenderTarget, pNewZStencil);
+
+	__asm {
+		LTCG_EPILOGUE
+		ret
+	}
+}
+
+// ******************************************************************
+// * patch: D3D_CommonSetRenderTarget
+// * Disabled: Same as above. Test-case: Midtown Madness 3
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3D_CommonSetRenderTarget)
+(
+	X_D3DSurface    *pRenderTarget,
+	X_D3DSurface    *pNewZStencil,
+	void            *unknown
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(pRenderTarget)
+		LOG_FUNC_ARG(pNewZStencil)
+		LOG_FUNC_ARG(unknown)
+		LOG_FUNC_END;
+
+	NestedPatchCounter call(setRenderTargetCount);
+
+	XB_TRMP(D3D_CommonSetRenderTarget)(pRenderTarget, pNewZStencil, unknown);
+
+	if (call.GetLevel() == 0) {
+		CxbxImpl_SetRenderTarget(pRenderTarget, pNewZStencil);
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetRenderTargetFast
+// * Disabled: Redirects to SetRenderTarget.
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTargetFast)
+(
+	X_D3DSurface	*pRenderTarget,
+	X_D3DSurface	*pNewZStencil,
+	dword_xt			Flags
+)
+{
+	LOG_FORWARD("D3DDevice_SetRenderTarget");
+	EMUPATCH(D3DDevice_SetRenderTarget)(pRenderTarget, pNewZStencil);
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetPalette
+// * Disabled: Xbox native pushes NV097_SET_TEXTURE_PALETTE.
+// ******************************************************************
+static void CxbxImpl_SetPalette
+(
+	xbox::dword_xt      Stage,
+	xbox::X_D3DPalette *pPalette
+)
+{
+	if (Stage >= xbox::X_D3DTS_STAGECOUNT) {
+		LOG_TEST_CASE("Stage out of bounds");
+	} else {
+		// Note : Actual update of paletized textures (X_D3DFMT_P8) happens in CxbxUpdateHostTextures!
+		g_pXbox_Palette_Data[Stage] = GetDataFromXboxResource(pPalette);
+		g_Xbox_Palette_Size[Stage] = pPalette ? XboxD3DPaletteSizeToBytes(GetXboxPaletteSize(pPalette)) : 0;
+	}
+}
+
+static void D3DDevice_SetPalette_4__LTCG_eax1
+(
+	xbox::dword_xt      Stage,
+	xbox::X_D3DPalette *pPalette
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Stage)
+		LOG_FUNC_ARG(pPalette)
+		LOG_FUNC_END;
+}
+
+// Test-case: Ninja Gaiden
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetPalette_4__LTCG_eax1)
+(
+	X_D3DPalette *pPalette
+)
+{
+	dword_xt Stage;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Stage, eax
+	}
+
+	D3DDevice_SetPalette_4__LTCG_eax1(Stage, pPalette);
+
+	__asm {
+		push pPalette
+		mov  eax, Stage
+		call XB_TRMP(D3DDevice_SetPalette_4__LTCG_eax1)
+	}
+
+	CxbxImpl_SetPalette(Stage, pPalette);
+
+	__asm {
+		LTCG_EPILOGUE
+		ret  4
+	}
+}
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetPalette)
+(
+	dword_xt      Stage,
+	X_D3DPalette *pPalette
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Stage)
+		LOG_FUNC_ARG(pPalette)
+		LOG_FUNC_END;
+
+	XB_TRMP(D3DDevice_SetPalette)(Stage, pPalette);
+	CxbxImpl_SetPalette(Stage, pPalette);
+}
+
+// ******************************************************************
+// * patch: D3DDevice_DeleteVertexShader_0__LTCG_eax1
+// * Disabled: Host shader cache uses PGRAPH program store.
+// * Test-case: Midtown Madness 3
+// ******************************************************************
+static void D3DDevice_DeleteVertexShader_0__LTCG_eax1
+(
+	xbox::dword_xt Handle
+)
+{
+	LOG_FUNC_ONE_ARG(Handle);
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DeleteVertexShader_0__LTCG_eax1)()
+{
+	dword_xt Handle;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Handle, eax
+	}
+
+	D3DDevice_DeleteVertexShader_0__LTCG_eax1(Handle);
+	CxbxImpl_DeleteVertexShader(Handle);
+
+	// When deleting, call trampoline *after* our implementation,
+	// so that we can still access its fields before it gets deleted!
+	__asm {
+		mov  eax, Handle
+		call XB_TRMP(D3DDevice_DeleteVertexShader_0__LTCG_eax1)
+
+		LTCG_EPILOGUE
+		ret
+	}
+}

@@ -25,118 +25,32 @@
 #include "../EmuD3D8_common.h"
 #include "../IndexBufferConvert.h"
 
-// This uses a custom calling convention where StreamNumber parameter is passed in EDX
-// Test-case: NASCAR Heat 2002
-xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_edx1)
-(
-   	void*,
-   	uint_xt                StreamNumber,
-   	X_D3DVertexBuffer  *pStreamData,
-   	uint_xt                Stride
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(StreamNumber)
-		LOG_FUNC_ARG(pStreamData)
-		LOG_FUNC_ARG(Stride)
-		LOG_FUNC_END;
+// D3DDevice_SetStreamSource_8__LTCG_edx1 — disabled.
+// Xbox native SetStreamSource writes NV097_SET_VERTEX_DATA_ARRAY_OFFSET/FORMAT
+// to the push buffer. Host vertex binding reads PGRAPH state.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
+// D3DDevice_SetStreamSource — disabled.
+// Same as above. Patch disabled in Patches.cpp.
 
-	// Forward to Xbox implementation
-	// This should stop us having to patch GetStreamSource!
-	XB_TRMP(D3DDevice_SetStreamSource_8__LTCG_edx1)(nullptr, StreamNumber, pStreamData, Stride);
-}
+// D3DDevice_SetVertexShader, D3DDevice_SetVertexShader_0__LTCG_ebx1 — disabled.
+// Xbox native SetVertexShader calls LoadVertexShader + SelectVertexShader which
+// push NV097_SET_TRANSFORM_PROGRAM and NV097_SET_TRANSFORM_PROGRAM_START.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_SetStreamSource
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource)
-(
-   	uint_xt                StreamNumber,
-   	X_D3DVertexBuffer  *pStreamData,
-   	uint_xt                Stride
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(StreamNumber)
-		LOG_FUNC_ARG(pStreamData)
-		LOG_FUNC_ARG(Stride)
-		LOG_FUNC_END;
+// D3DDevice_SetRenderTarget, D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2,
+// D3D_CommonSetRenderTarget, D3DDevice_SetRenderTargetFast — disabled.
+// Xbox native SetRenderTarget writes NV097_SET_SURFACE_COLOR_OFFSET and related
+// PGRAPH surface registers. Host RT is now created from PGRAPH surface state by
+// CxbxD3D11UpdateRenderTargetFromPGRAPH. Backbuffer detection handled in CreateDevice.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
-
-	// Forward to Xbox implementation
-	// This should stop us having to patch GetStreamSource!
-	uint32_t pPut0 = pgraph_trace_read_pput();
-	XB_TRMP(D3DDevice_SetStreamSource)(StreamNumber, pStreamData, Stride);
-	pgraph_trace_log_pushbuffer("SetStreamSource", pPut0, pgraph_trace_read_pput());
-}
-
-// ******************************************************************
-// * patch: D3DDevice_SetVertexShader
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShader)
-(
-   	dword_xt Handle
-)
-{
-	LOG_FUNC_ONE_ARG(Handle);
-
-	// This trampoline leads to calling D3DDevice_LoadVertexShader and D3DDevice_SelectVertexShader
-	// Please raise the alarm if this is ever not the case
-	uint32_t pPut0 = pgraph_trace_read_pput();
-	XB_TRMP(D3DDevice_SetVertexShader)(Handle);
-	pgraph_trace_log_pushbuffer("SetVertexShader", pPut0, pgraph_trace_read_pput());
-
-	CxbxImpl_SetVertexShader(Handle);
-}
-
-// Overload for logging
-static void D3DDevice_SetVertexShader_0__LTCG_ebx1
-(
-   	xbox::dword_xt Handle
-)
-{
-	LOG_FUNC_ONE_ARG(Handle);
-}
-
-// This uses a custom calling convention where Handle is passed in EBX
-// Test-case: NASCAR Heat 2002
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShader_0__LTCG_ebx1)()
-{
-	dword_xt Handle;
-	__asm {
-		LTCG_PROLOGUE
-		mov  Handle, ebx
-	}
-
-	// Log
-	D3DDevice_SetVertexShader_0__LTCG_ebx1(Handle);
-
-	// This trampoline leads to calling D3DDevice_LoadVertexShader and D3DDevice_SelectVertexShader
-	// Please raise the alarm if this is ever not the case
-	__asm {
-		mov  ebx, Handle
-		call XB_TRMP(D3DDevice_SetVertexShader_0__LTCG_ebx1)
-	}
-
-	CxbxImpl_SetVertexShader(Handle);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret
-	}
-}
-
-// SetRenderTarget can call CommonSetRenderTarget, nested call detection is required
-// Test case: Midtown Madness 3
-static thread_local uint32_t setRenderTargetCount = 0;
-
+// CxbxImpl_SetRenderTarget — still used by CreateDevice path (HostDraw.cpp)
+// to register backbuffer/depth stencil surfaces for PGRAPH-based RT resolution.
 void CxbxImpl_SetRenderTarget
 (
-   	xbox::X_D3DSurface    *pRenderTarget,
-   	xbox::X_D3DSurface    *pNewZStencil
+	xbox::X_D3DSurface    *pRenderTarget,
+	xbox::X_D3DSurface    *pNewZStencil
 )
 {
 	LOG_INIT;
@@ -151,11 +65,11 @@ void CxbxImpl_SetRenderTarget
 
 	// In Xbox titles, CreateDevice calls SetRenderTarget (our caller) for the depth stencil
 	// We can use this to determine the Xbox depth stencil surface for later use!
-   	if (g_pXbox_DefaultDepthStencilSurface == xbox::zeroptr) {
-   	   	g_pXbox_DefaultDepthStencilSurface = pNewZStencil;
+	if (g_pXbox_DefaultDepthStencilSurface == xbox::zeroptr) {
+		g_pXbox_DefaultDepthStencilSurface = pNewZStencil;
 		// TODO : Some titles might set another depth stencil later on,
 		// if that happens, we might need to skip the first one or two calls?
-   	}
+	}
 
 	// The current render target is only replaced if it's passed in here non-null
 	if (pRenderTarget != xbox::zeroptr) {
@@ -172,7 +86,7 @@ void CxbxImpl_SetRenderTarget
 			g_pXbox_RenderTarget = g_pXbox_BackBufferSurface;
 			CxbxRegisterSurfaceByDataAddr(g_pXbox_BackBufferSurface->Data, g_pXbox_BackBufferSurface);
 		}
-   	}
+	}
 
 	// The currenct depth stencil is always replaced by whats passed in here (even a null)
 	g_pXbox_DepthStencil = pNewZStencil;
@@ -184,239 +98,19 @@ void CxbxImpl_SetRenderTarget
 	// which creates host resources directly from PGRAPH surface state.
 }
 
-// ******************************************************************
-// * patch: D3DDevice_SetRenderTarget
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget)
-(
-   	X_D3DSurface    *pRenderTarget,
-   	X_D3DSurface    *pNewZStencil
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pRenderTarget)
-		LOG_FUNC_ARG(pNewZStencil)
-		LOG_FUNC_END;
+// D3DDevice_SetPalette, D3DDevice_SetPalette_4__LTCG_eax1 — disabled.
+// Xbox native SetPalette pushes NV097_SET_TEXTURE_PALETTE.
+// Host palette lookup uses PGRAPH texture palette registers.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	NestedPatchCounter call(setRenderTargetCount);
+// D3DDevice_DeleteVertexShader_0__LTCG_eax1 — disabled.
+// Vertex shader cache cleanup. Host shader cache uses PGRAPH program store.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	XB_TRMP(D3DDevice_SetRenderTarget)(pRenderTarget, pNewZStencil);
-
-	CxbxImpl_SetRenderTarget(pRenderTarget, pNewZStencil);
-}
-
-// LTCG specific D3DDevice_SetRenderTarget function...
-// Passes pRenderTarget in ecx and pNewZStencil in eax
-static void D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2
-(
-   	xbox::X_D3DSurface    *pRenderTarget,
-   	xbox::X_D3DSurface    *pNewZStencil
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pRenderTarget)
-		LOG_FUNC_ARG(pNewZStencil)
-		LOG_FUNC_END;
-
-	NestedPatchCounter call(setRenderTargetCount);
-
-	__asm {
-		mov  ecx, pRenderTarget
-		mov  eax, pNewZStencil
-		call XB_TRMP(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2)
-	}
-
-	CxbxImpl_SetRenderTarget(pRenderTarget, pNewZStencil);
-}
-
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2)
-(
-)
-{
-	X_D3DSurface *pRenderTarget;
-   	X_D3DSurface *pNewZStencil;
-	__asm {
-		LTCG_PROLOGUE
-		mov  pRenderTarget, ecx
-		mov  pNewZStencil, eax
-	}
-
-	// Actual function body
-	D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2(pRenderTarget, pNewZStencil);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret
-	}
-}
-
-// ******************************************************************
-// * patch: D3D_CommonSetRenderTarget
-// ******************************************************************
-// This is an internal function, but some LTCG games inline SetRenderTarget and call it directly
-// Test-case: Midtown Madness 3
-xbox::void_xt WINAPI xbox::EMUPATCH(D3D_CommonSetRenderTarget)
-(
-   	X_D3DSurface    *pRenderTarget,
-   	X_D3DSurface    *pNewZStencil,
-   	void            *unknown
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pRenderTarget)
-		LOG_FUNC_ARG(pNewZStencil)
-		LOG_FUNC_ARG(unknown)
-		LOG_FUNC_END;
-
-	NestedPatchCounter call(setRenderTargetCount);
-
-	XB_TRMP(D3D_CommonSetRenderTarget)(pRenderTarget, pNewZStencil, unknown);
-
-	if (call.GetLevel() == 0) {
-		CxbxImpl_SetRenderTarget(pRenderTarget, pNewZStencil);
-	}
-}
-
-static void CxbxImpl_SetPalette
-(
-   	xbox::dword_xt      Stage,
-   	xbox::X_D3DPalette *pPalette
-)
-{
-	if (Stage >= xbox::X_D3DTS_STAGECOUNT) {
-		LOG_TEST_CASE("Stage out of bounds");
-	} else {
-		// Note : Actual update of paletized textures (X_D3DFMT_P8) happens in CxbxUpdateHostTextures!
-		g_pXbox_Palette_Data[Stage] = GetDataFromXboxResource(pPalette);
-		g_Xbox_Palette_Size[Stage] = pPalette ? XboxD3DPaletteSizeToBytes(GetXboxPaletteSize(pPalette)) : 0;
-	}
-}
-
-// Overload for logging
-static void D3DDevice_SetPalette_4__LTCG_eax1
-(
-	xbox::dword_xt      Stage,
-	xbox::X_D3DPalette *pPalette
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Stage)
-		LOG_FUNC_ARG(pPalette)
-		LOG_FUNC_END;
-}
-
-// LTCG specific D3DDevice_SetPalette function...
-// This uses a custom calling convention where Stage parameter is passed in EAX
-// Test-case: Ninja Gaiden
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetPalette_4__LTCG_eax1)
-(
-	X_D3DPalette *pPalette
-)
-{
-	dword_xt Stage;
-	__asm {
-		LTCG_PROLOGUE
-		mov  Stage, eax
-	}
-
-	// Log
-	D3DDevice_SetPalette_4__LTCG_eax1(Stage, pPalette);
-
-	// Call the Xbox implementation of this function, to properly handle reference counting for us
-	__asm {
-		push pPalette
-		mov  eax, Stage
-		call XB_TRMP(D3DDevice_SetPalette_4__LTCG_eax1)
-	}
-
-	CxbxImpl_SetPalette(Stage, pPalette);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret  4
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_SetPalette
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetPalette)
-(
-	dword_xt      Stage,
-	X_D3DPalette *pPalette
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Stage)
-		LOG_FUNC_ARG(pPalette)
-		LOG_FUNC_END;
-
-	// Call the Xbox implementation of this function, to properly handle reference counting for us
-	XB_TRMP(D3DDevice_SetPalette)(Stage, pPalette);
-
-	CxbxImpl_SetPalette(Stage, pPalette);
-}
-
-// Overload for logging
-static void D3DDevice_DeleteVertexShader_0__LTCG_eax1
-(
-	xbox::dword_xt Handle
-)
-{
-	LOG_FUNC_ONE_ARG(Handle);
-}
-
-// LTCG specific D3DDevice_DeleteVertexShader function...
-// This uses a custom calling convention where parameter is passed in EAX
-// Test-case: Midtown Madness 3
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DeleteVertexShader_0__LTCG_eax1)
-(
-)
-{
-	dword_xt Handle;
-	__asm {
-		LTCG_PROLOGUE
-		mov  Handle, eax
-	}
-
-	// Log
-	D3DDevice_DeleteVertexShader_0__LTCG_eax1(Handle);
-
-	CxbxImpl_DeleteVertexShader(Handle);
-
-	// When deleting, call trampoline *after* our implementation,
-	// so that we can still access it's fields before it gets deleted!
-	__asm {
-		mov  eax, Handle
-		call XB_TRMP(D3DDevice_DeleteVertexShader_0__LTCG_eax1)
-
-		LTCG_EPILOGUE
-		ret
-	}
-}
-
-// SetScreenSpaceOffset — removed (Step 12).
+// D3DDevice_SetScreenSpaceOffset — disabled.
 // g_Xbox_ScreenSpaceOffset was only read by dead CxbxSetVertexShaderPassthroughProgram.
 // Patch disabled in Patches.cpp — Xbox code handles it natively.
 
-// ******************************************************************
-// * patch: D3DDevice_SetRenderTargetFast
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTargetFast)
-(
-   	X_D3DSurface	*pRenderTarget,
-   	X_D3DSurface	*pNewZStencil,
-   	dword_xt			Flags
-)
-{
-	LOG_FORWARD("D3DDevice_SetRenderTarget");
-
-	// Redirect to the standard version.
-	
-	EMUPATCH(D3DDevice_SetRenderTarget)(pRenderTarget, pNewZStencil);
-}
-
-// ******************************************************************
 // D3D_LazySetPointParams — disabled (unimplemented stub, LOG_UNIMPLEMENTED).
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 

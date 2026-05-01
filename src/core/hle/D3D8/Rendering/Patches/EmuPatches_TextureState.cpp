@@ -25,30 +25,9 @@
 #include "../EmuD3D8_common.h"
 #include "../IndexBufferConvert.h"
 
-// Mirror a texture's VRAM offset to the PGRAPH TEXOFFSET register so that
-// CxbxUpdateHostTextures() (which reads PGRAPH authoritatively) can resolve
-// the Xbox texture even when the pushbuffer hasn't been processed yet.
-static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
-{
-	if (Stage < xbox::X_D3DTS_STAGECOUNT) {
-		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
-		pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + Stage * 4)] = dataAddr;
-	}
-}
-
-// Variables only used in EmuPatches_State.cpp
-static xbox::X_D3DBaseTexture CxbxActiveTextureCopies[xbox::X_D3DTS_STAGECOUNT] = {}; // Set by D3DDevice_SwitchTexture. Cached active texture
-
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetBackBufferScale)(float_xt x, float_xt y)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(x)
-		LOG_FUNC_ARG(y)
-		LOG_FUNC_END;
-
-	g_Xbox_BackbufferScaleX = x;
-	g_Xbox_BackbufferScaleY = y;
-}
+// D3DDevice_SetBackBufferScale — disabled.
+// Host-only concept (upscale factor); Xbox native code doesn't need this.
+// Patch disabled in Patches.cpp.
 
 // ******************************************************************
 // * patch: D3DDevice_SetGammaRamp
@@ -189,111 +168,15 @@ xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2
 // D3DDevice_SetShaderConstantMode_0__LTCG_eax1 — disabled.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_SetTexture
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture)
-(
-   	dword_xt           Stage,
-	X_D3DBaseTexture  *pTexture
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Stage)
-		LOG_FUNC_ARG(pTexture)
-		LOG_FUNC_END;
+// D3DDevice_SetTexture — disabled.
+// Xbox native SetTexture pushes NV097_SET_TEXTURE_OFFSET to the push buffer.
+// Host texture lookup uses PGRAPH TEXOFFSET registers set by the push buffer.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	// Call the Xbox implementation of this function, to properly handle reference counting for us
-	uint32_t pPut0 = pgraph_trace_read_pput();
-	XB_TRMP(D3DDevice_SetTexture)(Stage, pTexture);
-	pgraph_trace_log_pushbuffer("SetTexture", pPut0, pgraph_trace_read_pput());
-
-	g_pXbox_SetTexture[Stage] = pTexture;
-
-	// Register in the VRAM-offset → texture side-map so PGRAPH TEXOFFSET lookups work
-	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero) {
-		CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
-		CxbxMirrorTexOffsetToPGRAPH(Stage, pTexture->Data);
-	} else {
-		CxbxMirrorTexOffsetToPGRAPH(Stage, 0);
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_SwitchTexture
-// ******************************************************************
-xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
-(
-   	dword_xt           Method,
-   	dword_xt           Data,
-   	dword_xt           Format
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Method)
-		LOG_FUNC_ARG(Data)
-		LOG_FUNC_ARG(Format)
-		LOG_FUNC_END;
-
-   	DWORD Stage = -1;
-
-	switch (Method) { // Detect which of the 4 (X_D3DTS_STAGECOUNT) texture stages is given by the (NV2A) Method argument
-	// This code contains D3DPUSH_ENCODE(NV2A_TX_OFFSET(v), 2) = 2 DWORD's, shifted left PUSH_COUNT_SHIFT (18) left
-	case 0x00081b00: Stage = 0; break;
-	case 0x00081b40: Stage = 1; break;
-	case 0x00081b80: Stage = 2; break;
-	case 0x00081bc0: Stage = 3; break;
-	default:
-		LOG_TEST_CASE("D3DDevice_SwitchTexture Unknown Method");
-   	   	EmuLog(LOG_LEVEL::WARNING, "Unknown Method (0x%.08X)", Method);
-	}
-
-   	if (Stage >= 0) {
-		// Switch Texture updates the data pointer of an active texture using pushbuffer commands
-		if (g_pXbox_SetTexture[Stage] == xbox::zeroptr) {
-			LOG_TEST_CASE("D3DDevice_SwitchTexture without an active texture");
-		}
-		else {
-			//LOG_TEST_CASE("Using CxbxActiveTextureCopies");
-			// See https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/issues/1159
-			// Test-case : Arena Football
-			// Test-case : Call of Duty 2: Big Red One
-			// Test-case : Crimson Skies
-			// Test-case : Freedom Fighters - see https://www.youtube.com/watch?v=_NDCoLY8V3I
-			// Test-case : Freestyle MetalX
-			// Test-case : GENMA ONIMUSHA
-			// Test-case : Gun
-			// Test-case : Harry Potter : Quidditch World Cup
-			// Test-case : King Arthur
-			// Test-case : Madden NFL 2002
-			// Test-case : Madden NFL 2005
-			// Test-case : Madden NFL 07
-			// Test-case : Need For Speed Most Wanted
-			// Test-case : Need For Speed Underground
-			// Test-case : PocketBike Racer
-			// Test-case : Project Gotham Racing 2
-			// Test-case : Richard Burns Rally
-			// Test-case : Spider - Man 2
-
-			// Update data and format separately, instead of via GetDataFromXboxResource()
-			CxbxActiveTextureCopies[Stage].Common = g_pXbox_SetTexture[Stage]->Common;
-			CxbxActiveTextureCopies[Stage].Data = Data;
-			CxbxActiveTextureCopies[Stage].Format = Format;
-			CxbxActiveTextureCopies[Stage].Lock = 0;
-			CxbxActiveTextureCopies[Stage].Size = g_pXbox_SetTexture[Stage]->Size;
-
-			// Use the above modified copy, instead of altering the active Xbox texture
-			g_pXbox_SetTexture[Stage] = &CxbxActiveTextureCopies[Stage];
-			// Register in the VRAM-offset → texture side-map for PGRAPH TEXOFFSET lookup
-			CxbxRegisterTextureByDataAddr(Data, &CxbxActiveTextureCopies[Stage]);
-			CxbxMirrorTexOffsetToPGRAPH(Stage, Data);
-			// Note : Since g_pXbox_SetTexture and CxbxActiveTextureCopies are host-managed,
-			// Xbox code should never alter these members (so : no reference counting, etc).
-			// As long as that's guaranteed, this is a safe way to emulate SwitchTexture.
-			// (GetHostResourceKey also avoids using any Xbox texture resource memory address.)
-		}
-   	}
-}
+// D3DDevice_SwitchTexture — disabled.
+// Xbox native SwitchTexture updates texture offset mid-draw via push buffer.
+// Host texture lookup uses PGRAPH TEXOFFSET registers.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // D3DDevice_SetTransform — disabled.
 // Transform state now sourced from PGRAPH XFCTX registers (MMAT0/CMAT/TnMAT).
@@ -304,149 +187,8 @@ xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
 // Xbox native code calls SetTransform internally which pushes NV2A transform methods.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_SetStreamSource
-// ******************************************************************
-
-// Overload for logging
-static void D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3
-(
-   	xbox::uint_xt            StreamNumber,
-   	xbox::X_D3DVertexBuffer *pStreamData,
-   	xbox::uint_xt            Stride
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(StreamNumber)
-   	   	LOG_FUNC_ARG(pStreamData)
-   	   	LOG_FUNC_ARG(Stride)
-   	   	LOG_FUNC_END;
-}
-
-// LTCG specific D3DDevice_SetStreamSource function...
-// This uses a custom calling convention where parameters are passed in EAX, EDI, EBX
-// Test-case: Juiced
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3)()
-{
-   	uint_xt StreamNumber;
-   	X_D3DVertexBuffer *pStreamData;
-   	uint_xt Stride;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  StreamNumber, eax
-   	   	mov  pStreamData, edi
-   	   	mov  Stride, ebx
-   	}
-
-   	// Log
-   	D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3(StreamNumber, pStreamData, Stride);
-
-   	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
-
-   	__asm {
-   	   	mov  eax, StreamNumber
-   	   	mov  edi, pStreamData
-   	   	mov  ebx, Stride
-   	   	call XB_TRMP(D3DDevice_SetStreamSource_0__LTCG_eax1_edi2_ebx3)
-
-   	   	LTCG_EPILOGUE
-   	   	ret
-   	}
-}
-
-// Overload for logging
-static void D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2
-(
-   	xbox::uint_xt            StreamNumber,
-   	xbox::X_D3DVertexBuffer *pStreamData,
-   	xbox::uint_xt            Stride
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(StreamNumber)
-   	   	LOG_FUNC_ARG(pStreamData)
-   	   	LOG_FUNC_ARG(Stride)
-   	   	LOG_FUNC_END;
-}
-
-// LTCG specific D3DDevice_SetStreamSource function...
-// This uses a custom calling convention where parameter is passed in EAX, EBX
-// Test-case: Ninja Gaiden
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2)
-(
-   	uint_xt                Stride
-)
-{
-   	uint_xt StreamNumber;
-   	X_D3DVertexBuffer *pStreamData;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  StreamNumber, eax
-   	   	mov  pStreamData, ebx
-   	}
-
-   	// Log
-   	D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2(StreamNumber, pStreamData, Stride);
-
-   	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
-
-   	// Forward to Xbox implementation
-   	// This should stop us having to patch GetStreamSource!
-   	__asm {
-   	   	push Stride
-   	   	mov  ebx, pStreamData
-   	   	mov  eax, StreamNumber
-   	   	call XB_TRMP(D3DDevice_SetStreamSource_4__LTCG_eax1_ebx2)
-
-   	   	LTCG_EPILOGUE
-   	   	ret  4
-   	}
-}
-
-// Overload for logging
-static void D3DDevice_SetStreamSource_8__LTCG_eax1
-(
-   	xbox::uint_xt            StreamNumber,
-   	xbox::X_D3DVertexBuffer *pStreamData,
-   	xbox::uint_xt            Stride
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(StreamNumber)
-   	   	LOG_FUNC_ARG(pStreamData)
-   	   	LOG_FUNC_ARG(Stride)
-   	   	LOG_FUNC_END;
-}
-
-// This uses a custom calling convention where parameter is passed in EAX
-// Test-case: Superman - The Man Of Steel
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_eax1)
-(
-   	X_D3DVertexBuffer  *pStreamData,
-   	uint_xt             Stride
-)
-{
-   	uint_xt StreamNumber;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  StreamNumber, eax
-   	}
-
-   	// Log
-   	D3DDevice_SetStreamSource_8__LTCG_eax1(StreamNumber, pStreamData, Stride);
-
-   	CxbxImpl_SetStreamSource(StreamNumber, pStreamData, Stride);
-
-   	// Forward to Xbox implementation
-   	// This should stop us having to patch GetStreamSource!
-   	__asm {
-   	   	push Stride
-   	   	push pStreamData
-   	   	mov  eax, StreamNumber
-   	   	call XB_TRMP(D3DDevice_SetStreamSource_8__LTCG_eax1)
-
-   	   	LTCG_EPILOGUE
-   	   	ret  8
-   	}
-}
+// D3DDevice_SetStreamSource (all LTCG variants) — disabled.
+// Xbox native SetStreamSource writes NV097_SET_VERTEX_DATA_ARRAY_OFFSET/FORMAT
+// to the push buffer. Host vertex binding reads PGRAPH state.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
