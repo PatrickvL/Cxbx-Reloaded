@@ -198,6 +198,37 @@ typedef struct TextureKey {
 	uint8_t* palette_data;
 } TextureKey;
 
+// Hardware tessellation patch state (NV097_SET_BEGIN_PATCH / SET_END_PATCH)
+#define NV2A_PATCH_MAX_CURVES     16   // max attribute curves per patch
+#define NV2A_PATCH_MAX_COEFFS   1024   // max float4 coefficient writes per patch
+
+typedef struct PatchCurve {
+	int curveType;          // curve type (0=END, 1=STRIP, 2=LEFT_GUARD, 3=RIGHT_GUARD, etc.)
+	int coeffStart;         // index into coefficients array
+	int coeffCount;         // number of float4 entries
+} PatchCurve;
+
+typedef struct PatchState {
+	// Configuration from SET_BEGIN_PATCH0-3
+	uint32_t patch0;
+	uint32_t patch1;
+	uint32_t patch2;
+	uint32_t patch3;
+
+	// Swatch config from SET_BEGIN_END_SWATCH
+	uint32_t swatch;
+
+	// Curve accumulation
+	bool active;                    // inside a BEGIN_PATCH..END_PATCH
+	int currentCurveAttr;           // current curve attribute (-1 if none)
+	int curveCount;                 // number of completed curves
+	PatchCurve curves[NV2A_PATCH_MAX_CURVES];
+
+	// Coefficient buffer (shared across all curves)
+	float coefficients[NV2A_PATCH_MAX_COEFFS * 4]; // float4 entries
+	int totalCoeffs;                // total float4 entries written
+} PatchState;
+
 typedef struct KelvinState {
 	xbox::addr_xt object_instance;
 } KelvinState;
@@ -286,6 +317,9 @@ typedef struct PGRAPHState {
 	/* FIXME: Unknown size, possibly endless, 1000 will do for now */
 	int32_t gl_draw_arrays_start[1000];
 	int32_t gl_draw_arrays_count[1000];
+
+	// Hardware tessellation state
+	PatchState patch;
 
 	uint32_t regs[NV_PGRAPH_SIZE]; // TODO : union
 } PGRAPHState;

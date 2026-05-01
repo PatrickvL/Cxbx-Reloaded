@@ -180,6 +180,7 @@ void (*pgraph_draw_inline_array)(NV2AState *d);
 void (*pgraph_draw_inline_elements)(NV2AState *d);
 void (*pgraph_draw_state_update)(NV2AState *d);
 void (*pgraph_draw_clear)(NV2AState *d);
+void (*pgraph_draw_patch)(NV2AState *d);  // Hardware tessellation callback
 
 void pgraph_handle_method(NV2AState *d, unsigned int subchannel, unsigned int method, uint32_t parameter);
 static void pgraph_log_method(unsigned int subchannel, unsigned int graphics_class, unsigned int method, uint32_t parameter);
@@ -1994,6 +1995,90 @@ void pgraph_handle_method(NV2AState *d,
 		//     // Test-case: Whiplash
 		//     pg->enable_vertex_program_write = parameter;
 		//     break;
+
+		// ===== Hardware Tessellation (Patch) Methods =====
+		case NV097_SET_BEGIN_PATCH0:
+			pg->patch.patch0 = parameter;
+			pg->patch.active = true;
+			pg->patch.curveCount = 0;
+			pg->patch.totalCoeffs = 0;
+			pg->patch.currentCurveAttr = -1;
+			break;
+		case NV097_SET_BEGIN_PATCH1:
+			pg->patch.patch1 = parameter;
+			break;
+		case NV097_SET_BEGIN_PATCH2:
+			pg->patch.patch2 = parameter;
+			break;
+		case NV097_SET_BEGIN_PATCH3:
+			pg->patch.patch3 = parameter;
+			break;
+
+		case NV097_SET_BEGIN_END_SWATCH:
+			if (parameter != 0) {
+				pg->patch.swatch = parameter; // Store begin format
+			} else {
+				// End swatch - draw the accumulated curves and reset for next swatch
+				if (pgraph_draw_patch != nullptr && pg->patch.active && pg->patch.curveCount > 0) {
+					pgraph_draw_patch(d);
+				}
+				// Reset curves for next swatch (keep patch0-3 and active)
+				pg->patch.curveCount = 0;
+				pg->patch.totalCoeffs = 0;
+				pg->patch.currentCurveAttr = -1;
+			}
+			break;
+
+		case NV097_SET_BEGIN_END_CURVE:
+			if (parameter == 0) {
+				// End current curve (END_CURVE_DATA)
+				if (pg->patch.currentCurveAttr >= 0 && pg->patch.curveCount < NV2A_PATCH_MAX_CURVES) {
+					PatchCurve &curve = pg->patch.curves[pg->patch.curveCount];
+					curve.curveType = pg->patch.currentCurveAttr;
+					curve.coeffCount = pg->patch.totalCoeffs - curve.coeffStart;
+					pg->patch.curveCount++;
+				}
+				pg->patch.currentCurveAttr = -1;
+			} else {
+				// Begin curve of given type (1=STRIP, 2=LEFT_GUARD, 3=RIGHT_GUARD, etc.)
+				pg->patch.currentCurveAttr = (int)parameter;
+				if (pg->patch.curveCount < NV2A_PATCH_MAX_CURVES) {
+					pg->patch.curves[pg->patch.curveCount].coeffStart = pg->patch.totalCoeffs;
+				}
+			}
+			break;
+
+		CASE_4(NV097_SET_CURVE_COEFFICIENTS, 4): {
+			int idx = (method - NV097_SET_CURVE_COEFFICIENTS) / 4;
+			if (pg->patch.totalCoeffs < NV2A_PATCH_MAX_COEFFS) {
+				int base = pg->patch.totalCoeffs * 4 + idx;
+				uint32_t u = parameter;
+				float f;
+				memcpy(&f, &u, sizeof(f));
+				pg->patch.coefficients[base] = f;
+				// Advance total count after writing the 4th component
+				if (idx == 3) {
+					pg->patch.totalCoeffs++;
+				}
+			}
+			break;
+		}
+
+		case NV097_SET_END_PATCH:
+			// Finalize any open curve
+			if (pg->patch.currentCurveAttr >= 0 && pg->patch.curveCount < NV2A_PATCH_MAX_CURVES) {
+				PatchCurve &curve = pg->patch.curves[pg->patch.curveCount];
+				curve.curveType = pg->patch.currentCurveAttr;
+				curve.coeffCount = pg->patch.totalCoeffs - curve.coeffStart;
+				pg->patch.curveCount++;
+				pg->patch.currentCurveAttr = -1;
+			}
+			// Dispatch tessellation for any remaining curves (if swatch didn't already draw them)
+			if (pgraph_draw_patch != nullptr && pg->patch.active && pg->patch.curveCount > 0) {
+				pgraph_draw_patch(d);
+			}
+			pg->patch.active = false;
+			break;
 
 		default:
 			NV2A_GL_DPRINTF(true, "    unhandled  (0x%02x 0x%08x)",

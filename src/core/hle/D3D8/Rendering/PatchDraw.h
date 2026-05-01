@@ -32,6 +32,9 @@
 
 #include "core\hle\D3D8\XbD3D8Types.h"
 
+// Forward declare NV2A types
+struct NV2AState;
+
 // Tessellate a rectangular patch and draw it via D3D11
 HRESULT CxbxDrawRectPatchD3D11(
 	UINT Handle,
@@ -45,6 +48,9 @@ HRESULT CxbxDrawTriPatchD3D11(
 	const float *pNumSegs,
 	const xbox::X_D3DTRIPATCH_INFO *pTriPatchInfo
 );
+
+// NV2A hardware tessellation: called from PGRAPH on SET_END_PATCH
+void D3D11_draw_patch(NV2AState *d);
 
 
 #endif // PATCHDRAW_H

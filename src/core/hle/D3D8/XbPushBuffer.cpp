@@ -36,6 +36,7 @@
 #include "core\hle\D3D8\XbPushBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11IABypassDraw
+#include "core\hle\D3D8\Rendering\PatchDraw.h" // For D3D11_draw_patch
 #include "devices/video/nv2a.h" // For g_NV2A, PGRAPHState
 #include "devices/video/nv2a_int.h" // For NV** defines
 #include "Logging.h"
@@ -271,6 +272,7 @@ extern void(*pgraph_draw_inline_array)(NV2AState *d);
 extern void(*pgraph_draw_inline_elements)(NV2AState *d);
 extern void(*pgraph_draw_state_update)(NV2AState *d);
 extern void(*pgraph_draw_clear)(NV2AState *d);
+extern void(*pgraph_draw_patch)(NV2AState *d);
 
 void D3D11_init_pgraph_plugins()
 {
@@ -281,6 +283,7 @@ void D3D11_init_pgraph_plugins()
 	pgraph_draw_inline_elements = D3D11_draw_inline_elements;
 	pgraph_draw_state_update = D3D11_draw_state_update;
 	pgraph_draw_clear = D3D11_draw_clear;
+	pgraph_draw_patch = D3D11_draw_patch;
 }
 
 extern void pgraph_handle_method(
