@@ -74,18 +74,6 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetDisplayFieldStatus)
 );
 
 // ******************************************************************
-// * patch: D3DDevice_Reset
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_Reset)
-(
-   	X_D3DPRESENT_PARAMETERS *pPresentationParameters
-);
-
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_Reset_0__LTCG_edi1)();
-
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_Reset_0__LTCG_ebx1)();
-
-// ******************************************************************
 // * patch: D3DDevice_SetIndices
 // ******************************************************************
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetIndices)
@@ -98,6 +86,31 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetIndices_4__LTCG_ebx1)
 (
    	uint_xt                BaseVertexIndex
 );
+
+// ******************************************************************
+// * patch: D3DDevice_BeginPush_4 — Disabled
+// ******************************************************************
+//xbox::PDWORD WINAPI EMUPATCH(D3DDevice_BeginPush_4)(dword_xt Count);
+
+// ******************************************************************
+// * patch: D3DDevice_BeginPush_8 — Disabled
+// ******************************************************************
+//xbox::void_xt WINAPI EMUPATCH(D3DDevice_BeginPush_8)(dword_xt Count, dword_xt **ppPush);
+
+// ******************************************************************
+// * patch: D3DDevice_EndPush — Disabled
+// ******************************************************************
+//xbox::void_xt WINAPI EMUPATCH(D3DDevice_EndPush)(dword_xt *pPush);
+
+// ******************************************************************
+// * patch: D3DDevice_Reset — Disabled
+// ******************************************************************
+//xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_Reset)
+//(
+//	X_D3DPRESENT_PARAMETERS *pPresentationParameters
+//);
+//xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_Reset_0__LTCG_edi1)();
+//xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_Reset_0__LTCG_ebx1)();
 
 
 } // namespace xbox
