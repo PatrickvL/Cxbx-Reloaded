@@ -184,15 +184,8 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_InsertCallback)
 //	CONST X_D3DTRIPATCH_INFO* pTriPatchInfo
 //);
 
-// ******************************************************************
-// * patch: D3D_BlockOnTime
-// ******************************************************************
-void WINAPI EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace);
-
-// ******************************************************************
-// * patch: D3D_BlockOnTime_4__LTCG_eax1
-// ******************************************************************
-void WINAPI EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int MakeSpace);
+// D3D_BlockOnTime — disabled (implementation in Direct3D9.cpp.unused-patches)
+// D3D_BlockOnTime_4__LTCG_eax1 — disabled
 
 // ******************************************************************
 // * patch: D3DDevice_GetProjectionViewportMatrix — Disabled

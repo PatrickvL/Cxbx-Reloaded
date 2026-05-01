@@ -281,9 +281,12 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_UpdateOverlay_16__LTCG_eax2", xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code polls resource state
 	//PATCH_ENTRY("D3DResource_BlockUntilNotBusy", xbox::EMUPATCH(D3DResource_BlockUntilNotBusy), PATCH_HLE_D3D),
-	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code uses NV2A time fence
-	PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
+	// Disabled: Xbox native code polls NV_PFIFO_CACHE1_DMA_GET until it equals PUT.
+	// The PFIFO read handler fast-path returns GET=PUT when pusher access is disabled (HLE mode),
+	// so the native polling loop exits immediately. No flush is needed because HostSync already
+	// calls pfifo_flush_to_pgraph before each draw.
+	//PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3D_CommonSetRenderTarget", xbox::EMUPATCH(D3D_CommonSetRenderTarget), PATCH_HLE_D3D),
 	// Disabled: host resources are NV2A-derived (PGRAPH RT cache, texture cache keyed by VRAM).
 	// Dirty page tracking invalidates stale host resources. FreeHostResource on Xbox D3D keys is vestigial.
