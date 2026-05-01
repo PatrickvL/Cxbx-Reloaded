@@ -112,6 +112,7 @@ static int ffs(int valu)
 
 // Non-power-of-two CASE statements
 #define CASE_3(v, step) CASE_2(v, step) : CASE_1(v + (step) * 2, step)
+#define CASE_6(v, step) CASE_4(v, step) : CASE_2(v + (step) * 4, step)
 
 #define NV2A_DEVICE(obj) \
     OBJECT_CHECK(NV2AState, (obj), "nv2a")
@@ -268,6 +269,7 @@ typedef struct PGRAPHState {
 	float light_local_attenuation[NV2A_MAX_LIGHTS][3];
 
 	float point_params[8]; // NV097_SET_POINT_PARAMS attenuation coefficients
+	float line_width;      // NV097_SET_LINE_WIDTH (float, pixels)
 
 	VertexAttribute vertex_attributes[NV2A_VERTEXSHADER_ATTRIBUTES];
 

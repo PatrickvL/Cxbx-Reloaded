@@ -637,6 +637,8 @@ void CxbxUpdateNativeD3DResources()
 		auto pg = &g_NV2A->GetDeviceState()->pgraph;
 		CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
 		CxbxD3D11UpdateSamplersFromPGRAPH(pg);
+		extern float g_fLineWidth;
+		g_fLineWidth = pg->line_width;
 	}
 
 	// Point sprite texture swap: NV2A uses stage 3 for point sprite textures.

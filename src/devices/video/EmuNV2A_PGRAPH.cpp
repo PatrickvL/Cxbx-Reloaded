@@ -1099,10 +1099,53 @@ void pgraph_handle_method(NV2AState *d,
 
 		CASE_3(NV097_SET_SCENE_AMBIENT_COLOR, 4):
 			slot = (method - NV097_SET_SCENE_AMBIENT_COLOR) / 4;
-			// ??
 			pg->ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][slot] = parameter;
 			pg->ltctxa_dirty[NV_IGRAPH_XF_LTCTXA_FR_AMB] = true;
 			break;
+
+		CASE_3(NV097_SET_BACK_SCENE_AMBIENT_COLOR, 4):
+			slot = (method - NV097_SET_BACK_SCENE_AMBIENT_COLOR) / 4;
+			pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][slot] = parameter;
+			pg->ltctxa_dirty[NV_IGRAPH_XF_LTCTXA_BR_AMB] = true;
+			break;
+
+		CASE_3(NV097_SET_MATERIAL_EMISSION, 4):
+			slot = (method - NV097_SET_MATERIAL_EMISSION) / 4;
+			pg->ltctxa[NV_IGRAPH_XF_LTCTXA_CM_COL][slot] = parameter;
+			pg->ltctxa_dirty[NV_IGRAPH_XF_LTCTXA_CM_COL] = true;
+			break;
+
+		case NV097_SET_MATERIAL_ALPHA:
+			pg->ltctxa[NV_IGRAPH_XF_LTCTXA_CM_COL][3] = parameter;
+			pg->ltctxa_dirty[NV_IGRAPH_XF_LTCTXA_CM_COL] = true;
+			break;
+
+		CASE_3(NV097_SET_BACK_MATERIAL_EMISSIONR, 4):
+			slot = (method - NV097_SET_BACK_MATERIAL_EMISSIONR) / 4;
+			pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BCM_COL][slot] = parameter;
+			pg->ltctxa_dirty[NV_IGRAPH_XF_LTCTXA_BCM_COL] = true;
+			break;
+
+		case NV097_SET_BACK_MATERIAL_ALPHA:
+			pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BCM_COL][3] = parameter;
+			pg->ltctxa_dirty[NV_IGRAPH_XF_LTCTXA_BCM_COL] = true;
+			break;
+
+		CASE_6(NV097_SET_SPECULAR_PARAMS, 4): {
+			slot = (method - NV097_SET_SPECULAR_PARAMS) / 4;
+			unsigned int row = NV_IGRAPH_XF_LTC1_l0 + slot / 4;
+			pg->ltc1[row][slot % 4] = parameter;
+			pg->ltc1_dirty[row] = true;
+			break;
+		}
+
+		CASE_6(NV097_SET_BACK_SPECULAR_PARAMS, 4): {
+			slot = (method - NV097_SET_BACK_SPECULAR_PARAMS) / 4;
+			unsigned int row = NV_IGRAPH_XF_LTC1_Bl0 + slot / 4;
+			pg->ltc1[row][slot % 4] = parameter;
+			pg->ltc1_dirty[row] = true;
+			break;
+		}
 
 		CASE_4(NV097_SET_VIEWPORT_OFFSET, 4):
 			slot = (method - NV097_SET_VIEWPORT_OFFSET) / 4;
@@ -1271,6 +1314,138 @@ void pgraph_handle_method(NV2AState *d,
 			}
 			break;
 		}
+
+		CASE_3(NV097_SET_NORMAL3F, 4): {
+			slot = (method - NV097_SET_NORMAL3F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_NORMAL];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_NORMAL);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			vertex_attribute->inline_value[3] = 1.0f;
+			break;
+		}
+
+		CASE_4(NV097_SET_DIFFUSE_COLOR4F, 4): {
+			slot = (method - NV097_SET_DIFFUSE_COLOR4F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_DIFFUSE];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_DIFFUSE);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			break;
+		}
+
+		CASE_3(NV097_SET_DIFFUSE_COLOR3F, 4): {
+			slot = (method - NV097_SET_DIFFUSE_COLOR3F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_DIFFUSE];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_DIFFUSE);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			vertex_attribute->inline_value[3] = 1.0f;
+			break;
+		}
+
+		case NV097_SET_DIFFUSE_COLOR4UB: {
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_DIFFUSE];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_DIFFUSE);
+			vertex_attribute->inline_value[0] = (parameter & 0xFF) / 255.0f;
+			vertex_attribute->inline_value[1] = ((parameter >> 8) & 0xFF) / 255.0f;
+			vertex_attribute->inline_value[2] = ((parameter >> 16) & 0xFF) / 255.0f;
+			vertex_attribute->inline_value[3] = ((parameter >> 24) & 0xFF) / 255.0f;
+			break;
+		}
+
+		CASE_4(NV097_SET_SPECULAR_COLOR4F, 4): {
+			slot = (method - NV097_SET_SPECULAR_COLOR4F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_SPECULAR];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_SPECULAR);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			break;
+		}
+
+		CASE_3(NV097_SET_SPECULAR_COLOR3F, 4): {
+			slot = (method - NV097_SET_SPECULAR_COLOR3F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_SPECULAR];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_SPECULAR);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			vertex_attribute->inline_value[3] = 1.0f;
+			break;
+		}
+
+		case NV097_SET_SPECULAR_COLOR4UB: {
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_SPECULAR];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_SPECULAR);
+			vertex_attribute->inline_value[0] = (parameter & 0xFF) / 255.0f;
+			vertex_attribute->inline_value[1] = ((parameter >> 8) & 0xFF) / 255.0f;
+			vertex_attribute->inline_value[2] = ((parameter >> 16) & 0xFF) / 255.0f;
+			vertex_attribute->inline_value[3] = ((parameter >> 24) & 0xFF) / 255.0f;
+			break;
+		}
+
+		CASE_4(NV097_SET_TEXCOORD0_4F, 4): {
+			slot = (method - NV097_SET_TEXCOORD0_4F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_TEXTURE0];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_TEXTURE0);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			break;
+		}
+
+		CASE_4(NV097_SET_TEXCOORD1_4F, 4): {
+			slot = (method - NV097_SET_TEXCOORD1_4F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_TEXTURE1];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_TEXTURE1);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			break;
+		}
+
+		CASE_4(NV097_SET_TEXCOORD2_4F, 4): {
+			slot = (method - NV097_SET_TEXCOORD2_4F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_TEXTURE2];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_TEXTURE2);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			break;
+		}
+
+		CASE_4(NV097_SET_TEXCOORD3_4F, 4): {
+			slot = (method - NV097_SET_TEXCOORD3_4F) / 4;
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_TEXTURE3];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_TEXTURE3);
+			vertex_attribute->inline_value[slot] = *(float*)&parameter;
+			break;
+		}
+
+		case NV097_SET_FOG1F: {
+			VertexAttribute *vertex_attribute =
+				&pg->vertex_attributes[NV2A_VERTEX_ATTR_FOG];
+			pgraph_allocate_inline_buffer_vertices(pg, NV2A_VERTEX_ATTR_FOG);
+			vertex_attribute->inline_value[0] = *(float*)&parameter;
+			vertex_attribute->inline_value[1] = 0.0f;
+			vertex_attribute->inline_value[2] = 0.0f;
+			vertex_attribute->inline_value[3] = 1.0f;
+			break;
+		}
+
+		case NV097_SET_EDGE_FLAG:
+			pg->regs[RI(NV_PGRAPH_SETUPRASTER)] =
+				(pg->regs[RI(NV_PGRAPH_SETUPRASTER)] & ~(1 << 30))
+				| ((parameter ? 1 : 0) << 30);
+			break;
+
+		case NV097_SET_LINE_WIDTH:
+			pg->line_width = *(float*)&parameter;
+			break;
+
+		case NV097_INVALIDATE_VERTEX_CACHE_FILE:
+			// This is a hint to flush the post-T&L vertex cache.
+			// No action required — our host renderer doesn't cache transformed vertices.
+			break;
 
 		CASE_16(NV097_SET_VERTEX_DATA_ARRAY_FORMAT, 4): {
 
