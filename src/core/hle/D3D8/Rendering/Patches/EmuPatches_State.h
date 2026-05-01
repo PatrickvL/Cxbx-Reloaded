@@ -35,22 +35,8 @@ namespace xbox {
 // ******************************************************************
 //xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetBackBufferScale)(float_xt x, float_xt y);
 
-// ******************************************************************
-// * patch: D3DDevice_SetGammaRamp
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetGammaRamp)
-(
-   	dword_xt                   dwFlags,
-   	CONST X_D3DGAMMARAMP   *pRamp
-);
-
-// ******************************************************************
-// * patch: D3DDevice_GetGammaRamp
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetGammaRamp)
-(
-   	X_D3DGAMMARAMP     *pRamp
-);
+// D3DDevice_SetGammaRamp — disabled (PRMDIO VGA DAC palette emulation handles gamma natively)
+// D3DDevice_GetGammaRamp — disabled (PRMDIO VGA DAC palette emulation handles gamma natively)
 
 // ******************************************************************
 // * patch: D3DDevice_SetViewport

@@ -24,6 +24,7 @@
 #include "Backend_D3D11_Internal.h"
 #include "Backend_D3D11_PageTracker.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // NV2A_get_vertex_attribute_value_pointer
+#include "devices\video\nv2a.h" // NV2ADevice, NV2AState
 
 // ******************************************************************
 // * Rendering helpers (D3D11 implementations)
@@ -182,10 +183,52 @@ HRESULT CxbxBltSurface(ID3D11Texture2D* pSrc, const RECT* pSrcRect, ID3D11Textur
 	return CxbxD3D11Blt(pSrc, pSrcRect, pDst, pDstRect, Filter);
 }
 
+// Build a DXGI_GAMMA_CONTROL from the NV2A VGA DAC palette (256-entry CLUT),
+// linearly interpolating into the 1025-entry DXGI curve.
+static void CxbxApplyNV2AGamma(NV2AState* d)
+{
+	IDXGIOutput* pOutput = nullptr;
+	if (FAILED(g_pSwapChain->GetContainingOutput(&pOutput))) return;
+
+	auto clut = d->puserdac.palette;
+
+	DXGI_GAMMA_CONTROL gammaControl = {};
+	gammaControl.Scale  = { 1.0f, 1.0f, 1.0f };
+	gammaControl.Offset = { 0.0f, 0.0f, 0.0f };
+
+	for (int j = 0; j <= 1024; ++j) {
+		float x    = (j / 1024.0f) * 255.0f;
+		int   lo   = (int)x;
+		int   hi   = lo < 255 ? lo + 1 : 255;
+		float frac = x - (float)lo;
+
+		auto lerp = [&](uint8_t a, uint8_t b) -> float {
+			return (a + frac * (float)(b - a)) / 255.0f;
+		};
+
+		gammaControl.GammaCurve[j] = {
+			lerp(clut[lo * 3 + 0], clut[hi * 3 + 0]),
+			lerp(clut[lo * 3 + 1], clut[hi * 3 + 1]),
+			lerp(clut[lo * 3 + 2], clut[hi * 3 + 2])
+		};
+	}
+
+	pOutput->SetGammaControl(&gammaControl);
+	pOutput->Release();
+}
+
 HRESULT CxbxPresent()
 {
 	LOG_INIT;
 	CxbxEndScene();
+
+	// Apply NV2A gamma LUT (PRMDIO VGA DAC palette) to DXGI output
+	NV2AState* d = g_NV2A->GetDeviceState();
+	if (d->puserdac.dirty) {
+		d->puserdac.dirty = false;
+		CxbxApplyNV2AGamma(d);
+	}
+
 	HRESULT hRet = g_pSwapChain->Present(0, 0);
 	DEBUG_D3DRESULT(hRet, "g_pSwapChain->Present");
 	// Allow the next page tracker flush to use DISCARD (safe at frame boundary

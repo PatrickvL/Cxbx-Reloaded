@@ -40,8 +40,16 @@
 DEVICE_READ32(PRMDIO)
 {
 	DEVICE_READ32_SWITCH() {
+	case NV_USER_DAC_WRITE_MODE_ADDRESS:
+		result = d->puserdac.write_mode_address / 3;
+		break;
+	case NV_USER_DAC_READ_MODE_ADDRESS:
+		result = d->puserdac.read_mode_address / 3;
+		break;
+	case NV_USER_DAC_PALETTE_DATA:
+		result = d->puserdac.palette[d->puserdac.read_mode_address++ % (256 * 3)];
+		break;
 	default:
-		DEBUG_READ32_UNHANDLED(PRMDIO);
 		break;
 	}
 
@@ -55,8 +63,17 @@ DEVICE_READ32(PRMDIO)
 DEVICE_WRITE32(PRMDIO)
 {
 	switch (addr) {
+	case NV_USER_DAC_WRITE_MODE_ADDRESS:
+		d->puserdac.write_mode_address = (value & 0xFF) * 3;
+		break;
+	case NV_USER_DAC_READ_MODE_ADDRESS:
+		d->puserdac.read_mode_address = (value & 0xFF) * 3;
+		break;
+	case NV_USER_DAC_PALETTE_DATA:
+		d->puserdac.palette[d->puserdac.write_mode_address++ % (256 * 3)] = (uint8_t)value;
+		d->puserdac.dirty = true;
+		break;
 	default:
-		DEBUG_WRITE32_UNHANDLED(PRMDIO);
 		break;
 	}
 

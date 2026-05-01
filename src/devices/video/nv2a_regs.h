@@ -897,6 +897,11 @@
 #define NV_PRAMDAC_FP_HCRTC                              0x00000828
 #define NV_PRAMDAC_FP_HVALID_END                         0x00000838
 
+// PRMDIO: VGA DAC palette registers (mapped into NV2A MMIO at block offset 0x681000)
+#define NV_USER_DAC_WRITE_MODE_ADDRESS                    0x000003C8
+#define NV_USER_DAC_PALETTE_DATA                          0x000003C9
+#define NV_USER_DAC_READ_MODE_ADDRESS                     0x000003C7
+
 #define NV_PRMCIO_ARX			0x006013c0
 #define NV_PRMCIO_AR__WRITE		0x006013c0
 #define NV_PRMCIO_AR__READ		0x006013c1

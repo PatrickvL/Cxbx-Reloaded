@@ -434,6 +434,14 @@ typedef struct NV2AState {
 		uint32_t regs[NV_PRAMDAC_SIZE]; // Not in xqemu/openxbox? TODO : union
     } pramdac;
 
+	// PRMDIO: VGA DAC palette (gamma LUT)
+	struct {
+		uint32_t write_mode_address; // byte index into palette[] (0..767)
+		uint32_t read_mode_address;  // byte index for read-back
+		uint8_t  palette[256 * 3];   // 256 entries x RGB (written sequentially)
+		bool     dirty;              // set true when palette[] is modified
+	} puserdac;
+
 	// PRMCIO (Actually the VGA controller)
 	struct {
 		uint8_t cr_index;

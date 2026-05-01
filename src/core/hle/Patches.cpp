@@ -121,7 +121,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_GetBackBuffer2", xbox::EMUPATCH(D3DDevice_GetBackBuffer2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetBackBuffer2_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_GetBackBuffer2_0__LTCG_eax1), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetDisplayFieldStatus", xbox::EMUPATCH(D3DDevice_GetDisplayFieldStatus), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetGammaRamp", xbox::EMUPATCH(D3DDevice_GetGammaRamp), PATCH_HLE_D3D),
+	// Disabled: PRMDIO VGA DAC palette emulation handles gamma natively
+	//PATCH_ENTRY("D3DDevice_GetGammaRamp", xbox::EMUPATCH(D3DDevice_GetGammaRamp), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetMaterial", xbox::EMUPATCH(D3DDevice_GetMaterial), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetModelView", xbox::EMUPATCH(D3DDevice_GetModelView), PATCH_HLE_D3D),
 	// Disabled: hardcoded TRUE stub, Xbox native overlay check is correct
@@ -195,7 +196,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetDepthClipPlanes", xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetFlickerFilter", xbox::EMUPATCH(D3DDevice_SetFlickerFilter), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetFlickerFilter_0__LTCG_esi1", xbox::EMUPATCH(D3DDevice_SetFlickerFilter_0__LTCG_esi1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_SetGammaRamp", xbox::EMUPATCH(D3DDevice_SetGammaRamp), PATCH_HLE_D3D),
+	// Disabled: PRMDIO VGA DAC palette emulation handles gamma natively
+	//PATCH_ENTRY("D3DDevice_SetGammaRamp", xbox::EMUPATCH(D3DDevice_SetGammaRamp), PATCH_HLE_D3D),
 	// Disabled: trampoline-only, g_Xbox_BaseVertexIndex was only reader (DrawIndexedVertices disabled)
 	//PATCH_ENTRY("D3DDevice_SetIndices", xbox::EMUPATCH(D3DDevice_SetIndices), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetIndices_4__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetIndices_4__LTCG_ebx1), PATCH_HLE_D3D),

@@ -29,89 +29,11 @@
 // Host-only concept (upscale factor); Xbox native code doesn't need this.
 // Patch disabled in Patches.cpp.
 
-// ******************************************************************
-// * patch: D3DDevice_SetGammaRamp
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetGammaRamp)
-(
-   	dword_xt                   dwFlags,
-   	CONST X_D3DGAMMARAMP      *pRamp
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(dwFlags)
-		LOG_FUNC_ARG(pRamp)
-		LOG_FUNC_END;
+// D3DDevice_SetGammaRamp — disabled (PRMDIO VGA DAC palette emulation handles gamma natively).
+// Implementation moved to Direct3D9.cpp.unused-patches.
 
-	// Use IDXGIOutput::SetGammaControl for D3D11
-	if (g_pSwapChain) {
-		IDXGIOutput* pOutput = nullptr;
-		if (SUCCEEDED(g_pSwapChain->GetContainingOutput(&pOutput))) {
-			DXGI_GAMMA_CONTROL gammaControl = {};
-			gammaControl.Scale = { 1.0f, 1.0f, 1.0f };
-			gammaControl.Offset = { 0.0f, 0.0f, 0.0f };
-			for (int v = 0; v < 256; v++) {
-				float idx = v / 255.0f * 1024.0f;
-				int i = static_cast<int>(idx);
-				if (i > 1024) i = 1024;
-				gammaControl.GammaCurve[i] = {
-					pRamp->red[v] / 255.0f,
-					pRamp->green[v] / 255.0f,
-					pRamp->blue[v] / 255.0f
-				};
-			}
-			// Interpolate any gaps in the 1025-entry curve
-			for (int i = 1; i < 1025; i++) {
-				if (gammaControl.GammaCurve[i].Red == 0.0f &&
-					gammaControl.GammaCurve[i].Green == 0.0f &&
-					gammaControl.GammaCurve[i].Blue == 0.0f && i < 1024) {
-					gammaControl.GammaCurve[i] = gammaControl.GammaCurve[i - 1];
-				}
-			}
-			pOutput->SetGammaControl(&gammaControl);
-			pOutput->Release();
-		}
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_GetGammaRamp
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetGammaRamp)
-(
-   	X_D3DGAMMARAMP     *pRamp
-)
-{
-	LOG_FUNC_ONE_ARG(pRamp);
-
-   	// Use IDXGIOutput::GetGammaControl to retrieve the current gamma ramp
-   	bool gotGamma = false;
-   	if (g_pSwapChain) {
-   	   	IDXGIOutput* pOutput = nullptr;
-   	   	if (SUCCEEDED(g_pSwapChain->GetContainingOutput(&pOutput))) {
-   	   	   	DXGI_GAMMA_CONTROL gammaControl = {};
-   	   	   	if (SUCCEEDED(pOutput->GetGammaControl(&gammaControl))) {
-   	   	   	   	for (int v = 0; v < 256; v++) {
-   	   	   	   	   	int i = static_cast<int>(v / 255.0f * 1024.0f);
-   	   	   	   	   	if (i > 1024) i = 1024;
-   	   	   	   	   	pRamp->red[v]   = static_cast<BYTE>(gammaControl.GammaCurve[i].Red * 255.0f);
-   	   	   	   	   	pRamp->green[v] = static_cast<BYTE>(gammaControl.GammaCurve[i].Green * 255.0f);
-   	   	   	   	   	pRamp->blue[v]  = static_cast<BYTE>(gammaControl.GammaCurve[i].Blue * 255.0f);
-   	   	   	   	}
-   	   	   	   	gotGamma = true;
-   	   	   	}
-   	   	   	pOutput->Release();
-   	   	}
-   	}
-   	if (!gotGamma) {
-   	   	// Fallback: return a linear ramp
-   	   	for (int v = 0; v < 256; v++) {
-   	   	   	pRamp->red[v]   = (BYTE)v;
-   	   	   	pRamp->green[v] = (BYTE)v;
-   	   	   	pRamp->blue[v]  = (BYTE)v;
-   	   	}
-   	}
-}
+// D3DDevice_GetGammaRamp — disabled (PRMDIO VGA DAC palette emulation handles gamma natively).
+// Implementation moved to Direct3D9.cpp.unused-patches.
 
 // CxbxrImpl_GetBackBuffer2 — removed.
 // Was only called by D3DDevice_GetBackBuffer patches (now disabled).
