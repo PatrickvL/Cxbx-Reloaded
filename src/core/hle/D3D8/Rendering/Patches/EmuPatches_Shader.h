@@ -39,20 +39,10 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_LoadVertexShader)
    	dword_xt                       Address
 );
 
-// ******************************************************************
-// * patch: D3DDevice_SelectVertexShader
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SelectVertexShader)
-(
-   	dword_xt                       Handle,
-   	dword_xt                       Address
-);
-
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2)();
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SelectVertexShader_4__LTCG_eax1)
-(
-   	dword_xt                       Address
-);
+// D3DDevice_SelectVertexShader — disabled.
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_SelectVertexShader)(dword_xt Handle, dword_xt Address);
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2)();
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_SelectVertexShader_4__LTCG_eax1)(dword_xt Address);
 
 // ******************************************************************
 // * patch: D3DDevice_SetShaderConstantMode
@@ -141,15 +131,9 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetPixelShader)
    	dword_xt           Handle
 );
 
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax2)
-(
-	dword_xt           Stage
-);
-
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax1)
-(
-	X_D3DBaseTexture  *pTexture
-);
+// D3DDevice_SetTexture_4__LTCG variants — disabled.
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax2)(dword_xt Stage);
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax1)(X_D3DBaseTexture *pTexture);
 
 // ******************************************************************
 // * patch: D3DDevice_DrawVertices
@@ -178,13 +162,8 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_DrawVertices_8__LTCG_eax3)
    	uint_xt             StartVertex
 );
 
-// ******************************************************************
-// * patch: D3DDevice_DeleteVertexShader
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_DeleteVertexShader)
-(
-   	dword_xt Handle
-);
+// D3DDevice_DeleteVertexShader — disabled.
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_DeleteVertexShader)(dword_xt Handle);
 
 // ******************************************************************
 // * patch: D3DDevice_GetShaderConstantMode
@@ -212,15 +191,8 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetVertexShaderConstant)
    	dword_xt ConstantCount
 );
 
-// ******************************************************************
-// * patch: D3DDevice_SetVertexShaderInput
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetVertexShaderInput)
-(
-   	dword_xt              Handle,
-   	uint_xt               StreamCount,
-   	X_STREAMINPUT     *pStreamInputs
-);
+// D3DDevice_SetVertexShaderInput — disabled.
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetVertexShaderInput)(dword_xt Handle, uint_xt StreamCount, X_STREAMINPUT *pStreamInputs);
 
 // ******************************************************************
 // * patch: D3DDevice_RunVertexStateShader

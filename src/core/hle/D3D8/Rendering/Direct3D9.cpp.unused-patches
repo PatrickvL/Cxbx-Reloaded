@@ -6381,3 +6381,275 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DeleteVertexShad
 		ret
 	}
 }
+
+// ================================================================
+// Removed from EmuPatches_Shader.cpp — disabled SelectVertexShader patches
+// ================================================================
+
+// Mirror a texture's VRAM offset to the PGRAPH TEXOFFSET register so that
+// CxbxUpdateHostTextures() can resolve the Xbox texture even when the
+// pushbuffer hasn't been processed yet.
+static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
+{
+	if (Stage < xbox::X_D3DTS_STAGECOUNT) {
+		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+		pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + Stage * 4)] = dataAddr;
+	}
+}
+
+// Overload for logging
+static void D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2
+(
+	xbox::dword_xt                 Handle,
+	xbox::dword_xt                 Address
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Handle)
+		LOG_FUNC_ARG(Address)
+		LOG_FUNC_END;
+}
+
+// LTCG specific D3DDevice_SelectVertexShader function...
+// This uses a custom calling convention where parameter is passed in EAX, EBX
+// Test-case: Star Wars - Battlefront
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2)
+(
+)
+{
+	dword_xt Handle;
+	dword_xt Address;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Handle, eax
+		mov  Address, ebx
+	}
+
+	D3DDevice_SelectVertexShader_0__LTCG_eax1_ebx2(Handle, Address);
+	CxbxImpl_SelectVertexShader(Handle, Address);
+
+	__asm {
+		LTCG_EPILOGUE
+		ret
+	}
+}
+
+// Overload for logging
+static void D3DDevice_SelectVertexShader_4__LTCG_eax1
+(
+	xbox::dword_xt                 Handle,
+	xbox::dword_xt                 Address
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Handle)
+		LOG_FUNC_ARG(Address)
+		LOG_FUNC_END;
+}
+
+// LTCG specific D3DDevice_SelectVertexShader function...
+// This uses a custom calling convention where parameter is passed in EAX
+// Test-case: Aggressive Inline
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SelectVertexShader_4__LTCG_eax1)
+(
+	dword_xt                       Address
+)
+{
+	dword_xt Handle;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Handle, eax
+	}
+
+	D3DDevice_SelectVertexShader_4__LTCG_eax1(Handle, Address);
+	CxbxImpl_SelectVertexShader(Handle, Address);
+
+	__asm {
+		LTCG_EPILOGUE
+		ret  4
+	}
+}
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SelectVertexShader)
+(
+	dword_xt                       Handle,
+	dword_xt                       Address
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Handle)
+		LOG_FUNC_ARG(Address)
+		LOG_FUNC_END;
+
+	XB_TRMP(D3DDevice_SelectVertexShader)(Handle, Address);
+	CxbxImpl_SelectVertexShader(Handle, Address);
+}
+
+// ================================================================
+// Removed from EmuPatches_Shader.cpp — disabled SetTexture LTCG patches
+// ================================================================
+
+// Overload for logging
+static void D3DDevice_SetTexture_4__LTCG_eax2
+(
+	xbox::dword_xt           Stage,
+	xbox::X_D3DBaseTexture  *pTexture
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Stage)
+		LOG_FUNC_ARG(pTexture)
+		LOG_FUNC_END;
+}
+
+// LTCG specific D3DDevice_SetTexture function...
+// This uses a custom calling convention where pTexture is passed in EAX
+// Test-case: NASCAR Heat 2002
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax2)
+(
+	dword_xt           Stage
+)
+{
+	X_D3DBaseTexture *pTexture;
+	__asm {
+		LTCG_PROLOGUE
+		mov  pTexture, eax
+	}
+
+	D3DDevice_SetTexture_4__LTCG_eax2(Stage, pTexture);
+
+	__asm {
+		mov eax, pTexture
+		push Stage
+		call XB_TRMP(D3DDevice_SetTexture_4__LTCG_eax2)
+	}
+
+	g_pXbox_SetTexture[Stage] = pTexture;
+
+	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero) {
+		CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
+		CxbxMirrorTexOffsetToPGRAPH(Stage, pTexture->Data);
+	} else {
+		CxbxMirrorTexOffsetToPGRAPH(Stage, 0);
+	}
+
+	__asm {
+		LTCG_EPILOGUE
+		ret  4
+	}
+}
+
+// Overload for logging
+static void D3DDevice_SetTexture_4__LTCG_eax1
+(
+	xbox::dword_xt           Stage,
+	xbox::X_D3DBaseTexture  *pTexture
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Stage)
+		LOG_FUNC_ARG(pTexture)
+		LOG_FUNC_END;
+}
+
+// LTCG specific D3DDevice_SetTexture function...
+// This uses a custom calling convention where Stage is passed in EAX
+// Test-case: Metal Wolf Chaos
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax1)
+(
+	X_D3DBaseTexture  *pTexture
+)
+{
+	dword_xt Stage;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Stage, eax
+	}
+
+	D3DDevice_SetTexture_4__LTCG_eax1(Stage, pTexture);
+
+	__asm {
+		mov eax, Stage
+		push pTexture
+		call XB_TRMP(D3DDevice_SetTexture_4__LTCG_eax1)
+	}
+
+	g_pXbox_SetTexture[Stage] = pTexture;
+
+	if (pTexture != xbox::zeroptr && pTexture->Data != xbox::zero) {
+		CxbxRegisterTextureByDataAddr(pTexture->Data, pTexture);
+		CxbxMirrorTexOffsetToPGRAPH(Stage, pTexture->Data);
+	} else {
+		CxbxMirrorTexOffsetToPGRAPH(Stage, 0);
+	}
+
+	__asm {
+		LTCG_EPILOGUE
+		ret  4
+	}
+}
+
+// ================================================================
+// Removed from EmuPatches_Shader.cpp — disabled DeleteVertexShader patch
+// ================================================================
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_DeleteVertexShader)
+(
+	dword_xt Handle
+)
+{
+	LOG_FUNC_ONE_ARG(Handle);
+
+	CxbxImpl_DeleteVertexShader(Handle);
+
+	// When deleting, call trampoline *after* our implementation,
+	// so that we can still access it's fields before it gets deleted!
+	XB_TRMP(D3DDevice_DeleteVertexShader)(Handle);
+}
+
+// ================================================================
+// Removed from EmuPatches_Shader.cpp — disabled SetVertexShaderInput patch
+// ================================================================
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShaderInput)
+(
+	dword_xt              Handle,
+	uint_xt               StreamCount,
+	X_STREAMINPUT     *pStreamInputs
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Handle)
+		LOG_FUNC_ARG(StreamCount)
+		LOG_FUNC_ARG(pStreamInputs)
+		LOG_FUNC_END;
+
+	// When this API is in effect, VertexBuffers as set by Xbox SetStreamSource are disregarded,
+	// instead, the pStreamInputs[].VertexBuffer streams are used.
+
+	// If Handle is NULL, all VertexShader input state is cleared (after which the VertexBuffers as set by SetStreamSource are used once again).
+
+	// Otherwise, Handle is the address of an Xbox VertexShader struct, or-ed with 1 (X_D3DFVF_RESERVED0)
+	// The given pStreamInputs are stored in a global array, and the NV2A is programmed to read
+	// each vertex attribute (as defined in the given VertexShader.VertexAttribute.Slots[]) to read
+	// the attribute data from the pStreamInputs[slot].VertexBuffer + pStreamInputs[slot].Offset + VertexShader.VertexAttribute.Slots[slot].Offset
+
+	/* LOG_TEST_CASE("SetVertexShaderInput");
+	/* Test-cases :
+		PushBuffer XDK sample
+		Halo 2-3ebe4439.ini:D3DDevice_SetVertexShaderInput = 0x3f7440
+		Kung Fu Chaos-d9ab292c.ini:D3DDevice_SetVertexShaderInput = 0x2bc0e0
+		NBA LIVE 2005-71d4eeb1.ini:D3DDevice_SetVertexShaderInput = 0x5cf810
+		NBA LIVE 2005-71d4eeb1.ini:D3DDevice_SetVertexShaderInputDirect = 0x5ceba0
+		Prince of Persia WW-4ccf7369.ini:D3DDevice_SetVertexShaderInput = 0x494830
+		Prince of Persia WW-4ccf7369.ini:D3DDevice_SetVertexShaderInputDirect = 0x494280
+		Spyro A Hero's Tail-b18e00e5.ini:D3DDevice_SetVertexShaderInput = 0x286cf0
+		Spyro A Hero's Tail-b18e00e5.ini:D3DDevice_SetVertexShaderInputDirect = 0x286760
+	*/
+
+	CxbxImpl_SetVertexShaderInput(Handle, StreamCount, pStreamInputs);
+
+	// Call trampoline
+	if (XB_TRMP(D3DDevice_SetVertexShaderInput))
+		XB_TRMP(D3DDevice_SetVertexShaderInput)(Handle, StreamCount, pStreamInputs);
+}
