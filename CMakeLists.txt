@@ -488,10 +488,12 @@ file (GLOB CXBXR_SOURCE_EMU
 )
 
 
-option(BUILD_CXBXR_DEBUGGER "Build cxbxr-debugger tool (with cheat table support)")
-if(BUILD_CXBXR_DEBUGGER)
- message(DEPRECATION "The Cxbxr-Debugger tool will eventually be removed from the upstream branch.")
-endif()
+# Debugger build disabled — capstone submodule requires CMake <4.0
+#option(BUILD_CXBXR_DEBUGGER "Build cxbxr-debugger tool (with cheat table support)")
+set(BUILD_CXBXR_DEBUGGER OFF)
+
+# Set shader output directory early so cxbxr-emu can find it during configure
+set(CXBXR_SHADER_GEN_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders" CACHE INTERNAL "")
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/projects/cxbx")
 
@@ -674,9 +676,6 @@ endforeach()
 
 add_custom_target(compile-shaders ALL DEPENDS ${CSO_HEADERS})
 set_target_properties(compile-shaders PROPERTIES FOLDER "Cxbx-Reloaded/tools")
-
-# Export include directory for cxbxr-emu
-set(CXBXR_SHADER_GEN_INCLUDE_DIR "${SHADER_OUT_DIR}" CACHE INTERNAL "")
 
 install(PROGRAMS $<TARGET_FILE_DIR:cxbx>/${CMAKE_SHARED_LIBRARY_PREFIX}subhook${CMAKE_SHARED_LIBRARY_SUFFIX}
   DESTINATION bin
