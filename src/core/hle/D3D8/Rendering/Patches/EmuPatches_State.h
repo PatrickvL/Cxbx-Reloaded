@@ -90,29 +90,6 @@ xbox::ulong_xt WINAPI EMUPATCH(D3DResource_AddRef)
 );
 
 // ******************************************************************
-// * patch: D3DDevice_SetTransform
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetTransform)
-(
-	X_D3DTRANSFORMSTATETYPE State,
-   	CONST X_D3DMATRIX      *pMatrix
-);
-
-// ******************************************************************
-// * patch: D3DDevice_MultiplyTransform
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_MultiplyTransform)
-(
-	X_D3DTRANSFORMSTATETYPE State,
-	CONST X_D3DMATRIX      *pMatrix
-);
-
-// ******************************************************************
-// * patch: D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2)();
-
-// ******************************************************************
 // * patch: D3DDevice_SetStreamSource
 // ******************************************************************
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetStreamSource)

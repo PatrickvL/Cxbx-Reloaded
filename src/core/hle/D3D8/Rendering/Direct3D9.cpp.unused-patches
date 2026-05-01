@@ -5223,3 +5223,130 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank)()
 	// to avoid an infinite spin while still letting the game proceed.
 	Sleep(16);
 }
+
+// ******************************************************************
+// * patch: D3DDevice_SetTransform
+// * Disabled: Transform state now sourced from PGRAPH XFCTX registers.
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTransform)
+(
+	X_D3DTRANSFORMSTATETYPE State,
+   	CONST X_D3DMATRIX      *pMatrix
+)
+{
+   	LOG_FUNC_BEGIN
+   	   	LOG_FUNC_ARG(State)
+   	   	LOG_FUNC_ARG(pMatrix)
+   	   	LOG_FUNC_END;
+
+   	setTransformCount++;
+
+   	// Trampoline to guest code to remove the need for a GetTransform patch
+   	uint32_t pPut0 = pgraph_trace_read_pput();
+   	XB_TRMP(D3DDevice_SetTransform)(State, pMatrix);
+   	pgraph_trace_log_pushbuffer("SetTransform", pPut0, pgraph_trace_read_pput());
+}
+
+// ******************************************************************
+// * patch: D3DDevice_SetTransform_0__LTCG_eax1_edx2
+// * Disabled: Transform state now sourced from PGRAPH XFCTX registers.
+// ******************************************************************
+static void D3DDevice_SetTransform_0__LTCG_eax1_edx2
+(
+	xbox::X_D3DTRANSFORMSTATETYPE State,
+   	CONST xbox::X_D3DMATRIX *pMatrix
+)
+{
+   	LOG_FUNC_BEGIN
+   	   	LOG_FUNC_ARG(State)
+   	   	LOG_FUNC_ARG(pMatrix)
+   	   	LOG_FUNC_END;
+
+   	setTransformCount++;
+
+   	__asm {
+   	   	mov  eax, State
+   	   	mov  edx, pMatrix
+   	   	call XB_TRMP(D3DDevice_SetTransform_0__LTCG_eax1_edx2)
+   	}
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTransform_0__LTCG_eax1_edx2)
+(
+)
+{
+	X_D3DTRANSFORMSTATETYPE State;
+   	CONST X_D3DMATRIX *pMatrix;
+   	__asm {
+   	   	LTCG_PROLOGUE
+   	   	mov  State, eax
+   	   	mov  pMatrix, edx   
+   	}
+
+	D3DDevice_SetTransform_0__LTCG_eax1_edx2(State, pMatrix);
+
+   	__asm {
+   	   	LTCG_EPILOGUE
+   	   	ret
+   	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_MultiplyTransform
+// * Disabled: Xbox native MultiplyTransform calls SetTransform internally.
+// * Test case: 25 to Life
+// ******************************************************************
+static void CxbxrImpl_MultiplyTransform(
+	xbox::X_D3DTRANSFORMSTATETYPE State,
+	CONST xbox::X_D3DMATRIX      *pMatrix
+)
+{
+	setTransformCount = 0;
+
+	if (XB_TRMP(D3DDevice_MultiplyTransform) != nullptr) {
+		XB_TRMP(D3DDevice_MultiplyTransform)(State, pMatrix);
+	}
+	else {
+		__asm {
+			mov  eax, pMatrix
+			mov  ebx, State
+			call XB_TRMP(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2)
+		}
+	}
+
+	if (setTransformCount == 0) {
+		LOG_TEST_CASE("MultiplyTransform did not appear to call SetTransform");
+	}
+}
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_MultiplyTransform)
+(
+   	X_D3DTRANSFORMSTATETYPE State,
+   	CONST X_D3DMATRIX      *pMatrix
+)
+{
+   	LOG_FUNC_BEGIN
+   	   	LOG_FUNC_ARG(State)
+   	   	LOG_FUNC_ARG(pMatrix)
+   	   	LOG_FUNC_END;
+
+	CxbxrImpl_MultiplyTransform(State, pMatrix);
+}
+
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2)()
+{
+	xbox::X_D3DTRANSFORMSTATETYPE State;
+   	xbox::X_D3DMATRIX *pMatrix;
+   	__asm {
+   	   	LTCG_PROLOGUE
+   	   	mov  State, eax
+   	   	mov  pMatrix, ebx
+   	}
+
+	CxbxrImpl_MultiplyTransform(State, pMatrix);
+
+	__asm {
+		LTCG_EPILOGUE
+		ret
+	}
+}

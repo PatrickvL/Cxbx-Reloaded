@@ -161,6 +161,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2", xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2", xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_LoadVertexShader_4__LTCG_eax1), PATCH_HLE_D3D),
+	// Disabled: Xbox native MultiplyTransform calls SetTransform which pushes NV2A transform methods
 	//PATCH_ENTRY("D3DDevice_MultiplyTransform", xbox::EMUPATCH(D3DDevice_MultiplyTransform), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2", xbox::EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2), PATCH_HLE_D3D),
 	// Disabled: pure trampoline with LOG_INCOMPLETE. Xbox native runs unpatched.
@@ -241,6 +242,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetTexture", xbox::EMUPATCH(D3DDevice_SetTexture), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetTexture_4__LTCG_eax2", xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetTexture_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_SetTexture_4__LTCG_eax1), PATCH_HLE_D3D),
+	// Disabled: transform state now sourced from PGRAPH XFCTX registers (MMAT0/CMAT/TnMAT)
 	//PATCH_ENTRY("D3DDevice_SetTransform", xbox::EMUPATCH(D3DDevice_SetTransform), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetTransform_0__LTCG_eax1_edx2", xbox::EMUPATCH(D3DDevice_SetTransform_0__LTCG_eax1_edx2), PATCH_HLE_D3D),
 	// Step 10: SetVertexData writes NV097_SET_VERTEX_DATA* push buffer commands → inline_buffer path

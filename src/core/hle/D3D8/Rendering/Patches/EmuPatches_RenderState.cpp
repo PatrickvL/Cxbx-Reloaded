@@ -25,9 +25,6 @@
 #include "../EmuD3D8_common.h"
 #include "../IndexBufferConvert.h"
 
-// Shared with EmuPatches_TextureState.cpp
-extern thread_local uint32_t setTransformCount;
-
 // This uses a custom calling convention where StreamNumber parameter is passed in EDX
 // Test-case: NASCAR Heat 2002
 xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SetStreamSource_8__LTCG_edx1)
@@ -428,67 +425,7 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetRenderTargetFast)
 // This patch only mirrored to XboxRenderStates which is redundant.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_SetTransform
-// ******************************************************************
-void CxbxImpl_SetTransform
-(
-   	xbox::X_D3DTRANSFORMSTATETYPE State,
-   	CONST xbox::X_D3DMATRIX *pMatrix
-)
-{
-   	LOG_INIT
-	// Transform state now sourced from PGRAPH XFCTX registers (MMAT0/CMAT/TnMAT)
-}
-
-// MultiplyTransform should call SetTransform, we'd like to know if it didn't
-// Test case: 25 to Life
-
-// LTCG specific D3DDevice_SetTransform function...
-// This uses a custom calling convention where parameter is passed in EAX, EDX
-
-// Naked functions must not contain objects that would require unwinding
-// so we cheat a bit by stashing the function body in a separate function
-static void D3DDevice_SetTransform_0__LTCG_eax1_edx2
-(
-	xbox::X_D3DTRANSFORMSTATETYPE State,
-   	CONST xbox::X_D3DMATRIX *pMatrix
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(State)
-   	   	LOG_FUNC_ARG(pMatrix)
-   	   	LOG_FUNC_END;
-
-   	setTransformCount++;
-
-   	__asm {
-   	   	// Trampoline to guest code to remove the need for a GetTransform patch
-   	   	mov  eax, State
-   	   	mov  edx, pMatrix
-   	   	call XB_TRMP(D3DDevice_SetTransform_0__LTCG_eax1_edx2)
-   	}
-
-	CxbxImpl_SetTransform(State, pMatrix);
-}
-
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTransform_0__LTCG_eax1_edx2)
-(
-)
-{
-	X_D3DTRANSFORMSTATETYPE State;
-   	CONST X_D3DMATRIX *pMatrix;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  State, eax
-   	   	mov  pMatrix, edx   
-   	}
-
-	// Log + implementation
-	D3DDevice_SetTransform_0__LTCG_eax1_edx2(State, pMatrix);
-
-   	__asm {
-   	   	LTCG_EPILOGUE
-   	   	ret
-   	}
-}
+// D3DDevice_SetTransform / D3DDevice_SetTransform_0__LTCG_eax1_edx2 — disabled.
+// Transform state now sourced from PGRAPH XFCTX registers (MMAT0/CMAT/TnMAT).
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
+// Test case: 25 to Life (MultiplyTransform should call SetTransform internally)

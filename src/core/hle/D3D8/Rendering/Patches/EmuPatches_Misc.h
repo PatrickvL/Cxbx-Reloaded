@@ -125,8 +125,6 @@ xbox::void_xt __fastcall EMUPATCH(D3DDevice_SetRenderState_Simple)
    	dword_xt Value
 );
 
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetTransform_0__LTCG_eax1_edx2)();
-
 // ******************************************************************
 // * patch: D3DDevice_InsertFence
 // ******************************************************************

@@ -39,10 +39,6 @@ static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
 // Variables only used in EmuPatches_State.cpp
 static xbox::X_D3DBaseTexture CxbxActiveTextureCopies[xbox::X_D3DTS_STAGECOUNT] = {}; // Set by D3DDevice_SwitchTexture. Cached active texture
 
-// Forward declarations (defined later in this file)
-thread_local uint32_t setTransformCount;
-void CxbxImpl_SetTransform(xbox::X_D3DTRANSFORMSTATETYPE State, CONST xbox::X_D3DMATRIX *pMatrix);
-
 xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetBackBufferScale)(float_xt x, float_xt y)
 {
 	LOG_FUNC_BEGIN
@@ -299,108 +295,14 @@ xbox::void_xt __fastcall xbox::EMUPATCH(D3DDevice_SwitchTexture)
    	}
 }
 
-// ******************************************************************
-// * patch: D3DDevice_SetTransform
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTransform)
-(
-	X_D3DTRANSFORMSTATETYPE State,
-   	CONST X_D3DMATRIX      *pMatrix
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(State)
-   	   	LOG_FUNC_ARG(pMatrix)
-   	   	LOG_FUNC_END;
+// D3DDevice_SetTransform — disabled.
+// Transform state now sourced from PGRAPH XFCTX registers (MMAT0/CMAT/TnMAT).
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
+// Test case: 25 to Life (MultiplyTransform should call SetTransform internally)
 
-   	setTransformCount++;
-
-   	// Trampoline to guest code to remove the need for a GetTransform patch
-   	uint32_t pPut0 = pgraph_trace_read_pput();
-   	XB_TRMP(D3DDevice_SetTransform)(State, pMatrix);
-   	pgraph_trace_log_pushbuffer("SetTransform", pPut0, pgraph_trace_read_pput());
-   	CxbxImpl_SetTransform(State, pMatrix);
-}
-
-static void CxbxrImpl_MultiplyTransform(
-	xbox::X_D3DTRANSFORMSTATETYPE State,
-	CONST xbox::X_D3DMATRIX      *pMatrix
-)
-{
-	setTransformCount = 0;
-
-	// Trampoline to guest code, which we expect to call SetTransform
-	// If we find a case where the trampoline doesn't call SetTransform
-	// (or we can't detect the call) we will need to implement this
-	if (XB_TRMP(D3DDevice_MultiplyTransform) != nullptr) {
-		XB_TRMP(D3DDevice_MultiplyTransform)(State, pMatrix);
-	}
-	else {
-		__asm {
-			mov  eax, pMatrix
-			mov  ebx, State
-			call XB_TRMP(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2)
-		}
-	}
-
-	if (setTransformCount == 0) {
-		LOG_TEST_CASE("MultiplyTransform did not appear to call SetTransform");
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_MultiplyTransform
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_MultiplyTransform)
-(
-   	X_D3DTRANSFORMSTATETYPE State,
-   	CONST X_D3DMATRIX      *pMatrix
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(State)
-   	   	LOG_FUNC_ARG(pMatrix)
-   	   	LOG_FUNC_END;
-
-	CxbxrImpl_MultiplyTransform(State, pMatrix);
-}
-
-// ******************************************************************
-// * patch: D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2
-// ******************************************************************
-// Overload for logging
-static void D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2(
-   	xbox::X_D3DTRANSFORMSTATETYPE State,
-   	CONST xbox::X_D3DMATRIX      *pMatrix
-)
-{
-   	LOG_FUNC_BEGIN
-   	   	LOG_FUNC_ARG(State)
-   	   	LOG_FUNC_ARG(pMatrix)
-   	   	LOG_FUNC_END;
-}
-
-// This uses a custom calling convention where parameter is passed in EBX, EAX
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2)()
-{
-	xbox::X_D3DTRANSFORMSTATETYPE State;
-   	xbox::X_D3DMATRIX *pMatrix;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  State, eax
-   	   	mov  pMatrix, ebx
-   	}
-
-   	// Log
-   	D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2(State, pMatrix);
-
-	CxbxrImpl_MultiplyTransform(State, pMatrix);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret
-	}
-}
+// D3DDevice_MultiplyTransform — disabled.
+// Xbox native code calls SetTransform internally which pushes NV2A transform methods.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // ******************************************************************
 // * patch: D3DDevice_SetStreamSource
