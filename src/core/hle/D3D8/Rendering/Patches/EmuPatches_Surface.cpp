@@ -364,6 +364,16 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 		}
 
 		// Is there an overlay to be presented too?
+		// NOTE: We use g_OverlayProxy (populated by the HLE UpdateOverlay patch) rather than
+		// reading NV2A PVIDEO registers directly. Investigation showed that while PVIDEO regs
+		// (NV_PVIDEO_BASE, OFFSET, SIZE_IN, FORMAT, etc.) ARE correctly written by Xbox code
+		// via MMIO (trapped through EmuX86_Write → PCIBus::MMIOWrite → NV2ADevice::MMIOWrite
+		// → EmuNV2A_PVIDEO_Write32), the actual video frame DATA at the physical addresses
+		// pointed to by PVIDEO_BASE+OFFSET is all zeros. This is because the Xbox hardware
+		// video decoder (PVPE/MediaPort) performs DMA writes that never materialize in our
+		// emulated physical memory. The HLE UpdateOverlay patch sidesteps this by reading the
+		// data pointer directly from the X_D3DSurface struct where the game's software codec
+		// (or XMV library) actually wrote the decoded frames.
 		if (g_OverlayProxy.Surface.Common) {
 			X_D3DFORMAT X_Format = GetXboxPixelContainerFormat(&g_OverlayProxy.Surface);
 			if (X_Format != X_D3DFMT_YUY2) {
@@ -433,7 +443,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	   	   	EmuDestRect.bottom = (LONG)(EmuDestRect.bottom * yScale);
    	   	   	   	EmuDestRect.right = (LONG)(EmuDestRect.right * xScale);
 
-   	   	   	   	// Finally, adjust to correct on-screen position (
+   	   	   	   	// Finally, adjust to correct on-screen position
    	   	   	   	EmuDestRect.top += (LONG)((g_HostBackBufferDesc.Height - height) / 2);
    	   	   	   	EmuDestRect.left += (LONG)((g_HostBackBufferDesc.Width - width) / 2);
    	   	   	   	EmuDestRect.right += (LONG)((g_HostBackBufferDesc.Width - width) / 2);
@@ -446,20 +456,14 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
    	   	   	   	EmuDestRect.bottom = (LONG)(EmuDestRect.top + height);
 			}
 
-			// load the YUY2 into the backbuffer
-
 			// Limit the width and height of the output to the backbuffer dimensions.
 			// This will (hopefully) prevent exceptions in Blinx - The Time Sweeper
 			// (see https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/issues/285)
-			{
-				// Use our (bounded) copy when bounds exceed :
-				if (EmuDestRect.right > (LONG)g_HostBackBufferDesc.Width) {
-					EmuDestRect.right = (LONG)g_HostBackBufferDesc.Width;
-				}
-
-				if (EmuDestRect.bottom > (LONG)g_HostBackBufferDesc.Height) {
-					EmuDestRect.bottom = (LONG)g_HostBackBufferDesc.Height;
-				}
+			if (EmuDestRect.right > (LONG)g_HostBackBufferDesc.Width) {
+				EmuDestRect.right = (LONG)g_HostBackBufferDesc.Width;
+			}
+			if (EmuDestRect.bottom > (LONG)g_HostBackBufferDesc.Height) {
+				EmuDestRect.bottom = (LONG)g_HostBackBufferDesc.Height;
 			}
 
    	   	   	// Create a temporary surface to hold the overlay
@@ -529,7 +533,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 		}
 
 		pCurrentHostBackBuffer->Release();
-	}
+	} // if (hRet == S_OK) - backbuffer acquired
 
 	hRet = CxbxPresent();
 
