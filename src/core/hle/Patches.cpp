@@ -144,7 +144,11 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_GetViewportOffsetAndScale_0__LTCG_edx1_ecx2", xbox::EMUPATCH(D3DDevice_GetViewportOffsetAndScale_0__LTCG_edx1_ecx2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetVisibilityTestResult", xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_InsertCallback", xbox::EMUPATCH(D3DDevice_InsertCallback), PATCH_HLE_D3D),
-	// Disabled: fake 0x8000BEEF stub, Xbox native fence via NV2A reference counter
+	// Disabled: Native InsertCallback pushes NV097_NO_OPERATION(param) to the push buffer.
+	// PGRAPH raises INTR_ERROR → miniport ISR reads TRAPPED_DATA_LOW → dispatches callback.
+	// The HLE version stored callbacks in g_Xbox_CallbackQueue but CxbxHandleXboxCallbacks()
+	// was never called, so callbacks were never dispatched anyway.
+	//// Disabled: fake 0x8000BEEF stub, Xbox native fence via NV2A reference counter
 	//PATCH_ENTRY("D3DDevice_InsertFence", xbox::EMUPATCH(D3DDevice_InsertFence), PATCH_HLE_D3D),
 	// Disabled: hardcoded FALSE stub, Xbox native fence check via NV2A
 	//PATCH_ENTRY("D3DDevice_IsBusy", xbox::EMUPATCH(D3DDevice_IsBusy), PATCH_HLE_D3D),
