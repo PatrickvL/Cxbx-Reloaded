@@ -185,42 +185,6 @@ xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_DrawTriPatch)
 );
 
 // ******************************************************************
-// * patch: D3DDevice_GetProjectionViewportMatrix
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetProjectionViewportMatrix)
-(
-	X_D3DMATRIX *pProjectionViewport
-);
-
-// ******************************************************************
-// * patch: D3DDevice_SetModelView
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetModelView)
-(
-	CONST X_D3DMATRIX *pModelView,
-	CONST X_D3DMATRIX *pInverseModelView,
-	CONST X_D3DMATRIX *pComposite
-);
-
-// ******************************************************************
-// * patch: D3DDevice_FlushVertexCache
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_FlushVertexCache)();
-
-// ******************************************************************
-// * patch: D3DDevice_GetModelView
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_GetModelView)
-(
-   	X_D3DMATRIX* pModelView
-);
-
-// ******************************************************************
-// * patch: D3D_SetCommonDebugRegisters
-// ******************************************************************
-void WINAPI EMUPATCH(D3D_SetCommonDebugRegisters)();
-
-// ******************************************************************
 // * patch: D3D_BlockOnTime
 // ******************************************************************
 void WINAPI EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace);
@@ -231,14 +195,50 @@ void WINAPI EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace);
 void WINAPI EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int MakeSpace);
 
 // ******************************************************************
-// * patch: D3D_DestroyResource
+// * patch: D3DDevice_GetProjectionViewportMatrix — Disabled
 // ******************************************************************
-void WINAPI EMUPATCH(D3D_DestroyResource)( X_D3DResource* pResource );
+//xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetProjectionViewportMatrix)
+//(
+//	X_D3DMATRIX *pProjectionViewport
+//);
 
 // ******************************************************************
-// * patch: D3D_DestroyResource_0__LTCG_edi1
+// * patch: D3DDevice_SetModelView — Disabled
 // ******************************************************************
-void WINAPI EMUPATCH(D3D_DestroyResource_0__LTCG_edi1)();
+//xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetModelView)
+//(
+//	CONST X_D3DMATRIX *pModelView,
+//	CONST X_D3DMATRIX *pInverseModelView,
+//	CONST X_D3DMATRIX *pComposite
+//);
+
+// ******************************************************************
+// * patch: D3DDevice_FlushVertexCache — Disabled
+// ******************************************************************
+//xbox::void_xt WINAPI EMUPATCH(D3DDevice_FlushVertexCache)();
+
+// ******************************************************************
+// * patch: D3DDevice_GetModelView — Disabled
+// ******************************************************************
+//xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_GetModelView)
+//(
+//	X_D3DMATRIX* pModelView
+//);
+
+// ******************************************************************
+// * patch: D3D_SetCommonDebugRegisters — Disabled
+// ******************************************************************
+//void WINAPI EMUPATCH(D3D_SetCommonDebugRegisters)();
+
+// ******************************************************************
+// * patch: D3D_DestroyResource — Disabled
+// ******************************************************************
+//void WINAPI EMUPATCH(D3D_DestroyResource)( X_D3DResource* pResource );
+
+// ******************************************************************
+// * patch: D3D_DestroyResource_0__LTCG_edi1 — Disabled
+// ******************************************************************
+//void WINAPI EMUPATCH(D3D_DestroyResource_0__LTCG_edi1)();
 
 } // namespace xbox
 

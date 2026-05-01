@@ -349,110 +349,21 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_InsertCallback)
 	LOG_INCOMPLETE();
 }
 
-#pragma warning(disable:4244)
-// ******************************************************************
-// * patch: D3DDevice_GetProjectionViewportMatrix
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetProjectionViewportMatrix)
-(
-	X_D3DMATRIX *pProjectionViewport
-)
-{
-	LOG_FUNC_ONE_ARG(pProjectionViewport);
+// D3DDevice_GetProjectionViewportMatrix — disabled.
+// Xbox native code reads projection from D3DDevice struct and builds viewport matrix.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-	// blueshogun96 1/25/10
-	// It's been almost 3 years, but I think this is a better 
-	// implementation.  Still probably not right, but better
-	// then before.
-
-	HRESULT hRet;
-	D3DXMATRIX Out, mtxProjection, mtxViewport;
-	D3D11_VIEWPORT Viewport;
-
-	// Get current viewport from D3D11 state
-	UINT numViewports = 1;
-	g_pD3DDeviceContext->RSGetViewports(&numViewports, &Viewport);
-	hRet = S_OK;
-
-	// Read projection matrix from PGRAPH XFCTX composite matrix
-	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
-	for (int row = 0; row < 4; row++)
-		std::memcpy(&mtxProjection.m[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
-
-	// Clear the destination matrix
-	::ZeroMemory(&Out, sizeof(Out));
-
-	// Create the Viewport matrix manually
-	// Direct3D8 doesn't give me everything I need in a viewport structure
-	// (one thing I REALLY HATE!) so some constants will have to be used
-	// instead.
-
-	float ClipWidth = 2.0f;
-	float ClipHeight = 2.0f;
-	float ClipX = -1.0f;
-	float ClipY = 1.0f;
-	float Width = Viewport.Width;
-	float Height = Viewport.Height;
-
-	D3DXMatrixIdentity(&mtxViewport);
-	mtxViewport._11 = Width / ClipWidth;
-	mtxViewport._22 = -(Height / ClipHeight);
-	mtxViewport._41 = -(ClipX * mtxViewport._11);
-	mtxViewport._42 = -(ClipY * mtxViewport._22);
-
-	// Multiply projection and viewport matrix together
-	D3DXMatrixMultiply(&Out, &mtxProjection, &mtxViewport);
-
-	*pProjectionViewport = Out;
-
-//	__asm int 3;
-}
-#pragma warning(default:4244)
-
-// ******************************************************************
-// * patch: D3DDevice_SetModelView
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetModelView)
-(
-	CONST X_D3DMATRIX *pModelView,
-	CONST X_D3DMATRIX *pInverseModelView,
-	CONST X_D3DMATRIX *pComposite
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pModelView)
-		LOG_FUNC_ARG(pInverseModelView)
-		LOG_FUNC_ARG(pComposite)
-		LOG_FUNC_END;
-
-	// TODO handle other matrices
-	// SetModelView state now sourced from PGRAPH XFCTX registers
-	LOG_TEST_CASE("SetModelView");
-}
+// D3DDevice_SetModelView — disabled.
+// SetModelView state now sourced from PGRAPH XFCTX registers.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // D3DDevice_FlushVertexCache — disabled.
 // Unimplemented stub with no side effects.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_GetModelView
-// ******************************************************************
-xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetModelView)
-(
-	X_D3DMATRIX* pModelView
-)
-{
-	LOG_FUNC_ONE_ARG(pModelView);
-
-	// Read WorldView[0] from PGRAPH XFCTX_MMAT0
-	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
-	XMFLOAT4X4 tmp;
-	for (int row = 0; row < 4; row++)
-		std::memcpy(&tmp.m[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_MMAT0 + row][0], 16);
-	*pModelView = XMLoadFloat4x4(&tmp);
-
-	return S_OK;
-}
+// D3DDevice_GetModelView — disabled.
+// Xbox native code reads WorldView from D3DDevice struct.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // D3D_SetCommonDebugRegisters — disabled.
 // Empty LOG_UNIMPLEMENTED stub; Xbox native code writes harmless debug regs.
@@ -497,49 +408,8 @@ __declspec(naked) void WINAPI xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int M
 	}
 }
 
-// ******************************************************************
-// * patch: D3D_DestroyResource
-// ******************************************************************
-void WINAPI xbox::EMUPATCH(D3D_DestroyResource)(X_D3DResource* pResource)
-{
-   	LOG_FUNC_ONE_ARG(pResource);
-
-   	// Release the host copy (if it exists!)
-   	FreeHostResource(GetHostResourceKey(pResource));
-
-   	// Call the Xbox version of DestroyResource
-   	XB_TRMP(D3D_DestroyResource)(pResource);
-}
-
-// ******************************************************************
-// * patch: D3D_DestroyResource_LTCG
-// ******************************************************************
-static void D3D_DestroyResource_0__LTCG_edi1(xbox::X_D3DResource* pResource)
-{
-	LOG_FUNC_ONE_ARG(pResource);
-}
-
-__declspec(naked) void WINAPI xbox::EMUPATCH(D3D_DestroyResource_0__LTCG_edi1)()
-{
-   	X_D3DResource* pResource;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  pResource, edi
-   	}
-
-   	// Log
-   	D3D_DestroyResource_0__LTCG_edi1(pResource);
-
-   	// Release the host copy (if it exists!)
-   	FreeHostResource(GetHostResourceKey(pResource));
-
-   	// Call the Xbox version of DestroyResource
-   	__asm {
-   	   	mov  edi, pResource
-   	   	call XB_TRMP(D3D_DestroyResource_0__LTCG_edi1)
-
-   	   	LTCG_EPILOGUE
-   	   	ret
-   	}
-}
+// D3D_DestroyResource — disabled.
+// Host resources are NV2A-derived (PGRAPH RT cache, texture cache keyed by VRAM).
+// Dirty page tracking invalidates stale host resources.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
