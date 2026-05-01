@@ -77,8 +77,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_BeginVisibilityTest", xbox::EMUPATCH(D3DDevice_BeginVisibilityTest), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
 	//PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
-	// Disabled: Xbox native code waits on VBlank event; NV2A VBlank IRQ signals it correctly
-	//PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
+	// Re-enabled: The miniport ISR acks PCRTC VBlank but its DPC (which would signal the
+	// kernel event) is never initialized because D3DDevice_CreateDevice is HLE'd.
+	PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
 	// Disabled: Clear now handled by D3D11_draw_clear via NV097_CLEAR_SURFACE → pgraph_handle_method
 	//PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
     PATCH_ENTRY("D3DDevice_CopyRects", xbox::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
@@ -143,12 +144,12 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_GetViewportOffsetAndScale", xbox::EMUPATCH(D3DDevice_GetViewportOffsetAndScale), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetViewportOffsetAndScale_0__LTCG_edx1_ecx2", xbox::EMUPATCH(D3DDevice_GetViewportOffsetAndScale_0__LTCG_edx1_ecx2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_GetVisibilityTestResult", xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_InsertCallback", xbox::EMUPATCH(D3DDevice_InsertCallback), PATCH_HLE_D3D),
 	// Disabled: Native InsertCallback pushes NV097_NO_OPERATION(param) to the push buffer.
 	// PGRAPH raises INTR_ERROR → miniport ISR reads TRAPPED_DATA_LOW → dispatches callback.
 	// The HLE version stored callbacks in g_Xbox_CallbackQueue but CxbxHandleXboxCallbacks()
 	// was never called, so callbacks were never dispatched anyway.
-	//// Disabled: fake 0x8000BEEF stub, Xbox native fence via NV2A reference counter
+	//PATCH_ENTRY("D3DDevice_InsertCallback", xbox::EMUPATCH(D3DDevice_InsertCallback), PATCH_HLE_D3D),
+	// Disabled: fake 0x8000BEEF stub, Xbox native fence via NV2A reference counter
 	//PATCH_ENTRY("D3DDevice_InsertFence", xbox::EMUPATCH(D3DDevice_InsertFence), PATCH_HLE_D3D),
 	// Disabled: hardcoded FALSE stub, Xbox native fence check via NV2A
 	//PATCH_ENTRY("D3DDevice_IsBusy", xbox::EMUPATCH(D3DDevice_IsBusy), PATCH_HLE_D3D),
@@ -171,7 +172,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2", xbox::EMUPATCH(D3DDevice_MultiplyTransform_0__LTCG_ebx1_eax2), PATCH_HLE_D3D),
 	// Disabled: pure trampoline with LOG_INCOMPLETE. Xbox native runs unpatched.
 	//PATCH_ENTRY("D3DDevice_PersistDisplay", xbox::EMUPATCH(D3DDevice_PersistDisplay), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_Present", xbox::EMUPATCH(D3DDevice_Present), PATCH_HLE_D3D),
+	// Disabled: Native Swap pushes NV097_FLIP_INCREMENT_WRITE + NV097_FLIP_STALL to push buffer.
+	// PGRAPH FLIP_STALL handler calls pgraph_flip_stall → D3D11_flip_stall which blits
+	// the PGRAPH backbuffer to the host swap chain and presents.
+	//PATCH_ENTRY("D3DDevice_Present", xbox::EMUPATCH(D3DDevice_Present), PATCH_HLE_D3D),
 	// Disabled: unimplemented stub (LOG_UNIMPLEMENTED), intercepting does nothing useful
 	//PATCH_ENTRY("D3DDevice_PrimeVertexCache", xbox::EMUPATCH(D3DDevice_PrimeVertexCache), PATCH_HLE_D3D),
 	// Disabled: Xbox D3DDevice_Reset only does Xbox D3D resource cleanup.
@@ -280,8 +284,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: trampoline-only after CxbxImpl_SetViewport removal.
 	// Xbox code runs unpatched and writes viewport to push buffer directly.
 	//PATCH_ENTRY("D3DDevice_SetViewport", xbox::EMUPATCH(D3DDevice_SetViewport), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_Swap", xbox::EMUPATCH(D3DDevice_Swap), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_Swap_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_Swap_0__LTCG_eax1), PATCH_HLE_D3D),
+	// Disabled: Native Swap pushes NV097_FLIP_STALL → pgraph_flip_stall → D3D11_flip_stall.
+	//PATCH_ENTRY("D3DDevice_Swap", xbox::EMUPATCH(D3DDevice_Swap), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_Swap_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_Swap_0__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SwitchTexture", xbox::EMUPATCH(D3DDevice_SwitchTexture), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_UpdateOverlay", xbox::EMUPATCH(D3DDevice_UpdateOverlay), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_UpdateOverlay_16__LTCG_eax2", xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2), PATCH_HLE_D3D),

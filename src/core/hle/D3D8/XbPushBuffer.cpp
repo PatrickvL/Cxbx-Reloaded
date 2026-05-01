@@ -37,6 +37,7 @@
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11IABypassDraw
 #include "core\hle\D3D8\Rendering\PatchDraw.h" // For D3D11_draw_patch
+#include "core/common/video/RenderBase.hpp" // For g_renderbase
 #include "devices/video/nv2a.h" // For g_NV2A, PGRAPHState
 #include "devices/video/nv2a_int.h" // For NV** defines
 #include "Logging.h"
@@ -273,6 +274,63 @@ extern void(*pgraph_draw_inline_elements)(NV2AState *d);
 extern void(*pgraph_draw_state_update)(NV2AState *d);
 extern void(*pgraph_draw_clear)(NV2AState *d);
 extern void(*pgraph_draw_patch)(NV2AState *d);
+extern void(*pgraph_flip_stall)(NV2AState *d);
+
+extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget);
+
+// D3D11_flip_stall: Triggered by NV097_FLIP_STALL in the push buffer.
+// Blits the PGRAPH-tracked backbuffer to the host swap chain and presents.
+static void D3D11_flip_stall(NV2AState *d)
+{
+	// Get host swap chain backbuffer
+	ID3D11Texture2D *pHostBackBuffer = nullptr;
+	HRESULT hRet = CxbxGetBackBuffer(&pHostBackBuffer);
+	if (hRet != S_OK || !pHostBackBuffer)
+		return;
+
+	// Clear host backbuffer to black (prevents artifacts on aspect ratio change)
+	ID3D11Texture2D* pExistingRT = CxbxGetCurrentRenderTarget();
+	if (pExistingRT) {
+		(void)CxbxSetRenderTarget(pHostBackBuffer);
+		CxbxD3DClear(0, nullptr,
+			D3DCLEAR_TARGET | (g_bHasDepth ? D3DCLEAR_ZBUFFER : 0) | (g_bHasStencil ? D3DCLEAR_STENCIL : 0),
+			0xFF000000, g_bHasDepth ? 1.0f : 0.0f, 0);
+		(void)CxbxSetRenderTarget(pExistingRT);
+	}
+
+	// Calculate destination rect (centered, aspect-ratio aware)
+	const auto width = g_XBVideo.bMaintainAspect ? g_AspectRatioScaleWidth * g_AspectRatioScale : g_HostBackBufferDesc.Width;
+	const auto height = g_XBVideo.bMaintainAspect ? g_AspectRatioScaleHeight * g_AspectRatioScale : g_HostBackBufferDesc.Height;
+
+	// Blit PGRAPH backbuffer to host backbuffer
+	auto pXboxBackBufferHostSurface = g_pHostPgraphBackBuffer;
+	if (pXboxBackBufferHostSurface) {
+		RECT dest{};
+		dest.top = (LONG)((g_HostBackBufferDesc.Height - height) / 2);
+		dest.left = (LONG)((g_HostBackBufferDesc.Width - width) / 2);
+		dest.right = (LONG)(dest.left + width);
+		dest.bottom = (LONG)(dest.top + height);
+
+		CxbxBltSurface(pXboxBackBufferHostSurface, nullptr, pHostBackBuffer, &dest, D3DTEXF_LINEAR);
+	}
+
+	// Render ImGui overlay
+	if (g_renderbase) {
+		static std::function<void(ImGuiUI*, ID3D11Texture2D*)> internal_render = &CxbxImGui_RenderD3D;
+		g_renderbase->Render(internal_render, pHostBackBuffer);
+	}
+
+	pHostBackBuffer->Release();
+
+	// Present to display
+	CxbxPresent();
+
+	// Update FPS counter
+	g_renderbase->UpdateFPSCounter();
+
+	// Reset per-frame counters
+	g_dwPrimPerFrame = 0;
+}
 
 void D3D11_init_pgraph_plugins()
 {
@@ -284,6 +342,7 @@ void D3D11_init_pgraph_plugins()
 	pgraph_draw_state_update = D3D11_draw_state_update;
 	pgraph_draw_clear = D3D11_draw_clear;
 	pgraph_draw_patch = D3D11_draw_patch;
+	pgraph_flip_stall = D3D11_flip_stall;
 }
 
 extern void pgraph_handle_method(

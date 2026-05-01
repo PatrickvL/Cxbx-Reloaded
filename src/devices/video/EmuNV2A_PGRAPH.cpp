@@ -181,6 +181,7 @@ void (*pgraph_draw_inline_elements)(NV2AState *d);
 void (*pgraph_draw_state_update)(NV2AState *d);
 void (*pgraph_draw_clear)(NV2AState *d);
 void (*pgraph_draw_patch)(NV2AState *d);  // Hardware tessellation callback
+void (*pgraph_flip_stall)(NV2AState *d);  // Host present on FLIP_STALL
 
 void pgraph_handle_method(NV2AState *d, unsigned int subchannel, unsigned int method, uint32_t parameter);
 static void pgraph_log_method(unsigned int subchannel, unsigned int graphics_class, unsigned int method, uint32_t parameter);
@@ -289,6 +290,9 @@ DEVICE_WRITE32(PGRAPH)
 
 	switch (addr) {
 	case NV_PGRAPH_INTR:
+		if (value & NV_PGRAPH_INTR_ERROR) {
+			EmuLog(LOG_LEVEL::INFO, "NV_PGRAPH_INTR: ISR clearing INTR_ERROR (pending was 0x%08X)", pg->pending_interrupts);
+		}
 		pg->pending_interrupts &= ~value;
 		qemu_cond_broadcast(&pg->interrupt_cond);
 		break;
@@ -576,6 +580,8 @@ void pgraph_handle_method(NV2AState *d,
 			if (parameter != 0) {
 				assert(!(pg->pending_interrupts & NV_PGRAPH_INTR_ERROR));
 
+				EmuLog(LOG_LEVEL::INFO, "NV097_NO_OPERATION: param=0x%08X, raising PGRAPH INTR_ERROR (waiting for ISR to clear)", parameter);
+
 				SET_MASK(pg->regs[RI(NV_PGRAPH_TRAPPED_ADDR)],
 					NV_PGRAPH_TRAPPED_ADDR_CHID, channel_id);
 				SET_MASK(pg->regs[RI(NV_PGRAPH_TRAPPED_ADDR)],
@@ -595,6 +601,7 @@ void pgraph_handle_method(NV2AState *d,
 				while (pg->pending_interrupts & NV_PGRAPH_INTR_ERROR) {
 					qemu_cond_wait(&pg->interrupt_cond, &pg->pgraph_lock);
 				}
+				EmuLog(LOG_LEVEL::INFO, "NV097_NO_OPERATION: ISR cleared PGRAPH INTR_ERROR, continuing");
 			}
 			break;
 
@@ -622,25 +629,11 @@ void pgraph_handle_method(NV2AState *d,
 		case NV097_FLIP_STALL:
 			pgraph_update_surface(d, false, true, true);
 
-
-			// TODO: Fix this (why does it hang?)
-			/* while (true) */ {
-				uint32_t surface = pg->regs[RI(NV_PGRAPH_SURFACE)];
-				NV2A_DPRINTF("flip stall read: %d, write: %d, modulo: %d\n",
-					GET_MASK(surface, NV_PGRAPH_SURFACE_READ_3D),
-					GET_MASK(surface, NV_PGRAPH_SURFACE_WRITE_3D),
-					GET_MASK(surface, NV_PGRAPH_SURFACE_MODULO_3D));
-
-				if (GET_MASK(surface, NV_PGRAPH_SURFACE_READ_3D)
-					!= GET_MASK(surface, NV_PGRAPH_SURFACE_WRITE_3D)) {
-					break;
-				}
-
-				//qemu_cond_wait(&pg->flip_3d, &pg->lock);
+			// Trigger host present via the flip_stall plugin callback
+			if (pgraph_flip_stall != nullptr) {
+				pgraph_flip_stall(d);
 			}
 
-			// TODO: Remove this when the AMD crash is solved in vblank_thread
-			NV2ADevice::UpdateHostDisplay(d);
 			NV2A_DPRINTF("flip stall done\n");
 			break;
 
