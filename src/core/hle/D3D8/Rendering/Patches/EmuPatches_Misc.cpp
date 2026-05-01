@@ -320,21 +320,9 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_UpdateOverlay_16
 // Empty stub; Xbox native fence wait via NV2A.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_BlockUntilVerticalBlank
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank)()
-{
-	LOG_FUNC();
-
-	// BlockUntilIdle is inlined (no symbol) and cannot be patched.
-	// BlockUntilVerticalBlank is a real symbol.  The native Xbox code
-	// waits for a VBlank interrupt, but the HLE interrupt chain may not
-	// deliver it to the Xbox kernel event the native code waits on.
-	// Sleep for approximately one VBlank period (~16 ms at 60 Hz NTSC)
-	// to avoid an infinite spin while still letting the game proceed.
-	Sleep(16);
-}
+// D3DDevice_BlockUntilVerticalBlank — disabled.
+// Xbox native code waits on VBlank event; NV2A VBlank IRQ signals it correctly.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // D3DResource_BlockUntilNotBusy — disabled.
 // Empty stub; Xbox native code polls resource state.
