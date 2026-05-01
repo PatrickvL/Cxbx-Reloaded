@@ -702,6 +702,9 @@ void CxbxInvalidatePgraphRTBinding()
 static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 	xbox::addr_xt offset, DXGI_FORMAT format, UINT width, UINT height, bool isDepthStencil)
 {
+	if (width == 0 || height == 0)
+		return nullptr;
+
 	UINT hostWidth = width * g_RenderUpscaleFactor;
 	UINT hostHeight = height * g_RenderUpscaleFactor;
 
@@ -807,9 +810,14 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 			CxbxSetRenderTarget(pHostRT, mipSlice, faceIndex);
 		}
 
-		// Track the first color offset as the backbuffer; update pointer on re-bind
+		// Track the backbuffer by matching RT dimensions against presentation parameters.
+		// This avoids misidentifying an offscreen surface (shadow map, reflection, etc.)
+		// that happens to be rendered before the backbuffer.
 		if (g_PgraphBackBufferOffset == 0 && pHostRT) {
-			g_PgraphBackBufferOffset = colorOffset;
+			if (rtWidth == g_EmuCDPD.HostPresentationParameters.BackBufferWidth &&
+				rtHeight == g_EmuCDPD.HostPresentationParameters.BackBufferHeight) {
+				g_PgraphBackBufferOffset = colorOffset;
+			}
 		}
 		if (colorOffset == g_PgraphBackBufferOffset) {
 			g_pHostPgraphBackBuffer = pHostRT;
@@ -838,8 +846,10 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 				// D3D11 requires RTV and DSV dimensions to match.
 				// If the new DS has different dimensions from the current color RT
 				// (e.g. depth-only shadow pass with 512x512 DS vs 640x480 backbuffer),
-				// unbind the color RT and invalidate tracking so it gets rebound
-				// when the color offset changes on the next pass.
+				// unbind the color RT for depth-only rendering.  We keep
+				// g_LastBoundColorOffset at its real value so the color section
+				// is correctly skipped on subsequent depth-only draws.
+				bool unboundColorForDepthOnly = false;
 				if (g_pD3DCurrentHostRenderTarget) {
 					D3D11_TEXTURE2D_DESC dsDesc = {}, rtDesc = {};
 					pHostDS->GetDesc(&dsDesc);
@@ -851,7 +861,19 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 						}
 						g_pD3DCurrentRTV = nullptr;
 						g_pD3DCurrentHostRenderTarget = nullptr;
-						g_LastBoundColorOffset = ~0u; // Force rebind on next color change
+						unboundColorForDepthOnly = true;
+					}
+				} else if (g_pD3DCurrentRTV == nullptr && g_LastBoundColorOffset != 0) {
+					// Color was already unbound from a previous depth-only pass.
+					// Check if the NEW DS matches the color surface dimensions,
+					// which means we're transitioning out of depth-only mode.
+					D3D11_TEXTURE2D_DESC dsDesc = {};
+					pHostDS->GetDesc(&dsDesc);
+					UINT expectedW = rtWidth * g_RenderUpscaleFactor;
+					UINT expectedH = rtHeight * g_RenderUpscaleFactor;
+					if (dsDesc.Width == expectedW && dsDesc.Height == expectedH) {
+						// DS now matches color dimensions — force color rebind
+						g_LastBoundColorOffset = ~0u;
 					}
 				}
 				CxbxSetDepthStencilSurface(pHostDS);
