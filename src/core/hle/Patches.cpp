@@ -148,6 +148,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_IsBusy", xbox::EMUPATCH(D3DDevice_IsBusy), PATCH_HLE_D3D),
 	// Disabled: hardcoded FALSE stub, Xbox native fence check via NV2A
 	//PATCH_ENTRY("D3DDevice_IsFencePending", xbox::EMUPATCH(D3DDevice_IsFencePending), PATCH_HLE_D3D),
+	// Disabled: trampoline-only, Xbox native pushes NV2A light methods directly
 	//PATCH_ENTRY("D3DDevice_LightEnable", xbox::EMUPATCH(D3DDevice_LightEnable), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_LightEnable_4__LTCG_eax1", xbox::EMUPATCH(D3DDevice_LightEnable_4__LTCG_eax1), PATCH_HLE_D3D),
 	// Disabled: trampoline-only after CxbxImpl_LoadVertexShader removal.
@@ -186,7 +187,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: Xbox native stores scale in device struct. Default 1.0 is correct for most titles.
 	// TODO: Read from Xbox device struct in Swap path if non-1.0 scale needed.
 	//PATCH_ENTRY("D3DDevice_SetBackBufferScale", xbox::EMUPATCH(D3DDevice_SetBackBufferScale), PATCH_HLE_D3D),
-	//PATCH_ENTRY("D3DDevice_SetBackMaterial", xbox::EMUPATCH(D3DDevice_SetBackMaterial), PATCH_HLE_D3D), // Not re-enabled: Meshes sample doesn't use it
+	// Disabled: trampoline-only, Xbox native pushes NV2A back material methods directly
+	//PATCH_ENTRY("D3DDevice_SetBackMaterial", xbox::EMUPATCH(D3DDevice_SetBackMaterial), PATCH_HLE_D3D),
 	// Disabled: all cases are TODO stubs, intercepting does nothing useful
 	//PATCH_ENTRY("D3DDevice_SetDepthClipPlanes", xbox::EMUPATCH(D3DDevice_SetDepthClipPlanes), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetFlickerFilter", xbox::EMUPATCH(D3DDevice_SetFlickerFilter), PATCH_HLE_D3D),
@@ -195,6 +197,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: trampoline-only, g_Xbox_BaseVertexIndex was only reader (DrawIndexedVertices disabled)
 	//PATCH_ENTRY("D3DDevice_SetIndices", xbox::EMUPATCH(D3DDevice_SetIndices), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetIndices_4__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetIndices_4__LTCG_ebx1), PATCH_HLE_D3D),
+	// Disabled: trampoline-only, Xbox native pushes NV2A light/material methods directly
 	//PATCH_ENTRY("D3DDevice_SetLight", xbox::EMUPATCH(D3DDevice_SetLight), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetMaterial", xbox::EMUPATCH(D3DDevice_SetMaterial), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetModelView", xbox::EMUPATCH(D3DDevice_SetModelView), PATCH_HLE_D3D),

@@ -133,40 +133,6 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetVertexShader)
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetVertexShader_0__LTCG_ebx1)();
 
 // ******************************************************************
-// * patch: D3DDevice_SetLight
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_SetLight)
-(
-   	dword_xt            Index,
-   	CONST X_D3DLIGHT8 *pLight
-);
-
-// ******************************************************************
-// * patch: D3DDevice_SetMaterial
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetMaterial)
-(
-   	CONST X_D3DMATERIAL8 *pMaterial
-);
-
-// ******************************************************************
-// * patch: D3DDevice_LightEnable
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_LightEnable)
-(
-   	dword_xt            Index,
-   	bool_xt             bEnable
-);
-
-// ******************************************************************
-// * patch: D3DDevice_LightEnable_4__LTCG_eax1
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_LightEnable_4__LTCG_eax1)
-(
-   	bool_xt bEnable
-);
-
-// ******************************************************************
 // * patch: D3DDevice_SetRenderTarget
 // ******************************************************************
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetRenderTarget)
@@ -213,14 +179,6 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetScreenSpaceOffset)
 (
    	float_xt x,
    	float_xt y
-);
-
-// ******************************************************************
-// * patch: D3DDevice_SetBackMaterial
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetBackMaterial)
-(
-	CONST X_D3DMATERIAL8 *pMaterial
 );
 
 // ******************************************************************
