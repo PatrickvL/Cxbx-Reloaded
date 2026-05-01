@@ -165,24 +165,24 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_InsertCallback)
 );
 
 // ******************************************************************
-// * patch: D3DDevice_DrawRectPatch
+// * patch: D3DDevice_DrawRectPatch — Disabled
 // ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_DrawRectPatch)
-(
-	uint_xt					Handle,
-	CONST float_xt				*pNumSegs,
-	CONST X_D3DRECTPATCH_INFO *pRectPatchInfo
-);
+//xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_DrawRectPatch)
+//(
+//	uint_xt					Handle,
+//	CONST float_xt				*pNumSegs,
+//	CONST X_D3DRECTPATCH_INFO *pRectPatchInfo
+//);
 
 // ******************************************************************
-// * patch: D3DDevice_DrawTriPatch
+// * patch: D3DDevice_DrawTriPatch — Disabled
 // ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_DrawTriPatch)
-(
-	uint_xt					Handle,
-	CONST float_xt				*pNumSegs,
-	CONST X_D3DTRIPATCH_INFO* pTriPatchInfo
-);
+//xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_DrawTriPatch)
+//(
+//	uint_xt					Handle,
+//	CONST float_xt				*pNumSegs,
+//	CONST X_D3DTRIPATCH_INFO* pTriPatchInfo
+//);
 
 // ******************************************************************
 // * patch: D3D_BlockOnTime

@@ -120,21 +120,21 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetVertexDataColor)
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_End)();
 
 // ******************************************************************
-// * patch: D3DDevice_RunPushBuffer
+// * patch: D3DDevice_RunPushBuffer — Disabled
 // ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_RunPushBuffer)
-(
-   	X_D3DPushBuffer       *pPushBuffer,
-   	X_D3DFixup            *pFixup
-);
+//xbox::void_xt WINAPI EMUPATCH(D3DDevice_RunPushBuffer)
+//(
+//	X_D3DPushBuffer       *pPushBuffer,
+//	X_D3DFixup            *pFixup
+//);
 
 // ******************************************************************
-// * patch: D3DDevice_RunPushBuffer_4__LTCG_eax2
+// * patch: D3DDevice_RunPushBuffer_4__LTCG_eax2 — Disabled
 // ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_RunPushBuffer_4__LTCG_eax2)
-(
-   	X_D3DPushBuffer *pPushBuffer
-);
+//xbox::void_xt WINAPI EMUPATCH(D3DDevice_RunPushBuffer_4__LTCG_eax2)
+//(
+//	X_D3DPushBuffer *pPushBuffer
+//);
 
 // ******************************************************************
 // * patch: D3DDevice_BeginPushBuffer
@@ -214,12 +214,12 @@ xbox::void_xt WINAPI EMUPATCH(CDevice_SetStateUP_0__LTCG_esi1)();
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetStipple)( dword_xt* pPattern );
 
 // ******************************************************************
-// * patch: D3DDevice_SetSwapCallback
+// * patch: D3DDevice_SetSwapCallback — Disabled
 // ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetSwapCallback)
-(
-	X_D3DSWAPCALLBACK		pCallback
-);
+//xbox::void_xt WINAPI EMUPATCH(D3DDevice_SetSwapCallback)
+//(
+//	X_D3DSWAPCALLBACK		pCallback
+//);
 
 // ******************************************************************
 // * patch: D3DDevice_PrimeVertexCache

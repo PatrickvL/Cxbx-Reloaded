@@ -39,61 +39,10 @@
 // which had zero readers. Xbox code runs unpatched.
 // Patch disabled in Patches.cpp.
 
-// ******************************************************************
-// * patch: D3DDevice_RunPushBuffer
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_RunPushBuffer)
-(
-   	X_D3DPushBuffer       *pPushBuffer,
-   	X_D3DFixup            *pFixup
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pPushBuffer)
-		LOG_FUNC_ARG(pFixup)
-		LOG_FUNC_END;
-
-	EmuExecutePushBuffer(pPushBuffer, pFixup);    
-}
-
-// ******************************************************************
-// * patch: D3DDevice_RunPushBuffer_4__LTCG_eax2
-// ******************************************************************
-// Overload for logging
-static void D3DDevice_RunPushBuffer_4__LTCG_eax2
-(
-   	xbox::X_D3DPushBuffer       *pPushBuffer,
-	xbox::X_D3DFixup            *pFixup
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pPushBuffer)
-		LOG_FUNC_ARG(pFixup)
-		LOG_FUNC_END;
-}
-
-// This uses a custom calling convention where parameter is passed in EAX
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_RunPushBuffer_4__LTCG_eax2)
-(
-   	X_D3DPushBuffer *pPushBuffer
-)
-{
-	X_D3DFixup* pFixup;
-	__asm {
-		LTCG_PROLOGUE
-		mov  pFixup, eax
-	}
-
-	// Log
-	D3DDevice_RunPushBuffer_4__LTCG_eax2(pPushBuffer, pFixup);
-
-	EmuExecutePushBuffer(pPushBuffer, pFixup);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret  4
-	}
-}
+// D3DDevice_RunPushBuffer, D3DDevice_RunPushBuffer_4__LTCG_eax2 — disabled.
+// Native RunPushBuffer applies fixups and pushes commands through
+// the real GPU FIFO.  D3D_BlockOnTime drains the FIFO when the ring fills.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // D3DDevice_DrawVertices, DrawVerticesUP, DrawVerticesUP_12__LTCG_ebx3,
 // DrawIndexedVertices, DrawIndexedVerticesUP — disabled.
@@ -108,73 +57,17 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_RunPushBuffer_4_
 // all necessary NV2A state through the push buffer before draw calls.
 // Patches disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
 // D3DDevice_SetStipple — disabled (unimplemented stub, LOG_IGNORED).
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_SetSwapCallback
-// ******************************************************************
-void WINAPI xbox::EMUPATCH(D3DDevice_SetSwapCallback)
-(
-	X_D3DSWAPCALLBACK		pCallback
-)
-{
-	LOG_FUNC_ONE_ARG(pCallback);
+// D3DDevice_SetSwapCallback — disabled.
+// Xbox native stores callback in device struct. Swap callback not invoked without this.
+// TODO: Read callback pointer from Xbox device struct in Swap path if needed.
+// Patch disabled in Patches.cpp.
 
-   	g_pXbox_SwapCallback = pCallback;
-}
-
-// ******************************************************************
 // D3DDevice_PrimeVertexCache — disabled (unimplemented stub, LOG_UNIMPLEMENTED).
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_DrawRectPatch
-// ******************************************************************
-xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawRectPatch)
-(
-	uint_xt					Handle,
-	CONST float_xt				*pNumSegs,
-	CONST X_D3DRECTPATCH_INFO *pRectPatchInfo
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Handle)
-		LOG_FUNC_ARG(pNumSegs)
-		LOG_FUNC_ARG(pRectPatchInfo)
-		LOG_FUNC_END;
-
-	CxbxUpdateNativeD3DResources();
-
-	// D3D11 has no DrawRectPatch - use CPU tessellation
-	HRESULT hRet = CxbxDrawRectPatchD3D11(Handle, pNumSegs, pRectPatchInfo);
-	DEBUG_D3DRESULT(hRet, "CxbxDrawRectPatchD3D11");
-
-	return hRet;
-}
-
-// ******************************************************************
-// * patch: D3DDevice_DrawTriPatch
-// ******************************************************************
-xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_DrawTriPatch)
-(
-	uint_xt					Handle,
-	CONST float_xt				*pNumSegs,
-	CONST X_D3DTRIPATCH_INFO* pTriPatchInfo
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Handle)
-		LOG_FUNC_ARG(pNumSegs)
-		LOG_FUNC_ARG(pTriPatchInfo)
-		LOG_FUNC_END;
-
-	CxbxUpdateNativeD3DResources();
-
-	// D3D11 has no DrawTriPatch - use CPU tessellation
-	HRESULT hRet = CxbxDrawTriPatchD3D11(Handle, pNumSegs, pTriPatchInfo);
-	DEBUG_D3DRESULT(hRet, "CxbxDrawTriPatchD3D11");
-
-	return hRet;
-}
+// D3DDevice_DrawRectPatch, D3DDevice_DrawTriPatch — disabled.
+// Xbox does CPU tessellation then submits vertices via push buffer.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
