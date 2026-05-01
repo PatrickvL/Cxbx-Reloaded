@@ -48,29 +48,17 @@ DEVICE_READ32(PCRTC)
 		break;
 	case NV_PCRTC_RASTER: {
 		// Test case: Alter Echo
-		// Hack: Alternate between 0, mid-frame, and end-of-frame, this is enough to satisfy any title
-		// that waits for VBlank using D3DDevice_GetRasterStatus, but not harm performance as much as
-		// the previous implementation
-
-		static int stage = 0;
-
-		switch (stage) {
-		case 0:
-			result = 0;
-			break;
-		case 1:
-			result = NV2ADevice::GetFrameHeight(d) / 2;
-			break;
-		case 2:
-			result = NV2ADevice::GetFrameHeight(d) + 1;
-			break;
-		}
-
-		stage++;
-
-		if (stage > 2) {
-			stage = 0;
-		}
+		// Return a time-based scanline position within the current frame.
+		// The Xbox NTSC display runs at ~60 Hz with 525 total lines (480 visible + 45 blanking).
+		// Compute where in the frame we are based on host time modulo frame period.
+		const unsigned int totalLines = 525; // TODO : Use  NV2ADevice::GetFrameHeight(d) ?
+		LARGE_INTEGER freq, now;
+		QueryPerformanceFrequency(&freq);
+		QueryPerformanceCounter(&now);
+		// Frame period in QPC ticks (~16.667ms at 60Hz)
+		LONGLONG frameTicks = freq.QuadPart / 60; // TODO : Use actual refresh rate based on display mode?  
+		LONGLONG posInFrame = now.QuadPart % frameTicks;
+		result = (unsigned int)(posInFrame * totalLines / frameTicks);
 	} break;
 	default: 
 		result = 0;

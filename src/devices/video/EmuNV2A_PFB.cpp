@@ -62,6 +62,19 @@ DEVICE_WRITE32(PFB)
 	switch (addr) {
 	default:
 		DEVICE_WRITE32_REG(pfb);
+
+		// Mirror tile region registers to PGRAPH (real hardware does this automatically).
+		// NV_PFB_TILE[0..7] at 0x240..0x2BF map to NV_PGRAPH_TTILE[0..7] at 0x900..0x97F.
+		if (addr >= 0x240 && addr < 0x2C0) {
+			unsigned int pgraph_addr = NV_PGRAPH_TTILE(0) + (addr - 0x240);
+			d->pgraph.regs[RI(pgraph_addr)] = value;
+		}
+		// NV_PFB_ZCOMP[0..7] at 0x300..0x31F map to NV_PGRAPH_ZCOMP[0..7] at 0x980..0x99F.
+		// NV_PFB_ZCOMP_OFFSET (0x324) maps to NV_PGRAPH_ZCOMP_OFFSET (0x9A0).
+		else if (addr >= 0x300 && addr <= 0x324) {
+			unsigned int pgraph_addr = NV_PGRAPH_ZCOMP(0) + (addr - 0x300);
+			d->pgraph.regs[RI(pgraph_addr)] = value;
+		}
 		break;
 	}
 
