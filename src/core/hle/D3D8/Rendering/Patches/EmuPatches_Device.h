@@ -74,21 +74,6 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetDisplayFieldStatus)
 );
 
 // ******************************************************************
-// * patch: D3DDevice_BeginPush_4
-// ******************************************************************
-xbox::PDWORD WINAPI EMUPATCH(D3DDevice_BeginPush_4)(dword_xt Count);
-
-// ******************************************************************
-// * patch: D3DDevice_BeginPush_8
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_BeginPush_8)(dword_xt Count, dword_xt **ppPush);
-
-// ******************************************************************
-// * patch: D3DDevice_EndPush
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_EndPush)(dword_xt *pPush);
-
-// ******************************************************************
 // * patch: D3DDevice_Reset
 // ******************************************************************
 xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_Reset)

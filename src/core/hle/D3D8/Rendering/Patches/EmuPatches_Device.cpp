@@ -24,7 +24,10 @@
 // ******************************************************************
 #include "../EmuD3D8_common.h"
 
-static xbox::dword_xt *g_pXbox_BeginPush_Buffer = xbox::zeroptr; // primary push buffer
+// D3DDevice_BeginPush / D3DDevice_EndPush — disabled.
+// Xbox native BeginPush returns pointer into GPU ring buffer (CDevice+0x00 = pPut).
+// PFIFO processes commands from ring buffer when DMA_PUT is updated by EndPush.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // D3DDevice_SetIndices, D3DDevice_SetIndices_4__LTCG_ebx1 — disabled.
 // Trampoline-only after DrawIndexedVertices was disabled (g_Xbox_BaseVertexIndex had no readers).
@@ -425,74 +428,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetDisplayFieldStatus)(X_D3DFIELD_
 		pFieldStatus->Field = (g_Xbox_VBlankData.VBlank % 2 == 0) ? X_D3DFIELD_ODD : X_D3DFIELD_EVEN;
 	} else {
 		pFieldStatus->Field = X_D3DFIELD_PROGRESSIVE;
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_BeginPush_4
-// TODO: Find a test case and verify this
-// Starting from XDK 4531, this changed to 1 parameter only.
-// Is this definition incorrect, or did it change at some point?
-// ******************************************************************
-xbox::PDWORD WINAPI xbox::EMUPATCH(D3DDevice_BeginPush_4)(dword_xt Count)
-{
-	LOG_FUNC_ONE_ARG(Count);
-
-	if (g_pXbox_BeginPush_Buffer != nullptr)
-	{
-		EmuLog(LOG_LEVEL::WARNING, "D3DDevice_BeginPush called without D3DDevice_EndPush in between?!");
-		delete[] g_pXbox_BeginPush_Buffer; // prevent a memory leak
-	}
-
-	dword_xt *pRet = new dword_xt[Count];
-
-   	g_pXbox_BeginPush_Buffer = pRet;
-
-   	return pRet;
-}
-
-// ******************************************************************
-// * patch: D3DDevice_BeginPush_8
-// TODO: Find a test case and verify this: RalliSport Challenge XDK 4134
-// For XDK before 4531
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginPush_8)(dword_xt Count, dword_xt** ppPush)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Count)
-		LOG_FUNC_ARG(ppPush)
-		LOG_FUNC_END;
-
-	if (g_pXbox_BeginPush_Buffer != nullptr)
-	{
-		EmuLog(LOG_LEVEL::WARNING, "D3DDevice_BeginPush2 called without D3DDevice_EndPush in between?!");
-		delete[] g_pXbox_BeginPush_Buffer; // prevent a memory leak
-	}
-
-	dword_xt *pRet = new dword_xt[Count];
-
-	g_pXbox_BeginPush_Buffer = pRet;
-
-	*ppPush=pRet;
-}
-
-// ******************************************************************
-// * patch: D3DDevice_EndPush
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_EndPush)(dword_xt *pPush)
-{
-	LOG_FUNC_ONE_ARG(pPush);
-
-	if (g_pXbox_BeginPush_Buffer == nullptr)
-		EmuLog(LOG_LEVEL::WARNING, "D3DDevice_EndPush called without preceding D3DDevice_BeginPush?!");
-	else
-	{
-   	   	// Note: We don't use the count from BeginPush because that specifies the *maximum* count
-   	   	// rather than the count actually in the pushbuffer. 
-		pfifo_submit_pushbuffer(g_NV2A->GetDeviceState(), g_pXbox_BeginPush_Buffer, (uintptr_t)pPush - (uintptr_t)g_pXbox_BeginPush_Buffer);
-
-		delete[] g_pXbox_BeginPush_Buffer;
-		g_pXbox_BeginPush_Buffer = nullptr;
 	}
 }
 

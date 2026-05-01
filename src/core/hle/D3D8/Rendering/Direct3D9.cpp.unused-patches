@@ -5350,3 +5350,69 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_MultiplyTransfor
 		ret
 	}
 }
+
+// ******************************************************************
+// * patch: D3DDevice_BeginPush_4
+// * Disabled: Xbox native BeginPush returns pointer into GPU ring buffer.
+// * PFIFO processes commands from ring buffer when DMA_PUT is updated.
+// ******************************************************************
+static xbox::dword_xt *g_pXbox_BeginPush_Buffer = xbox::zeroptr;
+
+xbox::PDWORD WINAPI xbox::EMUPATCH(D3DDevice_BeginPush_4)(dword_xt Count)
+{
+	LOG_FUNC_ONE_ARG(Count);
+
+	if (g_pXbox_BeginPush_Buffer != nullptr)
+	{
+		EmuLog(LOG_LEVEL::WARNING, "D3DDevice_BeginPush called without D3DDevice_EndPush in between?!");
+		delete[] g_pXbox_BeginPush_Buffer;
+	}
+
+	dword_xt *pRet = new dword_xt[Count];
+   	g_pXbox_BeginPush_Buffer = pRet;
+   	return pRet;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_BeginPush_8
+// * Disabled: Same as above, for XDK before 4531.
+// * Test case: RalliSport Challenge XDK 4134
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginPush_8)(dword_xt Count, dword_xt** ppPush)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Count)
+		LOG_FUNC_ARG(ppPush)
+		LOG_FUNC_END;
+
+	if (g_pXbox_BeginPush_Buffer != nullptr)
+	{
+		EmuLog(LOG_LEVEL::WARNING, "D3DDevice_BeginPush2 called without D3DDevice_EndPush in between?!");
+		delete[] g_pXbox_BeginPush_Buffer;
+	}
+
+	dword_xt *pRet = new dword_xt[Count];
+	g_pXbox_BeginPush_Buffer = pRet;
+	*ppPush=pRet;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_EndPush
+// * Disabled: Xbox native EndPush updates DMA_PUT in CDevice.
+// ******************************************************************
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_EndPush)(dword_xt *pPush)
+{
+	LOG_FUNC_ONE_ARG(pPush);
+
+	if (g_pXbox_BeginPush_Buffer == nullptr)
+		EmuLog(LOG_LEVEL::WARNING, "D3DDevice_EndPush called without preceding D3DDevice_BeginPush?!");
+	else
+	{
+		// Note: We don't use the count from BeginPush because that specifies the *maximum* count
+		// rather than the count actually in the pushbuffer. 
+		pfifo_submit_pushbuffer(g_NV2A->GetDeviceState(), g_pXbox_BeginPush_Buffer, (uintptr_t)pPush - (uintptr_t)g_pXbox_BeginPush_Buffer);
+
+		delete[] g_pXbox_BeginPush_Buffer;
+		g_pXbox_BeginPush_Buffer = nullptr;
+	}
+}
