@@ -113,49 +113,10 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetGammaRamp)
    	}
 }
 
-
-xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2
-(
-   	xbox::int_xt BackBuffer
-)
-{
-	xbox::X_D3DSurface* pXboxBackBuffer = nullptr;
-
-	// Rather than create a new surface, we should forward to the Xbox version of GetBackBuffer,
-	// This gives us the correct Xbox surface to update.
-	// We get signatures for both backbuffer functions as it changed in later XDKs
-
-	// This also updates the reference count, so we don't need to do this ourselves
-	if (XB_TRMP(D3DDevice_GetBackBuffer) != nullptr) {
-		XB_TRMP(D3DDevice_GetBackBuffer)(BackBuffer, xbox::X_D3DBACKBUFFER_TYPE_MONO, &pXboxBackBuffer);
-	}
-	else if (XB_TRMP(D3DDevice_GetBackBuffer_8__LTCG_eax1) != nullptr) {
-		__asm {
-			lea  eax, pXboxBackBuffer
-			push eax
-			push D3DBACKBUFFER_TYPE_MONO
-			mov  eax, BackBuffer
-			call XB_TRMP(D3DDevice_GetBackBuffer_8__LTCG_eax1)
-		}
-	}
-	else if (XB_TRMP(D3DDevice_GetBackBuffer2) != nullptr) {
-		pXboxBackBuffer = XB_TRMP(D3DDevice_GetBackBuffer2)(BackBuffer);
-	}
-	else {
-		__asm {
-			mov  eax, BackBuffer
-			call XB_TRMP(D3DDevice_GetBackBuffer2_0__LTCG_eax1)
-			mov  pXboxBackBuffer, eax
-		}
-	}
-
-	// Now pXboxBackbuffer points to the requested Xbox backbuffer
-	if (pXboxBackBuffer == nullptr) {
-		CxbxrAbort("D3DDevice_GetBackBuffer2: Could not get Xbox backbuffer");
-	}
-
-	return pXboxBackBuffer;
-}
+// CxbxrImpl_GetBackBuffer2 — removed.
+// Was only called by D3DDevice_GetBackBuffer patches (now disabled).
+// Backbuffer surface is known from CreateDevice (g_pXbox_BackBufferSurface).
+// Implementation moved to Direct3D9.cpp.unused-patches.
 
 // D3DDevice_SetViewport — disabled (trampoline-only after CxbxImpl_SetViewport removal).
 // Patch disabled in Patches.cpp — Xbox code runs unpatched.

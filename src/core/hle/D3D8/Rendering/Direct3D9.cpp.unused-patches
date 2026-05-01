@@ -6653,3 +6653,160 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetVertexShaderInput)
 	if (XB_TRMP(D3DDevice_SetVertexShaderInput))
 		XB_TRMP(D3DDevice_SetVertexShaderInput)(Handle, StreamCount, pStreamInputs);
 }
+
+// ================================================================
+// Removed from EmuPatches_Surface.cpp — disabled GetBackBuffer patches
+// ================================================================
+
+xbox::X_D3DSurface* WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer2)
+(
+	int_xt                 BackBuffer
+)
+{
+	LOG_FUNC_ONE_ARG(BackBuffer);
+	return CxbxrImpl_GetBackBuffer2(BackBuffer);
+}
+
+static void D3DDevice_GetBackBuffer2_0__LTCG_eax1(xbox::int_xt BackBuffer)
+{
+	LOG_FUNC_ONE_ARG(BackBuffer);
+}
+
+__declspec(naked) xbox::X_D3DSurface* WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer2_0__LTCG_eax1)
+(
+)
+{
+	int_xt BackBuffer;
+	xbox::X_D3DSurface* pBackBuffer;
+	__asm {
+		LTCG_PROLOGUE
+		mov  BackBuffer, eax
+	}
+	D3DDevice_GetBackBuffer2_0__LTCG_eax1(BackBuffer);
+	pBackBuffer = CxbxrImpl_GetBackBuffer2(BackBuffer);
+	__asm {
+		mov  eax, pBackBuffer
+		LTCG_EPILOGUE
+		ret
+	}
+}
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer)
+(
+	int_xt                BackBuffer,
+	D3DBACKBUFFER_TYPE    Type,
+	X_D3DSurface        **ppBackBuffer
+)
+{
+	LOG_FORWARD("D3DDevice_GetBackBuffer2");
+	*ppBackBuffer = CxbxrImpl_GetBackBuffer2(BackBuffer);
+}
+
+// Test case: NBA 2K2
+__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer_8__LTCG_eax1)
+(
+	D3DBACKBUFFER_TYPE Type,
+	X_D3DSurface     **ppBackBuffer
+)
+{
+	int_xt BackBuffer;
+	__asm {
+		LTCG_PROLOGUE
+		mov  BackBuffer, eax
+	}
+	*ppBackBuffer = CxbxrImpl_GetBackBuffer2(BackBuffer);
+	__asm {
+		LTCG_EPILOGUE
+		ret  8
+	}
+}
+
+// ================================================================
+// Removed from EmuPatches_Surface.cpp — disabled Clear patch
+// ================================================================
+
+xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_Clear)
+(
+	dword_xt           Count,
+	CONST X_D3DRECT   *pRects,
+	dword_xt           Flags,
+	X_D3DCOLOR         Color,
+	float              Z,
+	dword_xt           Stencil
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Count)
+		LOG_FUNC_ARG(pRects)
+		LOG_FUNC_ARG(Flags)
+		LOG_FUNC_ARG(Color)
+		LOG_FUNC_ARG(Z)
+		LOG_FUNC_ARG(Stencil)
+		LOG_FUNC_END;
+
+	DWORD HostFlags = 0;
+	CxbxUpdateNativeD3DResources();
+
+	{
+		if (Flags & X_D3DCLEAR_TARGET) {
+			if ((Flags & X_D3DCLEAR_TARGET) != X_D3DCLEAR_TARGET)
+				EmuLog(LOG_LEVEL::WARNING, "Unsupported : Partial D3DCLEAR_TARGET flag(s) for D3DDevice_Clear : 0x%.08X", Flags & X_D3DCLEAR_TARGET);
+			HostFlags |= D3DCLEAR_TARGET;
+		}
+		if (Flags & X_D3DCLEAR_ZBUFFER) {
+			if (g_bHasDepth)
+				HostFlags |= D3DCLEAR_ZBUFFER;
+			else
+				EmuLog(LOG_LEVEL::WARNING, "Unsupported : D3DCLEAR_ZBUFFER flag for D3DDevice_Clear without ZBuffer");
+		}
+		if (Flags & X_D3DCLEAR_STENCIL) {
+			if (g_bHasStencil)
+				HostFlags |= D3DCLEAR_STENCIL;
+			else
+				EmuLog(LOG_LEVEL::WARNING, "Unsupported : D3DCLEAR_STENCIL flag for D3DDevice_Clear without ZBuffer");
+		}
+		if(Flags & ~(X_D3DCLEAR_TARGET | X_D3DCLEAR_ZBUFFER | X_D3DCLEAR_STENCIL))
+			EmuLog(LOG_LEVEL::WARNING, "Unsupported Flag(s) for D3DDevice_Clear : 0x%.08X", Flags & ~(X_D3DCLEAR_TARGET | X_D3DCLEAR_ZBUFFER | X_D3DCLEAR_STENCIL));
+	}
+
+	if (Count > 0 && pRects != nullptr) {
+		float aaX, aaY;
+		GetMultiSampleScaleRaw(aaX, aaY);
+		float Xscale = aaX * g_RenderUpscaleFactor;
+		float Yscale = aaY * g_RenderUpscaleFactor;
+
+		std::vector<D3DRECT> rects(Count);
+		for (DWORD i = 0; i < Count; i++) {
+			rects[i].left = static_cast<LONG>(pRects[i].x1 * Xscale);
+			rects[i].right = static_cast<LONG>(pRects[i].x2 * Xscale);
+			rects[i].top = static_cast<LONG>(pRects[i].y1 * Yscale);
+			rects[i].bottom = static_cast<LONG>(pRects[i].y2 * Yscale);
+		}
+		CxbxD3DClear(Count, rects.data(), HostFlags, Color, Z, Stencil);
+	} else {
+		CxbxD3DClear(Count, reinterpret_cast<const D3DRECT*>(pRects), HostFlags, Color, Z, Stencil);
+	}
+}
+
+// ================================================================
+// Removed from EmuPatches_Surface.cpp — disabled PersistDisplay patch
+// ================================================================
+
+xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_PersistDisplay)()
+{
+	LOG_FUNC();
+	LOG_INCOMPLETE();
+
+	// TODO: This function simply saves a copy of the display to a surface and persists it in contiguous memory
+	// 1. Check for an existing persisted surface via AvGetSavedDataAddress, free it if necessary
+	// 2. Create an Xbox format surface with the same size and format as active display
+	// 3. Copy the host framebuffer to the xbox surface, converting format if necessary
+	// 4. Set the display mode via AvSetDisplayMode to the same format as the persisted surface
+	// 5. Use MmPersistContigousMemory to persist the surface data across reboot
+	// 6. Call AvSetSavedDataAddress, passing the xbox surface data pointer
+
+	if (XB_TRMP(D3DDevice_PersistDisplay)) {
+		return XB_TRMP(D3DDevice_PersistDisplay)();
+	}
+	return 0;
+}

@@ -404,8 +404,8 @@ void RunOnWndMsgThread(const std::function<void()>& func);
 
 const char *CxbxGetErrorDescription(HRESULT hResult);
 
-// EmuPatches_State.cpp
-xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2(xbox::int_xt BackBuffer);
+// CxbxrImpl_GetBackBuffer2 — removed (only used by disabled GetBackBuffer patches).
+// xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2(xbox::int_xt BackBuffer);
 
 // Xbox function trampolines -- defined in RenderGlobals.cpp, used across
 // multiple EmuPatches_*.cpp translation units.

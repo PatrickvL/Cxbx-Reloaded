@@ -30,173 +30,19 @@ static DWORD g_VBLastSwap = 0;
 // Forward declaration (defined in HostImGui.cpp)
 extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget);
 
+// D3DDevice_GetBackBuffer2, D3DDevice_GetBackBuffer2_0__LTCG_eax1,
+// D3DDevice_GetBackBuffer, D3DDevice_GetBackBuffer_8__LTCG_eax1 — disabled.
+// Xbox GetBackBuffer2 returns a pointer to the internal backbuffer surface
+// structure. Since we no longer intercept SetRenderTarget, the backbuffer
+// surface is already known from CreateDevice (g_pXbox_BackBufferSurface).
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
+// Test-case: NBA 2K2 (LTCG_eax1)
 
-xbox::X_D3DSurface* WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer2)
-(
-	int_xt                 BackBuffer
-)
-{
-	LOG_FUNC_ONE_ARG(BackBuffer);
-
-	return CxbxrImpl_GetBackBuffer2(BackBuffer);
-}
-
-static void D3DDevice_GetBackBuffer2_0__LTCG_eax1(xbox::int_xt BackBuffer)
-{
-	LOG_FUNC_ONE_ARG(BackBuffer);
-}
-
-// LTCG specific GetBackBuffer2 function...
-// This uses a custom calling convention where parameter is passed in EAX
-__declspec(naked) xbox::X_D3DSurface* WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer2_0__LTCG_eax1)
-(
-)
-{
-
-	int_xt BackBuffer;
-	xbox::X_D3DSurface* pBackBuffer;
-	__asm {
-		LTCG_PROLOGUE
-		mov  BackBuffer, eax
-	}
-
-	// Log
-	D3DDevice_GetBackBuffer2_0__LTCG_eax1(BackBuffer);
-
-	pBackBuffer = CxbxrImpl_GetBackBuffer2(BackBuffer);
-
-	__asm {
-		mov  eax, pBackBuffer
-		LTCG_EPILOGUE
-		ret
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_GetBackBuffer
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer)
-(
-   	int_xt                BackBuffer,
-   	D3DBACKBUFFER_TYPE    Type,
-   	X_D3DSurface        **ppBackBuffer
-)
-{
-	LOG_FORWARD("D3DDevice_GetBackBuffer2");
-
-	*ppBackBuffer = CxbxrImpl_GetBackBuffer2(BackBuffer);
-}
-
-// ******************************************************************
-// * patch: D3DDevice_GetBackBuffer_8__LTCG_eax1
-// ******************************************************************
-// Overload for logging
-static void D3DDevice_GetBackBuffer_8__LTCG_eax1()
-{
-	LOG_FORWARD("D3DDevice_GetBackBuffer2");
-}
-
-// Test case: NBA 2K2
-// This uses a custom calling convention where parameter is passed in EAX
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetBackBuffer_8__LTCG_eax1)
-(
-   	D3DBACKBUFFER_TYPE Type,
-   	X_D3DSurface     **ppBackBuffer
-)
-{
-	int_xt BackBuffer;
-	__asm {
-		LTCG_PROLOGUE
-		mov  BackBuffer, eax
-	}
-
-	// Log
-	D3DDevice_GetBackBuffer_8__LTCG_eax1();
-
-	*ppBackBuffer = CxbxrImpl_GetBackBuffer2(BackBuffer);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret  8
-	}
-}
-
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_Clear)
-(
-   	dword_xt           Count,
-   	CONST X_D3DRECT   *pRects,
-   	dword_xt           Flags,
-	X_D3DCOLOR         Color,
-   	float              Z,
-   	dword_xt           Stencil
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Count)
-		LOG_FUNC_ARG(pRects)
-		LOG_FUNC_ARG(Flags)
-		LOG_FUNC_ARG(Color)
-		LOG_FUNC_ARG(Z)
-		LOG_FUNC_ARG(Stencil)
-		LOG_FUNC_END;
-
-	DWORD HostFlags = 0;
-
-	// Clear requires the Xbox viewport to be applied
-	CxbxUpdateNativeD3DResources();
-
-   	// make adjustments to parameters to make sense with windows d3d
-   	{
-		if (Flags & X_D3DCLEAR_TARGET) {
-			// TODO: D3DCLEAR_TARGET_A, *R, *G, *B don't exist on windows
-			if ((Flags & X_D3DCLEAR_TARGET) != X_D3DCLEAR_TARGET)
-				EmuLog(LOG_LEVEL::WARNING, "Unsupported : Partial D3DCLEAR_TARGET flag(s) for D3DDevice_Clear : 0x%.08X", Flags & X_D3DCLEAR_TARGET);
-		
-			HostFlags |= D3DCLEAR_TARGET;
-		}
-
-   	   	// Do not needlessly clear Z Buffer
-		if (Flags & X_D3DCLEAR_ZBUFFER) {
-			if (g_bHasDepth)
-				HostFlags |= D3DCLEAR_ZBUFFER;
-			else
-				EmuLog(LOG_LEVEL::WARNING, "Unsupported : D3DCLEAR_ZBUFFER flag for D3DDevice_Clear without ZBuffer");
-		}
-
-		// Only clear depth buffer and stencil if present
-		//
-		// Avoids following DirectX Debug Runtime error report
-		//    [424] Direct3D8: (ERROR) :Invalid flag D3DCLEAR_ZBUFFER: no zbuffer is associated with device. Clear failed. 
-		if (Flags & X_D3DCLEAR_STENCIL) {
-			if (g_bHasStencil)
-				HostFlags |= D3DCLEAR_STENCIL;
-			else
-				EmuLog(LOG_LEVEL::WARNING, "Unsupported : D3DCLEAR_STENCIL flag for D3DDevice_Clear without ZBuffer");
-		}
-
-   	   	if(Flags & ~(X_D3DCLEAR_TARGET | X_D3DCLEAR_ZBUFFER | X_D3DCLEAR_STENCIL))
-   	   	   	EmuLog(LOG_LEVEL::WARNING, "Unsupported Flag(s) for D3DDevice_Clear : 0x%.08X", Flags & ~(X_D3DCLEAR_TARGET | X_D3DCLEAR_ZBUFFER | X_D3DCLEAR_STENCIL));
-   	}
-
-   	if (Count > 0 && pRects != nullptr) {
-   	   	// Scale the fill based on our scale factor and MSAA scale
-		float aaX, aaY;
-		GetMultiSampleScaleRaw(aaX, aaY);
-		float Xscale = aaX * g_RenderUpscaleFactor;
-		float Yscale = aaY * g_RenderUpscaleFactor;
-
-   	   	std::vector<D3DRECT> rects(Count);
-   	   	for (DWORD i = 0; i < Count; i++) {
-   	   	   	rects[i].left = static_cast<LONG>(pRects[i].x1 * Xscale);
-   	   	   	rects[i].right = static_cast<LONG>(pRects[i].x2 * Xscale);
-   	   	   	rects[i].top = static_cast<LONG>(pRects[i].y1 * Yscale);
-   	   	   	rects[i].bottom = static_cast<LONG>(pRects[i].y2 * Yscale);
-		}
-   	   	CxbxD3DClear(Count, rects.data(), HostFlags, Color, Z, Stencil);
-   	} else {
-		CxbxD3DClear(Count, reinterpret_cast<const D3DRECT*>(pRects), HostFlags, Color, Z, Stencil);
-   	}
-}
+// D3DDevice_Clear — disabled.
+// Xbox Clear uses the NV2A 2D engine (SOLID_RECTANGLE class 0x5E or
+// GDI_RECTANGLE_TEXT class 0x4A) to fill color/Z/stencil buffers.
+// Our NV2A 2D engine implementation now handles these blit classes.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 
 // ******************************************************************
@@ -769,29 +615,8 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap)
 // All were trampoline-only (LOG_FUNC + XB_TRMP) with no side effects.
 // Patches disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_PersistDisplay
-// ******************************************************************
-xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_PersistDisplay)()
-{
-	LOG_FUNC();
-
-	LOG_INCOMPLETE();
-
-	// TODO: This function simply saves a copy of the display to a surface and persists it in contiguous memory
-	// This function, if ever required, can be implemented as the following
-	// 1. Check for an existing persisted surface via AvGetSavedDataAddress, free it if necessary
-	// 2. Create an Xbox format surface with the same size and format as active display
-	// 3. Copy the host framebuffer to the xbox surface, converting format if necessary
-	// 4. Set the display mode via AvSetDisplayMode to the same format as the persisted surface,
-	//    passing the ->Data pointer of the xbox surface as the framebuffer pointer.
-	// 5. Use MmPersistContigousMemory to persist the surface data across reboot
-	// 6. Call AvSetSavedDataAddress, passing the xbox surface data pointer
-
-	// Call the native Xbox function so that AvSetSavedDataAddress is called and the VMManager can know its correct address
-	if (XB_TRMP(D3DDevice_PersistDisplay)) {
-		return XB_TRMP(D3DDevice_PersistDisplay)();
-	}
-	return 0;
-}
+// D3DDevice_PersistDisplay — disabled.
+// Was an incomplete stub that just called the Xbox trampoline.
+// Xbox code saves a framebuffer copy to contiguous memory for dashboard hand-off.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 

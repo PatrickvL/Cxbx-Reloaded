@@ -42,34 +42,11 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_CopyRects)
    	CONST X_POINT      *pDestPointsArray
 );
 
-// ******************************************************************
-// * patch: D3DDevice_GetBackBuffer2
-// ******************************************************************
-X_D3DSurface* WINAPI EMUPATCH(D3DDevice_GetBackBuffer2)
-(
-   	int_xt                 BackBuffer
-);
-
-X_D3DSurface* WINAPI EMUPATCH(D3DDevice_GetBackBuffer2_0__LTCG_eax1)();
-
-// ******************************************************************
-// * patch: D3DDevice_GetBackBuffer
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetBackBuffer)
-(
-   	int_xt             BackBuffer,
-   	D3DBACKBUFFER_TYPE Type,
-   	X_D3DSurface     **ppBackBuffer
-);
-
-// ******************************************************************
-// * patch: D3DDevice_GetBackBuffer_8__LTCG_eax1
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetBackBuffer_8__LTCG_eax1)
-(
-   	D3DBACKBUFFER_TYPE Type,
-   	X_D3DSurface     **ppBackBuffer
-);
+// D3DDevice_GetBackBuffer2 / GetBackBuffer / LTCG variants — disabled.
+// xbox::X_D3DSurface* WINAPI EMUPATCH(D3DDevice_GetBackBuffer2)(int_xt BackBuffer);
+// xbox::X_D3DSurface* WINAPI EMUPATCH(D3DDevice_GetBackBuffer2_0__LTCG_eax1)();
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetBackBuffer)(int_xt BackBuffer, D3DBACKBUFFER_TYPE Type, X_D3DSurface **ppBackBuffer);
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetBackBuffer_8__LTCG_eax1)(D3DBACKBUFFER_TYPE Type, X_D3DSurface **ppBackBuffer);
 
 // ******************************************************************
 // * patch: D3DDevice_Present
@@ -131,19 +108,11 @@ xbox::void_xt WINAPI EMUPATCH(Lock3DSurface_16__LTCG_eax4)
    	dword_xt             Flags
 );
 
-// D3DDevice_Clear: patch disabled — clear now handled by D3D11_draw_clear via
-// NV097_CLEAR_SURFACE → pgraph_handle_method. Declaration kept for compilation.
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_Clear)
-(
-   	dword_xt           Count,
-   	CONST X_D3DRECT   *pRects,
-   	dword_xt           Flags,
-   	X_D3DCOLOR         Color,
-   	float              Z,
-   	dword_xt           Stencil
-);
+// D3DDevice_Clear — disabled (NV2A 2D engine handles clear).
+// xbox::void_xt WINAPI EMUPATCH(D3DDevice_Clear)(dword_xt Count, CONST X_D3DRECT *pRects, dword_xt Flags, X_D3DCOLOR Color, float Z, dword_xt Stencil);
 
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_PersistDisplay)();
+// D3DDevice_PersistDisplay — disabled.
+// xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_PersistDisplay)();
 
 } // namespace xbox
 
