@@ -334,8 +334,15 @@ void nv2a_vblank_interrupt(void *opaque)
 		d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
 		update_irq(d);
 
-		// trigger the gpu interrupt if it was asserted in update_irq
-		if (g_bEnableAllInterrupts && HalSystemInterrupts[3].IsPending() && EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
+		// Trigger the GPU interrupt if the PCRTC interrupt is enabled at all levels.
+		// Note: We cannot use IsPending() here because it relies on a rising-edge detect
+		// (m_Pending is only set when transitioning from deasserted to asserted). If another
+		// interrupt source (e.g. PGRAPH) keeps the PMC line asserted, there is no rising edge
+		// and VBlank delivery would stop. Instead, check the hardware enable chain directly.
+		if (g_bEnableAllInterrupts
+			&& (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts)
+			&& d->pmc.enabled_interrupts
+			&& EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
 			HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
 		}
 
@@ -414,6 +421,11 @@ void NV2ADevice::Init()
 	CxbxReserveNV2AMemory(d);
 
 	d->pcrtc.start = 0;
+
+	// Enable PMC hardware interrupts - the miniport normally writes this during init,
+	// but since our miniport init may race with VBlank delivery, set it here to ensure
+	// the ISR can see pending interrupts from the start.
+	d->pmc.enabled_interrupts = NV_PMC_INTR_EN_0_HARDWARE;
 
 	d->vram_ptr = (uint8_t*)PHYSICAL_MAP_BASE;
 	d->vram_size = g_SystemMaxMemory;
