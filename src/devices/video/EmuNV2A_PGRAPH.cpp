@@ -183,6 +183,12 @@ void (*pgraph_draw_clear)(NV2AState *d);
 void (*pgraph_draw_patch)(NV2AState *d);  // Hardware tessellation callback
 void (*pgraph_flip_stall)(NV2AState *d);  // Host present on FLIP_STALL
 
+// Set true the first time the title issues an explicit NV097_FLIP_STALL.
+// Once observed, the puller's auto-present fallback (intended for raw push
+// buffer games that never flip) is disabled to avoid spurious mid-frame
+// presents between explicit flips, which causes flicker at half frame rate.
+bool g_pgraph_explicit_flip_stall_seen = false;
+
 void pgraph_handle_method(NV2AState *d, unsigned int subchannel, unsigned int method, uint32_t parameter);
 static void pgraph_log_method(unsigned int subchannel, unsigned int graphics_class, unsigned int method, uint32_t parameter);
 static void pgraph_allocate_inline_buffer_vertices(PGRAPHState *pg, unsigned int attr);
@@ -629,8 +635,14 @@ void pgraph_handle_method(NV2AState *d,
 		case NV097_FLIP_STALL:
 			pgraph_update_surface(d, false, true, true);
 
+			// Title is using explicit flips — disable puller auto-present fallback.
+			g_pgraph_explicit_flip_stall_seen = true;
+
 			// Trigger host present via the flip_stall plugin callback
 			if (pgraph_flip_stall != nullptr) {
+				// Clear draw_dirty so the auto-present in the puller loop
+				// doesn't fire again after this explicit FLIP_STALL present.
+				d->pgraph.surface_color.draw_dirty = false;
 				pgraph_flip_stall(d);
 			}
 
@@ -1966,10 +1978,10 @@ void pgraph_handle_method(NV2AState *d,
 		//     and both DMA contexts point to the same region.
 		//     break;
 		//
-		// CASE_4(NV097_SET_TEXTURE_MATRIX_ENABLE, 4):
-		//     slot = (method - NV097_SET_TEXTURE_MATRIX_ENABLE) / 4;
-		//     pg->texture_matrix_enable[slot] = parameter;
-		//     break;
+		CASE_4(NV097_SET_TEXTURE_MATRIX_ENABLE, 4):
+		    slot = (method - NV097_SET_TEXTURE_MATRIX_ENABLE) / 4;
+		    pg->texture_matrix_enable[slot] = parameter != 0;
+		    break;
 		//
 		// case NV097_SET_ZPASS_PIXEL_COUNT_ENABLE:
 		//     pg->zpass_pixel_count_enable = parameter;

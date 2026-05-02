@@ -288,19 +288,27 @@ static void D3D11_flip_stall(NV2AState *d)
 	if (hRet != S_OK || !pHostBackBuffer)
 		return;
 
-	// Clear host backbuffer to black (prevents artifacts on aspect ratio change)
+	// Save and restore the game's render target around the present blit.
+	// CxbxD3D11Blt manages its own RT state internally, so the PGRAPH RT
+	// is effectively unbound during the copy (no resource hazard).
 	ID3D11Texture2D* pExistingRT = CxbxGetCurrentRenderTarget();
+
+	// Clear host backbuffer to black (prevents artifacts on aspect ratio change)
+	(void)CxbxSetRenderTarget(pHostBackBuffer);
+	CxbxD3DClear(0, nullptr, D3DCLEAR_TARGET, 0xFF000000, 1.0f, 0);
 	if (pExistingRT) {
-		(void)CxbxSetRenderTarget(pHostBackBuffer);
-		CxbxD3DClear(0, nullptr,
-			D3DCLEAR_TARGET | (g_bHasDepth ? D3DCLEAR_ZBUFFER : 0) | (g_bHasStencil ? D3DCLEAR_STENCIL : 0),
-			0xFF000000, g_bHasDepth ? 1.0f : 0.0f, 0);
 		(void)CxbxSetRenderTarget(pExistingRT);
 	}
 
 	// Calculate destination rect (centered, aspect-ratio aware)
-	const auto width = g_XBVideo.bMaintainAspect ? g_AspectRatioScaleWidth * g_AspectRatioScale : g_HostBackBufferDesc.Width;
-	const auto height = g_XBVideo.bMaintainAspect ? g_AspectRatioScaleHeight * g_AspectRatioScale : g_HostBackBufferDesc.Height;
+	float width, height;
+	if (g_XBVideo.bMaintainAspect && g_AspectRatioScaleWidth > 0 && g_AspectRatioScaleHeight > 0) {
+		width = g_AspectRatioScaleWidth * g_AspectRatioScale;
+		height = g_AspectRatioScaleHeight * g_AspectRatioScale;
+	} else {
+		width = (float)g_HostBackBufferDesc.Width;
+		height = (float)g_HostBackBufferDesc.Height;
+	}
 
 	// Blit PGRAPH backbuffer to host backbuffer
 	auto pXboxBackBufferHostSurface = g_pHostPgraphBackBuffer;

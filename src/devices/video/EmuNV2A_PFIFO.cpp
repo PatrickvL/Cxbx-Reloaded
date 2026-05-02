@@ -189,6 +189,10 @@ static void pfifo_run_puller(NV2AState *d)
 // so CxbxUpdateNativeD3DResources skips pfifo_flush (prevents deadlock).
 extern void CxbxSetPullerContext(bool active);
 
+// Forward declaration: auto-present on VBlank for games without explicit FLIP_STALL
+extern void(*pgraph_flip_stall)(NV2AState *d);
+extern bool g_pgraph_explicit_flip_stall_seen;
+
 int pfifo_puller_thread(NV2AState *d)
 {
     g_AffinityPolicy->SetAffinityOther();
@@ -198,6 +202,15 @@ int pfifo_puller_thread(NV2AState *d)
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
     while (true) {
         pfifo_run_puller(d);
+
+        // Auto-present fallback: only for raw push buffer games that never issue
+        // an explicit NV097_FLIP_STALL. Once we've seen one, the title is driving
+        // its own flips and any auto-present here would cause mid-frame flicker.
+        if (pgraph_flip_stall && !g_pgraph_explicit_flip_stall_seen
+            && d->pgraph.surface_color.draw_dirty) {
+            d->pgraph.surface_color.draw_dirty = false;
+            pgraph_flip_stall(d);
+        }
 
         // If the HLE thread is waiting for a PFIFO flush, signal it now
         // that CACHE1 has been drained.  The waiter will re-check whether
