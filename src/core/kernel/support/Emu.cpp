@@ -279,6 +279,13 @@ bool EmuTryHandleException(EXCEPTION_POINTERS *e)
 		return genericException(e);
 	}
 
+	// Do not handle exceptions from non-Xbox code (e.g. D3D11 internal guard
+	// page faults). Let those propagate to the system/runtime SEH handlers.
+	if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION
+		&& !IsXboxCodeAddress(e->ContextRecord->Eip)) {
+		return false;
+	}
+
 	if (e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) {
 		bool isInt2Dh = *(uint16_t*)(e->ContextRecord->Eip - 2) == 0x2DCD;
 

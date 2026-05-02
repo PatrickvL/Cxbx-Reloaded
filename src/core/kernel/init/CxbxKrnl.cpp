@@ -52,6 +52,7 @@
 #include "common/ReserveAddressRanges.h"
 #include "common/xbox/Types.hpp"
 #include "common/win32/WineEnv.h"
+#include "devices/video/nv2a.h" // For NV2ADevice, g_NV2A
 
 #include <clocale>
 #include <process.h>
@@ -1214,6 +1215,17 @@ static void CxbxrKrnlInitHacks()
 	EmuLogInit(LOG_LEVEL::DEBUG, "Initializing Direct3D.");
 	EmuD3DInit();
 
+	// Create the host D3D11 device before Xbox code starts.
+	// Must be after EmuD3DInit() which initializes g_EmuCDPD adapter settings,
+	// and after CxbxInitWindow() which creates g_hEmuWindow.
+	CxbxInitHostD3DDevice();
+
+	// Now that the D3D11 device exists, start the FIFO threads.
+	// The puller thread calls D3D11 APIs during draw dispatch, so the
+	// device must be fully created before it can process any commands.
+	extern NV2ADevice* g_NV2A;
+	g_NV2A->StartFifoThreads();
+
 	bool isEmuDisk = CxbxrIsPathInsideEmuDisk(relative_path);
 	CxbxrSetupDrives(relative_path, BootFlags);
 
@@ -1338,8 +1350,34 @@ static void CxbxrKrnlInitHacks()
 	xbox::PsCreateSystemThread(&hThread, xbox::zeroptr, CxbxLaunchXbe, Entry, FALSE);
 
 	xbox::KeRaiseIrqlToDpcLevel();
+	extern NV2ADevice* g_NV2A;
+
 	while (true) {
 		xbox::KeWaitForDpc();
+
+		// Dispatch GPU hardware interrupt (IRQ 3) on this thread BEFORE running DPCs.
+		// This ensures ISR and DPC execute sequentially (never concurrently), matching
+		// real Xbox behavior where both run on the same CPU at non-preemptible IRQLs.
+		if (g_bEnableAllInterrupts && g_NV2A) {
+			NV2AState* d = g_NV2A->GetDeviceState();
+			bool vblank_occurred = d->vblank_pending.test();
+			if (vblank_occurred) {
+				d->vblank_pending.clear();
+
+				if (EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
+					// Fire the miniport ISR. Set pcrtc pending so the ISR sees
+					// a valid interrupt source when it reads PMC_INTR_0.
+					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
+				}
+			} else if (HalSystemInterrupts[3].IsPending() &&
+			           EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
+				// Non-VBlank GPU interrupt (e.g. PGRAPH INTR_ERROR from
+				// D3DDevice_InsertCallback). Fire the ISR so it can ack.
+				HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
+			}
+		}
+
 		ExecuteDpcQueue();
 	}
 }

@@ -559,7 +559,9 @@ void SetupPresentationParameters
 
    	params.Windowed = !g_XBVideo.bFullScreen;
 
-   	g_Xbox_PresentationInterval_Default = pXboxPresentationParameters->FullScreen_PresentationInterval;
+   	if (pXboxPresentationParameters) {
+   		g_Xbox_PresentationInterval_Default = pXboxPresentationParameters->FullScreen_PresentationInterval;
+   	}
 
    	// retrieve resolution from configuration
    	char szBackBufferFormat[16] = {};
@@ -569,12 +571,20 @@ void SetupPresentationParameters
    	   	&params.BackBufferHeight,
    	   	szBackBufferFormat,
    	   	&params.FullScreen_RefreshRateInHz)) {
-   	   	EmuLog(LOG_LEVEL::DEBUG, "EmuCreateDeviceProxy: Couldn't parse resolution : %s. Using Xbox Default (%d, %d @ %uhz)", resolution,
-   	   	   	pXboxPresentationParameters->BackBufferWidth, pXboxPresentationParameters->BackBufferHeight,
-   	   	   	pXboxPresentationParameters->FullScreen_RefreshRateInHz);
-   	   	params.BackBufferWidth = pXboxPresentationParameters->BackBufferWidth;
-   	   	params.BackBufferHeight = pXboxPresentationParameters->BackBufferHeight;
-   	   	params.FullScreen_RefreshRateInHz = pXboxPresentationParameters->FullScreen_RefreshRateInHz;
+   		if (pXboxPresentationParameters) {
+   	   		EmuLog(LOG_LEVEL::DEBUG, "EmuCreateDeviceProxy: Couldn't parse resolution : %s. Using Xbox Default (%d, %d @ %uhz)", resolution,
+   	   	   		pXboxPresentationParameters->BackBufferWidth, pXboxPresentationParameters->BackBufferHeight,
+   	   	   		pXboxPresentationParameters->FullScreen_RefreshRateInHz);
+   	   		params.BackBufferWidth = pXboxPresentationParameters->BackBufferWidth;
+   	   		params.BackBufferHeight = pXboxPresentationParameters->BackBufferHeight;
+   	   		params.FullScreen_RefreshRateInHz = pXboxPresentationParameters->FullScreen_RefreshRateInHz;
+   		} else {
+   			// Early init without Xbox params — use sensible defaults
+   			EmuLog(LOG_LEVEL::DEBUG, "SetupPresentationParameters: No Xbox params, using 640x480 @ 60hz defaults");
+   			params.BackBufferWidth = 640;
+   			params.BackBufferHeight = 480;
+   			params.FullScreen_RefreshRateInHz = 60;
+   		}
    	}
 
    	if (params.Windowed) {
@@ -755,7 +765,12 @@ void GetScreenScaleFactors(float& scaleX, float& scaleY) {
 	// So the Xbox expects vertices in 480*480 coordinate space
 
 	// SSAA increases the screen scale (but MSAA does not)
-	bool isMultiSampleEnabled = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_MULTISAMPLEANTIALIAS);
+	// Read from PGRAPH ANTIALIASING register (authoritative, no HLE dependency)
+	bool isMultiSampleEnabled = false;
+	if (g_NV2A) {
+		PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
+		isMultiSampleEnabled = (pg->regs[RI(NV_PGRAPH_ANTIALIASING)] & NV_PGRAPH_ANTIALIASING_ENABLE) != 0;
+	}
 	bool isSuperSampleMode = g_Xbox_MultiSampleType & xbox::X_D3DMULTISAMPLE_SAMPLING_SUPER;
 
 	// Apply multisample scale if supersampling is enabled

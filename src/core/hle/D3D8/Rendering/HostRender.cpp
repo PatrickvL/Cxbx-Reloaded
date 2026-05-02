@@ -53,6 +53,22 @@ static void DrawInitialBlackScreen
 	CxbxPresent();
 }
 
+void CxbxInitHostD3DDevice()
+{
+	// Create the host D3D11 device before emulation starts.
+	// This allows native Xbox Direct3D_CreateDevice to run unpatched,
+	// which populates D3D_g_pDevice and all internal D3D device fields
+	// (including the VBlank KEVENT that BlockUntilVerticalBlank waits on).
+	if (g_pD3DDevice != nullptr) {
+		return; // Already created
+	}
+
+	CreateDefaultDevice(nullptr);
+
+	// Host-side init that was formerly in Direct3D_CreateDevice_End.
+	CxbxResetPgraphSurfaceTracking();
+}
+
 void CreateDefaultDevice
 (
    	const xbox::X_D3DPRESENT_PARAMETERS     *pPresentationParameters
@@ -822,15 +838,48 @@ void UpdateFixedFunctionVertexShaderState()
 		ffShaderState.Fog.FogParam1 = 0.0f;
 	}
 
-	// Texture state
+	// Texture state — read from PGRAPH (authoritative, no HLE dependency)
 	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
-		auto transformFlags = XboxTextureStates.Get(i, X_D3DTSS_TEXTURETRANSFORMFLAGS);
-		ffShaderState.TextureStates[i].TextureTransformFlagsCount = transformFlags & ~D3DTTFF_PROJECTED;
-		ffShaderState.TextureStates[i].TextureTransformFlagsProjected = transformFlags & D3DTTFF_PROJECTED;
+		// TextureTransformFlags: derived from PGRAPH texture_matrix_enable[]
+		// and the shader stage program mode (for PROJECTED).
+		// When texture_matrix_enable is true, the NV2A always does a full 4x4
+		// matrix multiply (equivalent to D3DTTFF_COUNT4). When false, count=0
+		// (D3DTTFF_DISABLE — no texture matrix transform).
+		bool matrixEnabled = pg->texture_matrix_enable[i];
+		ffShaderState.TextureStates[i].TextureTransformFlagsCount = matrixEnabled ? 4 : 0;
 
-		auto texCoordIndex = XboxTextureStates.Get(i, X_D3DTSS_TEXCOORDINDEX);
-		ffShaderState.TextureStates[i].TexCoordIndex = texCoordIndex & 0x7; // 8 coords
-		ffShaderState.TextureStates[i].TexCoordIndexGen = texCoordIndex >> 16; // D3DTSS_TCI flags
+		// PROJECTED comes from the shader stage program mode (2D/3D_PROJECTIVE).
+		// NV_PGRAPH_SHADERPROG stores all 4 stages; each stage has 5 bits.
+		static const uint32_t stageMasks[4] = {
+			NV097_SET_SHADER_STAGE_PROGRAM_STAGE0,
+			NV097_SET_SHADER_STAGE_PROGRAM_STAGE1,
+			NV097_SET_SHADER_STAGE_PROGRAM_STAGE2,
+			NV097_SET_SHADER_STAGE_PROGRAM_STAGE3
+		};
+		uint32_t shaderProg = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
+		uint32_t stageMode = GET_MASK(shaderProg, stageMasks[i]);
+		// 2D_PROJECTIVE=1 and 3D_PROJECTIVE=2 are the projective modes
+		bool projected = (stageMode == 1 || stageMode == 2);
+		ffShaderState.TextureStates[i].TextureTransformFlagsProjected = projected ? D3DTTFF_PROJECTED : 0;
+
+		// TexCoordIndex: low bits = which texcoord set, high bits = texgen mode.
+		// On NV2A, texcoord routing is identity for FF (stage i uses TEXCOORD i).
+		// Texgen mode is stored in CSV1_A (stages 0,1) / CSV1_B (stages 2,3).
+		unsigned int csvReg = (i < 2) ? NV_PGRAPH_CSV1_A : NV_PGRAPH_CSV1_B;
+		unsigned int sMask  = (i % 2) ? NV_PGRAPH_CSV1_A_T1_S : NV_PGRAPH_CSV1_A_T0_S;
+		uint32_t texgenS = GET_MASK(pg->regs[RI(csvReg)], sMask);
+		// Map NV2A texgen values to D3DTSS_TCI values (high 16 bits of TEXCOORDINDEX)
+		unsigned int tci = 0; // TCI_PASSTHRU
+		switch (texgenS) {
+		case NV_PGRAPH_CSV1_A_T0_S_DISABLE:        tci = 0; break; // TCI_PASSTHRU
+		case NV_PGRAPH_CSV1_A_T0_S_EYE_LINEAR:     tci = 2; break; // TCI_CAMERASPACEPOSITION
+		case NV_PGRAPH_CSV1_A_T0_S_OBJECT_LINEAR:  tci = 4; break; // TCI_OBJECT (Xbox ext)
+		case NV_PGRAPH_CSV1_A_T0_S_SPHERE_MAP:     tci = 5; break; // TCI_SPHERE (Xbox ext)
+		case NV_PGRAPH_CSV1_A_T0_S_NORMAL_MAP:     tci = 1; break; // TCI_CAMERASPACENORMAL
+		case NV_PGRAPH_CSV1_A_T0_S_REFLECTION_MAP: tci = 3; break; // TCI_CAMERASPACEREFLECTIONVECTOR
+		}
+		ffShaderState.TextureStates[i].TexCoordIndex = i; // identity routing
+		ffShaderState.TextureStates[i].TexCoordIndexGen = tci;
 	}
 
 	// Read current TexCoord component counts from PGRAPH vertex attributes.
