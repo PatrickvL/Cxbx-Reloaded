@@ -160,6 +160,13 @@ xbox::void_xt xbox::KeWaitForDpc()
 	g_DpcData.IsDpcPending.wait(false);
 }
 
+// Wake the main DPC thread to dispatch a hardware interrupt (called from system_events thread)
+void KeSignalVBlankPending()
+{
+	g_DpcData.IsDpcPending.test_and_set();
+	g_DpcData.IsDpcPending.notify_one();
+}
+
 // ******************************************************************
 // * EmuKeGetPcr()
 // * NOTE: This is a macro on the Xbox, however we implement it 

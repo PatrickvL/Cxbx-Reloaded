@@ -111,6 +111,7 @@ public:
 
 	// PCI Device functions
 	void Init();
+	void StartFifoThreads();
 	void Reset();
 
 	// State Getter: Used for HLE reading of device state

@@ -28,6 +28,7 @@
 #include <queue>
 #include <thread>
 #include <cstdint>
+#include <atomic>
 
 #include "xbox_types.h" // For xbox::addr_xt
 
@@ -321,6 +322,8 @@ typedef struct PGRAPHState {
 	// Hardware tessellation state
 	PatchState patch;
 
+	bool texture_matrix_enable[NV2A_MAX_TEXTURES]; // NV097_SET_TEXTURE_MATRIX_ENABLE per stage
+
 	uint32_t regs[NV_PGRAPH_SIZE]; // TODO : union
 } PGRAPHState;
 
@@ -349,6 +352,7 @@ typedef struct OverlayState {
 typedef struct NV2AState {
 	void(* vblank_cb)(void *);
 	uint64_t vblank_last;
+	std::atomic_flag vblank_pending = ATOMIC_FLAG_INIT; // Set by timer, consumed by main thread
     // PCIDevice dev;
     // qemu_irq irq;
     bool exiting;

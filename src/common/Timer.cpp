@@ -118,6 +118,11 @@ static void update_non_periodic_events()
 
 	// check for hw interrupts
 	for (int i = 0; i < MAX_BUS_INTERRUPT_LEVEL; i++) {
+		// Skip IRQ 3 (GPU/NV2A) - it's delivered explicitly by nv2a_vblank_interrupt
+		// and the PGRAPH INTR_ERROR mechanism. Triggering it here races with the DPC
+		// that re-enables PMC_INTR_EN_0, causing an ISR/DPC ping-pong deadlock.
+		if (i == 3) continue;
+
 		// If the interrupt is pending and connected, process it
 		if (g_bEnableAllInterrupts && HalSystemInterrupts[i].IsPending() && EmuInterruptList[i] && EmuInterruptList[i]->Connected) {
 			HalSystemInterrupts[i].Trigger(EmuInterruptList[i]);

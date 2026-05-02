@@ -44,7 +44,20 @@ DEVICE_READ32(PMC)
 		result = 0; // When read, returns 0 if in little-endian mode, 0x01000001 if in big-endian mode.
 		break;
 	case NV_PMC_INTR_0: // Shows which functional units have pending IRQ
-		result = d->pmc.pending_interrupts;
+		// Compute live from sub-unit states (like real NV2A hardware).
+		// This avoids race conditions from concurrent update_irq calls
+		// on multiple threads (PULLER, timer, main DPC thread).
+		result = 0;
+		if (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts)
+			result |= NV_PMC_INTR_0_PFIFO;
+		if (d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts)
+			result |= NV_PMC_INTR_0_PGRAPH;
+		if (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts)
+			result |= NV_PMC_INTR_0_PCRTC;
+		if (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts)
+			result |= NV_PMC_INTR_0_PVIDEO;
+		if (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts)
+			result |= NV_PMC_INTR_0_PTIMER;
 		break;
 	case NV_PMC_INTR_EN_0: // Selects which functional units can cause IRQs
 		result = d->pmc.enabled_interrupts;
@@ -70,7 +83,6 @@ DEVICE_WRITE32(PMC)
 		d->pmc.enabled_interrupts = value;
 		update_irq(d);
 		break;
-
 	default: 
 		//DEVICE_WRITE32_REG(pmc); // Was : DEBUG_WRITE32_UNHANDLED(PMC);
 		break;

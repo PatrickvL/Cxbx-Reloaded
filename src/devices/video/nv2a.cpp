@@ -84,64 +84,40 @@ struct _GError
 
 static void update_irq(NV2AState *d)
 {
-	/* PFIFO */
-	if (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) {
-		d->pmc.pending_interrupts |= NV_PMC_INTR_0_PFIFO;
-	}
-	else {
-		d->pmc.pending_interrupts &= ~NV_PMC_INTR_0_PFIFO;
-	}
-
-	/* PCRTC */
-	if (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) {
-		d->pmc.pending_interrupts |= NV_PMC_INTR_0_PCRTC;
-	}
-	else {
-		d->pmc.pending_interrupts &= ~NV_PMC_INTR_0_PCRTC;
+	/* PGRAPH - Auto-ack CONTEXT_SWITCH only. The PULLER thread uses
+	 * CONTEXT_SWITCH as an internal synchronization mechanism and waits on
+	 * interrupt_cond for the ack. We auto-ack it here because the Xbox
+	 * miniport ISR may not handle it properly. Other PGRAPH interrupts
+	 * (ERROR, NOTIFY) must route through the real ISR so that
+	 * D3DDevice_InsertCallback works correctly. */
+	if (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_CONTEXT_SWITCH) {
+		d->pgraph.pending_interrupts &= ~NV_PGRAPH_INTR_CONTEXT_SWITCH;
+		qemu_cond_broadcast(&d->pgraph.interrupt_cond);
 	}
 
-	/* PGRAPH */
-	if (d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) {
-		d->pmc.pending_interrupts |= NV_PMC_INTR_0_PGRAPH;
-	}
-	else {
-		d->pmc.pending_interrupts &= ~NV_PMC_INTR_0_PGRAPH;
-	}
+	/* Compute live PMC interrupt status from sub-units.
+	 * PMC_INTR_0 on real NV2A is a read-only register that reflects live
+	 * sub-unit status. We don't need to cache pmc.pending_interrupts for
+	 * read purposes (the READ handler computes it live), but we still
+	 * need to know if anything is pending for Assert(true/false). */
+	bool any_pending = false;
+	if (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts)
+		any_pending = true;
+	if (d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts)
+		any_pending = true;
+	if (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts)
+		any_pending = true;
+	if (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts)
+		any_pending = true;
+	if (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts)
+		any_pending = true;
 
-	/* PVIDEO */
-	if (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) {
-		d->pmc.pending_interrupts |= NV_PMC_INTR_0_PVIDEO;
-	}
-	else {
-		d->pmc.pending_interrupts &= ~NV_PMC_INTR_0_PVIDEO;
-	}
-
-	/* PTIMER */
-	if (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts) {
-		d->pmc.pending_interrupts |= NV_PMC_INTR_0_PTIMER;
-	}
-	else {
-		d->pmc.pending_interrupts &= ~NV_PMC_INTR_0_PTIMER;
-	}
-
-	/* TODO : PBUS * /
-	if (d->pbus.pending_interrupts & d->pbus.enabled_interrupts) {
-		d->pmc.pending_interrupts |= NV_PMC_INTR_0_PBUS;
-	}
-	else {
-		d->pmc.pending_interrupts &= ~NV_PMC_INTR_0_PBUS;
-	} */
-
-	/* TODO : SOFTWARE * /
-	if (d->user.pending_interrupts & d->.enabled_interrupts) {
-		d->pmc.pending_interrupts |= NV_PMC_INTR_0_SOFTWARE;
-	}
-	else {
-		d->pmc.pending_interrupts &= ~NV_PMC_INTR_0_SOFTWARE;
-	} */
-
-	if (d->pmc.pending_interrupts && d->pmc.enabled_interrupts) {
+	if (any_pending && d->pmc.enabled_interrupts) {
 		HalSystemInterrupts[3].Assert(true);
+		// Wake the DPC thread so it can fire the ISR for non-VBlank
+		// interrupts (e.g. PGRAPH INTR_ERROR from D3DDevice_InsertCallback).
+		extern void KeSignalVBlankPending();
+		KeSignalVBlankPending();
 	}
 	else {
 		HalSystemInterrupts[3].Assert(false);
@@ -331,20 +307,14 @@ void nv2a_vblank_interrupt(void *opaque)
 	NV2AState *d = static_cast<NV2AState *>(opaque);
 
 	if (!d->exiting) [[likely]] {
-		d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
-		update_irq(d);
+		// Signal that a VBlank occurred. Don't touch pcrtc.pending_interrupts here!
+		// The main thread will set/clear it atomically around the ISR call to prevent
+		// the timer from re-asserting it while the ISR is processing.
+		d->vblank_pending.test_and_set();
 
-		// Trigger the GPU interrupt if the PCRTC interrupt is enabled at all levels.
-		// Note: We cannot use IsPending() here because it relies on a rising-edge detect
-		// (m_Pending is only set when transitioning from deasserted to asserted). If another
-		// interrupt source (e.g. PGRAPH) keeps the PMC line asserted, there is no rising edge
-		// and VBlank delivery would stop. Instead, check the hardware enable chain directly.
-		if (g_bEnableAllInterrupts
-			&& (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts)
-			&& d->pmc.enabled_interrupts
-			&& EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
-			HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
-		}
+		// Wake the main thread so it can dispatch the ISR:
+		extern void KeSignalVBlankPending();
+		KeSignalVBlankPending();
 
 		// TODO: We should swap here for the purposes of supporting overlays + direct framebuffer access
 		// But it causes crashes on AMD hardware for reasons currently unknown...
@@ -426,6 +396,7 @@ void NV2ADevice::Init()
 	// but since our miniport init may race with VBlank delivery, set it here to ensure
 	// the ISR can see pending interrupts from the start.
 	d->pmc.enabled_interrupts = NV_PMC_INTR_EN_0_HARDWARE;
+	d->pcrtc.enabled_interrupts = NV_PCRTC_INTR_0_VBLANK;
 
 	d->vram_ptr = (uint8_t*)PHYSICAL_MAP_BASE;
 	d->vram_size = g_SystemMaxMemory;
@@ -449,9 +420,14 @@ void NV2ADevice::Init()
 
     d->pfifo.regs[RI(NV_PFIFO_CACHE1_STATUS)] |= NV_PFIFO_CACHE1_STATUS_LOW_MARK;
 
-    /* fire up puller */
+    // FIFO threads are started later by StartFifoThreads(), after the host
+    // D3D11 device has been created (the puller thread calls D3D11 APIs).
+}
+
+void NV2ADevice::StartFifoThreads()
+{
+	NV2AState *d = m_nv2a_state;
 	d->pfifo.puller_thread = std::thread(pfifo_puller_thread, d);
-    /* fire up pusher */
 	d->pfifo.pusher_thread = std::thread(pfifo_pusher_thread, d);
 }
 
@@ -649,10 +625,11 @@ uint64_t NV2ADevice::ptimer_next(uint64_t now)
 				m_nv2a_state->ptimer.pending_interrupts |= NV_PTIMER_INTR_0_ALARM;
 				update_irq(m_nv2a_state);
 
-				// trigger the gpu interrupt if it was asserted in update_irq
-				if (g_bEnableAllInterrupts && HalSystemInterrupts[3].IsPending() && EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
-					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
-				}
+				// Wake main thread to dispatch the interrupt (same as VBlank path).
+				// Don't call Trigger() here — it would fire the ISR concurrently
+				// with DPCs on the main thread, causing a deadlock.
+				extern void KeSignalVBlankPending();
+				KeSignalVBlankPending();
 			}
 			m_nv2a_state->ptimer_last = get_now();
 			return ptimer_period;
