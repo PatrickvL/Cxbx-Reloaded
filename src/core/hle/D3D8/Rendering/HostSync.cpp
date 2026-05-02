@@ -33,8 +33,6 @@ thread_local bool g_bInPullerContext = false;
 
 void CxbxSetPullerContext(bool active) { g_bInPullerContext = active; }
 
-static std::queue<s_Xbox_Callback> g_Xbox_CallbackQueue;
-
 // Synthetic Xbox texture objects constructed from PGRAPH registers.
 // Used when SetTexture patches are disabled: the Xbox D3D runtime writes
 // texture format/offset/size to the NV2A pushbuffer, so PGRAPH has all
@@ -364,19 +362,20 @@ void CxbxUpdateHostTextureScaling()
 		int texCoordIndex = stage;
 		if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction
 			|| g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough) {
-			// Get TEXCOORDINDEX for the current texture stage's state
-			// Stores both the texture stage index and information for generating coordinates
-			// See D3DTSS_TEXCOORDINDEX
-			auto texCoordIndexState = XboxTextureStates.Get(stage, xbox::X_D3DTSS_TEXCOORDINDEX);
+			// Read texgen mode from PGRAPH CSV1_A/CSV1_B to determine if
+			// coordinates are generated (no HLE dependency).
+			unsigned int csvReg = (stage < 2) ? NV_PGRAPH_CSV1_A : NV_PGRAPH_CSV1_B;
+			unsigned int sMask  = (stage % 2) ? NV_PGRAPH_CSV1_A_T1_S : NV_PGRAPH_CSV1_A_T0_S;
+			uint32_t texgenS = GET_MASK(pg->regs[RI(csvReg)], sMask);
 
 			// If coordinates are generated, we don't have to worry about the coordinates coming from the title
-			bool isGenerated = texCoordIndexState >= X_D3DTSS_TCI_CAMERASPACENORMAL;
+			bool isGenerated = (texgenS != NV_PGRAPH_CSV1_A_T0_S_DISABLE);
 			if (isGenerated) {
 				continue;
 			}
 
-			// Determine the texture coordinate addressing this texture stage
-			texCoordIndex = (texCoordIndexState & 0x3); // 0 - 3
+			// On NV2A, texcoord routing is identity for FF (stage i uses TEXCOORD i)
+			texCoordIndex = stage;
 		}
 
 		auto texCoordScale = &texcoordScales[texCoordIndex];
@@ -449,15 +448,9 @@ void CxbxUpdateHostTextureScaling()
 	// Upload TEXCOORDINDEX remapping for the passthrough vertex shader.
 	// On NV2A, the texture unit applies D3DTSS_TEXCOORDINDEX after VS output
 	// interpolation. In D3D11 passthrough mode, we must do this remapping in the VS.
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough) {
-		float texCoordIndices[4];
-		for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
-			auto texCoordIndexState = XboxTextureStates.Get(stage, xbox::X_D3DTSS_TEXCOORDINDEX);
-			texCoordIndices[stage] = (float)(texCoordIndexState & 0x3); // 0 - 3
-		}
-		CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_TEXCOORDINDEX, texCoordIndices, 1);
-	} else {
-		// Default: each stage uses its own texcoord set (identity mapping)
+	// On NV2A, texcoord routing is always identity (stage i uses TEXCOORD i),
+	// so we always upload the identity mapping.
+	{
 		float defaultIndices[4] = { 0.0f, 1.0f, 2.0f, 3.0f };
 		CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_TEXCOORDINDEX, defaultIndices, 1);
 	}
@@ -493,58 +486,36 @@ void CxbxUpdateDirtyVertexShaderConstants(const float* constants, bool* dirty) {
 // Xbox native code pushes NV097_SET_TRANSFORM_CONSTANT through PFIFO → PGRAPH.
 void CxbxUpdateHostVertexShaderConstants()
 {
-	// For Xbox vertex shader programs, the Xbox vertex shader constants
-	// are mirrored on the host.
-	// Otherwise, the same set of constants is used for the fixed function vertex shader
-	// implementation instead
-
 	// Track which constants are currently written
 	// So we can skip updates
 	static bool isXboxConstants = false;
 
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
-		// Write host FF shader state
-		// TODO dirty tracking like for Xbox constants?
 		UpdateFixedFunctionVertexShaderState();
 		isXboxConstants = false;
 	}
 	else {
-		// Write Xbox constants
 		auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 		auto constant_floats = (float*)pg->vsh_constants;
 
 		if (isXboxConstants) {
-			// Only need to overwrite what's changed
 			CxbxUpdateDirtyVertexShaderConstants(constant_floats, pg->vsh_constants_dirty);
 		}
 		else {
-			// We need to update everything
 			CxbxSetVertexShaderConstantF(0, constant_floats, X_D3DVS_CONSTREG_COUNT);
 		}
 
-		// We've written the Xbox constants
 		isXboxConstants = true;
-
-		// FIXME our viewport constants don't match Xbox values
-		// If we write them to pgraph constants, like we do with constants set by the title,
-		// the Xbox could overwrite them (at any time?) and we get flickering geometry.
-		// For now, set our viewport constants directly in the call below,
-		// overwriting whatever was in pgraph
-		// Test case:
-		// Xbox dashboard (during initial fade from black)
-		// Need for Speed: Hot Pursuit 2 (car select)
 		CxbxUpdateHostViewPortOffsetAndScaleConstants();
 	}
 
 	// Upload NV2A fog parameters from PGRAPH registers.
-	// FOG_MODE from CONTROL_3, FOGPARAM0/1 are pre-baked coefficients.
 	{
 		auto *pg = &g_NV2A->GetDeviceState()->pgraph;
 		uint32_t ctl3 = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
 		float fogMode = (float)GET_MASK(ctl3, NV_PGRAPH_CONTROL_3_FOG_MODE);
 		float fogParam0; std::memcpy(&fogParam0, &pg->regs[RI(NV_PGRAPH_FOGPARAM0)], sizeof(float));
 		float fogParam1; std::memcpy(&fogParam1, &pg->regs[RI(NV_PGRAPH_FOGPARAM1)], sizeof(float));
-		// CxbxFogInfo: x=fogMode, y=fogParam0, z=fogParam1, w=unused
 		float fogStuff[4] = { fogMode, fogParam0, fogParam1, 0.0f };
 		CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_FOGINFO, fogStuff, 1);
 	}
@@ -743,95 +714,9 @@ bool CxbxFlushHostGPU()
 	return true;
 }
 
-// This function mimicks NV2A software callback events.
-// Normally, these would be handled by actual push-buffer
-// command handling at the point where they where inserted.
-// Since our HLE mostly circumvents the NV2A pushbuffer,
-// this function has to be called after 'pushing' functions.
-void CxbxHandleXboxCallbacks()
-{
-	// The following can only work when host GPU queries are available
-	if (g_pHostQueryCallbackEvent != nullptr) {
-		// Query whether host GPU encountered a callback event already
-		BOOL queryData = FALSE;
-		if (S_FALSE == CxbxQueryGetData(g_pHostQueryCallbackEvent, &queryData, sizeof(queryData), 0)) {
-			// If not, don't handle callbacks
-			return;
-		}
-	}
-
-	// Process inserted callbacks
-	while (!g_Xbox_CallbackQueue.empty()) {
-		// Fetch a callback from the FIFO callback queue
-		s_Xbox_Callback XboxCallback = g_Xbox_CallbackQueue.front();
-		g_Xbox_CallbackQueue.pop();
-
-		// Differentiate between write and read callbacks
-		if (XboxCallback.Type == xbox::X_D3DCALLBACK_WRITE) {
-			// Write callbacks should wait until GPU is idle
-			if (!CxbxFlushHostGPU()) {
-				// Host GPU can't be flushed. In the old behaviour, we made the callback anyway
-				// TODO : Should we keep doing that?
-			}
-		} else {
-			assert(XboxCallback.Type == xbox::X_D3DCALLBACK_READ);
-			// Should we mimick Read callback old behaviour?
-			if (g_bHack_DisableHostGPUQueries) {
-				// Note : Previously, we only processed Write, and ignored Read callbacks
-				continue;
-			} else {
-				// New behaviour does place Read callbacks too
-			}
-		}
-
-		// Make the callback
-		XboxCallback.pCallback(XboxCallback.Context);
-	}
-}
-
-// On Xbox, this function inserts push-buffer commands that
-// will trigger the software handler to perform the callback
-// when the GPU processes these commands.
-// The type X_D3DCALLBACK_WRITE callbacks are prefixed with an
-// wait-for-idle command, but otherwise they're identical.
-// (Software handlers are triggered on NV2A via NV097_NO_OPERATION) 
-void CxbxImpl_InsertCallback
-(
-	xbox::X_D3DCALLBACKTYPE	Type,
-	xbox::X_D3DCALLBACK		pCallback,
-	xbox::dword_xt				Context
-)
-{
-	if (Type > xbox::X_D3DCALLBACK_WRITE) {
-		LOG_TEST_CASE("Illegal callback type!");
-		return;
-	}
-
-	if (pCallback == xbox::zeroptr) {
-		LOG_TEST_CASE("pCallback == xbox::zeroptr!");
-		return;
-	}
-
-	// Should we mimick old behaviour?
-	if (g_bHack_DisableHostGPUQueries) {
-		// Mimick old behaviour, in which only the final callback event
-		// was remembered, by emptying the callback queue entirely :
-		while (!g_Xbox_CallbackQueue.empty()) {
-			g_Xbox_CallbackQueue.pop();
-		}
-	}
-
-	// Push this callback's arguments into the callback queue :
-	s_Xbox_Callback XboxCallback = { pCallback, Type, Context };
-	g_Xbox_CallbackQueue.push(XboxCallback); // g_Xbox_CallbackQueue.emplace(pCallback, Type, Context); doesn't compile?
-
-	// Does host supports GPU queries?
-	if (g_pHostQueryCallbackEvent != nullptr) {
-		// Insert a callback event on host GPU,
-		// which will be handled by CxbxHandleXboxCallback
-		CxbxQueryIssueEnd(g_pHostQueryCallbackEvent);
-	}
-}
+// CxbxHandleXboxCallbacks and CxbxImpl_InsertCallback — removed.
+// Native InsertCallback pushes NV097_NO_OPERATION(param) to the push buffer.
+// PGRAPH raises INTR_ERROR → miniport ISR reads TRAPPED_DATA_LOW → dispatches callback.
 
 // ******************************************************************
 // * patch: D3DDevice_SetPixelShader

@@ -159,51 +159,13 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_CopyRects)
 
 // CXBX_SWAP_PRESENT_FORWARD is now defined in RenderGlobals.h
 
-// ******************************************************************
-// * patch: D3DDevice_Present
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_Present)
-(
-   	CONST X_RECT* pSourceRect,
-   	CONST X_RECT* pDestRect,
-   	PVOID         pDummy1,
-   	PVOID         pDummy2
-)
-{
-	// LOG_FORWARD("D3DDevice_Swap");
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pSourceRect)
-		LOG_FUNC_ARG(pDestRect)
-		LOG_FUNC_ARG(pDummy1)
-		LOG_FUNC_ARG(pDummy2)
-		LOG_FUNC_END;
+// D3DDevice_Present — disabled.
+// Native Swap pushes NV097_FLIP_INCREMENT_WRITE + NV097_FLIP_STALL to push buffer.
 
-	EMUPATCH(D3DDevice_Swap)(CXBX_SWAP_PRESENT_FORWARD); // Xbox present ignores
-}
+// D3DDevice_Swap_0__LTCG_eax1 — disabled.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 std::chrono::steady_clock::time_point frameStartTime;
-
-// LTCG specific swap function...
-// This uses a custom calling convention where parameter is passed in EAX
-__declspec(naked) xbox::dword_xt WINAPI xbox::EMUPATCH(D3DDevice_Swap_0__LTCG_eax1)
-(
-)
-{
-   	dword_xt Flags;
-	dword_xt result;
-   	__asm {
-   	   	LTCG_PROLOGUE
-   	   	mov  Flags, eax
-   	}
-
-   	result = EMUPATCH(D3DDevice_Swap)(Flags);
-
-   	__asm {
-		mov  eax, result
-   	   	LTCG_EPILOGUE
-   	   	ret
-   	}
-}
 
 // ******************************************************************
 // * patch: D3DDevice_Swap

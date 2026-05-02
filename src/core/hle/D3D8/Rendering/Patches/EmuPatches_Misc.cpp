@@ -321,33 +321,16 @@ __declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_UpdateOverlay_16
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // D3DDevice_BlockUntilVerticalBlank — disabled.
-// Xbox native code waits on VBlank event; NV2A VBlank IRQ signals it correctly.
-// Patch disabled in Patches.cpp — let Xbox code run unpatched.
+// Native Xbox code waits on m_VerticalBlankEvent KEVENT inside the D3D device struct.
+// With Direct3D_CreateDevice unpatched, D3D_g_pDevice is valid and VBlank IRQ signals it.
 
 // D3DResource_BlockUntilNotBusy — disabled.
 // Empty stub; Xbox native code polls resource state.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// ******************************************************************
-// * patch: D3DDevice_InsertCallback
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_InsertCallback)
-(
-	X_D3DCALLBACKTYPE	Type,
-	X_D3DCALLBACK		pCallback,
-	dword_xt				Context
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Type)
-		LOG_FUNC_ARG(pCallback)
-		LOG_FUNC_ARG(Context)
-		LOG_FUNC_END;
-
-	CxbxImpl_InsertCallback(Type, pCallback, Context);
-
-	LOG_INCOMPLETE();
-}
+// D3DDevice_InsertCallback — disabled.
+// Native InsertCallback pushes NV097_NO_OPERATION(param) to the push buffer.
+// PGRAPH raises INTR_ERROR → miniport ISR reads TRAPPED_DATA_LOW → dispatches callback.
 
 // D3DDevice_GetProjectionViewportMatrix — disabled.
 // Xbox native code reads projection from D3DDevice struct and builds viewport matrix.

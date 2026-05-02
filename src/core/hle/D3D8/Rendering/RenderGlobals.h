@@ -328,10 +328,11 @@ void DetermineSupportedD3DFormats();
 // HostDevice.cpp
 void SetXboxMultiSampleType(xbox::X_D3DMULTISAMPLE_TYPE value);
 
-// HostDraw.cpp
-void Direct3D_CreateDevice_Start(const xbox::X_D3DPRESENT_PARAMETERS* pPresentationParameters);
-void Direct3D_CreateDevice_End(const xbox::X_D3DPRESENT_PARAMETERS* pPresentationParameters);
+// HostRender.cpp
+void CxbxInitHostD3DDevice();
 void CreateDefaultDevice(const xbox::X_D3DPRESENT_PARAMETERS* pPresentationParameters);
+
+// HostDraw.cpp — Direct3D_CreateDevice_Start/End removed (native Xbox CreateDevice runs unpatched)
 ID3D11Resource* CxbxConvertXboxSurfaceToHostTexture(xbox::X_D3DBaseTexture* pBaseTexture);
 
 // HostResource.cpp
@@ -393,9 +394,8 @@ D3DXVECTOR4 toVector(D3DCOLOR color);
 D3DXVECTOR4 toVector(xbox::X_D3DCOLORVALUE val);
 
 // HostSync.cpp
-void CxbxHandleXboxCallbacks();
-void CxbxImpl_InsertCallback(xbox::X_D3DCALLBACKTYPE Type, xbox::X_D3DCALLBACK pCallback, xbox::dword_xt Context);
 void CxbxD3D11InvalidateCachedSRVForTexture(ID3D11Resource* pTexture);
+
 // HostWindow.cpp
 void DrawUEM(HWND hWnd);
 void CxbxReleaseCursor();

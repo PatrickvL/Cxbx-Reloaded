@@ -140,13 +140,27 @@ float CxbxGetTexFmtFixup(int stage_nr)
 
 D3DXCOLOR CxbxCalcColorSign(int stage_nr)
 {
-	// Initially use what the running executable put in COLORSIGN :
-	DWORD XboxColorSign = XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_COLORSIGN);
+	// Read COLORSIGN from PGRAPH TEXFILTER register (bits 28-31: ASIGNED, RSIGNED, GSIGNED, BSIGNED).
+	// The Xbox D3D runtime writes X_D3DTSS_COLORSIGN bits directly into the TEXFILTER register,
+	// and the bit positions match: ASIGNED=bit28, RSIGNED=bit29, GSIGNED=bit30, BSIGNED=bit31.
+	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+	uint32_t texFilter = pg->regs[RI(NV_PGRAPH_TEXFILTER0 + stage_nr * 4)];
+	DWORD XboxColorSign = texFilter & 0xF0000000; // Extract sign bits (matches X_D3DTSIGN layout)
 
-	{ // This mimicks behaviour of XDK LazySetShaderStageProgram, which we bypass due to our drawing patches without trampolines.
-		// When bump environment mapping is enabled
-		if (XboxTextureStates.Get(stage_nr, xbox::X_D3DTSS_COLOROP) >= xbox::X_D3DTOP_BUMPENVMAP)
-			// Always mark the blue (alias for U) and green (alias for  V) color channels as signed :
+	{ // This mimics behaviour of XDK LazySetShaderStageProgram, which we bypass due to our drawing patches without trampolines.
+		// When bump environment mapping is enabled, check the shader stage program from PGRAPH.
+		// COLOROP >= BUMPENVMAP maps to shader stage mode BUMPENVMAP(6) or BUMPENVMAP_LUMINANCE(7).
+		static const uint32_t stageMasks[4] = {
+			NV097_SET_SHADER_STAGE_PROGRAM_STAGE0,
+			NV097_SET_SHADER_STAGE_PROGRAM_STAGE1,
+			NV097_SET_SHADER_STAGE_PROGRAM_STAGE2,
+			NV097_SET_SHADER_STAGE_PROGRAM_STAGE3
+		};
+		uint32_t shaderProg = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
+		uint32_t stageMode = GET_MASK(shaderProg, stageMasks[stage_nr]);
+		// BUMPENVMAP=6, BUMPENVMAP_LUMINANCE=7 (same across all stages)
+		if (stageMode == 6 || stageMode == 7)
+			// Always mark the blue (alias for U) and green (alias for V) color channels as signed:
 			XboxColorSign |= xbox::X_D3DTSIGN_GSIGNED | xbox::X_D3DTSIGN_BSIGNED;
 	}
 
@@ -321,10 +335,15 @@ void CxbxD3D11UploadRCInterpreterState()
 	aux.TexFmtFixup = { CxbxGetTexFmtFixup(0), CxbxGetTexFmtFixup(1),
 	                     CxbxGetTexFmtFixup(2), CxbxGetTexFmtFixup(3) };
 
-	// Color key per stage
+	// Color key per stage — read from PGRAPH (authoritative, no HLE dependency)
 	for (int i = 0; i < 4; i++) {
-		aux.ColorKeyOp[i] = { static_cast<float>(XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYOP)), 0.0f, 0.0f, 0.0f };
-		D3DXCOLOR ckc(XboxTextureStates.Get(i, xbox::X_D3DTSS_COLORKEYCOLOR));
+		// COLORKEYOP is stored in TEXCTL0 bits 0-1 (COLORKEYMODE)
+		uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
+		uint32_t colorKeyMode = texCtl & NV_PGRAPH_TEXCTL0_0_COLORKEYMODE;
+		aux.ColorKeyOp[i] = { static_cast<float>(colorKeyMode), 0.0f, 0.0f, 0.0f };
+
+		// COLORKEYCOLOR is stored in NV_PGRAPH_COLORKEYCOLOR0..3
+		D3DXCOLOR ckc(pg->regs[RI(NV_PGRAPH_COLORKEYCOLOR0 + i * 4)]);
 		aux.ColorKeyColor[i] = { ckc.r, ckc.g, ckc.b, ckc.a };
 	}
 

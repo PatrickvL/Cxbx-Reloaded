@@ -48,18 +48,8 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_CopyRects)
 // xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetBackBuffer)(int_xt BackBuffer, D3DBACKBUFFER_TYPE Type, X_D3DSurface **ppBackBuffer);
 // xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetBackBuffer_8__LTCG_eax1)(D3DBACKBUFFER_TYPE Type, X_D3DSurface **ppBackBuffer);
 
-// ******************************************************************
-// * patch: D3DDevice_Present
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_Present)
-(
-   	CONST X_RECT* pSourceRect,
-   	CONST X_RECT* pDestRect,
-   	PVOID         pDummy1,
-   	PVOID         pDummy2
-);
-
-dword_xt WINAPI EMUPATCH(D3DDevice_Swap_0__LTCG_eax1)();
+// D3DDevice_Present — disabled. Native Swap pushes NV097_FLIP commands.
+// D3DDevice_Swap_0__LTCG_eax1 — disabled.
 
 // ******************************************************************
 // * patch: Lock2DSurface

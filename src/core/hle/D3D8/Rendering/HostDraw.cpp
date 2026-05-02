@@ -25,78 +25,10 @@
 #include "EmuD3D8_common.h"
 #include "Backend\Backend_D3D11.h"
 
-void Direct3D_CreateDevice_Start
-(
-	const xbox::X_D3DPRESENT_PARAMETERS     *pPresentationParameters
-)
-{
-   	CxbxVertexShaderSetFlags();
-
-   	if (!XboxRenderStates.Init()) {
-   	   	CxbxrAbort("Failed to init XboxRenderStates");
-   	}
-
-   	if (!XboxTextureStates.Init()) {
-   	   	CxbxrAbort("Failed to init XboxTextureStates");
-   	}
-
-	SetXboxMultiSampleType(pPresentationParameters->MultiSampleType);
-
-	// create default device *before* calling Xbox Direct3D_CreateDevice trampoline
-	// to avoid hitting EMUPATCH'es that need a valid g_pD3DDevice
-
-	if (g_pD3DDevice != nullptr) { // Check to make sure device is null, otherwise no need to create it
-		return;
-	}
-
-	CreateDefaultDevice(pPresentationParameters);
-}
-
-void Direct3D_CreateDevice_End
-(
-	const xbox::X_D3DPRESENT_PARAMETERS     *pPresentationParameters
-)
-{
-
-   	UpdateHostBackBufferDesc();
-   	SetAspectRatioScale(pPresentationParameters);
-
-	// Reset PGRAPH surface tracking so the first RT bound becomes the tracked backbuffer
-	CxbxResetPgraphSurfaceTracking();
-
-   	// Try to determine the Xbox backbuffer and depth stencil surfaces.
-	// These are used for side-map registration (helps PGRAPH RT path reuse Xbox resource metadata).
-	// With SetRenderTarget patches disabled, the initial SetRenderTarget from CreateDevice won't
-	// be intercepted, so we fetch the surfaces via GetRenderTarget/GetDepthStencilSurface trampolines.
-	// This is optional — the PGRAPH RT path creates host resources directly from NV2A state if needed.
-   	if (g_pXbox_BackBufferSurface == xbox::zeroptr) {
-   	   	if (XB_TRMP(D3DDevice_GetRenderTarget)) {
-   	   	   	XB_TRMP(D3DDevice_GetRenderTarget)(&g_pXbox_BackBufferSurface);
-   	   	}
-   	   	else if (XB_TRMP(D3DDevice_GetRenderTarget2)) {
-   	   	   	g_pXbox_BackBufferSurface = XB_TRMP(D3DDevice_GetRenderTarget2)();
-   	   	}
-
-   	   	if (g_pXbox_BackBufferSurface != xbox::zeroptr) {
-   	   	   	CxbxImpl_SetRenderTarget(g_pXbox_BackBufferSurface, xbox::zeroptr);
-   	   	} else {
-			EmuLog(LOG_LEVEL::WARNING, "Could not determine Xbox backbuffer — PGRAPH path will create host RT directly");
-   	   	}
-   	}
-
-   	if (g_pXbox_DefaultDepthStencilSurface == xbox::zeroptr) {
-   	   	if (XB_TRMP(D3DDevice_GetDepthStencilSurface)) {
-   	   	   	XB_TRMP(D3DDevice_GetDepthStencilSurface)(&g_pXbox_DefaultDepthStencilSurface);
-   	   	}
-   	   	else if (XB_TRMP(D3DDevice_GetDepthStencilSurface2)) {
-   	   	   	g_pXbox_DefaultDepthStencilSurface = XB_TRMP(D3DDevice_GetDepthStencilSurface2)();
-   	   	}
-
-   	   	if (g_pXbox_DefaultDepthStencilSurface != xbox::zeroptr) {
-   	   	   	CxbxImpl_SetRenderTarget(xbox::zeroptr, g_pXbox_DefaultDepthStencilSurface);
-   	   	}
-   	}
-}
+// Direct3D_CreateDevice_Start and Direct3D_CreateDevice_End are no longer used.
+// Host D3D11 device creation and host-state init moved to CxbxInitHostD3DDevice().
+// Xbox state is maintained by native Xbox CreateDevice running unpatched.
+// Xbox backbuffer/depth surfaces are resolved by the PGRAPH RT path on first use.
 
 // Called by D3D11_draw_inline_elements (XbPushBuffer.cpp)
 void CxbxDrawIndexed(CxbxDrawContext &DrawContext)

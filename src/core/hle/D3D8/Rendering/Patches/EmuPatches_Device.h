@@ -30,40 +30,8 @@
 
 namespace xbox {
 
-// ******************************************************************
-// * patch: Direct3D_CreateDevice
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(Direct3D_CreateDevice)
-(
-   	uint_xt                     Adapter,
-	X_D3DDEVTYPE                DeviceType,
-	X_HWND                      hFocusWindow,
-   	dword_xt                    BehaviorFlags,
-   	X_D3DPRESENT_PARAMETERS    *pPresentationParameters,
-   	X_D3DDevice           **ppReturnedDeviceInterface
-);
-
-// LTCG variants of Direct3D_CreateDevice
-xbox::hresult_xt WINAPI EMUPATCH(Direct3D_CreateDevice_4__LTCG_eax1_ecx3)
-(
-   	X_D3DPRESENT_PARAMETERS     *pPresentationParameters
-);
-
-xbox::hresult_xt WINAPI EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ecx6)
-(
-   	uint_xt                     Adapter,
-   	X_D3DDEVTYPE                DeviceType,
-	X_HWND                      hFocusWindow,
-   	X_D3DPRESENT_PARAMETERS     *pPresentationParameters
-);
-
-xbox::hresult_xt WINAPI EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ebx6)
-(
-   	uint_xt                     Adapter,
-   	X_D3DDEVTYPE                DeviceType,
-	X_HWND                      hFocusWindow,
-   	X_D3DPRESENT_PARAMETERS     *pPresentationParameters
-);
+// Direct3D_CreateDevice patches disabled — host D3D11 device created by CxbxInitHostD3DDevice(),
+// native Xbox CreateDevice runs unpatched. See HostRender.cpp and Patches.cpp.
 
 // ******************************************************************
 // * patch: D3DDevice_GetDisplayFieldStatus

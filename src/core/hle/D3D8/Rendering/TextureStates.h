@@ -37,6 +37,7 @@ class XboxTextureStateConverter
 public:
     bool Init();
     uint32_t Get(int textureStage, DWORD xboxState);
+    bool IsInitialized() const { return D3D__TextureState != nullptr; }
 
 private:
     void BuildTextureStateMappingTable();

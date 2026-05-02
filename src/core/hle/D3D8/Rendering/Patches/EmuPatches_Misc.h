@@ -30,6 +30,10 @@
 
 namespace xbox {
 
+// D3DDevice_BlockUntilVerticalBlank — disabled.
+// Native Xbox code waits on m_VerticalBlankEvent KEVENT inside the D3D device struct.
+// With Direct3D_CreateDevice unpatched, D3D_g_pDevice is valid and VBlank IRQ signals it.
+
 // ******************************************************************
 // * patch: IDirect3DResource8_IsBusy
 // ******************************************************************
@@ -154,15 +158,8 @@ xbox::void_xt WINAPI EMUPATCH(D3DResource_BlockUntilNotBusy)
    	X_D3DResource *pThis
 );
 
-// ******************************************************************
-// * patch: D3DDevice_InsertCallback
-// ******************************************************************
-xbox::void_xt WINAPI EMUPATCH(D3DDevice_InsertCallback)
-(
-	X_D3DCALLBACKTYPE	Type,
-	X_D3DCALLBACK		pCallback,
-	dword_xt				Context
-);
+// D3DDevice_InsertCallback — disabled.
+// Native InsertCallback pushes NV097_NO_OPERATION(param) to the push buffer.
 
 // ******************************************************************
 // * patch: D3DDevice_DrawRectPatch — Disabled

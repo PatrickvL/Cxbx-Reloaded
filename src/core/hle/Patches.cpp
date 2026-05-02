@@ -77,9 +77,11 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("D3DDevice_BeginVisibilityTest", xbox::EMUPATCH(D3DDevice_BeginVisibilityTest), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
 	//PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
-	// Re-enabled: The miniport ISR acks PCRTC VBlank but its DPC (which would signal the
-	// kernel event) is never initialized because D3DDevice_CreateDevice is HLE'd.
-	PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
+	// Disabled: Xbox native BlockUntilVerticalBlank waits on m_VerticalBlankEvent KEVENT
+	// which lives inside the Xbox D3D device struct. Since CxbxInitHostD3DDevice() creates
+	// the host D3D11 device before emulation, native Direct3D_CreateDevice runs (via trampoline)
+	// and populates D3D_g_pDevice, so native BlockUntilVerticalBlank reads a valid KEVENT.
+	//PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
 	// Disabled: Clear now handled by D3D11_draw_clear via NV097_CLEAR_SURFACE → pgraph_handle_method
 	//PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
     PATCH_ENTRY("D3DDevice_CopyRects", xbox::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
@@ -308,10 +310,12 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3D_LazySetPointParams", xbox::EMUPATCH(D3D_LazySetPointParams), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
 	//PATCH_ENTRY("D3D_SetCommonDebugRegisters", xbox::EMUPATCH(D3D_SetCommonDebugRegisters), PATCH_HLE_D3D),
-	PATCH_ENTRY("Direct3D_CreateDevice", xbox::EMUPATCH(Direct3D_CreateDevice), PATCH_HLE_D3D),
-	PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ebx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ebx6), PATCH_HLE_D3D),
-	PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ecx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ecx6), PATCH_HLE_D3D),
-	PATCH_ENTRY("Direct3D_CreateDevice_4__LTCG_eax1_ecx3", xbox::EMUPATCH(Direct3D_CreateDevice_4__LTCG_eax1_ecx3), PATCH_HLE_D3D),
+	// Disabled: Host D3D11 device now created early by CxbxInitHostD3DDevice().
+	// Native Xbox CreateDevice runs unpatched, populating D3D_g_pDevice and all internal state.
+	//PATCH_ENTRY("Direct3D_CreateDevice", xbox::EMUPATCH(Direct3D_CreateDevice), PATCH_HLE_D3D),
+	//PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ebx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ebx6), PATCH_HLE_D3D),
+	//PATCH_ENTRY("Direct3D_CreateDevice_16__LTCG_eax4_ecx6", xbox::EMUPATCH(Direct3D_CreateDevice_16__LTCG_eax4_ecx6), PATCH_HLE_D3D),
+	//PATCH_ENTRY("Direct3D_CreateDevice_4__LTCG_eax1_ecx3", xbox::EMUPATCH(Direct3D_CreateDevice_4__LTCG_eax1_ecx3), PATCH_HLE_D3D),
 	// Disabled: trampoline-only (LOG_FUNC + XB_TRMP), no side effects
 	//PATCH_ENTRY("Lock2DSurface", xbox::EMUPATCH(Lock2DSurface), PATCH_HLE_D3D),
 	//PATCH_ENTRY("Lock2DSurface_16__LTCG_esi4_eax5", xbox::EMUPATCH(Lock2DSurface_16__LTCG_esi4_eax5), PATCH_HLE_D3D),
