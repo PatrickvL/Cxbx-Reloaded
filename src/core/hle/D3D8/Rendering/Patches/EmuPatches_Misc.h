@@ -188,6 +188,16 @@ xbox::void_xt WINAPI EMUPATCH(D3DDevice_InsertCallback)
 // D3D_BlockOnTime_4__LTCG_eax1 — disabled
 
 // ******************************************************************
+// * patch: D3D_BlockOnTime
+// ******************************************************************
+void WINAPI EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace);
+
+// ******************************************************************
+// * patch: D3D_BlockOnTime_4__LTCG_eax1
+// ******************************************************************
+void WINAPI EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int MakeSpace);
+
+// ******************************************************************
 // * patch: D3DDevice_GetProjectionViewportMatrix — Disabled
 // ******************************************************************
 //xbox::void_xt WINAPI EMUPATCH(D3DDevice_GetProjectionViewportMatrix)

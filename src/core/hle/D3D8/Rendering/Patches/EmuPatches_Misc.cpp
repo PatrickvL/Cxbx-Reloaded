@@ -373,10 +373,48 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_InsertCallback)
 // Hardcoded FALSE stub; Xbox native version checks NV_PGRAPH_STATUS.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// D3D_BlockOnTime — disabled.
-// Xbox native code polls NV_PFIFO_CACHE1_DMA_GET until it equals PUT.
-// PFIFO read handler fast-path returns GET=PUT in HLE mode, so the native
-// polling loop exits immediately. Implementation moved to Direct3D9.cpp.unused-patches.
+// ******************************************************************
+// * patch: D3D_BlockOnTime
+// ******************************************************************
+// The Xbox D3D runtime enables the DMA pusher (PUSH0_ACCESS=1,
+// DMA_PUSH_ACCESS=1) during CreateDevice.  When the access flags are
+// set the PFIFO read fast-path does NOT fake GET=PUT, so the native
+// polling loop would spin forever waiting for the pusher to advance
+// DMA_GET — which never happens because the Xbox ring buffer is not
+// mapped for real FIFO-mode processing in HLE mode.
+// We therefore intercept the call and drain any pending PGRAPH
+// commands via pfifo_flush_to_pgraph, then return, bypassing the
+// native spin loop entirely.
+void WINAPI xbox::EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Time)
+		LOG_FUNC_ARG(MakeSpace)
+		LOG_FUNC_END;
+
+	// Drain pending PFIFO commands so the DMA pusher advances GET,
+	// freeing ring buffer space for the caller.
+	if (g_NV2A) {
+		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
+	}
+}
+
+// ******************************************************************
+// * patch: D3D_BlockOnTime_4__LTCG_eax1
+// ******************************************************************
+__declspec(naked) void WINAPI xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1)(int MakeSpace)
+{
+	xbox::dword_xt Time;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Time, eax
+	}
+	EMUPATCH(D3D_BlockOnTime)(Time, MakeSpace);
+	__asm {
+		LTCG_EPILOGUE
+		ret  4
+	}
+}
 
 // D3D_DestroyResource — disabled.
 // Host resources are NV2A-derived (PGRAPH RT cache, texture cache keyed by VRAM).

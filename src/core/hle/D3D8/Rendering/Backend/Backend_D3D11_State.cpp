@@ -527,8 +527,10 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		default: // NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1: 1x1
 			break;
 		}
-		clipX *= aaFactorX;  clipY *= aaFactorY;
-		clipW *= aaFactorX;  clipH *= aaFactorY;
+		clipX *= aaFactorX;
+		clipY *= aaFactorY;
+		clipW *= aaFactorX;
+		clipH *= aaFactorY;
 
 		// Apply host upscale factor
 		clipX = static_cast<unsigned int>(clipX * g_RenderUpscaleFactor);
