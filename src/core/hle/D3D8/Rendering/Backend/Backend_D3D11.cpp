@@ -279,6 +279,11 @@ void CxbxD3D11DispatchCS(
 	ID3D11UnorderedAccessView* pUAV,
 	UINT groupsX, UINT groupsY, UINT groupsZ)
 {
+	// Unbind all PS SRV slots to prevent SRV/UAV hazard on any resource
+	// that may be simultaneously bound as a UAV for the CS dispatch.
+	static ID3D11ShaderResourceView* const nullPSSRVs[12] = {};
+	g_pD3DDeviceContext->PSSetShaderResources(0, 12, nullPSSRVs);
+
 	g_pD3DDeviceContext->CSSetShader(pShader, nullptr, 0);
 	g_pD3DDeviceContext->CSSetConstantBuffers(0, 1, &pCB);
 	if (numSRVs > 0)
@@ -286,13 +291,22 @@ void CxbxD3D11DispatchCS(
 	g_pD3DDeviceContext->CSSetUnorderedAccessViews(0, 1, &pUAV, nullptr);
 	g_pD3DDeviceContext->Dispatch(groupsX, groupsY, groupsZ);
 
-	// Unbind to avoid resource hazards
+	// Unbind CS resources to avoid hazards
 	ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };
 	ID3D11UnorderedAccessView* pNullUAV = nullptr;
 	UINT unbindCount = numSRVs > 0 ? numSRVs : 1;
 	g_pD3DDeviceContext->CSSetShaderResources(0, unbindCount, nullSRVs);
 	g_pD3DDeviceContext->CSSetUnorderedAccessViews(0, 1, &pNullUAV, nullptr);
 	g_pD3DDeviceContext->CSSetShader(nullptr, nullptr, 0);
+
+#ifdef _DEBUG
+	// Flush and check for device removal to catch TDRs at the exact dispatch
+	g_pD3DDeviceContext->Flush();
+	HRESULT hrRemoved = g_pD3DDevice->GetDeviceRemovedReason();
+	if (FAILED(hrRemoved)) {
+		EmuLog(LOG_LEVEL::ERROR2, "CxbxD3D11DispatchCS: Device removed after Dispatch! Reason: 0x%08X", hrRemoved);
+	}
+#endif
 }
 
 // Map a DYNAMIC buffer with WRITE_DISCARD, memcpy data, and Unmap.

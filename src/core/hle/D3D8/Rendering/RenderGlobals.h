@@ -395,6 +395,7 @@ D3DXVECTOR4 toVector(xbox::X_D3DCOLORVALUE val);
 // HostSync.cpp
 void CxbxHandleXboxCallbacks();
 void CxbxImpl_InsertCallback(xbox::X_D3DCALLBACKTYPE Type, xbox::X_D3DCALLBACK pCallback, xbox::dword_xt Context);
+void CxbxD3D11InvalidateCachedSRVForTexture(ID3D11Resource* pTexture);
 // HostWindow.cpp
 void DrawUEM(HWND hWnd);
 void CxbxReleaseCursor();

@@ -75,6 +75,10 @@ bool CxbxD3D11UnswizzleTexture(
 	if (FAILED(hr))
 		return false;
 
+	// Invalidate any cached PS SRV for this texture before binding it as a UAV.
+	// Prevents SRV/UAV resource hazards that can trigger GPU TDRs.
+	CxbxD3D11InvalidateCachedSRVForTexture(pTexture);
+
 	// Create a temporary UAV for the destination texture
 	// Map the format to a uint-typed format for RWTexture2D<uint>
 	DXGI_FORMAT uavFormat;
@@ -151,6 +155,10 @@ bool CxbxD3D11ExpandPaletteTexture(
 	if (FAILED(hr))
 		return false;
 
+	// Invalidate any cached PS SRV for this texture before binding it as a UAV.
+	// Prevents SRV/UAV resource hazards that can trigger GPU TDRs.
+	CxbxD3D11InvalidateCachedSRVForTexture(pTexture);
+
 	// Create UAV for destination texture (R8G8B8A8_UNORM → R32_UINT UAV)
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 	uavDesc.Format = DXGI_FORMAT_R32_UINT;
@@ -218,6 +226,10 @@ bool CxbxD3D11FormatConvertTexture(
 	hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11FormatConvertCB, cbData, sizeof(cbData));
 	if (FAILED(hr))
 		return false;
+
+	// Invalidate any cached PS SRV for this texture before binding it as a UAV.
+	// Prevents SRV/UAV resource hazards that can trigger GPU TDRs.
+	CxbxD3D11InvalidateCachedSRVForTexture(pTexture);
 
 	// Create UAV (R32_UINT view of the R8G8B8A8_UNORM texture)
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};

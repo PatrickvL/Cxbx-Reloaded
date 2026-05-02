@@ -42,14 +42,35 @@ static std::queue<s_Xbox_Callback> g_Xbox_CallbackQueue;
 // One per texture stage; updated each draw by CxbxUpdateHostTextures.
 static xbox::X_D3DBaseTexture s_SyntheticTextures[xbox::X_D3DTS_STAGECOUNT] = {};
 
+// Per-stage SRV cache: avoids recreating SRVs every frame for the same resource.
+// Promoted to file scope so CxbxD3D11InvalidateCachedSRVForTexture can access them.
+static ID3D11Resource*           s_CachedResource[xbox::X_D3DTS_STAGECOUNT] = {};
+static ID3D11ShaderResourceView* s_CachedSRV[xbox::X_D3DTS_STAGECOUNT] = {};
+static D3D11_SRV_DIMENSION       s_CachedDim[xbox::X_D3DTS_STAGECOUNT] = {};
+
+// Invalidate any cached SRV that wraps pTexture and unbind it from all PS slots.
+// Must be called before binding pTexture as a UAV for a compute shader dispatch
+// to eliminate SRV/UAV resource hazards that can trigger GPU TDRs.
+void CxbxD3D11InvalidateCachedSRVForTexture(ID3D11Resource* pTexture)
+{
+	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
+		if (s_CachedResource[stage] == pTexture) {
+			if (s_CachedSRV[stage]) {
+				ID3D11ShaderResourceView* pNullSRV = nullptr;
+				g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pNullSRV);
+				g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pNullSRV);
+				g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pNullSRV);
+				s_CachedSRV[stage]->Release();
+				s_CachedSRV[stage] = nullptr;
+			}
+			s_CachedResource[stage] = nullptr;
+		}
+	}
+}
+
 void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
-
-	// Per-stage SRV cache: avoids recreating SRVs every frame for the same resource
-	static ID3D11Resource*           s_CachedResource[xbox::X_D3DTS_STAGECOUNT] = {};
-	static ID3D11ShaderResourceView* s_CachedSRV[xbox::X_D3DTS_STAGECOUNT] = {};
-	static D3D11_SRV_DIMENSION       s_CachedDim[xbox::X_D3DTS_STAGECOUNT] = {};
 
 	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 
@@ -266,6 +287,14 @@ void CxbxUpdateHostTextures()
 				HRESULT hRet = g_pD3DDevice->CreateShaderResourceView(pHostBaseTexture, &srvDesc, &pSRV);
 				DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateShaderResourceView");
 				if (FAILED(hRet)) {
+					if (hRet == DXGI_ERROR_DEVICE_REMOVED) {
+						HRESULT reason = g_pD3DDevice->GetDeviceRemovedReason();
+						CxbxrAbort("D3D11 device removed (DXGI_ERROR_DEVICE_REMOVED).\n"
+							"Reason: 0x%08X\n\n"
+							"This is usually caused by a GPU driver crash (TDR) triggered by\n"
+							"an invalid compute shader dispatch or resource hazard.\n"
+							"Enable D3D11 debug layer for more details.", reason);
+					}
 					EmuLog(LOG_LEVEL::WARNING, "CxbxUpdateHostTextures : g_pD3DDevice->CreateShaderResourceView "
 						"D3D error (0x%08X: format=%u)", hRet, srvDesc.Format);
 				}
