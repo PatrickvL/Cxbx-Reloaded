@@ -281,6 +281,7 @@ void CxbxD3D11DispatchCS(
 {
 	// Unbind all PS SRV slots to prevent SRV/UAV hazard on any resource
 	// that may be simultaneously bound as a UAV for the CS dispatch.
+	// 12 = 3 slot ranges × 4 stages: base (0-3), 3D (4-7), cube (8-11).
 	static ID3D11ShaderResourceView* const nullPSSRVs[12] = {};
 	g_pD3DDeviceContext->PSSetShaderResources(0, 12, nullPSSRVs);
 
