@@ -415,7 +415,9 @@ void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg)
 // *   vsh_constants[VPSCL] = { Width/2, -Height/2, zScale, 0 }
 // *   vsh_constants[VPOFF] = { X+Width/2, Y+Height/2, zOffset, 0 }
 // *
-// * Window clip (scissor): NV_PGRAPH_WINDOWCLIPX0/Y0
+// * Scissor: surface_shape.clip_x/y/width/height (from NV097_SET_SURFACE_CLIP_HORIZONTAL/VERTICAL)
+// *   AA factor (surface_shape.anti_aliasing) is applied first, then the host upscale factor.
+// *   This matches xemu's pgraph_apply_anti_aliasing_factor + pgraph_apply_scaling_factor ordering.
 // * Depth clip: NV_PGRAPH_ZCLIPMIN / NV_PGRAPH_ZCLIPMAX
 // ******************************************************************
 void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
@@ -435,22 +437,13 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		return;
 	}
 
-	// Derive Xbox-style viewport rect from NV2A transform constants
-	float xboxWidth  = vpscl[0] * 2.0f;
-	float xboxHeight = fabsf(vpscl[1]) * 2.0f;
-	float xboxX      = vpoff[0] - vpscl[0];
-	float xboxY      = vpoff[1] + vpscl[1]; // vpscl[1] is negative
 
-	// Read depth clip range
+	// Read depth clip range (not yet consumed; retained as placeholder for
+	// future depth range / MinDepth/MaxDepth setup in the viewport below)
 	float minZ, maxZ;
 	std::memcpy(&minZ, &pg->regs[RI(NV_PGRAPH_ZCLIPMIN)], sizeof(float));
 	std::memcpy(&maxZ, &pg->regs[RI(NV_PGRAPH_ZCLIPMAX)], sizeof(float));
 
-	// Get host scaling factors (AA + render upscale)
-	float aaScaleX, aaScaleY;
-	GetMultiSampleScaleRaw(aaScaleX, aaScaleY);
-	float Xscale = aaScaleX * g_RenderUpscaleFactor;
-	float Yscale = aaScaleY * g_RenderUpscaleFactor;
 
 	DWORD HostRenderTarget_Width, HostRenderTarget_Height;
 	if (!GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height)) {
@@ -501,18 +494,8 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		}
 	}
 
-	// Determine vertex shader mode from PGRAPH CSV0_D register.
-	uint32_t pgraphVSMode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
-
-	// For FF mode (FIXED and not passthrough), the viewport is already set by
-	// UpdateFixedFunctionVertexShaderState() which derives it from CMAT.
-	// VPSCL/VPOFF are NOT meaningful for FF mode (the viewport transform is
-	// baked into CMAT), so we must not overwrite the FF viewport here.
-	if (pgraphVSMode != NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-		return;
-	}
-
-	// Programmable VS: full-screen viewport, scissor clips to viewport bounds
+	// Scissor from NV2A surface clip registers — matches xemu pgraph_gl/vk_draw_begin.
+	// Set for ALL vertex shader modes (PROGRAM and FIXED) to prevent stale scissor state.
 	{
 		D3D11_VIEWPORT hostViewport;
 		hostViewport.TopLeftX = 0;
@@ -523,15 +506,45 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		hostViewport.MaxDepth = 1.0f;
 		CxbxSetViewport(&hostViewport);
 
+		// Apply AA factor first (from surface_shape.anti_aliasing), then upscale.
+		// Matches xemu: pgraph_apply_anti_aliasing_factor then pgraph_apply_scaling_factor.
+		unsigned int clipX = pg->surface_shape.clip_x;
+		unsigned int clipY = pg->surface_shape.clip_y;
+		unsigned int clipW = pg->surface_shape.clip_width;
+		unsigned int clipH = pg->surface_shape.clip_height;
+
+		// AA factor: matches pgraph_apply_anti_aliasing_factor in EmuNV2A_PGRAPH.cpp
+		unsigned int aaFactorX = 1, aaFactorY = 1;
+		switch (pg->surface_shape.anti_aliasing) {
+		case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
+			aaFactorX = 2;
+			aaFactorY = 1;
+			break;
+		case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_SQUARE_OFFSET_4:
+			aaFactorX = 2;
+			aaFactorY = 2;
+			break;
+		default: // NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1: 1x1
+			break;
+		}
+		clipX *= aaFactorX;  clipY *= aaFactorY;
+		clipW *= aaFactorX;  clipH *= aaFactorY;
+
+		// Apply host upscale factor
+		clipX = static_cast<unsigned int>(clipX * g_RenderUpscaleFactor);
+		clipY = static_cast<unsigned int>(clipY * g_RenderUpscaleFactor);
+		clipW = static_cast<unsigned int>(clipW * g_RenderUpscaleFactor);
+		clipH = static_cast<unsigned int>(clipH * g_RenderUpscaleFactor);
+
+		RECT scissorRect;
+		scissorRect.left   = static_cast<LONG>(clipX);
+		scissorRect.top    = static_cast<LONG>(clipY);
+		scissorRect.right  = std::min(static_cast<LONG>(clipX + clipW), static_cast<LONG>(HostRenderTarget_Width));
+		scissorRect.bottom = std::min(static_cast<LONG>(clipY + clipH), static_cast<LONG>(HostRenderTarget_Height));
+		CxbxSetScissorRect(&scissorRect);
+
 		g_D3D11RasterizerDesc.ScissorEnable = TRUE;
 		g_bD3D11RasterizerStateDirty = true;
-
-		RECT viewportRect;
-		viewportRect.left   = static_cast<LONG>(xboxX * Xscale);
-		viewportRect.top    = static_cast<LONG>(xboxY * Yscale);
-		viewportRect.right  = std::min(static_cast<LONG>(viewportRect.left + (xboxWidth * Xscale)), (LONG)HostRenderTarget_Width);
-		viewportRect.bottom = std::min(static_cast<LONG>(viewportRect.top + (xboxHeight * Yscale)), (LONG)HostRenderTarget_Height);
-		CxbxSetScissorRect(&viewportRect);
 	}
 }
 
