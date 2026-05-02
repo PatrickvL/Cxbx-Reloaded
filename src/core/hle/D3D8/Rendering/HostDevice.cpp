@@ -577,6 +577,11 @@ void SetupPresentationParameters
    	   	   		pXboxPresentationParameters->FullScreen_RefreshRateInHz);
    	   		params.BackBufferWidth = pXboxPresentationParameters->BackBufferWidth;
    	   		params.BackBufferHeight = pXboxPresentationParameters->BackBufferHeight;
+   	   		// Field rendering uses half-height backbuffers (one per field); the host
+   	   		// display should be full frame height so both fields can be presented.
+   	   		if (pXboxPresentationParameters->Flags & X_D3DPRESENTFLAG_FIELD) {
+   	   			params.BackBufferHeight *= 2;
+   	   		}
    	   		params.FullScreen_RefreshRateInHz = pXboxPresentationParameters->FullScreen_RefreshRateInHz;
    		} else {
    			// Early init without Xbox params — use sensible defaults

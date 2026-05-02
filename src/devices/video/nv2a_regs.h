@@ -738,6 +738,9 @@
 #define NV_PCRTC_START                                   0x00000800
 #define NV_PCRTC_CONFIG                                  0x00000804
 #define NV_PCRTC_RASTER                                  0x00000808
+#   define NV_PCRTC_RASTER_POSITION                          0x000007FF // bits [10:0]
+#   define NV_PCRTC_RASTER_VERT_BLANK                        (1 << 16)
+#   define NV_PCRTC_RASTER_FIELD                             (1 << 20) // 0=EVEN, 1=ODD
 
 
 #define NV_PVIDEO_DEBUG_2                                0x00000088

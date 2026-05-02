@@ -828,9 +828,12 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		// Track the backbuffer by matching RT dimensions against presentation parameters.
 		// This avoids misidentifying an offscreen surface (shadow map, reflection, etc.)
 		// that happens to be rendered before the backbuffer.
+		// Also accept half-height surfaces for field rendering (D3DPRESENTFLAG_FIELD),
+		// where the Xbox renders 640x240 per field into a 640x480 display.
 		if (g_PgraphBackBufferOffset == 0 && pHostRT) {
 			if (rtWidth == g_EmuCDPD.HostPresentationParameters.BackBufferWidth &&
-				rtHeight == g_EmuCDPD.HostPresentationParameters.BackBufferHeight) {
+				(rtHeight == g_EmuCDPD.HostPresentationParameters.BackBufferHeight ||
+				 rtHeight * 2 == g_EmuCDPD.HostPresentationParameters.BackBufferHeight)) {
 				g_PgraphBackBufferOffset = colorOffset;
 			}
 		}

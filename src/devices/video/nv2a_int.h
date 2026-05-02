@@ -427,6 +427,7 @@ typedef struct NV2AState {
         uint32_t pending_interrupts;
         uint32_t enabled_interrupts;
         hwaddr start;
+        uint32_t vblank_count; // Incremented each VBlank; bit 0 determines interlace field (even/odd)
 		uint32_t regs[NV_PCRTC_SIZE]; // Not in xqemu/openxbox? TODO : union
     } pcrtc;
 

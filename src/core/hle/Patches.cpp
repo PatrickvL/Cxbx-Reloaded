@@ -123,7 +123,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_GetBackBuffer_8__LTCG_eax1", xbox::EMUPATCH(D3DDevice_GetBackBuffer_8__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetBackBuffer2", xbox::EMUPATCH(D3DDevice_GetBackBuffer2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetBackBuffer2_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_GetBackBuffer2_0__LTCG_eax1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetDisplayFieldStatus", xbox::EMUPATCH(D3DDevice_GetDisplayFieldStatus), PATCH_HLE_D3D),
+	// Disabled: Xbox native reads VBlank count from device struct and field from NV_PCRTC_RASTER bit 20.
+	// PCRTC emulation now provides VERT_BLANK and FIELD bits; VBlank ISR increments the kernel counter.
+	//PATCH_ENTRY("D3DDevice_GetDisplayFieldStatus", xbox::EMUPATCH(D3DDevice_GetDisplayFieldStatus), PATCH_HLE_D3D),
 	// Disabled: PRMDIO VGA DAC palette emulation handles gamma natively
 	//PATCH_ENTRY("D3DDevice_GetGammaRamp", xbox::EMUPATCH(D3DDevice_GetGammaRamp), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetMaterial", xbox::EMUPATCH(D3DDevice_GetMaterial), PATCH_HLE_D3D),

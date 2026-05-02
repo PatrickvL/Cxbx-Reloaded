@@ -33,6 +33,65 @@
 // *
 // ******************************************************************
 
+// Read Vertical Display End (visible scanlines) from VGA CRT registers.
+// Returns the number of visible lines (e.g. 480 for NTSC, 576 for PAL).
+// This is the same value GetFrameHeight() computes, but kept local to PCRTC.
+static unsigned int pcrtc_get_visible_lines(NV2AState *d)
+{
+	unsigned int vde = ((unsigned int)d->prmcio.cr[NV_CIO_CR_VDE_INDEX])
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CR_OVL_INDEX] & 0x02) >> 1 << 8)
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CR_OVL_INDEX] & 0x40) >> 6 << 9)
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CRE_LSR_INDEX] & 0x02) >> 1 << 10)
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CRE_EBR_INDEX] & 0x04) >> 2 << 11);
+	return vde + 1; // VDE is end value (0-based), so +1 for count
+}
+
+// Read Vertical Display Total from VGA CRT registers.
+// Returns the total number of scanlines per frame including blanking.
+static unsigned int pcrtc_get_total_lines(NV2AState *d)
+{
+	unsigned int vdt = ((unsigned int)d->prmcio.cr[NV_CIO_CR_VDT_INDEX])
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CR_OVL_INDEX] & 0x01) << 8)
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CR_OVL_INDEX] & 0x20) >> 5 << 9)
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CRE_LSR_INDEX] & 0x01) << 10)
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CRE_EBR_INDEX] & 0x01) << 11);
+	return vdt + 2; // VDT register value is total-2
+}
+
+// Read Horizontal Display Total from VGA CRT registers (in character clocks).
+// Returns the total number of character clocks per scanline including blanking.
+static unsigned int pcrtc_get_htotal_chars(NV2AState *d)
+{
+	unsigned int hdt = ((unsigned int)d->prmcio.cr[NV_CIO_CR_HDT_INDEX])
+		| (((unsigned int)d->prmcio.cr[NV_CIO_CRE_HEB__INDEX] & 0x01) << 8);
+	return hdt + 5; // HDT register value is total-5
+}
+
+// Compute refresh rate (Hz) from VPLL pixel clock and CRT timing registers.
+// refresh = pixel_clock / (htotal_pixels * vtotal_lines)
+// where pixel_clock = (NV2A_CRYSTAL_FREQ * N) / (M * 2^P)
+// and htotal_pixels = htotal_chars * 8 (each character clock = 8 pixels)
+static unsigned int pcrtc_get_refresh_rate(NV2AState *d, unsigned int totalLines)
+{
+	uint32_t coeff = d->pramdac.video_clock_coeff;
+	unsigned int m = coeff & NV_PRAMDAC_VPLL_COEFF_MDIV;
+	unsigned int n = (coeff & NV_PRAMDAC_VPLL_COEFF_NDIV) >> 8;
+	unsigned int p = (coeff & NV_PRAMDAC_VPLL_COEFF_PDIV) >> 16;
+	if (m == 0 || totalLines == 0) return 60; // avoid division by zero
+
+	// Pixel clock in Hz
+	uint64_t pixelClock = ((uint64_t)NV2A_CRYSTAL_FREQ * n) / ((1 << p) * m);
+
+	unsigned int htotalChars = pcrtc_get_htotal_chars(d);
+	unsigned int htotalPixels = htotalChars * 8;
+	if (htotalPixels == 0) return 60;
+
+	unsigned int refreshRate = (unsigned int)(pixelClock / ((uint64_t)htotalPixels * totalLines));
+	// Clamp to sane range (avoid garbage from uninitialized registers)
+	if (refreshRate < 24 || refreshRate > 120) return 60;
+	return refreshRate;
+}
+
 DEVICE_READ32(PCRTC)
 {
 	DEVICE_READ32_SWITCH() {
@@ -47,18 +106,34 @@ DEVICE_READ32(PCRTC)
 		result = d->pcrtc.start;
 		break;
 	case NV_PCRTC_RASTER: {
-		// Test case: Alter Echo
+		// Test case: Alter Echo, FieldRender
 		// Return a time-based scanline position within the current frame.
-		// The Xbox NTSC display runs at ~60 Hz with 525 total lines (480 visible + 45 blanking).
-		// Compute where in the frame we are based on host time modulo frame period.
-		const unsigned int totalLines = 525; // TODO : Use  NV2ADevice::GetFrameHeight(d) ?
+		// Read visible/total line counts from VGA CRT registers (set by Xbox kernel).
+		unsigned int visibleLines = pcrtc_get_visible_lines(d);
+		unsigned int totalLines = pcrtc_get_total_lines(d);
+		// Guard against uninitialized registers (early boot before AvSetDisplayMode)
+		if (visibleLines == 0 || totalLines == 0) {
+			visibleLines = 480;
+			totalLines = 525;
+		}
+		// Derive refresh rate from VPLL pixel clock and CRT timing registers
+		unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
 		LARGE_INTEGER freq, now;
 		QueryPerformanceFrequency(&freq);
 		QueryPerformanceCounter(&now);
-		// Frame period in QPC ticks (~16.667ms at 60Hz)
-		LONGLONG frameTicks = freq.QuadPart / 60; // TODO : Use actual refresh rate based on display mode?  
+		// Frame period in QPC ticks
+		LONGLONG frameTicks = freq.QuadPart / refreshRate;
 		LONGLONG posInFrame = now.QuadPart % frameTicks;
-		result = (unsigned int)(posInFrame * totalLines / frameTicks);
+		unsigned int scanline = (unsigned int)(posInFrame * totalLines / frameTicks);
+		result = scanline & NV_PCRTC_RASTER_POSITION;
+		// Bit 16: VERT_BLANK - active when scanline is in the blanking interval
+		if (scanline >= visibleLines) {
+			result |= NV_PCRTC_RASTER_VERT_BLANK;
+		}
+		// Bit 20: FIELD - toggles each VBlank for interlaced modes (0=EVEN, 1=ODD)
+		if (d->pcrtc.vblank_count & 1) {
+			result |= NV_PCRTC_RASTER_FIELD;
+		}
 	} break;
 	default: 
 		result = 0;

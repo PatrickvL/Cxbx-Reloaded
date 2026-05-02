@@ -63,41 +63,12 @@ static void D3DDevice_SetIndices_4__LTCG_ebx1
 
 
 // ******************************************************************
-// * patch: D3DDevice_GetDisplayFieldStatus
+// * patch: D3DDevice_GetDisplayFieldStatus (DISABLED)
+// * Xbox native reads VBlank count from device struct and field from NV_PCRTC_RASTER bit 20.
+// * PCRTC emulation now provides VERT_BLANK and FIELD bits; VBlank ISR increments the kernel counter.
+// * Patch disabled in Patches.cpp — implementation moved to Direct3D9.cpp.unused-patches.
 // ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_GetDisplayFieldStatus)(X_D3DFIELD_STATUS *pFieldStatus)
-{
-	// NOTE: This can be unpatched only when NV2A does it's own VBlank and HLE _Swap function is unpatched
 
-
-	LOG_FUNC_ONE_ARG(pFieldStatus);
-
-	// Read AV Flags to determine if Progressive or Interlaced
-	// The xbox does this by reading from pDevice->m_Miniport.m_CurrentAvInfo
-	// but we don't have an OOVPA for that. Instead, we call the Xbox implementation of 
-	// D3DDevice_GetDisplayMode and read the result
-
-	X_D3DDISPLAYMODE displayMode;
-
-	// If we can find the Xbox version of GetDisplayMode, use the real data returned, otherwise
-	// use a sensible default
-	if (XB_TRMP(D3DDevice_GetDisplayMode) != nullptr) {
-		XB_TRMP(D3DDevice_GetDisplayMode)(&displayMode);
-	} else {
-		// We don't show a warning because doing so pollutes the kernel debug log as this function gets called every frame
-		displayMode.Flags = X_D3DPRESENTFLAG_INTERLACED;
-	}
-	
-	// Set the VBlank count
-	pFieldStatus->VBlankCount = g_Xbox_VBlankData.VBlank;
-
-	// If we are interlaced, return the current field, otherwise, return progressive scan
-	if (displayMode.Flags & X_D3DPRESENTFLAG_INTERLACED) {
-		pFieldStatus->Field = (g_Xbox_VBlankData.VBlank % 2 == 0) ? X_D3DFIELD_ODD : X_D3DFIELD_EVEN;
-	} else {
-		pFieldStatus->Field = X_D3DFIELD_PROGRESSIVE;
-	}
-}
 
 // ******************************************************************
 // * patch: D3DDevice_BeginVisibilityTest

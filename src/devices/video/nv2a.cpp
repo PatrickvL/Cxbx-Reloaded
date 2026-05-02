@@ -307,6 +307,9 @@ void nv2a_vblank_interrupt(void *opaque)
 	NV2AState *d = static_cast<NV2AState *>(opaque);
 
 	if (!d->exiting) [[likely]] {
+		// Increment VBlank counter (used by NV_PCRTC_RASTER FIELD bit for interlace detection)
+		d->pcrtc.vblank_count++;
+
 		// Signal that a VBlank occurred. Don't touch pcrtc.pending_interrupts here!
 		// The main thread will set/clear it atomically around the ISR call to prevent
 		// the timer from re-asserting it while the ISR is processing.

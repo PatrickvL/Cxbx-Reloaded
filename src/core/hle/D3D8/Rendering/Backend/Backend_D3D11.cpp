@@ -795,10 +795,14 @@ HRESULT CxbxD3D11Blt(
 	FLOAT oldBlendFactor[4];
 	UINT oldSampleMask;
 	g_pD3DDeviceContext->OMGetBlendState(&pOldBlendState, oldBlendFactor, &oldSampleMask);
+	// Save rasterizer state so the game's scissor rect doesn't clip the blit
+	ComPtr<ID3D11RasterizerState> pOldRasterizerState;
+	g_pD3DDeviceContext->RSGetState(&pOldRasterizerState);
 
 	// Set blit pipeline state
 	D3D11_VIEWPORT vp = { (FLOAT)dstX, (FLOAT)dstY, (FLOAT)dstW, (FLOAT)dstH, 0.0f, 1.0f };
 	g_pD3DDeviceContext->RSSetViewports(1, &vp);
+	g_pD3DDeviceContext->RSSetState(nullptr); // Default rasterizer: no scissor, no culling
 	g_pD3DDeviceContext->OMSetRenderTargets(1, &pRTV, nullptr);
 	g_pD3DDeviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF); // Default blend: no blending, all channels written
 	g_pD3DDeviceContext->VSSetShader(g_pD3D11BlitVS, nullptr, 0);
@@ -816,6 +820,7 @@ HRESULT CxbxD3D11Blt(
 	// Restore previous state
 	g_pD3DDeviceContext->OMSetRenderTargets(1, &pOldRTV, pOldDSV);
 	g_pD3DDeviceContext->RSSetViewports(1, &oldVP);
+	g_pD3DDeviceContext->RSSetState(pOldRasterizerState.Get());
 	g_pD3DDeviceContext->OMSetBlendState(pOldBlendState.Get(), oldBlendFactor, oldSampleMask);
 	if (pOldRTV) pOldRTV->Release();
 	if (pOldDSV) pOldDSV->Release();
