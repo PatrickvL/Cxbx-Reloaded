@@ -145,33 +145,23 @@ void UploadPixelContainerMips(
 			uint8_t* pStagingBuffer = nullptr; // Used for DEFAULT textures only
 
 			// CS unswizzle path: for swizzled single-mip 2D textures (DEFAULT+UAV),
-			// dispatch compute shader instead of Map/CPU-unswizzle/Unmap
-			if (bSwizzled && !bConvertTextureFormat && dwMipMapLevels == 1 && pxMipDepth == 1
+			// dispatch compute shader instead of Map/CPU-unswizzle/Unmap.
+			// Skip when bHostIsDynamic: dynamic textures lack D3D11_BIND_UNORDERED_ACCESS.
+			if (bSwizzled && !bConvertTextureFormat && !bHostIsDynamic && dwMipMapLevels == 1 && pxMipDepth == 1
 				&& XboxResourceType == xbox::X_D3DRTYPE_TEXTURE) {
 				uint8_t *pCsSrc = (uint8_t *)VirtualAddr + dwCubeFaceOffset + dwMipOffset;
 				ID3D11Texture2D* pTexture2D = static_cast<ID3D11Texture2D*>(pNewHostResource.Get());
 				if (CxbxD3D11UnswizzleTexture(pTexture2D, pCsSrc, pxMipWidth, pxMipHeight, dwBPP, PCFormat)) {
 					continue; // CS handled it, skip to next mip/face
 				}
-				// CS failed (unsupported format for UAV) — fall back to CPU unswizzle
+				// CS failed (unsupported format for UAV) — fall back to CPU unswizzle.
+				// Texture is DEFAULT (bHostIsDynamic excluded above), so use UpdateSubresource.
 				EmuLog(LOG_LEVEL::WARNING, "CS unswizzle failed, falling back to CPU for %ux%u bpp=%u", pxMipWidth, pxMipHeight, dwBPP);
 				DWORD fallbackRowPitch = pxMipWidth * dwBPP;
 				DWORD fallbackSize = fallbackRowPitch * pxMipHeight;
 				uint8_t* pFallbackBuf = (uint8_t*)malloc(fallbackSize);
 				EmuUnswizzleBox(pCsSrc, pxMipWidth, pxMipHeight, 1, dwBPP, pFallbackBuf, fallbackRowPitch, 0);
-				if (bHostIsDynamic) {
-					// DYNAMIC textures require Map/Unmap (UpdateSubresource is invalid)
-					hRet = g_pD3DDeviceContext->Map(pNewHostResource.Get(), Subresource, D3D11_MAP_WRITE_DISCARD, 0, &MappedResource);
-					if (SUCCEEDED(hRet)) {
-						for (DWORD row = 0; row < pxMipHeight; row++) {
-							memcpy((uint8_t*)MappedResource.pData + row * MappedResource.RowPitch,
-								pFallbackBuf + row * fallbackRowPitch, fallbackRowPitch);
-						}
-						g_pD3DDeviceContext->Unmap(pNewHostResource.Get(), Subresource);
-					}
-				} else {
-					g_pD3DDeviceContext->UpdateSubresource(pNewHostResource.Get(), Subresource, nullptr, pFallbackBuf, fallbackRowPitch, 0);
-				}
+				g_pD3DDeviceContext->UpdateSubresource(pNewHostResource.Get(), Subresource, nullptr, pFallbackBuf, fallbackRowPitch, 0);
 				free(pFallbackBuf);
 				continue;
 			}

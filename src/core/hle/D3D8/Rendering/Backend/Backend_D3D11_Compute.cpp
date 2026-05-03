@@ -127,6 +127,27 @@ static void CxbxEnsureUnswizzleStagingBuffer(UINT requiredSize)
 		&g_pD3D11UnswizzleSRV, "CxbxEnsureUnswizzleStagingBuffer");
 }
 
+// Typed unswizzle format decode constants (must match CxbxUnswizzleBGRA_CS.hlsl)
+#define CXBX_UNSW_DECODE_BGRA8      0
+#define CXBX_UNSW_DECODE_B4G4R4A4   1
+#define CXBX_UNSW_DECODE_B5G6R5     2
+#define CXBX_UNSW_DECODE_B5G5R5A1   3
+#define CXBX_UNSW_DECODE_R10G10B10A2 4
+
+// Returns the typed-unswizzle decode constant for a format, or -1 if not supported.
+static int CxbxGetTypedUnswizzleDecode(DXGI_FORMAT format)
+{
+	switch (format) {
+	case DXGI_FORMAT_B8G8R8A8_UNORM:
+	case DXGI_FORMAT_B8G8R8X8_UNORM:     return CXBX_UNSW_DECODE_BGRA8;
+	case DXGI_FORMAT_B4G4R4A4_UNORM:     return CXBX_UNSW_DECODE_B4G4R4A4;
+	case DXGI_FORMAT_B5G6R5_UNORM:       return CXBX_UNSW_DECODE_B5G6R5;
+	case DXGI_FORMAT_B5G5R5A1_UNORM:     return CXBX_UNSW_DECODE_B5G5R5A1;
+	case DXGI_FORMAT_R10G10B10A2_UNORM:  return CXBX_UNSW_DECODE_R10G10B10A2;
+	default: return -1;
+	}
+}
+
 bool CxbxD3D11UnswizzleTexture(
 	ID3D11Texture2D* pTexture,
 	const void* pSwizzledSrc,
@@ -140,12 +161,6 @@ bool CxbxD3D11UnswizzleTexture(
 
 	// Only 2D textures with bpp 1, 2, or 4
 	if (bpp != 1 && bpp != 2 && bpp != 4)
-		return false;
-
-	// Determine if we need the BGRA float4 CS variant (for formats that don't
-	// support R32_UINT UAV reinterpretation but do support same-format typed UAV)
-	bool bUseBGRA_CS = (format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8X8_UNORM);
-	if (bUseBGRA_CS && !g_pD3D11UnswizzleBGRA_CS)
 		return false;
 
 	UINT dataSize = width * height * bpp;
@@ -169,44 +184,59 @@ bool CxbxD3D11UnswizzleTexture(
 		if (i < height) { maskY |= j; j <<= 1; }
 	}
 
-	// Update constant buffer
-	UINT cbData[8] = { maskX, maskY, width, height, bpp, 0, 0, 0 };
-	hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleCB, cbData, sizeof(cbData));
-	if (FAILED(hr))
-		return false;
-
 	// Invalidate any cached PS SRV for this texture before binding it as a UAV.
 	// Prevents SRV/UAV resource hazards that can trigger GPU TDRs.
 	CxbxD3D11InvalidateCachedSRVForTexture(pTexture);
 
-	// Get or create a cached UAV for the destination texture
-	DXGI_FORMAT uavFormat;
-	if (bUseBGRA_CS) {
-		// BGRA path: use same-format UAV (no cross-family casting needed)
-		uavFormat = format;
-	} else {
-		// Standard path: reinterpret as uint for raw bit-move
-		switch (bpp) {
-		case 4:  uavFormat = DXGI_FORMAT_R32_UINT; break;
-		case 2:  uavFormat = DXGI_FORMAT_R16_UINT; break;
-		case 1:  uavFormat = DXGI_FORMAT_R8_UINT;  break;
-		default: return false;
-		}
+	// Try the fast path: R_UINT UAV reinterpretation (same typeless family)
+	DXGI_FORMAT uintFormat;
+	switch (bpp) {
+	case 4:  uintFormat = DXGI_FORMAT_R32_UINT; break;
+	case 2:  uintFormat = DXGI_FORMAT_R16_UINT; break;
+	case 1:  uintFormat = DXGI_FORMAT_R8_UINT;  break;
+	default: return false;
 	}
 
-	ID3D11UnorderedAccessView* pUAV = CxbxGetOrCreateTextureUAV(pTexture, uavFormat);
-	if (!pUAV) {
-		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11UnswizzleTexture: Failed to create UAV (format=%u)", uavFormat);
+	ID3D11UnorderedAccessView* pUAV = CxbxGetOrCreateTextureUAV(pTexture, uintFormat);
+	if (pUAV) {
+		// Fast path: raw uint bit-move via the standard unswizzle CS
+		UINT cbData[8] = { maskX, maskY, width, height, bpp, 0, 0, 0 };
+		hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleCB, cbData, sizeof(cbData));
+		if (FAILED(hr))
+			return false;
+
+		UINT groupsX = (width + 7) / 8;
+		UINT groupsY = (height + 7) / 8;
+		CxbxD3D11DispatchCS(g_pD3D11UnswizzleCS, g_pD3D11UnswizzleCB,
+			1, &g_pD3D11UnswizzleSRV, pUAV, groupsX, groupsY, 1);
+		return true;
+	}
+
+	// R_UINT failed (cross-family format) — use typed float4 CS with same-format UAV
+	if (!g_pD3D11UnswizzleBGRA_CS)
+		return false;
+
+	int fmtDecode = CxbxGetTypedUnswizzleDecode(format);
+	if (fmtDecode < 0) {
+		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11UnswizzleTexture: No typed decode for format %u", format);
 		return false;
 	}
 
-	// Dispatch 8x8 thread groups covering the texture dimensions
+	pUAV = CxbxGetOrCreateTextureUAV(pTexture, format);
+	if (!pUAV) {
+		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11UnswizzleTexture: Failed to create same-format UAV (format=%u)", format);
+		return false;
+	}
+
+	UINT cbData[8] = { maskX, maskY, width, height, bpp, (UINT)fmtDecode, 0, 0 };
+	hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleCB, cbData, sizeof(cbData));
+	if (FAILED(hr))
+		return false;
+
 	UINT groupsX = (width + 7) / 8;
 	UINT groupsY = (height + 7) / 8;
-	ID3D11ComputeShader* pCS = bUseBGRA_CS ? g_pD3D11UnswizzleBGRA_CS : g_pD3D11UnswizzleCS;
-	CxbxD3D11DispatchCS(pCS, g_pD3D11UnswizzleCB,
+	CxbxD3D11DispatchCS(g_pD3D11UnswizzleBGRA_CS, g_pD3D11UnswizzleCB,
 		1, &g_pD3D11UnswizzleSRV, pUAV, groupsX, groupsY, 1);
-
 	return true;
 }
 
