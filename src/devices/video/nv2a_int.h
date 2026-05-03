@@ -275,6 +275,7 @@ typedef struct PGRAPHState {
 	xbox::addr_xt dma_semaphore;
 
 	xbox::addr_xt dma_report;
+	unsigned int zpass_pixel_count_enable;
 	unsigned int zpass_pixel_count_result;
 
 	unsigned int primitive_mode;

@@ -206,6 +206,49 @@ void D3D11_draw_state_update(NV2AState *d)
 	LOG_INCOMPLETE(); // TODO : Read state from pgraph, convert to D3D
 }
 
+// ---- NV2A Zpass pixel count (visibility test) via D3D11 occlusion queries ----
+
+// Persistent occlusion query reused across draw calls.
+// Created on first use; Begin/End bracket each draw when zpass counting is enabled.
+static ID3D11Query* g_pZpassQuery = nullptr;
+
+void D3D11_zpass_begin(NV2AState *d)
+{
+	if (!g_pD3DDevice || !g_pD3DDeviceContext)
+		return;
+
+	// Create the occlusion query on first use
+	if (g_pZpassQuery == nullptr) {
+		D3D11_QUERY_DESC desc = {};
+		desc.Query = D3D11_QUERY_OCCLUSION;
+		HRESULT hr = g_pD3DDevice->CreateQuery(&desc, &g_pZpassQuery);
+		if (FAILED(hr) || g_pZpassQuery == nullptr)
+			return;
+	}
+
+	g_pD3DDeviceContext->Begin(g_pZpassQuery);
+}
+
+void D3D11_zpass_end(NV2AState *d)
+{
+	if (!g_pD3DDeviceContext || !g_pZpassQuery)
+		return;
+
+	PGRAPHState *pg = &d->pgraph;
+
+	g_pD3DDeviceContext->End(g_pZpassQuery);
+
+	// Retrieve the occlusion result (spin-wait; draw just completed so GPU is close)
+	UINT64 pixelCount = 0;
+	while (g_pD3DDeviceContext->GetData(g_pZpassQuery, &pixelCount, sizeof(pixelCount), 0) == S_FALSE) {
+		SwitchToThread();
+	}
+
+	pg->zpass_pixel_count_result += (unsigned int)pixelCount;
+}
+
+// ---- End zpass ----
+
 void D3D11_draw_clear(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
@@ -287,6 +330,8 @@ extern void(*pgraph_draw_state_update)(NV2AState *d);
 extern void(*pgraph_draw_clear)(NV2AState *d);
 extern void(*pgraph_draw_patch)(NV2AState *d);
 extern void(*pgraph_flip_stall)(NV2AState *d);
+extern void(*pgraph_zpass_begin)(NV2AState *d);
+extern void(*pgraph_zpass_end)(NV2AState *d);
 
 extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget);
 
@@ -460,6 +505,8 @@ void D3D11_init_pgraph_plugins()
 	pgraph_draw_clear = D3D11_draw_clear;
 	pgraph_draw_patch = D3D11_draw_patch;
 	pgraph_flip_stall = D3D11_flip_stall;
+	pgraph_zpass_begin = D3D11_zpass_begin;
+	pgraph_zpass_end = D3D11_zpass_end;
 }
 
 extern void pgraph_handle_method(

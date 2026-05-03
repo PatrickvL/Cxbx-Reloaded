@@ -5845,6 +5845,116 @@ void WINAPI xbox::EMUPATCH(D3DDevice_SetSwapCallback)
 (
 	X_D3DSWAPCALLBACK		pCallback
 )
+
+// ******************************************************************
+// * patch: D3DDevice_BeginVisibilityTest (DISABLED — NV2A PGRAPH occlusion queries)
+// ******************************************************************
+xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_BeginVisibilityTest)()
+{
+	LOG_FUNC();
+
+	if (g_bEnableHostQueryVisibilityTest) {
+		D3D11_QUERY_DESC QueryDesc;
+		QueryDesc.Query = D3D11_QUERY_OCCLUSION;
+		QueryDesc.MiscFlags = 0;
+		ID3D11Query* pHostQueryVisibilityTest = nullptr;
+		HRESULT hRet = g_pD3DDevice->CreateQuery(&QueryDesc, &pHostQueryVisibilityTest);
+		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateQuery (visibility test)");
+		if (pHostQueryVisibilityTest != nullptr) {
+			CxbxQueryIssueBegin(pHostQueryVisibilityTest);
+			g_HostQueryVisibilityTests.push(pHostQueryVisibilityTest);
+			pHostQueryVisibilityTest = nullptr;
+		}
+	}
+
+	return S_OK;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_EndVisibilityTest_0__LTCG_eax1 (DISABLED)
+// ******************************************************************
+__declspec(naked) xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_EndVisibilityTest_0__LTCG_eax1)()
+{
+	dword_xt Index;
+	xbox::hresult_xt result;
+	__asm {
+		LTCG_PROLOGUE
+		mov  Index, eax
+	}
+	result = EMUPATCH(D3DDevice_EndVisibilityTest)(Index);
+	__asm {
+		mov  eax, result
+		LTCG_EPILOGUE
+		ret
+	}
+}
+
+// ******************************************************************
+// * patch: D3DDevice_EndVisibilityTest (DISABLED)
+// ******************************************************************
+xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_EndVisibilityTest)(dword_xt Index)
+{
+	LOG_FUNC_ONE_ARG(Index);
+
+	if (g_bEnableHostQueryVisibilityTest) {
+		if (g_HostVisibilityTestMap[Index] != nullptr) {
+			return E_OUTOFMEMORY;
+		}
+		if (g_HostQueryVisibilityTests.empty()) {
+			return 2088;
+		}
+		ID3D11Query* pHostQueryVisibilityTest = g_HostQueryVisibilityTests.top();
+		g_HostQueryVisibilityTests.pop();
+		assert(pHostQueryVisibilityTest != nullptr);
+		CxbxQueryIssueEnd(pHostQueryVisibilityTest);
+		g_HostVisibilityTestMap[Index] = pHostQueryVisibilityTest;
+	}
+
+	return S_OK;
+}
+
+// ******************************************************************
+// * patch: D3DDevice_GetVisibilityTestResult (DISABLED)
+// ******************************************************************
+xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult)
+(
+	dword_xt                       Index,
+	uint_xt                       *pResult,
+	ulonglong_xt                  *pTimeStamp
+)
+{
+	LOG_FUNC_BEGIN
+		LOG_FUNC_ARG(Index)
+		LOG_FUNC_ARG(pResult)
+		LOG_FUNC_ARG(pTimeStamp)
+		LOG_FUNC_END;
+
+	if (g_bEnableHostQueryVisibilityTest) {
+		ID3D11Query* pHostQueryVisibilityTest = g_HostVisibilityTestMap[Index];
+		if (pHostQueryVisibilityTest == nullptr) {
+			return E_OUTOFMEMORY;
+		}
+		UINT64 occlusionData = 0;
+		HRESULT hRet;
+		while ((hRet = CxbxQueryGetData(pHostQueryVisibilityTest, &occlusionData, sizeof(occlusionData), 0)) == S_FALSE) {
+			SwitchToThread();
+		}
+		if (pResult != xbox::zeroptr)
+			*pResult = (uint_xt)occlusionData;
+		g_HostVisibilityTestMap[Index] = nullptr;
+		pHostQueryVisibilityTest->Release();
+	} else {
+		if (pResult != xbox::zeroptr) {
+			*pResult = 640 * 480;
+		}
+	}
+
+	if (pTimeStamp != xbox::zeroptr) {
+		*pTimeStamp = sizeof(DWORD);
+	}
+
+	return S_OK;
+}
 {
 	LOG_FUNC_ONE_ARG(pCallback);
 

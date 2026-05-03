@@ -182,6 +182,8 @@ void (*pgraph_draw_state_update)(NV2AState *d);
 void (*pgraph_draw_clear)(NV2AState *d);
 void (*pgraph_draw_patch)(NV2AState *d);  // Hardware tessellation callback
 void (*pgraph_flip_stall)(NV2AState *d);  // Host present on FLIP_STALL
+void (*pgraph_zpass_begin)(NV2AState *d); // Begin occlusion query for zpass counting
+void (*pgraph_zpass_end)(NV2AState *d);   // End occlusion query, accumulate result
 
 // Set true the first time the title issues an explicit NV097_FLIP_STALL.
 // Once observed, the puller's auto-present fallback (intended for raw push
@@ -1647,6 +1649,11 @@ void pgraph_handle_method(NV2AState *d,
 					NV2A_GL_DPRINTF(true, "EMPTY NV097_SET_BEGIN_END");
 					assert(false);
 				}
+
+				// End occlusion query and accumulate zpass pixel count
+				if (pg->zpass_pixel_count_enable && pgraph_zpass_end != nullptr) {
+					pgraph_zpass_end(d);
+				}
 			} else {
 
 				assert(parameter <= NV097_SET_BEGIN_END_OP_POLYGON);
@@ -1655,6 +1662,11 @@ void pgraph_handle_method(NV2AState *d,
 
 				if (pgraph_draw_state_update != nullptr) {
 					pgraph_draw_state_update(d);
+				}
+
+				// Begin occlusion query for zpass pixel counting
+				if (pg->zpass_pixel_count_enable && pgraph_zpass_begin != nullptr) {
+					pgraph_zpass_begin(d);
 				}
 
 				pg->inline_elements_length = 0;
@@ -1982,10 +1994,10 @@ void pgraph_handle_method(NV2AState *d,
 		    slot = (method - NV097_SET_TEXTURE_MATRIX_ENABLE) / 4;
 		    pg->texture_matrix_enable[slot] = parameter != 0;
 		    break;
-		//
-		// case NV097_SET_ZPASS_PIXEL_COUNT_ENABLE:
-		//     pg->zpass_pixel_count_enable = parameter;
-		//     break;
+
+		case NV097_SET_ZPASS_PIXEL_COUNT_ENABLE:
+		    pg->zpass_pixel_count_enable = parameter;
+		    break;
 		//
 		// CASE_4(NV097_SET_TEXTURE_OFFSET, 64):
 		//     Handled by table: NV_PGRAPH_TEXOFFSET0

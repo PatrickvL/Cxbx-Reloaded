@@ -39,30 +39,8 @@ namespace xbox {
 // ******************************************************************
 xbox::bool_xt WINAPI EMUPATCH(D3DDevice_IsBusy)();
 
-// ******************************************************************
-// * patch: D3DDevice_BeginVisibilityTest
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_BeginVisibilityTest)();
-
-// ******************************************************************
-// * patch: D3DDevice_EndVisibilityTest
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_EndVisibilityTest)
-(
-   	dword_xt                       Index
-);
-
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_EndVisibilityTest_0__LTCG_eax1)();
-
-// ******************************************************************
-// * patch: D3DDevice_GetVisibilityTestResult
-// ******************************************************************
-xbox::hresult_xt WINAPI EMUPATCH(D3DDevice_GetVisibilityTestResult)
-(
-   	dword_xt                       Index,
-   	uint_xt                       *pResult,
-   	ulonglong_xt                  *pTimeStamp
-);
+// D3DDevice_BeginVisibilityTest / EndVisibilityTest / GetVisibilityTestResult — disabled.
+// Visibility tests now handled natively via NV2A PGRAPH occlusion queries.
 
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2)();
 xbox::void_xt WINAPI EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_edx1_eax2)();

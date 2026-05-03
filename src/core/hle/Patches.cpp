@@ -74,7 +74,11 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: trampoline-only, toggles unused g_bRecordingPushBuffer flag
 	//PATCH_ENTRY("D3DDevice_BeginPushBuffer", xbox::EMUPATCH(D3DDevice_BeginPushBuffer), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_BeginPushBuffer_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_BeginPushBuffer_0__LTCG_edi1), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_BeginVisibilityTest", xbox::EMUPATCH(D3DDevice_BeginVisibilityTest), PATCH_HLE_D3D),
+	// Disabled: Visibility tests now handled natively via NV2A PGRAPH.
+	// Xbox code pushes NV097_CLEAR_REPORT_VALUE, SET_ZPASS_PIXEL_COUNT_ENABLE, and
+	// NV097_GET_REPORT through PFIFO. PGRAPH wraps D3D11 draws with occlusion queries
+	// and accumulates z-passing pixel counts into pg->zpass_pixel_count_result.
+	//PATCH_ENTRY("D3DDevice_BeginVisibilityTest", xbox::EMUPATCH(D3DDevice_BeginVisibilityTest), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
 	//PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
 	// Disabled: Xbox native BlockUntilVerticalBlank waits on m_VerticalBlankEvent KEVENT
@@ -115,8 +119,8 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_EndPush", xbox::EMUPATCH(D3DDevice_EndPush), PATCH_HLE_D3D),
 	// Disabled: trampoline-only, clears unused g_bRecordingPushBuffer flag
 	//PATCH_ENTRY("D3DDevice_EndPushBuffer", xbox::EMUPATCH(D3DDevice_EndPushBuffer), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_EndVisibilityTest", xbox::EMUPATCH(D3DDevice_EndVisibilityTest), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_EndVisibilityTest_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_EndVisibilityTest_0__LTCG_eax1), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_EndVisibilityTest", xbox::EMUPATCH(D3DDevice_EndVisibilityTest), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_EndVisibilityTest_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_EndVisibilityTest_0__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_FlushVertexCache", xbox::EMUPATCH(D3DDevice_FlushVertexCache), PATCH_HLE_D3D),
 	// Disabled: Xbox native GetBackBuffer returns correct Xbox surface pointers.
 	// No HLE code depends on intercepting the returned X_D3DSurface*.
@@ -148,7 +152,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_GetVertexShaderType", xbox::EMUPATCH(D3DDevice_GetVertexShaderType), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetViewportOffsetAndScale", xbox::EMUPATCH(D3DDevice_GetViewportOffsetAndScale), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_GetViewportOffsetAndScale_0__LTCG_edx1_ecx2", xbox::EMUPATCH(D3DDevice_GetViewportOffsetAndScale_0__LTCG_edx1_ecx2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_GetVisibilityTestResult", xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_GetVisibilityTestResult", xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult), PATCH_HLE_D3D),
 	// Disabled: Native InsertCallback pushes NV097_NO_OPERATION(param) to the push buffer.
 	// PGRAPH raises INTR_ERROR → miniport ISR reads TRAPPED_DATA_LOW → dispatches callback.
 	// The HLE version stored callbacks in g_Xbox_CallbackQueue but CxbxHandleXboxCallbacks()
