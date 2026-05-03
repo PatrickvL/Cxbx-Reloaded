@@ -1862,7 +1862,11 @@ void pgraph_handle_method(NV2AState *d,
 			xbox::addr_xt semaphore_dma_len;
 			uint8_t *semaphore_data = (uint8_t*)nv_dma_map(d, pg->dma_semaphore,
 				&semaphore_dma_len);
-			assert(semaphore_offset < semaphore_dma_len);
+			if (semaphore_offset >= semaphore_dma_len) {
+				EmuLog(LOG_LEVEL::WARNING, "Semaphore offset 0x%X >= dma_len 0x%X, skipping release",
+					semaphore_offset, semaphore_dma_len);
+				break;
+			}
 			semaphore_data += semaphore_offset;
 
 			stl_le_p((uint32_t*)semaphore_data, parameter);

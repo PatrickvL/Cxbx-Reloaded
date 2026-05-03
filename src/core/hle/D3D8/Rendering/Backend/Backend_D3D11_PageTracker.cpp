@@ -296,6 +296,14 @@ void CxbxPageTrackerInit()
 			EmuLog(LOG_LEVEL::WARNING, "PageTrackerInit: Failed to create UNORM8x4 SRV (hr=0x%08X)", hr);
 	}
 
+	// Reset write-watch BEFORE the initial upload. This ensures that any writes
+	// occurring concurrently (from the Xbox title thread) during the memcpy will
+	// have their dirty bits preserved and picked up by the first flush. If we
+	// reset AFTER the memcpy, writes that happen between the memcpy passing a page
+	// and the reset would have their dirty bits cleared, leaving stale data in the
+	// mirror with no way to detect it later.
+	ResetWriteWatch((PVOID)CONTIG_BASE, CONTIG_SIZE);
+
 	// Initial full upload of contiguous memory to GPU mirror
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -305,9 +313,6 @@ void CxbxPageTrackerInit()
 			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
 		}
 	}
-
-	// Reset write-watch to only track changes from this point forward
-	ResetWriteWatch((PVOID)CONTIG_BASE, CONTIG_SIZE);
 
 	// Detect Wine — GetWriteWatch may not reliably track dirty pages.
 	// When running on Wine, always do a full upload on every flush.
@@ -430,31 +435,7 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	if (result != 0 || count == 0)
 		return 0;
 
-	// Mark all flushed pages as texture-dirty (for deswizzle gating).
-	// This must happen regardless of the upload strategy below, so that
-	// HostResourceRequiresUpdate can detect which textures need re-deswizzle.
-	if (count > PAGE_COUNT / 4) {
-		// Bulk dirty — mark all pages as texture-dirty
-		memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
-	} else {
-		for (ULONG_PTR i = 0; i < count; i++) {
-			uint32_t pageIdx = (uint32_t)((uintptr_t)s_WriteWatchPages[i] - CONTIG_BASE) / PAGE_SIZE_;
-			SetBit(s_TextureDirtyBitmap, pageIdx);
-		}
-	}
-
-	// Many pages dirty AND first flush of frame: safe to DISCARD + full memcpy.
-	// DISCARD orphans the GPU buffer — any draw calls issued earlier in this frame
-	// that haven't completed yet would read from the orphaned (old) buffer, which is
-	// fine because DISCARD gives us a fresh allocation. But mid-frame DISCARD would
-	// lose updates from earlier flushes, so we only allow it on the first flush.
-	if (count > PAGE_COUNT / 4 && s_bFirstFlushOfFrame) {
-		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (SUCCEEDED(hr)) {
-			memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
-			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
-		}
+	// 
 		s_bFirstFlushOfFrame = false;
 	} else {
 		// Incremental update: NO_OVERWRITE preserves prior flush data in the same frame.
