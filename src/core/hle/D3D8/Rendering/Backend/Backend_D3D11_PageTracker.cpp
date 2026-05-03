@@ -47,7 +47,6 @@
 #include "common/AddressRanges.h"
 #include "common/win32/WineEnv.h"
 
-#include <algorithm>
 #include <cstring>
 
 // Wine may not reliably support MEM_WRITE_WATCH / GetWriteWatch.
@@ -465,17 +464,14 @@ uint32_t CxbxPageTrackerFlushToGPU()
 		// Incremental update: NO_OVERWRITE preserves prior flush data in the same frame.
 		// Coalesce consecutive dirty pages into contiguous runs to minimize memcpy calls
 		// and maximize throughput (large memcpy uses REP MOVSB / AVX at full bandwidth).
-
-		// GetWriteWatch returns pages in ascending address order per MSDN, but sort
-		// defensively to guarantee correctness of the coalescing algorithm.
-		std::sort(s_WriteWatchPages, s_WriteWatchPages + count);
+		// GetWriteWatch guarantees ascending address order per MSDN — no sort needed.
 
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
 		if (SUCCEEDED(hr)) {
 			uint8_t* pDst = (uint8_t*)mapped.pData;
 
-			// Walk the sorted page list and merge consecutive pages into runs
+			// Walk the page list and merge consecutive pages into runs
 			ULONG_PTR runStart = 0;
 			while (runStart < count) {
 				uintptr_t startAddr = (uintptr_t)s_WriteWatchPages[runStart];
