@@ -97,7 +97,22 @@ static D3D11_BLEND_OP MapPGRAPHBlendOp(unsigned int eqn)
 // * Read NV2A PGRAPH registers and populate D3D11 state descriptors.
 // * This is the PGRAPH-driven replacement for XboxRenderStates.Apply()
 // * for blend, depth-stencil, and rasterizer pipeline state.
+// *
+// * Only sets dirty flags when the relevant PGRAPH registers actually
+// * changed since the last call, avoiding expensive state object
+// * recreation (CreateBlendState etc.) on every draw.
 // ******************************************************************
+
+// Cached PGRAPH register values for change-detection
+static uint32_t s_CachedBlendReg = ~0u;
+static uint32_t s_CachedBlendColorReg = ~0u;
+static uint32_t s_CachedControl0Reg = ~0u;
+static uint32_t s_CachedControl1Reg = ~0u;
+static uint32_t s_CachedControl2Reg = ~0u;
+static uint32_t s_CachedControl3Reg = ~0u;
+static uint32_t s_CachedSetupRasterReg = ~0u;
+static uint32_t s_CachedZOffsetBiasReg = ~0u;
+static uint32_t s_CachedZOffsetFactorReg = ~0u;
 void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg)
 {
 	if (!pg) return;
@@ -105,140 +120,143 @@ void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg)
 	// ---- Blend state from NV_PGRAPH_BLEND (0x1804) ----
 	{
 		uint32_t blend = pg->regs[RI(NV_PGRAPH_BLEND)];
-
-		g_D3D11BlendDesc.RenderTarget[0].BlendEnable = (blend & NV_PGRAPH_BLEND_EN) ? TRUE : FALSE;
-
-		unsigned int sfactor = GET_MASK(blend, NV_PGRAPH_BLEND_SFACTOR);
-		unsigned int dfactor = GET_MASK(blend, NV_PGRAPH_BLEND_DFACTOR);
-		unsigned int eqn    = GET_MASK(blend, NV_PGRAPH_BLEND_EQN);
-
-		D3D11_BLEND srcBlend  = MapPGRAPHBlendFactor(sfactor);
-		D3D11_BLEND destBlend = MapPGRAPHBlendFactor(dfactor);
-		D3D11_BLEND_OP blendOp = MapPGRAPHBlendOp(eqn);
-
-		g_D3D11BlendDesc.RenderTarget[0].SrcBlend      = srcBlend;
-		g_D3D11BlendDesc.RenderTarget[0].SrcBlendAlpha  = RemapBlendForAlpha(srcBlend);
-		g_D3D11BlendDesc.RenderTarget[0].DestBlend     = destBlend;
-		g_D3D11BlendDesc.RenderTarget[0].DestBlendAlpha = RemapBlendForAlpha(destBlend);
-		g_D3D11BlendDesc.RenderTarget[0].BlendOp       = blendOp;
-		g_D3D11BlendDesc.RenderTarget[0].BlendOpAlpha  = blendOp;
-
-		g_bD3D11BlendStateDirty = true;
-	}
-
-	// ---- Blend color from NV_PGRAPH_BLENDCOLOR (0x1808) ----
-	{
+		uint32_t ctrl0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
 		uint32_t bc = pg->regs[RI(NV_PGRAPH_BLENDCOLOR)];
-		// NV2A BLENDCOLOR is ARGB packed
-		g_D3D11BlendFactor[0] = ((bc >> 16) & 0xFF) / 255.0f; // R
-		g_D3D11BlendFactor[1] = ((bc >> 8) & 0xFF) / 255.0f;  // G
-		g_D3D11BlendFactor[2] = (bc & 0xFF) / 255.0f;         // B
-		g_D3D11BlendFactor[3] = ((bc >> 24) & 0xFF) / 255.0f;  // A
+
+		// Only rebuild blend state if relevant registers changed
+		if (blend != s_CachedBlendReg || bc != s_CachedBlendColorReg ||
+			(ctrl0 & 0x3C000000u) != (s_CachedControl0Reg & 0x3C000000u)) { // color write mask bits 26-29
+			s_CachedBlendReg = blend;
+			s_CachedBlendColorReg = bc;
+
+			g_D3D11BlendDesc.RenderTarget[0].BlendEnable = (blend & NV_PGRAPH_BLEND_EN) ? TRUE : FALSE;
+
+			unsigned int sfactor = GET_MASK(blend, NV_PGRAPH_BLEND_SFACTOR);
+			unsigned int dfactor = GET_MASK(blend, NV_PGRAPH_BLEND_DFACTOR);
+			unsigned int eqn    = GET_MASK(blend, NV_PGRAPH_BLEND_EQN);
+
+			D3D11_BLEND srcBlend  = MapPGRAPHBlendFactor(sfactor);
+			D3D11_BLEND destBlend = MapPGRAPHBlendFactor(dfactor);
+			D3D11_BLEND_OP blendOp = MapPGRAPHBlendOp(eqn);
+
+			g_D3D11BlendDesc.RenderTarget[0].SrcBlend      = srcBlend;
+			g_D3D11BlendDesc.RenderTarget[0].SrcBlendAlpha  = RemapBlendForAlpha(srcBlend);
+			g_D3D11BlendDesc.RenderTarget[0].DestBlend     = destBlend;
+			g_D3D11BlendDesc.RenderTarget[0].DestBlendAlpha = RemapBlendForAlpha(destBlend);
+			g_D3D11BlendDesc.RenderTarget[0].BlendOp       = blendOp;
+			g_D3D11BlendDesc.RenderTarget[0].BlendOpAlpha  = blendOp;
+
+			// NV2A BLENDCOLOR is ARGB packed
+			g_D3D11BlendFactor[0] = ((bc >> 16) & 0xFF) / 255.0f; // R
+			g_D3D11BlendFactor[1] = ((bc >> 8) & 0xFF) / 255.0f;  // G
+			g_D3D11BlendFactor[2] = (bc & 0xFF) / 255.0f;         // B
+			g_D3D11BlendFactor[3] = ((bc >> 24) & 0xFF) / 255.0f;  // A
+
+			// Color write mask
+			UINT8 writeMask = 0;
+			if (ctrl0 & NV_PGRAPH_CONTROL_0_RED_WRITE_ENABLE)   writeMask |= D3D11_COLOR_WRITE_ENABLE_RED;
+			if (ctrl0 & NV_PGRAPH_CONTROL_0_GREEN_WRITE_ENABLE) writeMask |= D3D11_COLOR_WRITE_ENABLE_GREEN;
+			if (ctrl0 & NV_PGRAPH_CONTROL_0_BLUE_WRITE_ENABLE)  writeMask |= D3D11_COLOR_WRITE_ENABLE_BLUE;
+			if (ctrl0 & NV_PGRAPH_CONTROL_0_ALPHA_WRITE_ENABLE) writeMask |= D3D11_COLOR_WRITE_ENABLE_ALPHA;
+			g_D3D11BlendDesc.RenderTarget[0].RenderTargetWriteMask = writeMask;
+
+			g_bD3D11BlendStateDirty = true;
+		}
 	}
 
-	// ---- Color write mask from NV_PGRAPH_CONTROL_0 bits 26-29 ----
+	// ---- Depth/stencil state from NV_PGRAPH_CONTROL_0/1/2 ----
 	{
 		uint32_t ctrl0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
-		UINT8 writeMask = 0;
-		if (ctrl0 & NV_PGRAPH_CONTROL_0_RED_WRITE_ENABLE)   writeMask |= D3D11_COLOR_WRITE_ENABLE_RED;
-		if (ctrl0 & NV_PGRAPH_CONTROL_0_GREEN_WRITE_ENABLE) writeMask |= D3D11_COLOR_WRITE_ENABLE_GREEN;
-		if (ctrl0 & NV_PGRAPH_CONTROL_0_BLUE_WRITE_ENABLE)  writeMask |= D3D11_COLOR_WRITE_ENABLE_BLUE;
-		if (ctrl0 & NV_PGRAPH_CONTROL_0_ALPHA_WRITE_ENABLE) writeMask |= D3D11_COLOR_WRITE_ENABLE_ALPHA;
-		g_D3D11BlendDesc.RenderTarget[0].RenderTargetWriteMask = writeMask;
-	}
-
-	// ---- Depth state from NV_PGRAPH_CONTROL_0 (0x194C) ----
-	{
-		uint32_t ctrl0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
-
-		g_D3D11DepthStencilDesc.DepthEnable = (ctrl0 & NV_PGRAPH_CONTROL_0_ZENABLE) ? TRUE : FALSE;
-		g_D3D11DepthStencilDesc.DepthWriteMask = (ctrl0 & NV_PGRAPH_CONTROL_0_ZWRITEENABLE)
-			? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
-
-		// NV2A comparison func values (0-7) = D3D11 comparison func values (1-8) minus 1
-		unsigned int zfunc = GET_MASK(ctrl0, NV_PGRAPH_CONTROL_0_ZFUNC);
-		g_D3D11DepthStencilDesc.DepthFunc = (D3D11_COMPARISON_FUNC)(zfunc + 1);
-
-		g_bD3D11DepthStencilStateDirty = true;
-	}
-
-	// ---- Stencil state from NV_PGRAPH_CONTROL_1 (0x1950) ----
-	{
 		uint32_t ctrl1 = pg->regs[RI(NV_PGRAPH_CONTROL_1)];
-
-		g_D3D11DepthStencilDesc.StencilEnable = (ctrl1 & NV_PGRAPH_CONTROL_1_STENCIL_TEST_ENABLE) ? TRUE : FALSE;
-
-		unsigned int sfunc = GET_MASK(ctrl1, NV_PGRAPH_CONTROL_1_STENCIL_FUNC);
-		D3D11_COMPARISON_FUNC stencilFunc = (D3D11_COMPARISON_FUNC)(sfunc + 1);
-		g_D3D11DepthStencilDesc.FrontFace.StencilFunc = stencilFunc;
-		g_D3D11DepthStencilDesc.BackFace.StencilFunc  = stencilFunc;
-
-		g_D3D11StencilRef = GET_MASK(ctrl1, NV_PGRAPH_CONTROL_1_STENCIL_REF);
-		g_D3D11DepthStencilDesc.StencilReadMask  = (UINT8)GET_MASK(ctrl1, NV_PGRAPH_CONTROL_1_STENCIL_MASK_READ);
-		g_D3D11DepthStencilDesc.StencilWriteMask = (UINT8)GET_MASK(ctrl1, NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE);
-	}
-
-	// ---- Stencil ops from NV_PGRAPH_CONTROL_2 (0x1954) ----
-	// NV2A stencil op values (1-8) match D3D11_STENCIL_OP (1-8) directly
-	{
 		uint32_t ctrl2 = pg->regs[RI(NV_PGRAPH_CONTROL_2)];
 
-		D3D11_STENCIL_OP failOp  = (D3D11_STENCIL_OP)GET_MASK(ctrl2, NV_PGRAPH_CONTROL_2_STENCIL_OP_FAIL);
-		D3D11_STENCIL_OP zfailOp = (D3D11_STENCIL_OP)GET_MASK(ctrl2, NV_PGRAPH_CONTROL_2_STENCIL_OP_ZFAIL);
-		D3D11_STENCIL_OP zpassOp = (D3D11_STENCIL_OP)GET_MASK(ctrl2, NV_PGRAPH_CONTROL_2_STENCIL_OP_ZPASS);
+		// Only rebuild if depth/stencil registers changed
+		// ctrl0 depth bits are below bit 26 (write mask is bits 26-29, handled above)
+		if (ctrl0 != s_CachedControl0Reg || ctrl1 != s_CachedControl1Reg || ctrl2 != s_CachedControl2Reg) {
+			s_CachedControl0Reg = ctrl0;
+			s_CachedControl1Reg = ctrl1;
+			s_CachedControl2Reg = ctrl2;
 
-		g_D3D11DepthStencilDesc.FrontFace.StencilFailOp      = failOp;
-		g_D3D11DepthStencilDesc.FrontFace.StencilDepthFailOp = zfailOp;
-		g_D3D11DepthStencilDesc.FrontFace.StencilPassOp      = zpassOp;
-		g_D3D11DepthStencilDesc.BackFace.StencilFailOp       = failOp;
-		g_D3D11DepthStencilDesc.BackFace.StencilDepthFailOp  = zfailOp;
-		g_D3D11DepthStencilDesc.BackFace.StencilPassOp       = zpassOp;
+			g_D3D11DepthStencilDesc.DepthEnable = (ctrl0 & NV_PGRAPH_CONTROL_0_ZENABLE) ? TRUE : FALSE;
+			g_D3D11DepthStencilDesc.DepthWriteMask = (ctrl0 & NV_PGRAPH_CONTROL_0_ZWRITEENABLE)
+				? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+
+			unsigned int zfunc = GET_MASK(ctrl0, NV_PGRAPH_CONTROL_0_ZFUNC);
+			g_D3D11DepthStencilDesc.DepthFunc = (D3D11_COMPARISON_FUNC)(zfunc + 1);
+
+			g_D3D11DepthStencilDesc.StencilEnable = (ctrl1 & NV_PGRAPH_CONTROL_1_STENCIL_TEST_ENABLE) ? TRUE : FALSE;
+
+			unsigned int sfunc = GET_MASK(ctrl1, NV_PGRAPH_CONTROL_1_STENCIL_FUNC);
+			D3D11_COMPARISON_FUNC stencilFunc = (D3D11_COMPARISON_FUNC)(sfunc + 1);
+			g_D3D11DepthStencilDesc.FrontFace.StencilFunc = stencilFunc;
+			g_D3D11DepthStencilDesc.BackFace.StencilFunc  = stencilFunc;
+
+			g_D3D11StencilRef = GET_MASK(ctrl1, NV_PGRAPH_CONTROL_1_STENCIL_REF);
+			g_D3D11DepthStencilDesc.StencilReadMask  = (UINT8)GET_MASK(ctrl1, NV_PGRAPH_CONTROL_1_STENCIL_MASK_READ);
+			g_D3D11DepthStencilDesc.StencilWriteMask = (UINT8)GET_MASK(ctrl1, NV_PGRAPH_CONTROL_1_STENCIL_MASK_WRITE);
+
+			D3D11_STENCIL_OP failOp  = (D3D11_STENCIL_OP)GET_MASK(ctrl2, NV_PGRAPH_CONTROL_2_STENCIL_OP_FAIL);
+			D3D11_STENCIL_OP zfailOp = (D3D11_STENCIL_OP)GET_MASK(ctrl2, NV_PGRAPH_CONTROL_2_STENCIL_OP_ZFAIL);
+			D3D11_STENCIL_OP zpassOp = (D3D11_STENCIL_OP)GET_MASK(ctrl2, NV_PGRAPH_CONTROL_2_STENCIL_OP_ZPASS);
+
+			g_D3D11DepthStencilDesc.FrontFace.StencilFailOp      = failOp;
+			g_D3D11DepthStencilDesc.FrontFace.StencilDepthFailOp = zfailOp;
+			g_D3D11DepthStencilDesc.FrontFace.StencilPassOp      = zpassOp;
+			g_D3D11DepthStencilDesc.BackFace.StencilFailOp       = failOp;
+			g_D3D11DepthStencilDesc.BackFace.StencilDepthFailOp  = zfailOp;
+			g_D3D11DepthStencilDesc.BackFace.StencilPassOp       = zpassOp;
+
+			g_bD3D11DepthStencilStateDirty = true;
+		}
 	}
 
 	// ---- Rasterizer state from NV_PGRAPH_SETUPRASTER (0x1990) ----
 	{
 		uint32_t setup = pg->regs[RI(NV_PGRAPH_SETUPRASTER)];
+		uint32_t zBiasReg = pg->regs[RI(NV_PGRAPH_ZOFFSETBIAS)];
+		uint32_t zFactorReg = pg->regs[RI(NV_PGRAPH_ZOFFSETFACTOR)];
 
-		// Fill mode: PGRAPH FRONTFACEMODE 0=FILL, 1=POINT, 2=LINE
-		unsigned int fillMode = GET_MASK(setup, NV_PGRAPH_SETUPRASTER_FRONTFACEMODE);
-		switch (fillMode) {
-		case NV_PGRAPH_SETUPRASTER_FRONTFACEMODE_FILL:  g_D3D11RasterizerDesc.FillMode = D3D11_FILL_SOLID; break;
-		case NV_PGRAPH_SETUPRASTER_FRONTFACEMODE_LINE:  g_D3D11RasterizerDesc.FillMode = D3D11_FILL_WIREFRAME; break;
-		case NV_PGRAPH_SETUPRASTER_FRONTFACEMODE_POINT: g_D3D11RasterizerDesc.FillMode = D3D11_FILL_WIREFRAME; break; // no point fill in D3D11
-		}
+		if (setup != s_CachedSetupRasterReg || zBiasReg != s_CachedZOffsetBiasReg || zFactorReg != s_CachedZOffsetFactorReg) {
+			s_CachedSetupRasterReg = setup;
+			s_CachedZOffsetBiasReg = zBiasReg;
+			s_CachedZOffsetFactorReg = zFactorReg;
 
-		// Cull mode
-		if (!(setup & NV_PGRAPH_SETUPRASTER_CULLENABLE)) {
-			g_D3D11RasterizerDesc.CullMode = D3D11_CULL_NONE;
-		} else {
-			unsigned int cullCtrl = GET_MASK(setup, NV_PGRAPH_SETUPRASTER_CULLCTRL);
-			switch (cullCtrl) {
-			case NV_PGRAPH_SETUPRASTER_CULLCTRL_FRONT:          g_D3D11RasterizerDesc.CullMode = D3D11_CULL_FRONT; break;
-			case NV_PGRAPH_SETUPRASTER_CULLCTRL_BACK:           g_D3D11RasterizerDesc.CullMode = D3D11_CULL_BACK; break;
-			case NV_PGRAPH_SETUPRASTER_CULLCTRL_FRONT_AND_BACK: g_D3D11RasterizerDesc.CullMode = D3D11_CULL_NONE; break; // D3D11 can't cull both
-			default:                                            g_D3D11RasterizerDesc.CullMode = D3D11_CULL_NONE; break;
+			// Fill mode: PGRAPH FRONTFACEMODE 0=FILL, 1=POINT, 2=LINE
+			unsigned int fillMode = GET_MASK(setup, NV_PGRAPH_SETUPRASTER_FRONTFACEMODE);
+			switch (fillMode) {
+			case NV_PGRAPH_SETUPRASTER_FRONTFACEMODE_FILL:  g_D3D11RasterizerDesc.FillMode = D3D11_FILL_SOLID; break;
+			case NV_PGRAPH_SETUPRASTER_FRONTFACEMODE_LINE:  g_D3D11RasterizerDesc.FillMode = D3D11_FILL_WIREFRAME; break;
+			case NV_PGRAPH_SETUPRASTER_FRONTFACEMODE_POINT: g_D3D11RasterizerDesc.FillMode = D3D11_FILL_WIREFRAME; break; // no point fill in D3D11
 			}
+
+			// Cull mode
+			if (!(setup & NV_PGRAPH_SETUPRASTER_CULLENABLE)) {
+				g_D3D11RasterizerDesc.CullMode = D3D11_CULL_NONE;
+			} else {
+				unsigned int cullCtrl = GET_MASK(setup, NV_PGRAPH_SETUPRASTER_CULLCTRL);
+				switch (cullCtrl) {
+				case NV_PGRAPH_SETUPRASTER_CULLCTRL_FRONT:          g_D3D11RasterizerDesc.CullMode = D3D11_CULL_FRONT; break;
+				case NV_PGRAPH_SETUPRASTER_CULLCTRL_BACK:           g_D3D11RasterizerDesc.CullMode = D3D11_CULL_BACK; break;
+				case NV_PGRAPH_SETUPRASTER_CULLCTRL_FRONT_AND_BACK: g_D3D11RasterizerDesc.CullMode = D3D11_CULL_NONE; break; // D3D11 can't cull both
+				default:                                            g_D3D11RasterizerDesc.CullMode = D3D11_CULL_NONE; break;
+				}
+			}
+
+			// Front face winding: PGRAPH bit 23 — 0=CW, 1=CCW
+			g_D3D11RasterizerDesc.FrontCounterClockwise = (setup & NV_PGRAPH_SETUPRASTER_FRONTFACE) ? TRUE : FALSE;
+
+			// Line antialiasing
+			g_D3D11RasterizerDesc.AntialiasedLineEnable = (setup & NV_PGRAPH_SETUPRASTER_LINESMOOTHENABLE) ? TRUE : FALSE;
+
+			// Depth bias
+			float zBias; std::memcpy(&zBias, &zBiasReg, sizeof(float));
+			float zFactor; std::memcpy(&zFactor, &zFactorReg, sizeof(float));
+			g_D3D11RasterizerDesc.DepthBias = static_cast<INT>(zBias * (float)(1 << 24));
+			g_D3D11RasterizerDesc.SlopeScaledDepthBias = zFactor;
+			g_D3D11RasterizerDesc.DepthBiasClamp = 0.0f;
+
+			g_bD3D11RasterizerStateDirty = true;
 		}
-
-		// Front face winding: PGRAPH bit 23 — 0=CW, 1=CCW
-		g_D3D11RasterizerDesc.FrontCounterClockwise = (setup & NV_PGRAPH_SETUPRASTER_FRONTFACE) ? TRUE : FALSE;
-
-		// Line antialiasing
-		g_D3D11RasterizerDesc.AntialiasedLineEnable = (setup & NV_PGRAPH_SETUPRASTER_LINESMOOTHENABLE) ? TRUE : FALSE;
-
-		g_bD3D11RasterizerStateDirty = true;
-	}
-
-	// ---- Depth bias from NV_PGRAPH_ZOFFSETBIAS / ZOFFSETFACTOR ----
-	{
-		float zBias; std::memcpy(&zBias, &pg->regs[RI(NV_PGRAPH_ZOFFSETBIAS)], sizeof(float));
-		float zFactor; std::memcpy(&zFactor, &pg->regs[RI(NV_PGRAPH_ZOFFSETFACTOR)], sizeof(float));
-		// NV2A stores float bias directly; D3D11 DepthBias is an integer
-		// scaled by the depth buffer's minimum representable value.
-		// For D24: DepthBias * (1 / 2^24).
-		g_D3D11RasterizerDesc.DepthBias = static_cast<INT>(zBias * (float)(1 << 24));
-		g_D3D11RasterizerDesc.SlopeScaledDepthBias = zFactor;
-		g_D3D11RasterizerDesc.DepthBiasClamp = 0.0f;
 	}
 
 	// ---- Point sprite enable from NV_PGRAPH_CONTROL_3 ----
@@ -588,11 +606,20 @@ void CxbxD3D11ApplyDirtyStates()
 
 	// Update GS constant buffer (shared by point sprite and thick line GS)
 	// xy = inverse viewport dimensions, z = line width, w = unused
+	// Only update when viewport or line width actually changed.
 	{
+		static float s_LastGSVpWidth = 0.0f;
+		static float s_LastGSVpHeight = 0.0f;
+		static float s_LastGSLineWidth = 0.0f;
+
 		D3D11_VIEWPORT vp = {};
 		UINT numVP = 1;
 		g_pD3DDeviceContext->RSGetViewports(&numVP, &vp);
-		if (vp.Width > 0 && vp.Height > 0 && g_pD3D11GSConstantBuffer) {
+		if (vp.Width > 0 && vp.Height > 0 && g_pD3D11GSConstantBuffer &&
+			(vp.Width != s_LastGSVpWidth || vp.Height != s_LastGSVpHeight || g_fLineWidth != s_LastGSLineWidth)) {
+			s_LastGSVpWidth = vp.Width;
+			s_LastGSVpHeight = vp.Height;
+			s_LastGSLineWidth = g_fLineWidth;
 			float gsConstants[4] = { 1.0f / vp.Width, 1.0f / vp.Height, g_fLineWidth, 0.0f };
 			CxbxD3D11UpdateDynamicBuffer(g_pD3D11GSConstantBuffer, gsConstants, sizeof(gsConstants));
 			g_pD3DDeviceContext->GSSetConstantBuffers(0, 1, &g_pD3D11GSConstantBuffer);
