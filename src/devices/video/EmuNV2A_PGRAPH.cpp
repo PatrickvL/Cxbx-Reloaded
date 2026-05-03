@@ -359,6 +359,12 @@ DEVICE_WRITE32(PGRAPH)
 
 		break;
     }
+	case NV_PGRAPH_CTX_CONTROL:
+		// CHID bit is managed by hardware channel switch (PFIFO puller), not by
+		// CPU MMIO writes.  Preserve it so kernel register init doesn't clear it.
+		pg->regs[RI(NV_PGRAPH_CTX_CONTROL)] = value
+			| (pg->regs[RI(NV_PGRAPH_CTX_CONTROL)] & NV_PGRAPH_CTX_CONTROL_CHID);
+		break;
 	default: 
 		DEVICE_WRITE32_REG(pgraph); // Was : DEBUG_WRITE32_UNHANDLED(PGRAPH);
 		break;
