@@ -1188,6 +1188,7 @@ void pgraph_handle_method(NV2AState *d,
 
 			assert(program_load < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
 			pg->program_data[program_load][slot % 4] = parameter;
+			pg->program_data_dirty = true;
 
 			if (slot % 4 == 3) {
 				SET_MASK(pg->regs[RI(NV_PGRAPH_CHEOPS_OFFSET)],

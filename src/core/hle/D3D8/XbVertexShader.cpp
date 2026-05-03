@@ -453,8 +453,14 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 	// The shader selects the active program via CHEOPS_PROGRAM_START.
 	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
-	CxbxD3D11UpdateDynamicBuffer(g_pD3D11XFPRBuf,
-		pg->program_data, sizeof(pg->program_data));
+	// Skip XFPR upload if program data hasn't changed (dirty flag set by NV097_SET_TRANSFORM_PROGRAM)
+	static bool s_XFPRUploaded = false;
+	if (!s_XFPRUploaded || pg->program_data_dirty) {
+		CxbxD3D11UpdateDynamicBuffer(g_pD3D11XFPRBuf,
+			pg->program_data, sizeof(pg->program_data));
+		s_XFPRUploaded = true;
+		// Note: program_data_dirty is cleared by RunVertexStateShader cache logic
+	}
 
 	// Bind the shared PGRAPH regs SRV to VS t12 (same buffer, different stage)
 	g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
@@ -642,20 +648,36 @@ void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT *pData)
 	NV2AState* dev = g_NV2A->GetDeviceState();
 	PGRAPHState* pg = &(dev->pgraph);
 
-	Nv2aVshProgram program = {}; // Note: This nulls program.steps
-	// TODO : Retain program globally and perform nv2a_vsh_parse_program only when
-	//        the address-range we're about to emulate was modified since last parse.
-	// TODO : As a suggestion for this, parse all NV2A_MAX_TRANSFORM_PROGRAM_LENGTH slots,
-	//        and here just point program.steps to global vsh_program_steps[Address].
-	Nv2aVshParseResult result = nv2a_vsh_parse_program(
-		&program, // Note : program.steps will be malloc'ed
-		pg->program_data[Address],
-		NV2A_MAX_TRANSFORM_PROGRAM_LENGTH - Address);
-	if (result != NV2AVPR_SUCCESS) {
-		LOG_TEST_CASE("nv2a_vsh_parse_program failed");
-		// TODO : Dump Nv2aVshParseResult as string and program for debugging purposes
-		return;
+	// Cache the parsed program globally; only re-parse when program_data changes
+	static Nv2aVshProgram s_CachedProgram = {};
+	static bool s_CachedProgramValid = false;
+
+	if (pg->program_data_dirty || !s_CachedProgramValid) {
+		if (s_CachedProgramValid) {
+			nv2a_vsh_program_destroy(&s_CachedProgram);
+		}
+		s_CachedProgram = {};
+		Nv2aVshParseResult result = nv2a_vsh_parse_program(
+			&s_CachedProgram,
+			pg->program_data[0],
+			NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
+		if (result != NV2AVPR_SUCCESS) {
+			LOG_TEST_CASE("nv2a_vsh_parse_program failed (cached full parse)");
+			s_CachedProgramValid = false;
+			return;
+		}
+		// Guard against buffer overflow: force is_final on the last slot so
+		// the executor always terminates within the 136-entry allocation,
+		// even if no instruction in the program sets the final bit.
+		s_CachedProgram.steps[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH - 1].is_final = true;
+		s_CachedProgramValid = true;
+		pg->program_data_dirty = false;
 	}
+
+	// Create a view into the cached program starting at Address
+	// Execution stops naturally at the step with is_final==true
+	Nv2aVshProgram program;
+	program.steps = s_CachedProgram.steps + Address;
 
 	Nv2aVshCPUXVSSExecutionState state_linkage;
 	Nv2aVshExecutionState state = nv2a_vsh_emu_initialize_xss_execution_state(
@@ -666,7 +688,5 @@ void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT *pData)
 
 	nv2a_vsh_emu_execute_track_context_writes(&state, &program, pg->vsh_constants_dirty);
 	// Note: Above emulation's primary purpose is to update pg->vsh_constants and pg->vsh_constants_dirty
-	// therefor, nothing else needs to be done here, other than to cleanup
-
-	nv2a_vsh_program_destroy(&program); // Note: program.steps will be free'ed
+	// Do NOT call nv2a_vsh_program_destroy here — program.steps is a borrowed pointer
 }

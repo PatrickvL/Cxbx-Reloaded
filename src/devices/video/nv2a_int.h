@@ -284,6 +284,7 @@ typedef struct PGRAPHState {
 	uint32_t clear_surface_flags; // NV097_CLEAR_SURFACE parameter (Z/STENCIL/COLOR mask)
 
 	uint32_t program_data[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][VSH_TOKEN_SIZE]; // XFPR RAM mirror: NV2A Transform Program RAM (on-chip XF SRAM, 136 × 92-bit instructions in 128-bit containers)
+	bool program_data_dirty; // Set when any program_data slot is written; cleared after re-parse
 
 	uint32_t vsh_constants[NV2A_VERTEXSHADER_CONSTANTS][4]; // XFCTX RAM mirror: NV2A Transform Context RAM (on-chip XF SRAM, 192 × float4)
 	bool vsh_constants_dirty[NV2A_VERTEXSHADER_CONSTANTS];
