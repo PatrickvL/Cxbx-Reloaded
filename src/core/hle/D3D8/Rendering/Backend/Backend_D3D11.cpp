@@ -881,5 +881,6 @@ void CxbxD3D11ReleaseBackendResources()
 	if (g_pD3D11XFPRSRV) { g_pD3D11XFPRSRV->Release(); g_pD3D11XFPRSRV = nullptr; }
 	if (g_pD3D11XFPRBuf) { g_pD3D11XFPRBuf->Release(); g_pD3D11XFPRBuf = nullptr; }
 	ClearRTVCache();
+	CxbxReleaseOverlayResources();
 }
 

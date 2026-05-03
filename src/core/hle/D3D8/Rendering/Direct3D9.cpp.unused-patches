@@ -5939,6 +5939,15 @@ static void CxbxMirrorTexOffsetToPGRAPH(DWORD Stage, xbox::addr_xt dataAddr)
 
 static xbox::X_D3DBaseTexture CxbxActiveTextureCopies[xbox::X_D3DTS_STAGECOUNT] = {};
 
+// D3DDevice_EnableOverlay — disabled.
+// Native Xbox code programs NV_PVIDEO_STOP/BUFFER; D3D11_flip_stall reads PVIDEO state.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
+
+// D3DDevice_UpdateOverlay — disabled.
+// Native Xbox code programs PVIDEO registers (OFFSET, SIZE_IN, FORMAT, POINT_OUT, SIZE_OUT);
+// D3D11_flip_stall composites overlay from VRAM using PVIDEO register state.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
+
 xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_SetTexture)
 (
 	dword_xt           Stage,

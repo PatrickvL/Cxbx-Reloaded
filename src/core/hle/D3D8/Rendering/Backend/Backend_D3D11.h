@@ -147,6 +147,7 @@ HRESULT CxbxD3D11CreateConstantBuffer(UINT byteWidth, bool bDynamic, ID3D11Buffe
 
 // Release all D3D11 backend resources (blit shaders, samplers, constant buffers, state objects)
 void CxbxD3D11ReleaseBackendResources();
+void CxbxReleaseOverlayResources();
 
 // Read NV2A PGRAPH registers and update D3D11 blend/depth-stencil/rasterizer descriptors.
 struct PGRAPHState; // forward decl

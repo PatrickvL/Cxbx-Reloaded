@@ -27,7 +27,6 @@
 #include "devices/video/nv2a.h"        // For pfifo_flush_to_pgraph
 
 // Variables only used in EmuPatches_Misc.cpp
-static DWORD g_OverlaySwap = 0; // Set in D3DDevice_UpdateOverlay
 static std::stack<ID3D11Query*> g_HostQueryVisibilityTests;
 static std::map<int, ID3D11Query*> g_HostVisibilityTestMap;
 
@@ -168,141 +167,14 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(D3DDevice_GetVisibilityTestResult)
    	return S_OK;
 }
 
-// ******************************************************************
-// * patch: D3DDevice_EnableOverlay
-// ******************************************************************
-static void CxbxrImpl_EnableOverlay()
-{
-	// The Xbox D3DDevice_EnableOverlay call merely resets the active
-	// NV2A overlay state, it doesn't actually enable or disable anything.
-	// Thus, we should just reset our overlay state here too. A title will
-	// show new overlay data via D3DDevice_UpdateOverlay (see below).
-	g_OverlayProxy = {};
-}
+// D3DDevice_EnableOverlay — disabled.
+// Native Xbox code programs NV_PVIDEO_STOP/BUFFER; D3D11_flip_stall reads PVIDEO state.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_EnableOverlay)
-(
-   	bool_xt Enable
-)
-{
-	LOG_FUNC_ONE_ARG(Enable);
-
-	CxbxrImpl_EnableOverlay();
-}
-
-// ******************************************************************
-// * patch: D3DDevice_EnableOverlay_0__LTCG
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_EnableOverlay_0__LTCG)()
-{
-	LOG_FUNC();
-
-	CxbxrImpl_EnableOverlay();
-}
-
-static void CxbxrImpl_UpdateOverlay
-(
-	xbox::X_D3DSurface *pSurface,
-	CONST xbox::X_RECT *SrcRect,
-	CONST xbox::X_RECT *DstRect,
-	xbox::bool_xt       EnableColorKey,
-	xbox::X_D3DCOLOR    ColorKey
-)
-{
-	using namespace xbox;
-
-	// Reset and remember the overlay arguments, so our D3DDevice_Swap patch
-	// can correctly show this overlay surface data.
-	g_OverlayProxy = {};
-	if (pSurface) {
-		g_OverlayProxy.Surface = *pSurface;
-		if (SrcRect)
-			g_OverlayProxy.SrcRect = *SrcRect;
-
-		if (DstRect)
-			g_OverlayProxy.DstRect = *DstRect;
-
-		g_OverlayProxy.EnableColorKey = EnableColorKey;
-		g_OverlayProxy.ColorKey = ColorKey;
-		// Update overlay if present was not called since the last call to
-		// EmuD3DDevice_UpdateOverlay.
-		if (g_OverlaySwap != g_Xbox_SwapData.Swap - 1) {
-			EMUPATCH(D3DDevice_Swap)(CXBX_SWAP_PRESENT_FORWARD);
-		}
-
-		g_OverlaySwap = g_Xbox_SwapData.Swap;
-	}
-}
-
-// ******************************************************************
-// * patch: D3DDevice_UpdateOverlay
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_UpdateOverlay)
-(
-	X_D3DSurface *pSurface,
-	CONST RECT   *SrcRect,
-	CONST RECT   *DstRect,
-	bool_xt       EnableColorKey,
-	D3DCOLOR      ColorKey
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pSurface)
-		LOG_FUNC_ARG(SrcRect)
-		LOG_FUNC_ARG(DstRect)
-		LOG_FUNC_ARG(EnableColorKey)
-		LOG_FUNC_ARG(ColorKey)
-		LOG_FUNC_END;
-
-	CxbxrImpl_UpdateOverlay(pSurface, SrcRect, DstRect, EnableColorKey, ColorKey);
-}
-
-// ******************************************************************
-// * patch: D3DDevice_UpdateOverlay_16__LTCG_eax2
-// ******************************************************************
-static void D3DDevice_UpdateOverlay_16__LTCG_eax2
-(
-	xbox::X_D3DSurface *pSurface,
-	CONST RECT         *SrcRect,
-	CONST RECT         *DstRect,
-	xbox::bool_xt       EnableColorKey,
-	D3DCOLOR            ColorKey
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(pSurface)
-		LOG_FUNC_ARG(SrcRect)
-		LOG_FUNC_ARG(DstRect)
-		LOG_FUNC_ARG(EnableColorKey)
-		LOG_FUNC_ARG(ColorKey)
-		LOG_FUNC_END;
-}
-
-// This uses a custom calling convention where parameter is passed in EAX
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2)
-(
-	X_D3DSurface *pSurface,
-	CONST RECT   *DstRect,
-	bool_xt       EnableColorKey,
-	D3DCOLOR      ColorKey
-)
-{
-	RECT* SrcRect;
-	__asm {
-		LTCG_PROLOGUE
-		mov  SrcRect, eax
-	}
-
-	// Log
-	D3DDevice_UpdateOverlay_16__LTCG_eax2(pSurface, SrcRect, DstRect, EnableColorKey, ColorKey);
-
-	CxbxrImpl_UpdateOverlay(pSurface, SrcRect, DstRect, EnableColorKey, ColorKey);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret  16
-	}
-}
+// D3DDevice_UpdateOverlay — disabled.
+// Native Xbox code programs PVIDEO registers (OFFSET, SIZE_IN, FORMAT, POINT_OUT, SIZE_OUT);
+// D3D11_flip_stall composites overlay from VRAM using PVIDEO register state.
+// Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
 // D3DDevice_GetOverlayUpdateStatus — disabled.
 // Hardcoded TRUE stub; Xbox native overlay check is correct.

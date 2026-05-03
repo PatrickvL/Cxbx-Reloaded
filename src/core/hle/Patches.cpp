@@ -107,8 +107,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_DrawVertices_8__LTCG_eax3", xbox::EMUPATCH(D3DDevice_DrawVertices_8__LTCG_eax3), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_DrawVerticesUP", xbox::EMUPATCH(D3DDevice_DrawVerticesUP), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_DrawVerticesUP_12__LTCG_ebx3", xbox::EMUPATCH(D3DDevice_DrawVerticesUP_12__LTCG_ebx3), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_EnableOverlay", xbox::EMUPATCH(D3DDevice_EnableOverlay), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_EnableOverlay_0__LTCG", xbox::EMUPATCH(D3DDevice_EnableOverlay_0__LTCG), PATCH_HLE_D3D),
+	// Disabled: Native EnableOverlay programs NV_PVIDEO_STOP; D3D11_flip_stall reads PVIDEO state.
+	//PATCH_ENTRY("D3DDevice_EnableOverlay", xbox::EMUPATCH(D3DDevice_EnableOverlay), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_EnableOverlay_0__LTCG", xbox::EMUPATCH(D3DDevice_EnableOverlay_0__LTCG), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_End", xbox::EMUPATCH(D3DDevice_End), PATCH_HLE_D3D),
 	// Disabled: Xbox native EndPush updates pPut in CDevice. PFIFO processes commands from ring buffer.
 	//PATCH_ENTRY("D3DDevice_EndPush", xbox::EMUPATCH(D3DDevice_EndPush), PATCH_HLE_D3D),
@@ -292,8 +293,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_Swap", xbox::EMUPATCH(D3DDevice_Swap), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_Swap_0__LTCG_eax1", xbox::EMUPATCH(D3DDevice_Swap_0__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SwitchTexture", xbox::EMUPATCH(D3DDevice_SwitchTexture), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_UpdateOverlay", xbox::EMUPATCH(D3DDevice_UpdateOverlay), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_UpdateOverlay_16__LTCG_eax2", xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2), PATCH_HLE_D3D),
+	// Disabled: Native UpdateOverlay programs PVIDEO registers; D3D11_flip_stall composites overlay.
+	//PATCH_ENTRY("D3DDevice_UpdateOverlay", xbox::EMUPATCH(D3DDevice_UpdateOverlay), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_UpdateOverlay_16__LTCG_eax2", xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code polls resource state
 	//PATCH_ENTRY("D3DResource_BlockUntilNotBusy", xbox::EMUPATCH(D3DResource_BlockUntilNotBusy), PATCH_HLE_D3D),
 	// D3D_BlockOnTime: must be patched — the Xbox D3D runtime enables the DMA pusher

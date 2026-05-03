@@ -37,6 +37,7 @@
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11IABypassDraw
 #include "core\hle\D3D8\Rendering\PatchDraw.h" // For D3D11_draw_patch
+#include "common/AddressRanges.h" // For CONTIGUOUS_MEMORY_BASE
 #include "core/common/video/RenderBase.hpp" // For g_renderbase
 #include "devices/video/nv2a.h" // For g_NV2A, PGRAPHState
 #include "devices/video/nv2a_int.h" // For NV** defines
@@ -44,6 +45,17 @@
 
 // TODO: Find somewhere to put this that doesn't conflict with xbox::
 extern void CxbxUpdateHostTextures();
+
+// Persistent PVIDEO overlay texture — DYNAMIC so YUY2→ARGB writes directly into mapped GPU memory
+static UINT g_OverlayTexWidth = 0, g_OverlayTexHeight = 0;
+ID3D11Texture2D *g_pOverlayTex = nullptr;
+
+void CxbxReleaseOverlayResources()
+{
+	g_OverlayTexWidth = 0;
+	g_OverlayTexHeight = 0;
+	if (g_pOverlayTex) { g_pOverlayTex->Release(); g_pOverlayTex = nullptr; }
+}
 
 const char *NV2AMethodToString(DWORD dwMethod); // forward
 
@@ -320,6 +332,103 @@ static void D3D11_flip_stall(NV2AState *d)
 		dest.bottom = (LONG)(dest.top + height);
 
 		CxbxBltSurface(pXboxBackBufferHostSurface, nullptr, pHostBackBuffer, &dest, D3DTEXF_LINEAR);
+	}
+
+	// Composite PVIDEO overlay (if enabled by Xbox D3DDevice_UpdateOverlay → PVIDEO registers)
+	if (d->enable_overlay) {
+		// Determine which buffer is active (bit 0 = buffer 0, bit 4 = buffer 1)
+		uint32_t pvideo_buffer = d->pvideo.regs[RI(NV_PVIDEO_BUFFER)];
+		int buf = (pvideo_buffer & NV_PVIDEO_BUFFER_0_USE) ? 0 : 1;
+
+		uint32_t pvideo_offset = d->pvideo.regs[RI(NV_PVIDEO_OFFSET(buf))];
+		uint32_t pvideo_size_in = d->pvideo.regs[RI(NV_PVIDEO_SIZE_IN(buf))];
+		uint32_t pvideo_format = d->pvideo.regs[RI(NV_PVIDEO_FORMAT(buf))];
+		uint32_t pvideo_point_out = d->pvideo.regs[RI(NV_PVIDEO_POINT_OUT(buf))];
+		uint32_t pvideo_size_out = d->pvideo.regs[RI(NV_PVIDEO_SIZE_OUT(buf))];
+
+		UINT overlayWidth = GET_MASK(pvideo_size_in, NV_PVIDEO_SIZE_IN_WIDTH);
+		UINT overlayHeight = GET_MASK(pvideo_size_in, NV_PVIDEO_SIZE_IN_HEIGHT);
+		UINT overlayPitch = GET_MASK(pvideo_format, NV_PVIDEO_FORMAT_PITCH);
+
+		if (overlayWidth > 0 && overlayHeight > 0 && overlayPitch > 0) {
+			uint8_t *pOverlayData = (uint8_t *)(CONTIGUOUS_MEMORY_BASE + pvideo_offset);
+
+			// Calculate output rectangle (PVIDEO coordinates → host backbuffer)
+			int out_x = GET_MASK(pvideo_point_out, NV_PVIDEO_POINT_OUT_X);
+			int out_y = GET_MASK(pvideo_point_out, NV_PVIDEO_POINT_OUT_Y);
+			int out_w = GET_MASK(pvideo_size_out, NV_PVIDEO_SIZE_OUT_WIDTH);
+			int out_h = GET_MASK(pvideo_size_out, NV_PVIDEO_SIZE_OUT_HEIGHT);
+
+			// Scale overlay output rect from Xbox framebuffer coords to host backbuffer coords
+			DWORD XboxBackBufferWidth = g_PgraphBackBufferWidth;
+			DWORD XboxBackBufferHeight = g_PgraphBackBufferHeight;
+			if (XboxBackBufferWidth == 0) XboxBackBufferWidth = 640;
+			if (XboxBackBufferHeight == 0) XboxBackBufferHeight = 480;
+
+			float xScale = width / (float)XboxBackBufferWidth;
+			float yScale = height / (float)XboxBackBufferHeight;
+			float offsetX = (g_HostBackBufferDesc.Width - width) / 2.0f;
+			float offsetY = (g_HostBackBufferDesc.Height - height) / 2.0f;
+
+			RECT destRect;
+			destRect.left = (LONG)(out_x * xScale + offsetX);
+			destRect.top = (LONG)(out_y * yScale + offsetY);
+			destRect.right = (LONG)((out_x + out_w) * xScale + offsetX);
+			destRect.bottom = (LONG)((out_y + out_h) * yScale + offsetY);
+
+			// Clamp to host backbuffer
+			if (destRect.right > (LONG)g_HostBackBufferDesc.Width)
+				destRect.right = (LONG)g_HostBackBufferDesc.Width;
+			if (destRect.bottom > (LONG)g_HostBackBufferDesc.Height)
+				destRect.bottom = (LONG)g_HostBackBufferDesc.Height;
+
+			// Reallocate overlay texture only when the current one is too small
+			if (overlayWidth > g_OverlayTexWidth || overlayHeight > g_OverlayTexHeight) {
+				if (g_pOverlayTex) { g_pOverlayTex->Release(); g_pOverlayTex = nullptr; }
+
+				D3D11_TEXTURE2D_DESC texDesc = {};
+				texDesc.Width = overlayWidth;
+				texDesc.Height = overlayHeight;
+				texDesc.MipLevels = 1;
+				texDesc.ArraySize = 1;
+				texDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+				texDesc.SampleDesc.Count = 1;
+				texDesc.Usage = D3D11_USAGE_DYNAMIC;
+				texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+				texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+				g_pD3DDevice->CreateTexture2D(&texDesc, nullptr, &g_pOverlayTex);
+				g_OverlayTexWidth = overlayWidth;
+				g_OverlayTexHeight = overlayHeight;
+			}
+
+			// Check NV_PVIDEO_FORMAT_DISPLAY bit for destination color keying.
+			// When enabled, the overlay should only replace framebuffer pixels
+			// whose RGB matches NV_PVIDEO_COLOR_KEY (destination color key).
+			// This requires reading back destination pixels — not yet implemented.
+			bool colorKeyEnabled = (pvideo_format & NV_PVIDEO_FORMAT_DISPLAY) != 0;
+			if (colorKeyEnabled) {
+				LOG_TEST_CASE("PVIDEO destination color key enabled");
+			}
+
+			// Map texture, convert YUY2→ARGB directly into GPU memory, unmap
+			if (g_pOverlayTex) {
+				D3D11_MAPPED_SUBRESOURCE mapped;
+				HRESULT hr = g_pD3DDeviceContext->Map(g_pOverlayTex, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+				if (SUCCEEDED(hr)) {
+					const uint8_t *pSrcRow = pOverlayData;
+					uint8_t *pDstRow = (uint8_t *)mapped.pData;
+					for (UINT row = 0; row < overlayHeight; row++) {
+						____YUY2ToARGBRow_C(pSrcRow, pDstRow, overlayWidth);
+						pSrcRow += overlayPitch;
+						pDstRow += mapped.RowPitch;
+					}
+					g_pD3DDeviceContext->Unmap(g_pOverlayTex, 0);
+					RECT srcRect = { 0, 0, (LONG)overlayWidth, (LONG)overlayHeight };
+					CxbxBltSurface(g_pOverlayTex, &srcRect, pHostBackBuffer, &destRect, D3DTEXF_LINEAR);
+				}
+			}
+		}
 	}
 
 	// Render ImGui overlay
