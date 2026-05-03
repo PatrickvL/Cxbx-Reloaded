@@ -249,7 +249,7 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
     // Mark this thread as a puller context so that draw callbacks
     // (HLE_draw_state_update → CxbxUpdateNativeD3DResources) skip
     // pfifo_flush_to_pgraph (registers are already current) and
-    // pgraph_lock acquisition (we already hold it per method dispatch).
+    // pgraph_lock acquisition (we hold it for the whole buffer below).
     CxbxSetPullerContext(true);
 
     // Ensure PGRAPH context control has channel ID set (matches EmuExecutePushBufferRaw)
@@ -270,10 +270,16 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
     bool subr_active = false;
     uint32_t *subr_return = nullptr;
 
+    // Acquire pgraph_lock once for the entire pushbuffer rather than once per
+    // dispatched method.  pgraph_handle_method may release and re-acquire it
+    // internally (CRITICAL_SECTION is reentrant), but the net effect is that
+    // we hold it across all methods, eliminating N-1 redundant lock/unlock pairs.
+    qemu_mutex_lock(&d->pgraph.pgraph_lock);
+
     while (dma_get != dma_put) {
         if (dma_get >= dma_limit) {
             EmuLog(LOG_LEVEL::WARNING, "pfifo_submit_pushbuffer: overran buffer");
-            return;
+            goto done;
         }
 
         uint32_t word = *dma_get++;
@@ -282,10 +288,9 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
         if (state.mcnt) {
             // Dispatch subchannel 0 methods (3D) to PGRAPH,
             // matching the old EmuExecutePushBufferRaw behaviour.
+            // pgraph_lock is held for the whole buffer (acquired above).
             if (state.subc == 0) {
-                qemu_mutex_lock(&d->pgraph.pgraph_lock);
                 pgraph_handle_method(d, state.subc, state.mthd << 2, word);
-                qemu_mutex_unlock(&d->pgraph.pgraph_lock);
             }
 
             if (!state.ni)
@@ -337,56 +342,56 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
         state.mcnt = (word >> 18) & 0x7FF;
     }
 
+done:
+    qemu_mutex_unlock(&d->pgraph.pgraph_lock);
     CxbxSetPullerContext(false);
 }
 
 // ---------------------------------------------------------------------------
-// pfifo_flush_to_pgraph  --  block until all pending pushbuffer commands have
-// been pushed into CACHE1 by the DMA pusher AND pulled/dispatched to PGRAPH
-// by the puller.  Called from the HLE thread before each draw.
+// pfifo_flush_to_pgraph  --  drain all pending DMA pushbuffer commands into
+// PGRAPH so register state is current before the next draw.  Called from the
+// HLE thread (CxbxUpdateNativeD3DResources) before each draw.
+//
+// The pushbuffer is processed *inline* on the calling thread instead of
+// waking the background pusher thread and sleeping until it finishes.
+// Inline processing eliminates the two OS thread context switches
+// (cond_signal to wake pusher + cond_wait to sleep until done) that the
+// old round-trip protocol required — each switch costs ~10-50 µs on Windows,
+// so the saving is up to ~100 µs per draw call.
+//
+// pfifo_lock is already held for the duration so the pusher thread cannot
+// be concurrently modifying PFIFO/DMA state.  After the inline run the
+// pusher thread will simply find an empty buffer on its next wake.
 // ---------------------------------------------------------------------------
 void pfifo_flush_to_pgraph(NV2AState *d)
 {
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
 
-    while (true) {
-        uint32_t status  = d->pfifo.regs[RI(NV_PFIFO_CACHE1_STATUS)];
-        bool cache1_empty = (status & NV_PFIFO_CACHE1_STATUS_LOW_MARK) != 0;
-        uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
-        uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
-        bool dma_idle  = (get_v == put_v);
+    uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
+    uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
 
-        if (cache1_empty && dma_idle)
-            break;
-
+    if (get_v != put_v) {
         // Check whether the DMA pusher can actually process commands.
-        // If not (access flags not set), the commands are from HLE-patched
-        // D3D calls that already set PGRAPH state — skip them.
-        if (!dma_idle) {
-            uint32_t push0    = d->pfifo.regs[RI(NV_PFIFO_CACHE1_PUSH0)];
-            uint32_t dma_push = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUSH)];
-            bool pusher_can_run = GET_MASK(push0, NV_PFIFO_CACHE1_PUSH0_ACCESS)
-                               && GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_ACCESS)
-                               && !GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_STATUS);
-            if (!pusher_can_run) {
-                // Advance GET past the unprocessable commands.
-                d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = put_v;
-                if (cache1_empty)
-                    break;
-                // Fall through to drain any remaining CACHE1 entries.
-            }
+        // If not (access flags not set), the commands were submitted by
+        // HLE-patched D3D calls that already set PGRAPH state — skip them.
+        uint32_t push0    = d->pfifo.regs[RI(NV_PFIFO_CACHE1_PUSH0)];
+        uint32_t dma_push = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUSH)];
+        bool pusher_can_run = GET_MASK(push0, NV_PFIFO_CACHE1_PUSH0_ACCESS)
+                           && GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_ACCESS)
+                           && !GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_STATUS);
+        if (pusher_can_run) {
+            // Process the DMA push buffer inline on the calling thread.
+            // pfifo_lock is already held, exactly as in pfifo_pusher_thread.
+            // Mark this thread as puller context so that any draw callback
+            // triggered by pgraph_handle_method (e.g. pgraph_draw_arrays)
+            // does not attempt a re-entrant pfifo_flush_to_pgraph.
+            CxbxSetPullerContext(true);
+            pfifo_run_pusher(d);
+            CxbxSetPullerContext(false);
+        } else {
+            // Advance GET past the unprocessable commands.
+            d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = put_v;
         }
-
-        // Tell the puller to signal us after its next drain cycle.
-        d->pfifo.flush_requested = true;
-
-        // Wake both threads so the pusher can feed CACHE1 and the puller
-        // can drain it.  Harmless if either thread has nothing to do.
-        qemu_cond_signal(&d->pfifo.pusher_cond);
-        qemu_cond_signal(&d->pfifo.puller_cond);
-
-        // Release pfifo_lock and sleep until the puller finishes a drain.
-        qemu_cond_wait(&d->pfifo.flush_complete_cond, &d->pfifo.pfifo_lock);
     }
 
     d->pfifo.flush_requested = false;
@@ -403,10 +408,6 @@ static void pfifo_run_pusher(NV2AState *d)
     uint32_t *dma_get = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
     uint32_t *dma_put = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
     uint32_t *dma_dcount = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_DCOUNT)];
-
-    uint32_t *status = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_STATUS)];
-    uint32_t *get_reg = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_GET)];
-    uint32_t *put_reg = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_PUT)];
 
     if (!GET_MASK(*push0, NV_PFIFO_CACHE1_PUSH0_ACCESS)) return;
     if (!GET_MASK(*dma_push, NV_PFIFO_CACHE1_DMA_PUSH_ACCESS)) return;
@@ -439,6 +440,15 @@ static void pfifo_run_pusher(NV2AState *d)
     hwaddr dma_len;
     uint8_t *dma = (uint8_t*)nv_dma_map(d, dma_instance, &dma_len);
 
+    // Acquire pgraph_lock once for the entire pushbuffer rather than once per
+    // method.  A typical frame has hundreds of methods; eliminating the
+    // per-method lock/unlock pair saves ~100 ns × N ≈ tens of µs per frame.
+    // pgraph_handle_method may release and re-acquire pgraph_lock internally
+    // (e.g. NV097_NO_OPERATION notification, context switch) — CRITICAL_SECTION
+    // is reentrant, so this is safe: each internal unlock/relock is balanced and
+    // the function returns with the lock held.
+    qemu_mutex_lock(&d->pgraph.pgraph_lock);
+
 	/* based on the convenient pseudocode in envytools */
     while (true) {
         uint32_t dma_get_v = *dma_get;
@@ -467,39 +477,18 @@ static void pfifo_run_pusher(NV2AState *d)
             GET_MASK(*dma_subroutine, NV_PFIFO_CACHE1_DMA_SUBROUTINE_STATE);
 
         if (method_count) {
-            /* full */
-            if (*status & NV_PFIFO_CACHE1_STATUS_HIGH_MARK) return;
-
-
             /* data word of methods command */
             d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_DATA_SHADOW)] = word;
 
-            uint32_t put = *put_reg;
-            uint32_t get = *get_reg;
-
-            assert((method & 3) == 0);
-            uint32_t method_entry = 0;
-            SET_MASK(method_entry, NV_PFIFO_CACHE1_METHOD_ADDRESS, method >> 2);
-            SET_MASK(method_entry, NV_PFIFO_CACHE1_METHOD_TYPE, method_type);
-            SET_MASK(method_entry, NV_PFIFO_CACHE1_METHOD_SUBCHANNEL, method_subchannel);
-
-            // NV2A_DPRINTF("push %d 0x%08X 0x%08X - subch %d\n", put/4, method_entry, word, method_subchannel);
-
-            assert(put < 128*4 && (put%4) == 0);
-            d->pfifo.regs[RI(NV_PFIFO_CACHE1_METHOD + put*2)] = method_entry;
-            d->pfifo.regs[RI(NV_PFIFO_CACHE1_DATA + put*2)] = word;
-
-            uint32_t new_put = (put+4) & 0x1fc;
-            *put_reg = new_put;
-            if (new_put == get) {
-                // set high mark
-                *status |= NV_PFIFO_CACHE1_STATUS_HIGH_MARK;
-            }
-            if (*status & NV_PFIFO_CACHE1_STATUS_LOW_MARK) {
-                // unset low mark
-                *status &= ~NV_PFIFO_CACHE1_STATUS_LOW_MARK;
-                // signal puller
-                qemu_cond_signal(&d->pfifo.puller_cond);
+            // Bypass CACHE1: dispatch directly to PGRAPH instead of staging in
+            // the CACHE1 ring buffer for the puller thread to pick up later.
+            // This eliminates a full OS thread wake cycle per command batch.
+            // Apply the same filter as pfifo_run_puller: skip object-binding
+            // (method 0) and reference-object methods (0x180-0x1FF) that
+            // require RAMHT lookups which we don't emulate.
+            // pgraph_lock is held for the whole buffer (acquired above).
+            if (method >= 0x100 && !(method >= 0x180 && method < 0x200)) {
+                pgraph_handle_method(d, method_subchannel, method, word);
             }
 
             if (method_type == NV_PFIFO_CACHE1_DMA_STATE_METHOD_TYPE_INC) {
@@ -590,6 +579,9 @@ static void pfifo_run_pusher(NV2AState *d)
         }
     }
 
+    // Release the batched pgraph_lock acquired before the loop.
+    qemu_mutex_unlock(&d->pgraph.pgraph_lock);
+
     // NV2A_DPRINTF("DMA pusher done: max 0x%08X, 0x%08X - 0x%08X\n",
     //      dma_len, control->dma_get, control->dma_put);
 
@@ -609,10 +601,24 @@ int pfifo_pusher_thread(NV2AState *d)
 {
     g_AffinityPolicy->SetAffinityOther();
     CxbxSetThreadName("Cxbx NV2A FIFO pusher");
+    // Pusher now dispatches methods directly to PGRAPH (bypassing CACHE1), so
+    // draw callbacks (CxbxUpdateNativeD3DResources) must not attempt a
+    // re-entrant pfifo_flush_to_pgraph which would deadlock on pfifo_lock.
+    CxbxSetPullerContext(true);
 
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
     while (true) {
         pfifo_run_pusher(d);
+
+        // flush_requested is no longer set by pfifo_flush_to_pgraph (flush now
+        // processes the pushbuffer inline on the calling thread).  The check
+        // and signal below are kept as a safety net in case any future code
+        // path restores the old protocol, but they are normally dead code.
+        if (d->pfifo.flush_requested) {
+            d->pfifo.flush_requested = false;
+            qemu_cond_signal(&d->pfifo.flush_complete_cond);
+        }
+
         qemu_cond_wait(&d->pfifo.pusher_cond, &d->pfifo.pfifo_lock);
 
         if (d->exiting) {
