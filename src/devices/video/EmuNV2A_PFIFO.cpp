@@ -134,15 +134,16 @@ static void pfifo_run_puller(NV2AState *d)
     uint32_t *get_reg = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_GET)];
     uint32_t *put_reg = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_PUT)];
 
-    // TODO
-    // CacheEntry working_cache[NV2A_CACHE1_SIZE];
-    // int working_cache_size = 0;
-    // pull everything into our own queue
-
-    // TODO think more about locking
+    // Acquire pgraph_lock once for the entire CACHE1 drain rather than per
+    // method.  Eliminates N-1 redundant lock/unlock pairs per puller wake.
+    // pgraph_handle_method may internally release/reacquire for waits (e.g.
+    // NV097_NO_OPERATION interrupt handshake), which is safe because
+    // QemuMutex wraps CRITICAL_SECTION (see thread-win32.h) — reentrant
+    // by definition on Windows.
+    qemu_mutex_lock(&d->pgraph.pgraph_lock);
 
     while (true) {
-        if (!GET_MASK(*pull0, NV_PFIFO_CACHE1_PULL0_ACCESS)) return;
+        if (!GET_MASK(*pull0, NV_PFIFO_CACHE1_PULL0_ACCESS)) break;
 
         /* empty cache1 */
         if (*status & NV_PFIFO_CACHE1_STATUS_LOW_MARK) break;
@@ -177,12 +178,12 @@ static void pfifo_run_puller(NV2AState *d)
         // require RAMHT lookups.  Skip context-switch / FIFO-wait —
         // Xbox uses a single GPU channel, so it's safe to write directly.
         if (method >= 0x100 && !(method >= 0x180 && method < 0x200)) {
-            qemu_mutex_lock(&d->pgraph.pgraph_lock);
             pgraph_handle_method(d, subchannel, method, parameter);
-            qemu_mutex_unlock(&d->pgraph.pgraph_lock);
         }
 
     }
+
+    qemu_mutex_unlock(&d->pgraph.pgraph_lock);
 }
 
 // Defined in HostSync.cpp — marks the current thread as the PFIFO puller
@@ -365,6 +366,22 @@ done:
 // ---------------------------------------------------------------------------
 void pfifo_flush_to_pgraph(NV2AState *d)
 {
+    // Fast path: lockless check — if DMA buffer is already drained, skip
+    // the mutex entirely.  This is the common case for back-to-back draws
+    // within the same state batch (all methods already processed by a
+    // prior flush or by the puller thread).  The reads are benign races:
+    // if GET/PUT change between read and lock, the locked re-read will
+    // catch it.  CACHE1 (puller queue) is also checked: if empty, there
+    // are no pending methods anywhere.
+    {
+        uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
+        uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
+        uint32_t cache_status = d->pfifo.regs[RI(NV_PFIFO_CACHE1_STATUS)];
+        if (get_v == put_v && (cache_status & NV_PFIFO_CACHE1_STATUS_LOW_MARK)) {
+            return; // Nothing pending — no lock needed
+        }
+    }
+
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
 
     uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
