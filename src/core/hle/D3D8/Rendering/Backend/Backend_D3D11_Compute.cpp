@@ -22,6 +22,100 @@
 // ******************************************************************
 
 #include "Backend_D3D11_Internal.h"
+#include <unordered_map>
+
+// ******************************************************************
+// * Elastic UAV cache for compute shader dispatch targets
+// * Grows on demand up to a hardware-realistic ceiling, then evicts
+// * least-recently-used entries.  Sized for the heaviest Xbox titles
+// * (e.g. palette-animated textures cycling hundreds of surfaces).
+// ******************************************************************
+
+// Xbox has 64 MB unified RAM.  Even the most texture-heavy titles
+// (Jet Set Radio Future, Dead or Alive 3) rarely exceed ~200 active
+// textures simultaneously.  We cap UAV cache growth at 128 entries
+// (each UAV is ~16 bytes of driver state) and evict down to 96.
+static constexpr size_t UAV_CACHE_HIGH_WATERMARK = 128;
+static constexpr size_t UAV_CACHE_LOW_WATERMARK  = 96;
+
+struct UAVCacheKey {
+	ID3D11Resource* pResource;
+	DXGI_FORMAT format;
+	bool operator==(const UAVCacheKey& other) const {
+		return pResource == other.pResource && format == other.format;
+	}
+};
+
+struct UAVCacheKeyHash {
+	size_t operator()(const UAVCacheKey& k) const {
+		size_t h = std::hash<void*>()(k.pResource);
+		h ^= std::hash<int>()(static_cast<int>(k.format)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		return h;
+	}
+};
+
+struct UAVCacheValue {
+	ID3D11UnorderedAccessView* pUAV;
+	uint32_t lastUsed; // monotonic access counter for LRU eviction
+};
+
+static std::unordered_map<UAVCacheKey, UAVCacheValue, UAVCacheKeyHash> s_UAVCache;
+static uint32_t s_UAVCacheAccessCounter = 0;
+
+static void CxbxPruneUAVCache()
+{
+	if (s_UAVCache.size() < UAV_CACHE_HIGH_WATERMARK)
+		return;
+
+	// Find the eviction threshold (nth_element on lastUsed values).
+	// Stack array avoids heap alloc — size is bounded by UAV_CACHE_HIGH_WATERMARK.
+	size_t evictCount = s_UAVCache.size() - UAV_CACHE_LOW_WATERMARK;
+	uint32_t stamps[UAV_CACHE_HIGH_WATERMARK];
+	size_t n = 0;
+	for (auto& kv : s_UAVCache)
+		stamps[n++] = kv.second.lastUsed;
+	std::nth_element(stamps, stamps + evictCount, stamps + n);
+	uint32_t threshold = stamps[evictCount];
+
+	for (auto it = s_UAVCache.begin(); it != s_UAVCache.end(); ) {
+		if (it->second.lastUsed <= threshold) {
+			if (it->second.pUAV) it->second.pUAV->Release();
+			it = s_UAVCache.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
+// Cache lookup uses raw resource pointer as key.  This is safe because the
+// UAV internally AddRefs the resource, preventing destruction while cached.
+// Eviction releases the UAV (and its implicit resource ref) via Release().
+static ID3D11UnorderedAccessView* CxbxGetOrCreateTextureUAV(ID3D11Texture2D* pTexture, DXGI_FORMAT format)
+{
+	UAVCacheKey key = { pTexture, format };
+	auto it = s_UAVCache.find(key);
+	if (it != s_UAVCache.end()) {
+		it->second.lastUsed = ++s_UAVCacheAccessCounter;
+		return it->second.pUAV;
+	}
+
+	// Create new UAV
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+	uavDesc.Format = format;
+	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+	uavDesc.Texture2D.MipSlice = 0;
+	ID3D11UnorderedAccessView* pUAV = nullptr;
+	HRESULT hr = g_pD3DDevice->CreateUnorderedAccessView(pTexture, &uavDesc, &pUAV);
+	if (FAILED(hr))
+		return nullptr;
+
+	s_UAVCache[key] = { pUAV, ++s_UAVCacheAccessCounter };
+
+	// Prune if we've grown past the high watermark
+	CxbxPruneUAVCache();
+
+	return pUAV;
+}
 
 // ******************************************************************
 // * GPU unswizzle via compute shader
@@ -85,7 +179,7 @@ bool CxbxD3D11UnswizzleTexture(
 	// Prevents SRV/UAV resource hazards that can trigger GPU TDRs.
 	CxbxD3D11InvalidateCachedSRVForTexture(pTexture);
 
-	// Create a temporary UAV for the destination texture
+	// Get or create a cached UAV for the destination texture
 	DXGI_FORMAT uavFormat;
 	if (bUseBGRA_CS) {
 		// BGRA path: use same-format UAV (no cross-family casting needed)
@@ -100,13 +194,8 @@ bool CxbxD3D11UnswizzleTexture(
 		}
 	}
 
-	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-	uavDesc.Format = uavFormat;
-	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-	uavDesc.Texture2D.MipSlice = 0;
-	ID3D11UnorderedAccessView* pUAV = nullptr;
-	hr = g_pD3DDevice->CreateUnorderedAccessView(pTexture, &uavDesc, &pUAV);
-	if (FAILED(hr)) {
+	ID3D11UnorderedAccessView* pUAV = CxbxGetOrCreateTextureUAV(pTexture, uavFormat);
+	if (!pUAV) {
 		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11UnswizzleTexture: Failed to create UAV (format=%u)", uavFormat);
 		return false;
 	}
@@ -118,7 +207,6 @@ bool CxbxD3D11UnswizzleTexture(
 	CxbxD3D11DispatchCS(pCS, g_pD3D11UnswizzleCB,
 		1, &g_pD3D11UnswizzleSRV, pUAV, groupsX, groupsY, 1);
 
-	pUAV->Release();
 	return true;
 }
 
@@ -171,15 +259,10 @@ bool CxbxD3D11ExpandPaletteTexture(
 	// Prevents SRV/UAV resource hazards that can trigger GPU TDRs.
 	CxbxD3D11InvalidateCachedSRVForTexture(pTexture);
 
-	// Create UAV for destination texture (R8G8B8A8_UNORM → R32_UINT UAV)
-	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-	uavDesc.Format = DXGI_FORMAT_R32_UINT;
-	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-	uavDesc.Texture2D.MipSlice = 0;
-	ID3D11UnorderedAccessView* pUAV = nullptr;
-	hr = g_pD3DDevice->CreateUnorderedAccessView(pTexture, &uavDesc, &pUAV);
-	if (FAILED(hr)) {
-		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11ExpandPaletteTexture: Failed to create UAV (hr=0x%08X)", hr);
+	// Get or create a cached UAV for destination texture (R8G8B8A8_UNORM → R32_UINT UAV)
+	ID3D11UnorderedAccessView* pUAV = CxbxGetOrCreateTextureUAV(pTexture, DXGI_FORMAT_R32_UINT);
+	if (!pUAV) {
+		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11ExpandPaletteTexture: Failed to create UAV");
 		return false;
 	}
 
@@ -189,8 +272,6 @@ bool CxbxD3D11ExpandPaletteTexture(
 	UINT groupsY = (height + 7) / 8;
 	CxbxD3D11DispatchCS(g_pD3D11PaletteExpandCS, g_pD3D11PaletteExpandCB,
 		2, srvs, pUAV, groupsX, groupsY, 1);
-
-	pUAV->Release();
 	return true;
 }
 
@@ -243,15 +324,10 @@ bool CxbxD3D11FormatConvertTexture(
 	// Prevents SRV/UAV resource hazards that can trigger GPU TDRs.
 	CxbxD3D11InvalidateCachedSRVForTexture(pTexture);
 
-	// Create UAV (R32_UINT view of the R8G8B8A8_UNORM texture)
-	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-	uavDesc.Format = DXGI_FORMAT_R32_UINT;
-	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-	uavDesc.Texture2D.MipSlice = 0;
-	ID3D11UnorderedAccessView* pUAV = nullptr;
-	hr = g_pD3DDevice->CreateUnorderedAccessView(pTexture, &uavDesc, &pUAV);
-	if (FAILED(hr)) {
-		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11FormatConvertTexture: Failed to create UAV (hr=0x%08X)", hr);
+	// Get or create a cached UAV (R32_UINT view of the R8G8B8A8_UNORM texture)
+	ID3D11UnorderedAccessView* pUAV = CxbxGetOrCreateTextureUAV(pTexture, DXGI_FORMAT_R32_UINT);
+	if (!pUAV) {
+		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11FormatConvertTexture: Failed to create UAV");
 		return false;
 	}
 
@@ -260,7 +336,6 @@ bool CxbxD3D11FormatConvertTexture(
 	CxbxD3D11DispatchCS(g_pD3D11FormatConvertCS, g_pD3D11FormatConvertCB,
 		1, &g_pD3D11UnswizzleSRV, pUAV, groupsX, groupsY, 1);
 
-	pUAV->Release();
 	return true;
 }
 
