@@ -599,6 +599,7 @@ set(SHADER_SOURCES
     CxbxPointSpriteGS.hlsl
     CxbxThickLineGS.hlsl
     CxbxUnswizzleCS.hlsl
+    CxbxUnswizzleBGRA_CS.hlsl
     CxbxIndexConvertCS.hlsl
     CxbxPaletteExpandCS.hlsl
     CxbxFormatConvertCS.hlsl
@@ -618,6 +619,7 @@ set(SHADER_PROFILES
     cs_5_0
     cs_5_0
     cs_5_0
+    cs_5_0
 )
 set(SHADER_ARRAY_NAMES
     cso_CxbxRCInterpreterPS
@@ -629,6 +631,7 @@ set(SHADER_ARRAY_NAMES
     cso_CxbxPointSpriteGS
     cso_CxbxThickLineGS
     cso_CxbxUnswizzleCS
+    cso_CxbxUnswizzleBGRA_CS
     cso_CxbxIndexConvertCS
     cso_CxbxPaletteExpandCS
     cso_CxbxFormatConvertCS

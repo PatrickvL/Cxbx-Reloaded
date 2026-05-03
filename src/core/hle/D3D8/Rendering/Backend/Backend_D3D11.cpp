@@ -134,6 +134,7 @@ float                 g_fLineWidth = 1.0f;
 // * Compute shader unswizzle resources
 // ******************************************************************
 ID3D11ComputeShader  *g_pD3D11UnswizzleCS = nullptr;
+ID3D11ComputeShader  *g_pD3D11UnswizzleBGRA_CS = nullptr; // float4 variant for B8G8R8A8_UNORM UAV
 ID3D11Buffer         *g_pD3D11UnswizzleCB = nullptr; // constant buffer: maskX, maskY, width, height, bpp
 ID3D11Buffer         *g_pD3D11UnswizzleStagingBuf = nullptr; // reusable ByteAddressBuffer for upload
 UINT                  g_UnswizzleStagingBufSize = 0;
@@ -622,6 +623,18 @@ void CxbxD3D11InitBlit()
 		}
 	}
 
+	// BGRA variant of the unswizzle CS (writes float4 to B8G8R8A8_UNORM UAV)
+	pCSBlob = nullptr;
+	if (!LoadPrecompiledCSO("CxbxUnswizzleBGRA_CS", &pCSBlob)) {
+		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11InitBlit: Failed to load unswizzle BGRA CS CSO");
+	} else {
+		hr = g_pD3DDevice->CreateComputeShader(pCSBlob->GetBufferPointer(), pCSBlob->GetBufferSize(), nullptr, &g_pD3D11UnswizzleBGRA_CS);
+		pCSBlob->Release();
+		if (FAILED(hr)) {
+			EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11InitBlit: Failed to create unswizzle BGRA CS");
+		}
+	}
+
 	// Create unswizzle constant buffer (5 uints: maskX, maskY, width, height, bpp)
 	hr = CxbxD3D11CreateConstantBuffer(32, true, &g_pD3D11UnswizzleCB);
 	if (FAILED(hr)) {
@@ -858,6 +871,7 @@ void CxbxD3D11ReleaseBackendResources()
 	if (g_pD3D11ThickLineGS) { g_pD3D11ThickLineGS->Release(); g_pD3D11ThickLineGS = nullptr; }
 	if (g_pD3D11GSConstantBuffer) { g_pD3D11GSConstantBuffer->Release(); g_pD3D11GSConstantBuffer = nullptr; }
 	if (g_pD3D11UnswizzleCS) { g_pD3D11UnswizzleCS->Release(); g_pD3D11UnswizzleCS = nullptr; }
+	if (g_pD3D11UnswizzleBGRA_CS) { g_pD3D11UnswizzleBGRA_CS->Release(); g_pD3D11UnswizzleBGRA_CS = nullptr; }
 	if (g_pD3D11UnswizzleCB) { g_pD3D11UnswizzleCB->Release(); g_pD3D11UnswizzleCB = nullptr; }
 	if (g_pD3D11UnswizzleSRV) { g_pD3D11UnswizzleSRV->Release(); g_pD3D11UnswizzleSRV = nullptr; }
 	if (g_pD3D11UnswizzleStagingBuf) { g_pD3D11UnswizzleStagingBuf->Release(); g_pD3D11UnswizzleStagingBuf = nullptr; }

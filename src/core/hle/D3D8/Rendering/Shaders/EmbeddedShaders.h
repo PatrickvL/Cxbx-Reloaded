@@ -20,6 +20,7 @@
 #include "cso_CxbxPointSpriteGS.h"
 #include "cso_CxbxThickLineGS.h"
 #include "cso_CxbxUnswizzleCS.h"
+#include "cso_CxbxUnswizzleBGRA_CS.h"
 #include "cso_CxbxIndexConvertCS.h"
 #include "cso_CxbxPaletteExpandCS.h"
 #include "cso_CxbxFormatConvertCS.h"
@@ -43,6 +44,7 @@ inline bool GetEmbeddedShaderData(const char* name, const void** ppData, size_t*
         { "CxbxPointSpriteGS",   cso_CxbxPointSpriteGS,   cso_CxbxPointSpriteGS_size },
         { "CxbxThickLineGS",     cso_CxbxThickLineGS,     cso_CxbxThickLineGS_size },
         { "CxbxUnswizzleCS",     cso_CxbxUnswizzleCS,     cso_CxbxUnswizzleCS_size },
+        { "CxbxUnswizzleBGRA_CS", cso_CxbxUnswizzleBGRA_CS, cso_CxbxUnswizzleBGRA_CS_size },
         { "CxbxIndexConvertCS",  cso_CxbxIndexConvertCS,  cso_CxbxIndexConvertCS_size },
         { "CxbxPaletteExpandCS", cso_CxbxPaletteExpandCS, cso_CxbxPaletteExpandCS_size },
         { "CxbxFormatConvertCS", cso_CxbxFormatConvertCS, cso_CxbxFormatConvertCS_size },

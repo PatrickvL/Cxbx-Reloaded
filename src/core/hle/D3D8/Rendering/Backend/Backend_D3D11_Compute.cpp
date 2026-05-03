@@ -48,6 +48,12 @@ bool CxbxD3D11UnswizzleTexture(
 	if (bpp != 1 && bpp != 2 && bpp != 4)
 		return false;
 
+	// Determine if we need the BGRA float4 CS variant (for formats that don't
+	// support R32_UINT UAV reinterpretation but do support same-format typed UAV)
+	bool bUseBGRA_CS = (format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8X8_UNORM);
+	if (bUseBGRA_CS && !g_pD3D11UnswizzleBGRA_CS)
+		return false;
+
 	UINT dataSize = width * height * bpp;
 	// Round up to DWORD alignment for ByteAddressBuffer
 	UINT bufferSize = (dataSize + 3) & ~3u;
@@ -80,13 +86,18 @@ bool CxbxD3D11UnswizzleTexture(
 	CxbxD3D11InvalidateCachedSRVForTexture(pTexture);
 
 	// Create a temporary UAV for the destination texture
-	// Map the format to a uint-typed format for RWTexture2D<uint>
 	DXGI_FORMAT uavFormat;
-	switch (bpp) {
-	case 4:  uavFormat = DXGI_FORMAT_R32_UINT; break;
-	case 2:  uavFormat = DXGI_FORMAT_R16_UINT; break;
-	case 1:  uavFormat = DXGI_FORMAT_R8_UINT;  break;
-	default: return false;
+	if (bUseBGRA_CS) {
+		// BGRA path: use same-format UAV (no cross-family casting needed)
+		uavFormat = format;
+	} else {
+		// Standard path: reinterpret as uint for raw bit-move
+		switch (bpp) {
+		case 4:  uavFormat = DXGI_FORMAT_R32_UINT; break;
+		case 2:  uavFormat = DXGI_FORMAT_R16_UINT; break;
+		case 1:  uavFormat = DXGI_FORMAT_R8_UINT;  break;
+		default: return false;
+		}
 	}
 
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
@@ -103,7 +114,8 @@ bool CxbxD3D11UnswizzleTexture(
 	// Dispatch 8x8 thread groups covering the texture dimensions
 	UINT groupsX = (width + 7) / 8;
 	UINT groupsY = (height + 7) / 8;
-	CxbxD3D11DispatchCS(g_pD3D11UnswizzleCS, g_pD3D11UnswizzleCB,
+	ID3D11ComputeShader* pCS = bUseBGRA_CS ? g_pD3D11UnswizzleBGRA_CS : g_pD3D11UnswizzleCS;
+	CxbxD3D11DispatchCS(pCS, g_pD3D11UnswizzleCB,
 		1, &g_pD3D11UnswizzleSRV, pUAV, groupsX, groupsY, 1);
 
 	pUAV->Release();

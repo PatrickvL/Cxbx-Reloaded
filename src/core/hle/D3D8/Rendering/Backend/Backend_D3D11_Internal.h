@@ -78,6 +78,7 @@ extern float                 g_fLineWidth;
 // * Compute shader resources — unswizzle
 // ******************************************************************
 extern ID3D11ComputeShader       *g_pD3D11UnswizzleCS;
+extern ID3D11ComputeShader       *g_pD3D11UnswizzleBGRA_CS; // float4 variant for B8G8R8A8_UNORM UAV
 extern ID3D11Buffer              *g_pD3D11UnswizzleCB;
 extern ID3D11Buffer              *g_pD3D11UnswizzleStagingBuf;
 extern UINT                       g_UnswizzleStagingBufSize;
