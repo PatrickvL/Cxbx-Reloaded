@@ -24,6 +24,7 @@
 // ******************************************************************
 #include "EmuD3D8_common.h"
 #include "Backend/Backend_D3D11_PageTracker.h"
+#include <vector>
 
 
 xbox::X_D3DRESOURCETYPE GetXboxD3DResourceType(const xbox::X_D3DResource *pXboxResource)
@@ -141,6 +142,9 @@ bool IsResourceAPixelContainer(xbox::X_D3DResource* pXboxResource)
 resource_cache_t g_Cxbx_Cached_Direct3DResources;
 resource_cache_t g_Cxbx_Cached_PaletizedTextures;
 
+// Monotonic counter for LRU eviction (stamped on each cache access)
+static uint32_t g_ResourceCacheAccessCounter = 0;
+
 resource_cache_t& GetResourceCache(resource_key_t& key)
 {
 	return IsResourceAPixelContainer(key.Common) && IsPaletizedTexture(key.Format)
@@ -203,10 +207,31 @@ void ClearAllResourceCaches()
 
 void PrunePaletizedTexturesCache()
 {
-	// TODO : Implement a better cache eviction algorithm (like least-recently used, or just at-random)
-	// Poor mans cache eviction policy: just clear it once it overflows
-	if (g_Cxbx_Cached_PaletizedTextures.size() >= 1500) {
-		ClearResourceCache(g_Cxbx_Cached_PaletizedTextures);
+	constexpr size_t CACHE_HIGH_WATERMARK = 1500;
+	constexpr size_t CACHE_LOW_WATERMARK  = 1000; // Evict down to this level
+
+	if (g_Cxbx_Cached_PaletizedTextures.size() < CACHE_HIGH_WATERMARK)
+		return;
+
+	// LRU eviction: find the median access counter and evict entries below it
+	// to bring the cache back to the low watermark
+	size_t evictCount = g_Cxbx_Cached_PaletizedTextures.size() - CACHE_LOW_WATERMARK;
+
+	// Collect access timestamps and find a threshold to evict the oldest entries
+	std::vector<uint32_t> accessTimes;
+	accessTimes.reserve(g_Cxbx_Cached_PaletizedTextures.size());
+	for (auto& entry : g_Cxbx_Cached_PaletizedTextures) {
+		accessTimes.push_back(entry.second.lastAccessFrame);
+	}
+	std::nth_element(accessTimes.begin(), accessTimes.begin() + evictCount, accessTimes.end());
+	uint32_t threshold = accessTimes[evictCount]; // Evict everything at or below this value
+
+	for (auto it = g_Cxbx_Cached_PaletizedTextures.begin(); it != g_Cxbx_Cached_PaletizedTextures.end(); ) {
+		if (it->second.lastAccessFrame <= threshold) {
+			it = g_Cxbx_Cached_PaletizedTextures.erase(it);
+		} else {
+			++it;
+		}
 	}
 }
 
@@ -228,6 +253,7 @@ ID3D11Resource *GetHostResource(xbox::X_D3DResource *pXboxResource, DWORD D3DUsa
 		return nullptr;
 	}
 
+	it->second.lastAccessFrame = ++g_ResourceCacheAccessCounter;
 	return it->second.pHostResource.Get();
 }
 
@@ -356,6 +382,7 @@ void SetHostResource(xbox::X_D3DResource* pXboxResource, ID3D11Resource* pHostRe
 
 	resourceInfo.HostFormat = PCFormat;
 	resourceInfo.HostUsage = D3DUsage;
+	resourceInfo.lastAccessFrame = ++g_ResourceCacheAccessCounter;
 }
 
 // Inline Set* functions are now in RenderGlobals.h

@@ -309,6 +309,7 @@ typedef struct _resource_info_t {
 	DWORD dwXboxResourceType = 0;
 	void* pXboxData = xbox::zeroptr;
 	size_t szXboxDataSize = 0;
+	uint32_t lastAccessFrame = 0; // Frame counter for LRU eviction
 } resource_info_t;
 
 typedef std::unordered_map<resource_key_t, resource_info_t, resource_key_hash> resource_cache_t;
