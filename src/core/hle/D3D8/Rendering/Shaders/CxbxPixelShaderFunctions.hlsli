@@ -60,24 +60,24 @@ void PerformAlphaKill(const CXBX_STEERING_INT AlphaKill, float4 t)
 
 // Alpha test (D3D11 has no fixed-function alpha test)
 // NV2A quantizes both alpha output and reference to 8-bit before comparing.
-// alphaTest.x = AlphaTestEnable, .y = AlphaRef, .z = AlphaFunc (D3DCMPFUNC)
+// alphaTest.x = AlphaTestEnable, .y = AlphaRef, .z = AlphaFunc (NV2A PGRAPH encoding)
 void PerformAlphaTest(const float3 alphaTest, float alpha)
 {
 	[branch] if (alphaTest.x != 0.0f) {
 		uint alphaVal  = (uint)(saturate(alpha)       * 255.0f + 0.5f);
 		uint alphaRefI = (uint)(saturate(alphaTest.y) * 255.0f + 0.5f);
 		int  alphaFunc = (int)alphaTest.z;
-		// D3DCMPFUNC: 1=NEVER,2=LESS,3=EQUAL,4=LESSEQUAL,5=GREATER,6=NOTEQUAL,7=GREATEREQUAL,8=ALWAYS
+		// NV2A PGRAPH encoding: 0=NEVER,1=LESS,2=EQUAL,3=LEQUAL,4=GREATER,5=NOTEQUAL,6=GEQUAL,7=ALWAYS
 		bool alphaPass;
 		switch (alphaFunc) {
-			case 1:  alphaPass = false;                    break; // NEVER
-			case 2:  alphaPass = (alphaVal <  alphaRefI);  break; // LESS
-			case 3:  alphaPass = (alphaVal == alphaRefI);  break; // EQUAL
-			case 4:  alphaPass = (alphaVal <= alphaRefI);  break; // LESSEQUAL
-			case 5:  alphaPass = (alphaVal >  alphaRefI);  break; // GREATER
-			case 6:  alphaPass = (alphaVal != alphaRefI);  break; // NOTEQUAL
-			case 7:  alphaPass = (alphaVal >= alphaRefI);  break; // GREATEREQUAL
-			default: alphaPass = true;                     break; // 8 = ALWAYS
+			case 0:  alphaPass = false;                    break; // NEVER
+			case 1:  alphaPass = (alphaVal <  alphaRefI);  break; // LESS
+			case 2:  alphaPass = (alphaVal == alphaRefI);  break; // EQUAL
+			case 3:  alphaPass = (alphaVal <= alphaRefI);  break; // LEQUAL
+			case 4:  alphaPass = (alphaVal >  alphaRefI);  break; // GREATER
+			case 5:  alphaPass = (alphaVal != alphaRefI);  break; // NOTEQUAL
+			case 6:  alphaPass = (alphaVal >= alphaRefI);  break; // GEQUAL
+			default: alphaPass = true;                     break; // 7 = ALWAYS
 		}
 		if (!alphaPass) clip(-1);
 	}
