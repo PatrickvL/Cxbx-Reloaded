@@ -1475,6 +1475,8 @@ void pgraph_handle_method(NV2AState *d,
 			vertex_attribute->stride =
 				GET_MASK(parameter, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_STRIDE);
 
+			pg->vertex_attributes_generation++;
+
 			NV2A_DPRINTF("vertex data array format=%d, count=%d, stride=%d\n",
 				vertex_attribute->format,
 				vertex_attribute->count,
@@ -1553,6 +1555,7 @@ void pgraph_handle_method(NV2AState *d,
 				parameter & 0x7fffffff;
 
 			pg->vertex_attributes[slot].converted_elements = 0;
+			pg->vertex_attributes_generation++;
 
 			break;
 		}

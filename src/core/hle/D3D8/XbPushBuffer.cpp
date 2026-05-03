@@ -195,11 +195,17 @@ void D3D11_draw_state_update(NV2AState *d)
 	// so the vertex fetch re-uploads them before the next draw.
 	g_bD3D11VertexFetchDefaultsDirty = true;
 
-	// With SetStreamSource/SetVertexShader patches disabled, the layout CB
-	// generation counter is never bumped externally.  Invalidate every
-	// BEGIN/END pair so the vertex fetch always re-uploads attribute descriptors
-	// from the current PGRAPH vertex_attributes[] state.
-	CxbxD3D11VertexFetchInvalidateLayout();
+	// Only invalidate layout CB when vertex_attributes actually changed
+	// (FORMAT or OFFSET methods bumped the generation counter in PGRAPH).
+	// This avoids expensive per-draw layout CB re-upload for consecutive
+	// draws that share the same vertex format.
+	{
+		static uint32_t s_LastVertexAttribGeneration = ~0u;
+		if (pg->vertex_attributes_generation != s_LastVertexAttribGeneration) {
+			s_LastVertexAttribGeneration = pg->vertex_attributes_generation;
+			CxbxD3D11VertexFetchInvalidateLayout();
+		}
+	}
 
 	CxbxUpdateNativeD3DResources();
 

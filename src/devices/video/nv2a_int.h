@@ -307,6 +307,7 @@ typedef struct PGRAPHState {
 	float line_width;      // NV097_SET_LINE_WIDTH (float, pixels)
 
 	VertexAttribute vertex_attributes[NV2A_VERTEXSHADER_ATTRIBUTES];
+	uint32_t vertex_attributes_generation; // bumped when FORMAT or OFFSET changes
 
 	unsigned int inline_array_length;
 	uint32_t inline_array[NV2A_MAX_BATCH_LENGTH];
