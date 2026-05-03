@@ -739,7 +739,16 @@ bool ConvertD3DTextureToARGBBuffer(
 
 	uint8_t* unswizleBuffer = nullptr;
 	if (EmuXBFormatIsSwizzled(X_Format)) {
-		unswizleBuffer = (uint8_t*)malloc(SrcSlicePitch * uiDepth); // TODO : Reuse buffer when performance is important
+		// Reuse a static growing buffer to avoid malloc/free per mip level
+		static uint8_t* s_UnswizzleBuf = nullptr;
+		static size_t   s_UnswizzleBufSize = 0;
+		size_t requiredSize = (size_t)SrcSlicePitch * uiDepth;
+		if (requiredSize > s_UnswizzleBufSize) {
+			free(s_UnswizzleBuf);
+			s_UnswizzleBuf = (uint8_t*)malloc(requiredSize);
+			s_UnswizzleBufSize = requiredSize;
+		}
+		unswizleBuffer = s_UnswizzleBuf;
 		// First we need to unswizzle the texture data
 		EmuUnswizzleBox(
 			pSrc, SrcWidth, SrcHeight, uiDepth,
@@ -763,7 +772,6 @@ bool ConvertD3DTextureToARGBBuffer(
 			// This code will get hit when converting compressed texture mipmaps on hardware that somehow doesn't support DXT natively
 			// (or lied when Cxbx asked it if it does!)
 			EmuLog(LOG_LEVEL::WARNING, "Converting DXT textures smaller than a block is not currently implemented. Ignoring conversion!");
-			free(unswizleBuffer);
 			return true;
 		}
 
@@ -787,9 +795,6 @@ bool ConvertD3DTextureToARGBBuffer(
 		pSrcSlice += SrcSlicePitch;
 		pDstSlice += DstSlicePitch;
 	}
-
-	free(unswizleBuffer);
-	unswizleBuffer = nullptr;
 
 	return true;
 }
