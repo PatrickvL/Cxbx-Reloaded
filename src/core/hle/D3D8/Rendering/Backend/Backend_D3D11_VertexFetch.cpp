@@ -21,7 +21,7 @@
 // *
 // ******************************************************************
 
-// Backend_D3D11_IABypass.cpp — Input Assembler bypass draw path.
+// Backend_D3D11_VertexFetch.cpp — Programmable vertex fetching draw path.
 //
 // This module handles vertex data upload
 // and draw calls using SV_VertexID-based vertex fetch in the shader.
@@ -68,7 +68,7 @@
 #define CXBX_PRIM_LINELOOP  4
 
 // ******************************************************************
-// * Persistent GPU resources for IA bypass
+// * Persistent GPU resources for vertex fetch
 // ******************************************************************
 // UP draw staging buffer: only used for DrawPrimitiveUP / inline vertex data
 // where the source pointer is not in the 64 MiB contiguous mirror.
@@ -102,7 +102,7 @@ static UINT                      s_LastLayoutCBGeneration = UINT_MAX;
 // ******************************************************************
 // * Layout constant buffer structure (must match CxbxVertexLayoutCB in HLSL)
 // ******************************************************************
-struct IABypassLayoutCB {
+struct VertexFetchLayoutCB {
 	// Header: 8 uints (32 bytes, matches HLSL CxbxVertexLayoutCB)
 	UINT PrimType;        // 0=normal, 1=quad, 2=fan, 3=quadstrip, 4=lineloop
 	UINT IndexedDraw;     // 0=non-indexed, 1=indexed 16-bit, 2=indexed 32-bit
@@ -200,27 +200,27 @@ static UINT XboxFormatToVtxFmt(UINT xboxType)
 }
 
 // ******************************************************************
-// * Initialize IA bypass resources (called once during device init)
+// * Initialize vertex fetch resources (called once during device init)
 // ******************************************************************
-void CxbxD3D11IABypassInit()
+void CxbxD3D11VertexFetchInit()
 {
 	HRESULT hr;
 
 	// Layout CB (b1) — 32 + 256 = 288 bytes
-	hr = CxbxD3D11CreateConstantBuffer(sizeof(IABypassLayoutCB), true, &s_pLayoutCB);
+	hr = CxbxD3D11CreateConstantBuffer(sizeof(VertexFetchLayoutCB), true, &s_pLayoutCB);
 	if (FAILED(hr))
-		EmuLog(LOG_LEVEL::WARNING, "IABypassInit: Failed to create layout CB");
+		EmuLog(LOG_LEVEL::WARNING, "VertexFetchInit: Failed to create layout CB");
 
 	// Defaults CB (b2) — 16 × float4 = 256 bytes
 	hr = CxbxD3D11CreateConstantBuffer(16 * 4 * sizeof(float), true, &s_pDefaultsCB);
 	if (FAILED(hr))
-		EmuLog(LOG_LEVEL::WARNING, "IABypassInit: Failed to create defaults CB");
+		EmuLog(LOG_LEVEL::WARNING, "VertexFetchInit: Failed to create defaults CB");
 }
 
 // ******************************************************************
-// * Release IA bypass resources
+// * Release vertex fetch resources
 // ******************************************************************
-void CxbxD3D11IABypassRelease()
+void CxbxD3D11VertexFetchRelease()
 {
 	if (s_pUPVtxDataSRV_UNORM8x4) { s_pUPVtxDataSRV_UNORM8x4->Release(); s_pUPVtxDataSRV_UNORM8x4 = nullptr; }
 	if (s_pUPVtxDataSRV_SNORM16x2) { s_pUPVtxDataSRV_SNORM16x2->Release(); s_pUPVtxDataSRV_SNORM16x2 = nullptr; }
@@ -247,7 +247,7 @@ void CxbxD3D11IABypassRelease()
 }
 
 // Called externally when SetStreamSource or SetVertexShader change
-void CxbxD3D11IABypassInvalidateLayout()
+void CxbxD3D11VertexFetchInvalidateLayout()
 {
 	s_LayoutCBGeneration++;
 }
@@ -260,7 +260,7 @@ static void EnsureUPVtxDataBuffer(UINT requiredSize)
 	UINT oldSize = s_UPVtxDataBufSize;
 	CxbxD3D11EnsureRawStagingBuffer(requiredSize,
 		&s_pUPVtxDataBuf, &s_UPVtxDataBufSize,
-		&s_pUPVtxDataSRV, "IABypass_UPVtxData");
+		&s_pUPVtxDataSRV, "VertexFetch_UPVtxData");
 
 	// If the buffer was (re)created, also create typed SRV views for hardware format decode
 	if (s_UPVtxDataBufSize != oldSize && s_pUPVtxDataBuf) {
@@ -287,21 +287,21 @@ static void EnsureIdxDataBuffer(UINT requiredSize)
 {
 	CxbxD3D11EnsureRawStagingBuffer(requiredSize,
 		&s_pIdxDataBuf, &s_IdxDataBufSize,
-		&s_pIdxDataSRV, "IABypass_IdxData");
+		&s_pIdxDataSRV, "VertexFetch_IdxData");
 }
 
 // ******************************************************************
 // * Upload vertex defaults (NV2A sticky attribute values) to CB b2
 // ******************************************************************
 // Dirty flag for vertex defaults — set by CxbxSetVertexAttribute, consumed here
-bool g_bD3D11IABypassDefaultsDirty = true;
+bool g_bD3D11VertexFetchDefaultsDirty = true;
 
 static void UploadVertexDefaults()
 {
 	if (!s_pDefaultsCB) return;
-	if (!g_bD3D11IABypassDefaultsDirty) return;
+	if (!g_bD3D11VertexFetchDefaultsDirty) return;
 
-	g_bD3D11IABypassDefaultsDirty = false;
+	g_bD3D11VertexFetchDefaultsDirty = false;
 
 	D3D11_MAPPED_SUBRESOURCE mapped = {};
 	HRESULT hr = g_pD3DDeviceContext->Map(s_pDefaultsCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
@@ -320,12 +320,12 @@ static void UploadVertexDefaults()
 }
 
 // ******************************************************************
-// * Core draw function for IA bypass
+// * Core draw function for vertex fetch
 // * Returns true if the draw was handled, false to fall back to IA path.
 // ******************************************************************
-void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
+void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 {
-	// When all vertex shaders are compiled with IA bypass, the normal IA
+	// When all vertex shaders are compiled with vertex fetch, the normal IA
 	// fallback path cannot work (shader expects SV_VertexID, not TEXCOORD
 	// inputs).
 	if (!s_pLayoutCB || !s_pDefaultsCB)
@@ -477,7 +477,7 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 	// Step 4: Fill layout constant buffer (skip if generation unchanged)
 	// ---------------------------------------------------------------
 	// Bump generation for prim-type or index-mode changes (cheap inline check)
-	// The generation is also bumped externally by CxbxD3D11IABypassInvalidateLayout()
+	// The generation is also bumped externally by CxbxD3D11VertexFetchInvalidateLayout()
 	// for SetStreamSource / SetVertexShader changes.
 	{
 		// Build a local hash of fields that change per-draw but aren't covered by
@@ -500,8 +500,8 @@ void CxbxD3D11IABypassDraw(CxbxDrawContext& DrawContext)
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
 		if (FAILED(hr)) return;
 
-		IABypassLayoutCB* pCB = (IABypassLayoutCB*)mapped.pData;
-		memset(pCB, 0, sizeof(IABypassLayoutCB));
+		VertexFetchLayoutCB* pCB = (VertexFetchLayoutCB*)mapped.pData;
+		memset(pCB, 0, sizeof(VertexFetchLayoutCB));
 
 		pCB->PrimType = primType;
 		pCB->IndexedDraw = indexedDraw;
@@ -649,7 +649,7 @@ skip_layout_upload:
 	// ---------------------------------------------------------------
 
 	// Unbind IA state — null input layout, null vertex/index buffers
-	// (skip if already nulled from a prior IA bypass draw)
+	// (skip if already nulled from a prior vertex fetch draw)
 	if (!s_IAAlreadyNull) {
 		g_pD3DDeviceContext->IASetInputLayout(nullptr);
 		ID3D11Buffer* nullBufs[17] = {};
@@ -831,8 +831,8 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
 		if (FAILED(hr)) return;
 
-		IABypassLayoutCB* pCB = (IABypassLayoutCB*)mapped.pData;
-		memset(pCB, 0, sizeof(IABypassLayoutCB));
+		VertexFetchLayoutCB* pCB = (VertexFetchLayoutCB*)mapped.pData;
+		memset(pCB, 0, sizeof(VertexFetchLayoutCB));
 
 		pCB->PrimType = primType;
 		pCB->IndexedDraw = 0;

@@ -35,7 +35,7 @@
 #include "core\hle\D3D8\Rendering\RenderGlobals.h" // For g_Xbox_VertexShader_Handle
 #include "core\hle\D3D8\XbPushBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
-#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11IABypassDraw
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11VertexFetchDraw
 #include "core\hle\D3D8\Rendering\PatchDraw.h" // For D3D11_draw_patch
 #include "common/AddressRanges.h" // For CONTIGUOUS_MEMORY_BASE
 #include "core/common/video/RenderBase.hpp" // For g_renderbase
@@ -116,7 +116,7 @@ void D3D11_draw_arrays(NV2AState *d)
 		DrawContext.dwStartVertex = pg->gl_draw_arrays_start[i];
 		DrawContext.dwVertexCount = pg->gl_draw_arrays_count[i];
 
-		CxbxD3D11IABypassDraw(DrawContext);
+		CxbxD3D11VertexFetchDraw(DrawContext);
 		g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(
 			DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 	}
@@ -181,7 +181,7 @@ void D3D11_draw_inline_elements(NV2AState *d)
 	DrawContext.dwVertexCount = uiIndexCount;
 	DrawContext.pXboxIndexData = d->pgraph.inline_elements;
 
-	CxbxD3D11IABypassDraw(DrawContext);
+	CxbxD3D11VertexFetchDraw(DrawContext);
 	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(
 		DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 }
@@ -192,14 +192,14 @@ void D3D11_draw_state_update(NV2AState *d)
 
 	// Vertex attribute inline_value may have changed via NV2A push buffer
 	// (SET_VERTEX_DATA4F/4UB/2S) since the last draw. Mark defaults dirty
-	// so the IA bypass re-uploads them before the next draw.
-	g_bD3D11IABypassDefaultsDirty = true;
+	// so the vertex fetch re-uploads them before the next draw.
+	g_bD3D11VertexFetchDefaultsDirty = true;
 
 	// With SetStreamSource/SetVertexShader patches disabled, the layout CB
 	// generation counter is never bumped externally.  Invalidate every
-	// BEGIN/END pair so the IA bypass always re-uploads attribute descriptors
+	// BEGIN/END pair so the vertex fetch always re-uploads attribute descriptors
 	// from the current PGRAPH vertex_attributes[] state.
-	CxbxD3D11IABypassInvalidateLayout();
+	CxbxD3D11VertexFetchInvalidateLayout();
 
 	CxbxUpdateNativeD3DResources();
 

@@ -57,7 +57,7 @@
 #define LOG_PREFIX CXBXR_MODULE::D3D8
 
 #include "RenderGlobals.h"
-#include "Backend\Backend_D3D11.h" // FilterInputElementsByShaderSignature, CxbxD3D11IABypassDraw
+#include "Backend\Backend_D3D11.h" // FilterInputElementsByShaderSignature, CxbxD3D11VertexFetchDraw
 #include "core/hle/D3D8/XbVertexShader.h"
 #include "core/hle/D3D8/XbVertexBuffer.h" // For CxbxDrawContext
 #include "core/kernel/support/Emu.h"
@@ -827,7 +827,7 @@ HRESULT CxbxDrawTriPatchD3D11(
 // NV2A Hardware Tessellation: D3D11_draw_patch
 // Called from PGRAPH when SET_END_PATCH is received.
 // Decodes forward-difference matrix data from strip curves and evaluates
-// the tessellated surface, rendering via CxbxD3D11IABypassDraw.
+// the tessellated surface, rendering via CxbxD3D11VertexFetchDraw.
 // ---------------------------------------------------------------
 
 extern void CxbxUpdateNativeD3DResources();
@@ -1066,7 +1066,7 @@ void D3D11_draw_patch(NV2AState *d)
 		return;
 	}
 
-	// Route through IABypass as a UP (user-pointer) draw.
+	// Route through VertexFetch as a UP (user-pointer) draw.
 	VertexAttribute savedAttr0 = pg->vertex_attributes[0];
 
 	pg->vertex_attributes[0].format = 2; // NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F
@@ -1086,7 +1086,7 @@ void D3D11_draw_patch(NV2AState *d)
 	DrawContext.uiXboxVertexStreamZeroStride = sizeof(Float3);
 	DrawContext.bNV2AInlineData = true;
 
-	CxbxD3D11IABypassDraw(DrawContext);
+	CxbxD3D11VertexFetchDraw(DrawContext);
 
 	pg->vertex_attributes[0] = savedAttr0;
 }

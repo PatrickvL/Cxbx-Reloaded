@@ -380,7 +380,7 @@ Committed as b8b3b99c. Tested: BumpEarth, Dolphin, Fur.
 
 ### 5.1 — Read vertex array descriptors from PGRAPH  ✅ DONE
 
-**File:** `src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_IABypass.cpp`
+**File:** `src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_VertexFetch.cpp`
 
 Currently reads `g_Xbox_SetStreamSource[]` for per-stream base/stride/offset.
 Switch to reading `PGRAPHState.vertex_attributes[16]`:
@@ -489,7 +489,7 @@ D3D11 draws, the PFIFO puller triggers draws when it processes `NV097_SET_BEGIN_
 
 ### 8.1 — Register D3D11 draw backend as PGRAPH draw functions  ✅ DONE
 
-Committed as a816390d. `HLE_draw_arrays` calls `CxbxD3D11IABypassDraw()`.
+Committed as a816390d. `HLE_draw_arrays` calls `CxbxD3D11VertexFetchDraw()`.
 `HLE_init_pgraph_plugins()` sets function pointers. Puller context flag prevents
 `pfifo_flush` deadlock.
 
@@ -613,7 +613,7 @@ Once no code reads from them:
 
 Remove `needs_conversion`, `converted_buffer`, `converted_elements`,
 `converted_size`, `converted_count` — these were for the OpenGL path's
-format conversion. The D3D11 IA bypass handles format decode in shader.
+format conversion. The D3D11 vertex fetch handles format decode in shader.
 
 **Test:** Full suite.
 
@@ -659,7 +659,7 @@ Verify that all rendering decisions read from `PGRAPHState` only:
 - `VSInterpreterCBLayout` is **eliminated** — `pg->program_data[]` (XFPR RAM mirror)
   uploaded as `StructuredBuffer<uint4>` SRV (`g_XFPR` at t5); program start read
   from `regs[]`
-- `IABypassLayoutCB` may remain as a small aux cbuffer for per-draw params
+- `VertexFetchLayoutCB` may remain as a small aux cbuffer for per-draw params
   (PrimType, IndexedDraw, etc.) that have no PGRAPH register equivalent
 - Software-computed fields (ColorSign, TexFmtFixup, AlphaKill, FrontFaceInfo)
   in a small aux cbuffer — eventual goal: derive these in-shader from regs[]

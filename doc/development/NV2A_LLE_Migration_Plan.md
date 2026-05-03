@@ -36,7 +36,7 @@ Migrate Cxbx-Reloaded from the current **HLE D3D patch + D3D11 backend** archite
 │ HLE State    │ │ D3D11    │ │ HLSL Shaders     │
 │ Mirrors:     │ │ Backend  │ │ - VS Interpreter  │
 │ RenderState  │ │ Draw()   │ │ - RC Interpreter  │
-│ TextureState │ │ Present()│ │ - IA Bypass Fetch │
+│ TextureState │ │ Present()│ │ - vertex fetch Fetch │
 │ Globals      │ │          │ │ - Fixed-Function  │
 └──────────────┘ └──────────┘ └──────────────────┘
 
@@ -224,7 +224,7 @@ read from the NV2A PGRAPH register state populated by Phase 1.
   - `NV_PGRAPH_LIGHT0..7_*` → Light source parameters
 
 ### 2.3 — Vertex Attribute Fetch: Switch to PGRAPH Vertex Array State
-- **Current**: `Backend_D3D11_IABypass.cpp` reads from `g_Xbox_SetStreamSource[]` (HLE state)
+- **Current**: `Backend_D3D11_VertexFetch.cpp` reads from `g_Xbox_SetStreamSource[]` (HLE state)
 - **New**: Read from `PGRAPHState.vertex_attributes[16]`:
   - `dma_select`, `offset`, `format`, `size`, `count`, `stride` per attribute
   - `inline_value[4]` for NV2A sticky/default attribute values
@@ -334,7 +334,7 @@ Some patches handle CPU-side concerns that don't go through the pushbuffer:
 - Port key shaders:
   - `CxbxVertexShaderInterpreter.hlsl` → SPIR-V compute/vertex shader
   - `CxbxRegisterCombinerInterpreter.hlsl` → SPIR-V fragment shader
-  - `CxbxVertexFetch.hlsli` → SPIR-V vertex shader (buffer device address for vertex pull)
+  - `CxbxVertexFetch.hlsli` → SPIR-V vertex shader (buffer device address for vertex fetch)
 - **Alternative**: Keep HLSL and use `spirv-cross` or DXC for runtime compilation
 
 ### 4.3 — Vulkan Render Pass & Pipeline Setup

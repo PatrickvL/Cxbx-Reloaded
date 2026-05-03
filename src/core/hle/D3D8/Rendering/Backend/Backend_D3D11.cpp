@@ -719,11 +719,11 @@ void CxbxD3D11InitBlit()
 		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11InitBlit: Failed to create vertex convert CB");
 	}
 
-	// Initialize page-tracked 64 MiB mirror (must precede IA bypass init)
+	// Initialize page-tracked 64 MiB mirror (must precede vertex fetch init)
 	CxbxPageTrackerInit();
 
-	// Initialize IA bypass resources
-	CxbxD3D11IABypassInit();
+	// Initialize vertex fetch resources
+	CxbxD3D11VertexFetchInit();
 }
 
 // ******************************************************************

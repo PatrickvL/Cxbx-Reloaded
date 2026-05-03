@@ -37,7 +37,7 @@ void CxbxDrawIndexed(CxbxDrawContext &DrawContext)
 	assert(DrawContext.pXboxIndexData != nullptr);
 	assert(DrawContext.dwVertexCount > 0); // TODO : If this fails, make responsible callers do an early-exit
 
-	CxbxD3D11IABypassDraw(DrawContext);
+	CxbxD3D11VertexFetchDraw(DrawContext);
 	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 }
 
@@ -50,7 +50,7 @@ void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext)
 	assert(DrawContext.uiXboxVertexStreamZeroStride > 0);
 	assert(DrawContext.dwBaseVertexIndex == 0); // No IndexBase under Draw*UP
 
-	CxbxD3D11IABypassDraw(DrawContext);
+	CxbxD3D11VertexFetchDraw(DrawContext);
 	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 }
 

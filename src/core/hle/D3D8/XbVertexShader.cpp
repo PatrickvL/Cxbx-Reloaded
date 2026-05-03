@@ -530,7 +530,7 @@ CxbxVertexDeclaration* CxbxGetVertexDeclaration()
 	xbox::X_VERTEXATTRIBUTEFORMAT *pXboxVertexAttributeFormat = GetXboxVertexAttributeFormat();
 	if (pXboxVertexAttributeFormat == nullptr) {
 		// With SetVertexShader patches disabled, HLE attribute format is
-		// unavailable. The IA bypass draw path reads PGRAPH directly instead.
+		// unavailable. The vertex pull draw path reads PGRAPH directly instead.
 		return nullptr;
 	}
 

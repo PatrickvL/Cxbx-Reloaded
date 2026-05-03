@@ -609,7 +609,7 @@ void CxbxSetVertexAttribute(int Register, FLOAT a, FLOAT b, FLOAT c, FLOAT d)
 	attribute_floats[2] = c;
 	attribute_floats[3] = d;
 
-	g_bD3D11IABypassDefaultsDirty = true;
+	g_bD3D11VertexFetchDefaultsDirty = true;
 
 	// D3D11: The zero-stride vertex defaults buffer reads inline_value[] directly,
 	// so no constant buffer upload is needed for attribute defaults.
@@ -626,5 +626,5 @@ void CxbxImpl_SetStreamSource(UINT StreamNumber, xbox::X_D3DVertexBuffer* pStrea
 	g_Xbox_SetStreamSource[StreamNumber].VertexBuffer = pStreamData;
 	g_Xbox_SetStreamSource[StreamNumber].Stride = Stride;
 
-	CxbxD3D11IABypassInvalidateLayout();
+	CxbxD3D11VertexFetchInvalidateLayout();
 }
