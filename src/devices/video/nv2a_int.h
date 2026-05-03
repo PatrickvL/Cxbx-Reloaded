@@ -329,6 +329,7 @@ typedef struct PGRAPHState {
 	bool texture_matrix_enable[NV2A_MAX_TEXTURES]; // NV097_SET_TEXTURE_MATRIX_ENABLE per stage
 
 	uint32_t regs[NV_PGRAPH_SIZE]; // TODO : union
+	uint32_t regs_generation; // bumped on any regs[] write (for GPU upload skip)
 } PGRAPHState;
 
 typedef struct OverlayState {

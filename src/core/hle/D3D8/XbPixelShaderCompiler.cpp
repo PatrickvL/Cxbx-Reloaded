@@ -254,7 +254,15 @@ void CxbxD3D11UploadRCInterpreterState()
 	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
 	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
-	CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));
+	// Only re-upload when regs actually changed (generation counter bumped
+	// by nv097_dispatch_method on any register write).
+	{
+		static uint32_t s_LastRegsGeneration = ~0u;
+		if (pg->regs_generation != s_LastRegsGeneration) {
+			s_LastRegsGeneration = pg->regs_generation;
+			CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));
+		}
+	}
 	// Bind the regs SRV to PS t12
 	g_pD3DDeviceContext->PSSetShaderResources(CXBX_D3D11_PS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
 

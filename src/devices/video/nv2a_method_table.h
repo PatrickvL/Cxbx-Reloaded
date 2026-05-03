@@ -238,5 +238,9 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 			SET_MASK(reg, mask, parameter);
 		}
 	}
+
+	if (reg != old_val)
+		pg->regs_generation++;
+
 	return old_val;
 }
