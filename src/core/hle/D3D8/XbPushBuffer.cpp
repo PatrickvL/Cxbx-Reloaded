@@ -385,6 +385,7 @@ static void D3D11_flip_stall(NV2AState *d)
 		uint32_t pvideo_buffer = d->pvideo.regs[RI(NV_PVIDEO_BUFFER)];
 		int buf = (pvideo_buffer & NV_PVIDEO_BUFFER_0_USE) ? 0 : 1;
 
+		uint32_t pvideo_base = d->pvideo.regs[RI(NV_PVIDEO_BASE(buf))];
 		uint32_t pvideo_offset = d->pvideo.regs[RI(NV_PVIDEO_OFFSET(buf))];
 		uint32_t pvideo_size_in = d->pvideo.regs[RI(NV_PVIDEO_SIZE_IN(buf))];
 		uint32_t pvideo_format = d->pvideo.regs[RI(NV_PVIDEO_FORMAT(buf))];
@@ -396,7 +397,7 @@ static void D3D11_flip_stall(NV2AState *d)
 		UINT overlayPitch = GET_MASK(pvideo_format, NV_PVIDEO_FORMAT_PITCH);
 
 		if (overlayWidth > 0 && overlayHeight > 0 && overlayPitch > 0) {
-			uint8_t *pOverlayData = (uint8_t *)(CONTIGUOUS_MEMORY_BASE + pvideo_offset);
+			uint8_t *pOverlayData = (uint8_t *)(CONTIGUOUS_MEMORY_BASE + pvideo_base + pvideo_offset);
 
 			// Calculate output rectangle (PVIDEO coordinates → host backbuffer)
 			int out_x = GET_MASK(pvideo_point_out, NV_PVIDEO_POINT_OUT_X);
