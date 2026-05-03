@@ -184,6 +184,7 @@ void (*pgraph_draw_patch)(NV2AState *d);  // Hardware tessellation callback
 void (*pgraph_flip_stall)(NV2AState *d);  // Host present on FLIP_STALL
 void (*pgraph_zpass_begin)(NV2AState *d); // Begin occlusion query for zpass counting
 void (*pgraph_zpass_end)(NV2AState *d);   // End occlusion query, accumulate result
+void (*pgraph_zpass_collect)(NV2AState *d); // Collect pending query result (blocking)
 
 // Set true the first time the title issues an explicit NV097_FLIP_STALL.
 // Once observed, the puller's auto-present fallback (intended for raw push
@@ -1571,6 +1572,10 @@ void pgraph_handle_method(NV2AState *d,
 			 *        This'll do for now, but accuracy and performance with other
 			 *        approaches could be better
 			 */
+			// Collect any pending occlusion query result before reading
+			if (pgraph_zpass_collect != nullptr)
+				pgraph_zpass_collect(d);
+
 			uint8_t type = GET_MASK(parameter, NV097_GET_REPORT_TYPE);
 			assert(type == NV097_GET_REPORT_TYPE_ZPASS_PIXEL_CNT);
 			hwaddr offset = GET_MASK(parameter, NV097_GET_REPORT_OFFSET);

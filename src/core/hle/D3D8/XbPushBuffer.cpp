@@ -211,6 +211,35 @@ void D3D11_draw_state_update(NV2AState *d)
 // Persistent occlusion query reused across draw calls.
 // Created on first use; Begin/End bracket each draw when zpass counting is enabled.
 static ID3D11Query* g_pZpassQuery = nullptr;
+static bool g_bZpassQueryPending = false; // true = query ended but result not yet collected
+
+// Collect any pending zpass query result (non-blocking first, blocking if forced)
+static void CollectPendingZpassResult(PGRAPHState *pg, bool bBlock)
+{
+	if (!g_bZpassQueryPending)
+		return;
+
+	UINT64 pixelCount = 0;
+	HRESULT hr = g_pD3DDeviceContext->GetData(g_pZpassQuery, &pixelCount, sizeof(pixelCount),
+		D3D11_ASYNC_GETDATA_DONOTFLUSH);
+	if (hr == S_OK) {
+		pg->zpass_pixel_count_result += (unsigned int)pixelCount;
+		g_bZpassQueryPending = false;
+		return;
+	}
+
+	if (!bBlock)
+		return;
+
+	// Result not ready — flush command buffer and poll until available
+	g_pD3DDeviceContext->Flush();
+	while (g_pD3DDeviceContext->GetData(g_pZpassQuery, &pixelCount, sizeof(pixelCount), 0) == S_FALSE) {
+		// Yield briefly — the flush above ensures GPU is processing
+		SwitchToThread();
+	}
+	pg->zpass_pixel_count_result += (unsigned int)pixelCount;
+	g_bZpassQueryPending = false;
+}
 
 void D3D11_zpass_begin(NV2AState *d)
 {
@@ -231,6 +260,9 @@ void D3D11_zpass_begin(NV2AState *d)
 			return;
 	}
 
+	// Collect any still-pending result before reusing the query object
+	CollectPendingZpassResult(pg, true);
+
 	g_pD3DDeviceContext->Begin(g_pZpassQuery);
 	pg->zpass_pixel_count_active = true;
 }
@@ -248,13 +280,15 @@ void D3D11_zpass_end(NV2AState *d)
 	g_pD3DDeviceContext->End(g_pZpassQuery);
 	pg->zpass_pixel_count_active = false;
 
-	// Retrieve the occlusion result (spin-wait; draw just completed so GPU is close)
-	UINT64 pixelCount = 0;
-	while (g_pD3DDeviceContext->GetData(g_pZpassQuery, &pixelCount, sizeof(pixelCount), 0) == S_FALSE) {
-		SwitchToThread();
-	}
+	// Mark as pending — result will be collected lazily when needed
+	// (at next zpass_begin or GET_REPORT). This avoids stalling the CPU
+	// immediately after the draw, giving the GPU time to finish.
+	g_bZpassQueryPending = true;
+}
 
-	pg->zpass_pixel_count_result += (unsigned int)pixelCount;
+static void D3D11_zpass_collect(NV2AState *d)
+{
+	CollectPendingZpassResult(&d->pgraph, true);
 }
 
 // ---- End zpass ----
@@ -342,6 +376,7 @@ extern void(*pgraph_draw_patch)(NV2AState *d);
 extern void(*pgraph_flip_stall)(NV2AState *d);
 extern void(*pgraph_zpass_begin)(NV2AState *d);
 extern void(*pgraph_zpass_end)(NV2AState *d);
+extern void(*pgraph_zpass_collect)(NV2AState *d);
 
 extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget);
 
@@ -518,6 +553,7 @@ void D3D11_init_pgraph_plugins()
 	pgraph_flip_stall = D3D11_flip_stall;
 	pgraph_zpass_begin = D3D11_zpass_begin;
 	pgraph_zpass_end = D3D11_zpass_end;
+	pgraph_zpass_collect = D3D11_zpass_collect;
 }
 
 extern void pgraph_handle_method(
