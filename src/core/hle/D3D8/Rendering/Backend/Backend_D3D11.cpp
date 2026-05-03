@@ -134,7 +134,7 @@ float                 g_fLineWidth = 1.0f;
 // * Compute shader unswizzle resources
 // ******************************************************************
 ID3D11ComputeShader  *g_pD3D11UnswizzleCS = nullptr;
-ID3D11Buffer         *g_pD3D11UnswizzleCB = nullptr; // constant buffer: maskX, maskY, width, bpp
+ID3D11Buffer         *g_pD3D11UnswizzleCB = nullptr; // constant buffer: maskX, maskY, width, height, bpp
 ID3D11Buffer         *g_pD3D11UnswizzleStagingBuf = nullptr; // reusable ByteAddressBuffer for upload
 UINT                  g_UnswizzleStagingBufSize = 0;
 ID3D11ShaderResourceView *g_pD3D11UnswizzleSRV = nullptr; // SRV for staging buffer
@@ -622,8 +622,8 @@ void CxbxD3D11InitBlit()
 		}
 	}
 
-	// Create unswizzle constant buffer (4 uints: maskX, maskY, width, bpp)
-	hr = CxbxD3D11CreateConstantBuffer(16, true, &g_pD3D11UnswizzleCB);
+	// Create unswizzle constant buffer (5 uints: maskX, maskY, width, height, bpp)
+	hr = CxbxD3D11CreateConstantBuffer(32, true, &g_pD3D11UnswizzleCB);
 	if (FAILED(hr)) {
 		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11InitBlit: Failed to create unswizzle CB");
 	}

@@ -70,7 +70,7 @@ bool CxbxD3D11UnswizzleTexture(
 	}
 
 	// Update constant buffer
-	UINT cbData[4] = { maskX, maskY, width, bpp };
+	UINT cbData[8] = { maskX, maskY, width, height, bpp, 0, 0, 0 };
 	hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleCB, cbData, sizeof(cbData));
 	if (FAILED(hr))
 		return false;
