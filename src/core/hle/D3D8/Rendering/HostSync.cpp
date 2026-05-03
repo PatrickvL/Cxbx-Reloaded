@@ -72,6 +72,28 @@ void CxbxUpdateHostTextures()
 
 	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 
+	// Fast path: skip entire function if texture-related registers unchanged.
+	// This avoids hash map lookups, format decoding, and SRV creation.
+	{
+		static uint32_t s_LastTexOff[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastTexCtl[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastTexFmt[4] = { ~0u, ~0u, ~0u, ~0u };
+		bool anyChanged = false;
+		for (int i = 0; i < 4; i++) {
+			uint32_t off = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + i * 4)];
+			uint32_t ctl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
+			uint32_t fmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
+			if (off != s_LastTexOff[i] || ctl != s_LastTexCtl[i] || fmt != s_LastTexFmt[i]) {
+				s_LastTexOff[i] = off;
+				s_LastTexCtl[i] = ctl;
+				s_LastTexFmt[i] = fmt;
+				anyChanged = true;
+			}
+		}
+		if (!anyChanged)
+			return; // All texture state unchanged — skip expensive work
+	}
+
 	// Set the host texture for each stage
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
@@ -229,13 +251,8 @@ void CxbxUpdateHostTextures()
 		if (pHostBaseTexture != nullptr) {
 			// Reuse cached SRV if the underlying resource hasn't changed
 			if (s_CachedResource[stage] == pHostBaseTexture && s_CachedSRV[stage] != nullptr) {
-				g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &s_CachedSRV[stage]);
-				// All pixel shaders use separate Texture2D/3D/Cube declarations
-				// at t0-3/t4-7/t8-11; bind to the type-appropriate slot too
-				if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURE3D)
-					g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &s_CachedSRV[stage]);
-				else if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURECUBE)
-					g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &s_CachedSRV[stage]);
+				// SRV already cached and resource unchanged — skip rebind
+				// (the PSSetShaderResources call from the last time is still in effect)
 			} else {
 				// Release old cached SRV
 				if (s_CachedSRV[stage]) {
