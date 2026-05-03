@@ -510,14 +510,27 @@ void CxbxUpdateHostVertexShaderConstants()
 	}
 
 	// Upload NV2A fog parameters from PGRAPH registers.
+	// Only update if fog-related registers changed.
 	{
 		auto *pg = &g_NV2A->GetDeviceState()->pgraph;
 		uint32_t ctl3 = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
-		float fogMode = (float)GET_MASK(ctl3, NV_PGRAPH_CONTROL_3_FOG_MODE);
-		float fogParam0; std::memcpy(&fogParam0, &pg->regs[RI(NV_PGRAPH_FOGPARAM0)], sizeof(float));
-		float fogParam1; std::memcpy(&fogParam1, &pg->regs[RI(NV_PGRAPH_FOGPARAM1)], sizeof(float));
-		float fogStuff[4] = { fogMode, fogParam0, fogParam1, 0.0f };
-		CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_FOGINFO, fogStuff, 1);
+		uint32_t fogP0 = pg->regs[RI(NV_PGRAPH_FOGPARAM0)];
+		uint32_t fogP1 = pg->regs[RI(NV_PGRAPH_FOGPARAM1)];
+
+		static uint32_t s_LastFogCtl3 = ~0u;
+		static uint32_t s_LastFogP0 = ~0u;
+		static uint32_t s_LastFogP1 = ~0u;
+
+		if (ctl3 != s_LastFogCtl3 || fogP0 != s_LastFogP0 || fogP1 != s_LastFogP1) {
+			s_LastFogCtl3 = ctl3;
+			s_LastFogP0 = fogP0;
+			s_LastFogP1 = fogP1;
+			float fogMode = (float)GET_MASK(ctl3, NV_PGRAPH_CONTROL_3_FOG_MODE);
+			float fogParam0; std::memcpy(&fogParam0, &fogP0, sizeof(float));
+			float fogParam1; std::memcpy(&fogParam1, &fogP1, sizeof(float));
+			float fogStuff[4] = { fogMode, fogParam0, fogParam1, 0.0f };
+			CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_FOGINFO, fogStuff, 1);
+		}
 	}
 }
 
