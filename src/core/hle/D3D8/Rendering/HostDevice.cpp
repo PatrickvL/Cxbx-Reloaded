@@ -451,6 +451,16 @@ LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
    	   	}
    	   	break;
 
+   	   	case WM_ACTIVATEAPP:
+   	   	{
+   	   	   	if (wParam == FALSE) {
+   	   	   	   	DInput::mo_leave_wnd = true;
+   	   	   	} else {
+   	   	   	   	DInput::mo_leave_wnd = false;
+   	   	   	}
+   	   	}
+   	   	break;
+
    	   	case WM_CLOSE:
    	   	   	CxbxReleaseCursor();
    	   	   	DestroyWindow(hWnd);
