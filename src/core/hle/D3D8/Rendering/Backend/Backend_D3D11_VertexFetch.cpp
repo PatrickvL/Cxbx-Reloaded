@@ -703,14 +703,6 @@ skip_layout_upload:
 		CxbxUnbindThickLineGS(DrawContext.XboxPrimitiveType);
 	}
 
-	// Unbind VS SRVs to avoid conflicts with other passes
-	ID3D11ShaderResourceView* nullSRVs[4] = { nullptr, nullptr, nullptr, nullptr };
-	g_pD3DDeviceContext->VSSetShaderResources(0, 4, nullSRVs);
-	s_pLastBoundVtxSRV = nullptr;
-	s_pLastBoundIdxSRV = nullptr;
-	s_pLastBoundSNormSRV = nullptr;
-	s_pLastBoundUNormSRV = nullptr;
-
 	return;
 }
 
@@ -903,14 +895,6 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	if (primType == CXBX_PRIM_NORMAL) {
 		CxbxUnbindThickLineGS((xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode);
 	}
-
-	// Unbind VS SRVs
-	ID3D11ShaderResourceView* nullSRVs[4] = { nullptr, nullptr, nullptr, nullptr };
-	g_pD3DDeviceContext->VSSetShaderResources(0, 4, nullSRVs);
-	s_pLastBoundVtxSRV = nullptr;
-	s_pLastBoundIdxSRV = nullptr;
-	s_pLastBoundSNormSRV = nullptr;
-	s_pLastBoundUNormSRV = nullptr;
 
 	// Free per-attribute inline buffers (same protocol as xemu)
 	for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
