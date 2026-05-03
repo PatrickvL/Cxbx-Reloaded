@@ -214,6 +214,11 @@ static ID3D11Query* g_pZpassQuery = nullptr;
 
 void D3D11_zpass_begin(NV2AState *d)
 {
+	PGRAPHState *pg = &d->pgraph;
+
+	if (pg->zpass_pixel_count_active)
+		return; // already between Begin/End
+
 	if (!g_pD3DDevice || !g_pD3DDeviceContext)
 		return;
 
@@ -227,16 +232,21 @@ void D3D11_zpass_begin(NV2AState *d)
 	}
 
 	g_pD3DDeviceContext->Begin(g_pZpassQuery);
+	pg->zpass_pixel_count_active = true;
 }
 
 void D3D11_zpass_end(NV2AState *d)
 {
+	PGRAPHState *pg = &d->pgraph;
+
+	if (!pg->zpass_pixel_count_active)
+		return; // no query in flight
+
 	if (!g_pD3DDeviceContext || !g_pZpassQuery)
 		return;
 
-	PGRAPHState *pg = &d->pgraph;
-
 	g_pD3DDeviceContext->End(g_pZpassQuery);
+	pg->zpass_pixel_count_active = false;
 
 	// Retrieve the occlusion result (spin-wait; draw just completed so GPU is close)
 	UINT64 pixelCount = 0;

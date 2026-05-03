@@ -1657,7 +1657,7 @@ void pgraph_handle_method(NV2AState *d,
 				}
 
 				// End occlusion query and accumulate zpass pixel count
-				if (pg->zpass_pixel_count_enable && pgraph_zpass_end != nullptr) {
+				if (pgraph_zpass_end != nullptr) {
 					pgraph_zpass_end(d);
 				}
 			} else {
@@ -2007,6 +2007,13 @@ void pgraph_handle_method(NV2AState *d,
 
 		case NV097_SET_ZPASS_PIXEL_COUNT_ENABLE:
 		    pg->zpass_pixel_count_enable = parameter;
+		    if (parameter) {
+		        if (pgraph_zpass_begin != nullptr)
+		            pgraph_zpass_begin(d);
+		    } else {
+		        if (pgraph_zpass_end != nullptr)
+		            pgraph_zpass_end(d);
+		    }
 		    break;
 		//
 		// CASE_4(NV097_SET_TEXTURE_OFFSET, 64):

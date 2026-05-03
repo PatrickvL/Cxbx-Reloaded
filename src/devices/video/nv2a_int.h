@@ -276,6 +276,7 @@ typedef struct PGRAPHState {
 
 	xbox::addr_xt dma_report;
 	unsigned int zpass_pixel_count_enable;
+	bool zpass_pixel_count_active; // true when a D3D11 occlusion query is between Begin/End
 	unsigned int zpass_pixel_count_result;
 
 	unsigned int primitive_mode;
