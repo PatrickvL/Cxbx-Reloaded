@@ -445,10 +445,18 @@ void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg)
 		desc.MaxLOD         = maxLod;
 		std::memcpy(desc.BorderColor, borderColor, sizeof(borderColor));
 
-		HRESULT hr = g_pD3DDevice->CreateSamplerState(&desc, &s_CachedSamplers[stage]);
-		if (SUCCEEDED(hr)) {
-			// Bind to all 3 slot groups: base (0-3), 3D (4-7), cube (8-11)
-			// All pixel shaders use separate Texture2D/3D/Cube declarations
+		// Cache sampler state objects by descriptor to avoid redundant Create calls
+		static std::unordered_map<D3D11_SAMPLER_DESC, ID3D11SamplerState*, DescHash, DescEqual> s_SamplerCache;
+		auto cacheIt = s_SamplerCache.find(desc);
+		if (cacheIt != s_SamplerCache.end()) {
+			s_CachedSamplers[stage] = cacheIt->second;
+		} else {
+			HRESULT hr = g_pD3DDevice->CreateSamplerState(&desc, &s_CachedSamplers[stage]);
+			if (SUCCEEDED(hr)) {
+				s_SamplerCache[desc] = s_CachedSamplers[stage];
+			}
+		}
+		if (s_CachedSamplers[stage]) {
 			g_pD3DDeviceContext->PSSetSamplers(stage, 1, &s_CachedSamplers[stage]);
 			g_pD3DDeviceContext->PSSetSamplers(4 + stage, 1, &s_CachedSamplers[stage]);
 			g_pD3DDeviceContext->PSSetSamplers(8 + stage, 1, &s_CachedSamplers[stage]);
