@@ -168,8 +168,15 @@ void CxbxD3DClear(DWORD Count, CONST D3DRECT* pRects, DWORD Flags, D3DCOLOR Colo
 	}
 }
 
+// Tracked viewport dimensions — updated every time the viewport is set.
+// Used by GS constant buffer update to avoid RSGetViewports() per draw.
+float g_CurrentViewportWidth = 0.0f;
+float g_CurrentViewportHeight = 0.0f;
+
 void CxbxSetViewport(D3D11_VIEWPORT *pHostViewport)
 {
+	g_CurrentViewportWidth = pHostViewport->Width;
+	g_CurrentViewportHeight = pHostViewport->Height;
 	g_pD3DDeviceContext->RSSetViewports(1, pHostViewport);
 }
 

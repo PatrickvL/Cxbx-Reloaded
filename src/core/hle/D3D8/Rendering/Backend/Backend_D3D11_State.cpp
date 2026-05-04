@@ -638,15 +638,15 @@ void CxbxD3D11ApplyDirtyStates()
 		static float s_LastGSVpHeight = 0.0f;
 		static float s_LastGSLineWidth = 0.0f;
 
-		D3D11_VIEWPORT vp = {};
-		UINT numVP = 1;
-		g_pD3DDeviceContext->RSGetViewports(&numVP, &vp);
-		if (vp.Width > 0 && vp.Height > 0 && g_pD3D11GSConstantBuffer &&
-			(vp.Width != s_LastGSVpWidth || vp.Height != s_LastGSVpHeight || g_fLineWidth != s_LastGSLineWidth)) {
-			s_LastGSVpWidth = vp.Width;
-			s_LastGSVpHeight = vp.Height;
+		extern float g_CurrentViewportWidth, g_CurrentViewportHeight;
+		float vpW = g_CurrentViewportWidth;
+		float vpH = g_CurrentViewportHeight;
+		if (vpW > 0 && vpH > 0 && g_pD3D11GSConstantBuffer &&
+			(vpW != s_LastGSVpWidth || vpH != s_LastGSVpHeight || g_fLineWidth != s_LastGSLineWidth)) {
+			s_LastGSVpWidth = vpW;
+			s_LastGSVpHeight = vpH;
 			s_LastGSLineWidth = g_fLineWidth;
-			float gsConstants[4] = { 1.0f / vp.Width, 1.0f / vp.Height, g_fLineWidth, 0.0f };
+			float gsConstants[4] = { 1.0f / vpW, 1.0f / vpH, g_fLineWidth, 0.0f };
 			CxbxD3D11UpdateDynamicBuffer(g_pD3D11GSConstantBuffer, gsConstants, sizeof(gsConstants));
 			g_pD3DDeviceContext->GSSetConstantBuffers(0, 1, &g_pD3D11GSConstantBuffer);
 		}
