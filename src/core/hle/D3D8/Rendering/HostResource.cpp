@@ -432,13 +432,19 @@ ID3D11Resource *GetHostBaseTextureWithFormat(xbox::X_D3DResource *pXboxResource,
 	if (pXboxResource->Data == xbox::zero)
 		return nullptr;
 
-	EmuVerifyResourceIsRegistered(pXboxResource, D3DUsage, iTextureStage, /*dwSize=*/0);
-
+	// Fast path: check cache first without calling EmuVerifyResourceIsRegistered.
+	// The verify function does its own lookup, so skipping it when the resource
+	// is already cached eliminates one redundant hash map lookup per draw.
 	auto key = GetHostResourceKey(pXboxResource, iTextureStage);
 	auto& ResourceCache = GetResourceCache(key);
 	auto it = ResourceCache.find(key);
-	if (it == ResourceCache.end() || !it->second.pHostResource)
-		return nullptr;
+	if (it == ResourceCache.end() || !it->second.pHostResource) {
+		// Resource not in cache — verify (may create it), then re-lookup
+		EmuVerifyResourceIsRegistered(pXboxResource, D3DUsage, iTextureStage, /*dwSize=*/0);
+		it = ResourceCache.find(key);
+		if (it == ResourceCache.end() || !it->second.pHostResource)
+			return nullptr;
+	}
 
 	it->second.lastAccessFrame = ++g_ResourceCacheAccessCounter;
 	if (pOutHostFormat)
