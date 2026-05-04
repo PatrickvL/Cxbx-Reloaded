@@ -670,8 +670,8 @@ void CxbxD3D11SetVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration
 		}
 	}
 
-	// Update the vertex defaults buffer with current NV2A sticky attribute values
-	CxbxD3D11UpdateVertexDefaultsBuffer();
+	// Vertex defaults buffer is updated later in CxbxUpdateNativeD3DResources
+	// (after all constants are uploaded), so no need to do it here.
 
 	g_pD3DDeviceContext->IASetInputLayout(
 		pCxbxVertexDeclaration != nullptr ? pCxbxVertexDeclaration->pHostVertexDeclaration : nullptr);
