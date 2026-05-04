@@ -151,10 +151,12 @@ void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg)
 {
 	if (!pg) return;
 
+	// Read CONTROL_0 once — shared between blend (write mask) and depth/stencil blocks
+	uint32_t ctrl0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
+
 	// ---- Blend state from NV_PGRAPH_BLEND (0x1804) ----
 	{
 		uint32_t blend = pg->regs[RI(NV_PGRAPH_BLEND)];
-		uint32_t ctrl0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
 		uint32_t bc = pg->regs[RI(NV_PGRAPH_BLENDCOLOR)];
 
 		// Only rebuild blend state if relevant registers changed
@@ -200,7 +202,6 @@ void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg)
 
 	// ---- Depth/stencil state from NV_PGRAPH_CONTROL_0/1/2 ----
 	{
-		uint32_t ctrl0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
 		uint32_t ctrl1 = pg->regs[RI(NV_PGRAPH_CONTROL_1)];
 		uint32_t ctrl2 = pg->regs[RI(NV_PGRAPH_CONTROL_2)];
 
