@@ -513,44 +513,16 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 
 	// Passthrough should range 0 to 1, instead of 0 to zbuffer depth
 	// Test case: DoA3 character select
-	// Detect passthrough using the same logic as HostSync mode detection:
-	// - FIXED mode: CMAT ≈ identity
-	// - PROGRAM mode: VPSCL ≈ (1, ±1, ...) i.e. no viewport scaling
-	bool isPassthrough = false;
+	// Use the already-determined vertex shader mode from CxbxUpdateNativeD3DResources
+	bool isPassthrough = (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough);
 	float zOutputScale = 1.0f;
-	{
+	if (!isPassthrough) {
 		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
-		uint32_t pgraph_mode = GET_MASK(pg_z->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
-
-		if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-			// PROGRAM mode: check VPSCL for identity (small magnitudes)
-			float vpscl[4];
-			std::memcpy(vpscl, pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL], 16);
-			if (fabsf(vpscl[0]) <= 1.5f && fabsf(vpscl[1]) <= 1.5f) {
-				isPassthrough = true;
-			}
-		} else {
-			// FIXED mode: check CMAT for identity
-			float cmat[4][4];
-			for (int row = 0; row < 4; row++)
-				std::memcpy(&cmat[row][0], &pg_z->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
-			isPassthrough = true;
-			for (int r = 0; r < 4 && isPassthrough; r++) {
-				for (int c = 0; c < 4 && isPassthrough; c++) {
-					float expected = (r == c) ? 1.0f : 0.0f;
-					if (fabsf(cmat[r][c] - expected) > 0.01f)
-						isPassthrough = false;
-				}
-			}
-		}
-
 		// Derive Z output scale from PGRAPH depth surface format (replaces HLE g_ZScale)
-		if (!isPassthrough) {
-			switch (pg_z->surface_shape.zeta_format) {
-				case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   zOutputScale = 65535.0f;    break;
-				case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: zOutputScale = 16777215.0f; break;
-				default:                                  zOutputScale = 65535.0f;    break;
-			}
+		switch (pg_z->surface_shape.zeta_format) {
+			case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   zOutputScale = 65535.0f;    break;
+			case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: zOutputScale = 16777215.0f; break;
+			default:                                  zOutputScale = 65535.0f;    break;
 		}
 	}
 
