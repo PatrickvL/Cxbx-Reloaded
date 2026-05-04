@@ -462,11 +462,13 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 		// Note: program_data_dirty is cleared by RunVertexStateShader cache logic
 	}
 
-	// Bind the shared PGRAPH regs SRV to VS t12 (same buffer, different stage)
-	g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
-
-	// Bind the XFPR SRV to VS t5
-	g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_XFPR_SRV_SLOT, 1, &g_pD3D11XFPRSRV);
+	// Bind VS interpreter SRVs once — pointers are stable for device lifetime
+	static bool s_VSInterpreterSRVsBound = false;
+	if (!s_VSInterpreterSRVsBound) {
+		g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
+		g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_XFPR_SRV_SLOT, 1, &g_pD3D11XFPRSRV);
+		s_VSInterpreterSRVsBound = true;
+	}
 }
 
 void CxbxUpdateHostVertexShader()
