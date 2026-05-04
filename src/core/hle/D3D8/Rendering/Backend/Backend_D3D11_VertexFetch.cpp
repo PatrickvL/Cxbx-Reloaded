@@ -105,42 +105,42 @@ void CxbxInvalidateTopologyCache()
 // * Map Xbox primitive type to host topology and compute host vertex count.
 // * Returns false if the primitive type is unsupported (caller should skip draw).
 // ******************************************************************
-static bool ResolveTopology(xbox::X_D3DPRIMITIVETYPE xboxPrimType, UINT vertexCount,
+static bool ResolveTopology(uint32_t primitiveMode, UINT vertexCount,
 	UINT& outPrimType, D3D_PRIMITIVE_TOPOLOGY& outTopology, UINT& outHostVertexCount)
 {
 	outPrimType = CXBX_PRIM_NORMAL;
 	outHostVertexCount = vertexCount;
 	outTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
-	switch (xboxPrimType) {
-	case xbox::X_D3DPT_QUADLIST:
+	switch (primitiveMode) {
+	case NV097_SET_BEGIN_END_OP_QUADS:
 		outPrimType = CXBX_PRIM_QUAD;
 		outHostVertexCount = (vertexCount / 4) * 6;
 		break;
-	case xbox::X_D3DPT_QUADSTRIP:
+	case NV097_SET_BEGIN_END_OP_QUAD_STRIP:
 		outPrimType = CXBX_PRIM_QUADSTRIP;
 		outHostVertexCount = (vertexCount >= 4) ? ((vertexCount - 2) / 2) * 6 : 0;
 		break;
-	case xbox::X_D3DPT_TRIANGLEFAN:
-	case xbox::X_D3DPT_POLYGON:
+	case NV097_SET_BEGIN_END_OP_TRIANGLE_FAN:
+	case NV097_SET_BEGIN_END_OP_POLYGON:
 		outPrimType = CXBX_PRIM_FAN;
 		outHostVertexCount = (vertexCount >= 3) ? (vertexCount - 2) * 3 : 0;
 		break;
-	case xbox::X_D3DPT_TRIANGLELIST:
+	case NV097_SET_BEGIN_END_OP_TRIANGLES:
 		break;
-	case xbox::X_D3DPT_TRIANGLESTRIP:
+	case NV097_SET_BEGIN_END_OP_TRIANGLE_STRIP:
 		outTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
 		break;
-	case xbox::X_D3DPT_LINELIST:
+	case NV097_SET_BEGIN_END_OP_LINES:
 		outTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
 		break;
-	case xbox::X_D3DPT_LINESTRIP:
+	case NV097_SET_BEGIN_END_OP_LINE_STRIP:
 		outTopology = D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;
 		break;
-	case xbox::X_D3DPT_POINTLIST:
+	case NV097_SET_BEGIN_END_OP_POINTS:
 		outTopology = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
 		break;
-	case xbox::X_D3DPT_LINELOOP:
+	case NV097_SET_BEGIN_END_OP_LINE_LOOP:
 		outPrimType = CXBX_PRIM_LINELOOP;
 		outHostVertexCount = vertexCount * 2;
 		outTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
@@ -155,7 +155,7 @@ static bool ResolveTopology(xbox::X_D3DPRIMITIVETYPE xboxPrimType, UINT vertexCo
 // * Shared draw tail: unbind IA, set topology, bind SRVs/CBs, issue draw.
 // ******************************************************************
 static void BindAndIssueDraw(UINT primType, D3D_PRIMITIVE_TOPOLOGY hostTopology,
-	UINT hostVertexCount, xbox::X_D3DPRIMITIVETYPE xboxPrimType,
+	UINT hostVertexCount, uint32_t primitiveMode,
 	ID3D11ShaderResourceView* pVtxSRV, ID3D11ShaderResourceView* pIdxSRV,
 	ID3D11ShaderResourceView* pSNormSRV, ID3D11ShaderResourceView* pUNormSRV)
 {
@@ -195,13 +195,13 @@ static void BindAndIssueDraw(UINT primType, D3D_PRIMITIVE_TOPOLOGY hostTopology,
 
 	// Bind thick line GS if needed
 	if (primType == CXBX_PRIM_NORMAL) {
-		CxbxBindThickLineGS(xboxPrimType);
+		CxbxBindThickLineGS(primitiveMode);
 	}
 
 	g_pD3DDeviceContext->Draw(hostVertexCount, 0);
 
 	if (primType == CXBX_PRIM_NORMAL) {
-		CxbxUnbindThickLineGS(xboxPrimType);
+		CxbxUnbindThickLineGS(primitiveMode);
 	}
 }
 
@@ -464,7 +464,8 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 	// ---------------------------------------------------------------
 	UINT primType, hostVertexCount;
 	D3D_PRIMITIVE_TOPOLOGY hostTopology;
-	if (!ResolveTopology(DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount,
+	uint32_t primitiveMode = DrawContext.XboxPrimitiveType; // NV097_SET_BEGIN_END op value
+	if (!ResolveTopology(primitiveMode, DrawContext.dwVertexCount,
 		primType, hostTopology, hostVertexCount))
 		return; // Unsupported topology
 
@@ -729,7 +730,7 @@ skip_layout_upload:
 	ID3D11ShaderResourceView* pActiveUNormSRV = bIsUPDraw
 		? s_pUPVtxDataSRV_UNORM8x4 : CxbxPageTrackerGetMirrorSRV_UNORM8x4();
 
-	BindAndIssueDraw(primType, hostTopology, hostVertexCount, DrawContext.XboxPrimitiveType,
+	BindAndIssueDraw(primType, hostTopology, hostVertexCount, primitiveMode,
 		pActiveVtxSRV, pActiveIdxSRV, pActiveSNormSRV, pActiveUNormSRV);
 }
 
@@ -791,8 +792,8 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	// ---------------------------------------------------------------
 	UINT primType, hostVertexCount;
 	D3D_PRIMITIVE_TOPOLOGY hostTopology;
-	xbox::X_D3DPRIMITIVETYPE xboxPrimType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
-	if (!ResolveTopology(xboxPrimType, vertexCount, primType, hostTopology, hostVertexCount))
+	uint32_t primitiveMode = pg->primitive_mode; // NV097_SET_BEGIN_END op value
+	if (!ResolveTopology(primitiveMode, vertexCount, primType, hostTopology, hostVertexCount))
 		return; // Unsupported topology
 
 	// ---------------------------------------------------------------
@@ -834,7 +835,7 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	// ---------------------------------------------------------------
 	// Step 5: Bind resources and issue draw
 	// ---------------------------------------------------------------
-	BindAndIssueDraw(primType, hostTopology, hostVertexCount, xboxPrimType,
+	BindAndIssueDraw(primType, hostTopology, hostVertexCount, primitiveMode,
 		s_pUPVtxDataSRV, nullptr, s_pUPVtxDataSRV_SNORM16x2, s_pUPVtxDataSRV_UNORM8x4);
 
 	// Free per-attribute inline buffers (same protocol as xemu)

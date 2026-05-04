@@ -1024,23 +1024,23 @@ void ClearRTVCache()
 // ******************************************************************
 // * Thick line GS bind/unbind helpers
 // ******************************************************************
-static bool CxbxIsLinePrimitive(xbox::X_D3DPRIMITIVETYPE type)
+static bool CxbxIsLinePrimitive(uint32_t primitiveMode)
 {
-	return type == xbox::X_D3DPT_LINELIST
-	   	|| type == xbox::X_D3DPT_LINESTRIP
-	   	|| type == xbox::X_D3DPT_LINELOOP;
+	return primitiveMode == NV097_SET_BEGIN_END_OP_LINES
+	   	|| primitiveMode == NV097_SET_BEGIN_END_OP_LINE_STRIP
+	   	|| primitiveMode == NV097_SET_BEGIN_END_OP_LINE_LOOP;
 }
 
-void CxbxBindThickLineGS(xbox::X_D3DPRIMITIVETYPE type)
+void CxbxBindThickLineGS(uint32_t primitiveMode)
 {
-	if (g_fLineWidth > 1.0f && CxbxIsLinePrimitive(type) && g_pD3D11ThickLineGS) {
+	if (g_fLineWidth > 1.0f && CxbxIsLinePrimitive(primitiveMode) && g_pD3D11ThickLineGS) {
 		g_pD3DDeviceContext->GSSetShader(g_pD3D11ThickLineGS, nullptr, 0);
 	}
 }
 
-void CxbxUnbindThickLineGS(xbox::X_D3DPRIMITIVETYPE type)
+void CxbxUnbindThickLineGS(uint32_t primitiveMode)
 {
-	if (g_fLineWidth > 1.0f && CxbxIsLinePrimitive(type) && g_pD3D11ThickLineGS) {
+	if (g_fLineWidth > 1.0f && CxbxIsLinePrimitive(primitiveMode) && g_pD3D11ThickLineGS) {
 		// Restore point sprite GS or null
 		if (g_bPointSpriteEnabled && g_pD3D11PointSpriteGS) {
 			g_pD3DDeviceContext->GSSetShader(g_pD3D11PointSpriteGS, nullptr, 0);

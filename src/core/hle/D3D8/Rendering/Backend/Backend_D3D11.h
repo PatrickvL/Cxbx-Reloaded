@@ -207,8 +207,8 @@ HRESULT CxbxD3D11Blt(
 // Bind/unbind thick line geometry shader around line draw calls.
 // Call CxbxBindThickLineGS before and CxbxUnbindThickLineGS after direct
 // Draw/DrawIndexed calls that may use line primitives (UP draw paths).
-void CxbxBindThickLineGS(xbox::X_D3DPRIMITIVETYPE type);
-void CxbxUnbindThickLineGS(xbox::X_D3DPRIMITIVETYPE type);
+void CxbxBindThickLineGS(uint32_t primitiveMode);
+void CxbxUnbindThickLineGS(uint32_t primitiveMode);
 
 // GPU-accelerated texture unswizzle via compute shader.
 // Returns true if the CS path was used, false if caller should fall back to CPU.

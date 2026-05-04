@@ -51,6 +51,12 @@ static D3D11_SRV_DIMENSION       s_CachedDim[xbox::X_D3DTS_STAGECOUNT] = {};
 // avoid redundantly re-reading the same 12 registers for its own fast path.
 static uint32_t s_TextureStateGeneration = 0;
 
+// Cached per-stage register values from the fast-path check in CxbxUpdateHostTextures.
+// CxbxUpdateHostTextureScaling reuses these instead of re-reading PGRAPH.
+static uint32_t s_CachedTexOff[4] = {};
+static uint32_t s_CachedTexCtl[4] = {};
+static uint32_t s_CachedTexFmt[4] = {};
+
 // Invalidate any cached SRV that wraps pTexture and unbind it from all PS slots.
 // Must be called before binding pTexture as a UAV for a compute shader dispatch
 // to eliminate SRV/UAV resource hazards that can trigger GPU TDRs.
@@ -80,18 +86,15 @@ void CxbxUpdateHostTextures()
 	// Fast path: skip entire function if texture-related registers unchanged.
 	// This avoids hash map lookups, format decoding, and SRV creation.
 	{
-		static uint32_t s_LastTexOff[4] = { ~0u, ~0u, ~0u, ~0u };
-		static uint32_t s_LastTexCtl[4] = { ~0u, ~0u, ~0u, ~0u };
-		static uint32_t s_LastTexFmt[4] = { ~0u, ~0u, ~0u, ~0u };
 		bool anyChanged = false;
 		for (int i = 0; i < 4; i++) {
 			uint32_t off = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + i * 4)];
 			uint32_t ctl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
 			uint32_t fmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
-			if (off != s_LastTexOff[i] || ctl != s_LastTexCtl[i] || fmt != s_LastTexFmt[i]) {
-				s_LastTexOff[i] = off;
-				s_LastTexCtl[i] = ctl;
-				s_LastTexFmt[i] = fmt;
+			if (off != s_CachedTexOff[i] || ctl != s_CachedTexCtl[i] || fmt != s_CachedTexFmt[i]) {
+				s_CachedTexOff[i] = off;
+				s_CachedTexCtl[i] = ctl;
+				s_CachedTexFmt[i] = fmt;
 				anyChanged = true;
 			}
 		}
@@ -385,10 +388,10 @@ void CxbxUpdateHostTextureScaling()
 	texcoordScales.fill({ 1, 1, 1, 1 });
 
 	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
-		// Read texture format directly from PGRAPH (authoritative, no HLE dependency)
-		uint32_t texFmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
-		uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
-		uint32_t texCtl0 = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
+		// Reuse cached register values from CxbxUpdateHostTextures (avoids re-reading PGRAPH)
+		uint32_t texFmt = s_CachedTexFmt[stage];
+		uint32_t texOffset = s_CachedTexOff[stage];
+		uint32_t texCtl0 = s_CachedTexCtl[stage];
 
 		// No texture bound or disabled — skip
 		bool texEnabled = (texCtl0 & (1 << 30)) != 0;
