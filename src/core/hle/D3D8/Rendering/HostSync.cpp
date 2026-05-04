@@ -619,41 +619,58 @@ void CxbxUpdateNativeD3DResources()
 	// positions directly.  Normal VS programs have VPSCL = (W/2, -H/2, zScale, 0).
 	{
 		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
-		uint32_t pgraph_mode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
+		uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
+		uint32_t pgraph_mode = GET_MASK(csv0d, NV_PGRAPH_CSV0_D_MODE);
 
-		if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-			// For PROGRAM mode, use VPSCL to distinguish passthrough from real VS.
-			// XYZRHW passthrough: VPSCL.x ≈ 1, VPSCL.y ≈ ±1
-			// Real VS programs:   VPSCL.x = Width/2 (≥ 4), VPSCL.y = -Height/2
-			float vpscl[4];
-			std::memcpy(vpscl, pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL], 16);
+		// Fast path: skip mode detection if key inputs haven't changed
+		static uint32_t s_LastCsv0d_Mode = ~0u;
+		static uint32_t s_LastVpscl[2] = { ~0u, ~0u };
+		static uint32_t s_LastCmat0 = ~0u; // First element of CMAT as quick-reject
 
-			if (fabsf(vpscl[0]) <= 1.5f && fabsf(vpscl[1]) <= 1.5f) {
-				g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
+		bool modeInputChanged = (csv0d != s_LastCsv0d_Mode);
+		if (!modeInputChanged) {
+			if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
+				modeInputChanged = (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][0] != s_LastVpscl[0]
+				                 || pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][1] != s_LastVpscl[1]);
 			} else {
-				g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
+				modeInputChanged = (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0][0] != s_LastCmat0);
 			}
-		} else {
-			// FIXED mode: distinguish passthrough from normal FF via CMAT.
-			// For passthrough (XYZRHW), CMAT ≈ identity.
-			// For normal FF, CMAT = World*View*Proj*Viewport with large values.
-			float cmat[4][4];
-			for (int row = 0; row < 4; row++)
-				std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
+		}
 
-			bool isIdentity = true;
-			for (int r = 0; r < 4 && isIdentity; r++) {
-				for (int c = 0; c < 4 && isIdentity; c++) {
-					float expected = (r == c) ? 1.0f : 0.0f;
-					if (fabsf(cmat[r][c] - expected) > 0.01f)
-						isIdentity = false;
+		if (modeInputChanged) {
+			s_LastCsv0d_Mode = csv0d;
+			s_LastVpscl[0] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][0];
+			s_LastVpscl[1] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][1];
+			s_LastCmat0 = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0][0];
+
+			if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
+				float vpscl[4];
+				std::memcpy(vpscl, pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL], 16);
+
+				if (fabsf(vpscl[0]) <= 1.5f && fabsf(vpscl[1]) <= 1.5f) {
+					g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
+				} else {
+					g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
 				}
-			}
-
-			if (isIdentity) {
-				g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
 			} else {
-				g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
+				float cmat[4][4];
+				for (int row = 0; row < 4; row++)
+					std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
+
+				bool isIdentity = true;
+				for (int r = 0; r < 4 && isIdentity; r++) {
+					for (int c = 0; c < 4 && isIdentity; c++) {
+						float expected = (r == c) ? 1.0f : 0.0f;
+						if (fabsf(cmat[r][c] - expected) > 0.01f)
+							isIdentity = false;
+					}
+				}
+
+				if (isIdentity) {
+					g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
+				} else {
+					g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
+				}
 			}
 		}
 	}
