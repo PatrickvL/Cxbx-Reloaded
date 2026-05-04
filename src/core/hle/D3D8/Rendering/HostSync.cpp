@@ -727,11 +727,10 @@ void CxbxUpdateNativeD3DResources()
    	   	CxbxUpdateActivePixelShader();
    	}
 
-	// Refresh the zero-stride vertex defaults buffer with current NV2A sticky
-	// attribute values before every draw, not just on vertex declaration changes.
-	// This ensures non-streamed attributes (e.g. texcoords not in the vertex
-	// declaration) always read the latest inline_value[] data.
-	CxbxD3D11UpdateVertexDefaultsBuffer();
+	// Note: Vertex defaults upload (NV2A sticky attribute values) is handled
+	// internally by CxbxD3D11VertexFetchDraw's UploadVertexDefaults() at draw
+	// time. The IA-path CxbxD3D11UpdateVertexDefaultsBuffer() is no longer needed
+	// since all draws use the vertex fetch CS path (SV_VertexID-based fetching).
 
 	// Release pgraph_lock — all PGRAPH register reads for this draw are done.
 	// The puller thread is now free to process new commands for the next draw.
