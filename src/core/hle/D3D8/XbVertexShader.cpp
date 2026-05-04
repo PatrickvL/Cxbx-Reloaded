@@ -459,7 +459,7 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 		CxbxD3D11UpdateDynamicBuffer(g_pD3D11XFPRBuf,
 			pg->program_data, sizeof(pg->program_data));
 		s_XFPRUploaded = true;
-		// Note: program_data_dirty is cleared by RunVertexStateShader cache logic
+		pg->program_data_dirty = false;
 	}
 
 	// Bind VS interpreter SRVs once — pointers are stable for device lifetime
