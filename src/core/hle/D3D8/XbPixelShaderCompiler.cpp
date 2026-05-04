@@ -263,10 +263,23 @@ void CxbxD3D11UploadRCInterpreterState()
 			CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));
 		}
 	}
-	// Bind the regs SRV to PS t12
-	g_pD3DDeviceContext->PSSetShaderResources(CXBX_D3D11_PS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
+	// Bind the regs SRV to PS t12 (skip if already bound — pointer never changes)
+	{
+		static bool s_RegsSRVBound = false;
+		if (!s_RegsSRVBound) {
+			g_pD3DDeviceContext->PSSetShaderResources(CXBX_D3D11_PS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
+			s_RegsSRVBound = true;
+		}
+	}
 
 	// --- Build the auxiliary cbuffer (software-computed fields only) ---
+	// Skip rebuild if regs_generation hasn't changed (aux depends only on regs[])
+	{
+		static uint32_t s_LastAuxGeneration = ~0u;
+		if (pg->regs_generation == s_LastAuxGeneration)
+			return; // Aux CB and regs SRV are still current
+		s_LastAuxGeneration = pg->regs_generation;
+	}
 	PSAuxCBLayout aux = {};
 
 	// PSTextureModes: always from PGRAPH SHADERPROG
@@ -404,9 +417,15 @@ void CxbxD3D11UploadRCInterpreterState()
 		aux.ShadowCompare = { sc[0], sc[1], sc[2], sc[3] };
 	}
 
-	// Upload aux cbuffer and bind to b0
+	// Upload aux cbuffer and bind to b0 (bind only once — buffer pointer is stable)
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterAuxCB, &aux, sizeof(aux));
-	g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterAuxCB);
+	{
+		static bool s_AuxCBBound = false;
+		if (!s_AuxCBBound) {
+			g_pD3DDeviceContext->PSSetConstantBuffers(CXBX_D3D11_PS_CB_SLOT, 1, &g_pD3D11RCInterpreterAuxCB);
+			s_AuxCBBound = true;
+		}
+	}
 }
 
 void CxbxUpdateActivePixelShader() // NOPATCH
