@@ -46,6 +46,11 @@ static ID3D11Resource*           s_CachedResource[xbox::X_D3DTS_STAGECOUNT] = {}
 static ID3D11ShaderResourceView* s_CachedSRV[xbox::X_D3DTS_STAGECOUNT] = {};
 static D3D11_SRV_DIMENSION       s_CachedDim[xbox::X_D3DTS_STAGECOUNT] = {};
 
+// Shared texture state generation counter — incremented by CxbxUpdateHostTextures
+// when TEXOFFSET/TEXCTL0/TEXFMT change.  CxbxUpdateHostTextureScaling uses this to
+// avoid redundantly re-reading the same 12 registers for its own fast path.
+static uint32_t s_TextureStateGeneration = 0;
+
 // Invalidate any cached SRV that wraps pTexture and unbind it from all PS slots.
 // Must be called before binding pTexture as a UAV for a compute shader dispatch
 // to eliminate SRV/UAV resource hazards that can trigger GPU TDRs.
@@ -92,6 +97,7 @@ void CxbxUpdateHostTextures()
 		}
 		if (!anyChanged)
 			return; // All texture state unchanged — skip expensive work
+		s_TextureStateGeneration++; // Signal CxbxUpdateHostTextureScaling
 	}
 
 	// Set the host texture for each stage
@@ -345,26 +351,24 @@ void CxbxUpdateHostTextureScaling()
 {
 	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 
-	// Fast path: skip if texture format/offset/ctl/imagerect registers unchanged.
-	// This avoids format decoding, division, and VS constant upload every draw.
+	// Fast path: skip if texture state hasn't changed since last call.
+	// CxbxUpdateHostTextures (called immediately before us) already checks
+	// TEXOFFSET/TEXCTL0/TEXFMT and bumps s_TextureStateGeneration on change.
+	// We only need to additionally check TEXIMAGERECT and surface_color.offset.
 	{
-		static uint32_t s_LastFmt[4] = { ~0u, ~0u, ~0u, ~0u };
-		static uint32_t s_LastOff[4] = { ~0u, ~0u, ~0u, ~0u };
-		static uint32_t s_LastCtl[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastTexGen = ~0u;
 		static uint32_t s_LastRect[4] = { ~0u, ~0u, ~0u, ~0u };
 		static uint32_t s_LastSurfColor = ~0u;
 		bool anyChanged = false;
+		if (s_TextureStateGeneration != s_LastTexGen) {
+			s_LastTexGen = s_TextureStateGeneration;
+			anyChanged = true;
+		}
 		uint32_t surfColor = pg->surface_color.offset;
 		if (surfColor != s_LastSurfColor) { s_LastSurfColor = surfColor; anyChanged = true; }
 		for (int i = 0; i < 4; i++) {
-			uint32_t fmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
-			uint32_t off = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + i * 4)];
-			uint32_t ctl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
 			uint32_t rect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + i * 4)];
-			if (fmt != s_LastFmt[i] || off != s_LastOff[i] || ctl != s_LastCtl[i] || rect != s_LastRect[i]) {
-				s_LastFmt[i] = fmt; s_LastOff[i] = off; s_LastCtl[i] = ctl; s_LastRect[i] = rect;
-				anyChanged = true;
-			}
+			if (rect != s_LastRect[i]) { s_LastRect[i] = rect; anyChanged = true; }
 		}
 		if (!anyChanged) return;
 	}
