@@ -222,9 +222,13 @@ void CxbxUpdateHostTextures()
 		if (!bIsRenderTargetTexture && pXboxBaseTexture != xbox::zeroptr) {
 			DWORD XboxResourceType = GetXboxCommonResourceType(pXboxBaseTexture);
 			switch (XboxResourceType) {
-			case X_D3DCOMMON_TYPE_TEXTURE:
-				pHostBaseTexture = GetHostBaseTexture(pXboxBaseTexture, /*D3DUsage=*/0, stage);
+			case X_D3DCOMMON_TYPE_TEXTURE: {
+				DXGI_FORMAT hostFormat = DXGI_FORMAT_UNKNOWN;
+				pHostBaseTexture = GetHostBaseTextureWithFormat(pXboxBaseTexture, /*D3DUsage=*/0, stage, &hostFormat);
+				if (hostFormat != DXGI_FORMAT_UNKNOWN)
+					g_HostTextureFormats[stage] = hostFormat;
 				break;
+			}
 			case X_D3DCOMMON_TYPE_SURFACE:
 				// Surfaces can be set in the texture stages, instead of textures
 				LOG_TEST_CASE("ActiveTexture set to a surface (non-texture) resource"); // Test cases : Burnout, Outrun 2006
@@ -236,15 +240,6 @@ void CxbxUpdateHostTextures()
 			default:
 				LOG_TEST_CASE("ActiveTexture set to an unhandled resource type!");
 				break;
-			}
-
-			// Read HostFormat from GetResourceCache :
-			// TODO : Optimize this, as we're doing the lookup twice (once in GetHostBaseTexture, once here)
-			auto key = GetHostResourceKey(pXboxBaseTexture, stage);
-			auto& ResourceCache = GetResourceCache(key);
-			auto it = ResourceCache.find(key);
-			if (it != ResourceCache.end()) {
-				g_HostTextureFormats[stage] = it->second.HostFormat;
 			}
 		}
 

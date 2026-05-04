@@ -419,6 +419,33 @@ ID3D11Resource *GetHostBaseTexture(xbox::X_D3DResource *pXboxResource, DWORD D3D
 	return (ID3D11Resource*)GetHostResource(pXboxResource, D3DUsage, iTextureStage);
 }
 
+ID3D11Resource *GetHostBaseTextureWithFormat(xbox::X_D3DResource *pXboxResource, DWORD D3DUsage, int iTextureStage, DXGI_FORMAT *pOutHostFormat)
+{
+	if (pOutHostFormat) *pOutHostFormat = DXGI_FORMAT_UNKNOWN;
+
+	if (pXboxResource == xbox::zeroptr)
+		return nullptr;
+
+	if (GetXboxCommonResourceType(pXboxResource) != X_D3DCOMMON_TYPE_TEXTURE)
+		return nullptr;
+
+	if (pXboxResource->Data == xbox::zero)
+		return nullptr;
+
+	EmuVerifyResourceIsRegistered(pXboxResource, D3DUsage, iTextureStage, /*dwSize=*/0);
+
+	auto key = GetHostResourceKey(pXboxResource, iTextureStage);
+	auto& ResourceCache = GetResourceCache(key);
+	auto it = ResourceCache.find(key);
+	if (it == ResourceCache.end() || !it->second.pHostResource)
+		return nullptr;
+
+	it->second.lastAccessFrame = ++g_ResourceCacheAccessCounter;
+	if (pOutHostFormat)
+		*pOutHostFormat = it->second.HostFormat;
+	return it->second.pHostResource.Get();
+}
+
 ID3D11Texture3D *GetHostVolumeTexture(xbox::X_D3DResource *pXboxResource, int iTextureStage)
 {
 	return (ID3D11Texture3D *)GetHostBaseTexture(pXboxResource, 0, iTextureStage);

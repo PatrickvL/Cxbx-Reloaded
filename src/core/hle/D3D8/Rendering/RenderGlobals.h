@@ -344,6 +344,7 @@ void SetHostResource(xbox::X_D3DResource* pXboxResource, ID3D11Resource* pHostRe
 void FreeHostResource(resource_key_t key);
 ID3D11Texture2D* GetHostSurface(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage = 0);
 ID3D11Resource* GetHostBaseTexture(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage = 0, int iTextureStage = 0);
+ID3D11Resource* GetHostBaseTextureWithFormat(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage, int iTextureStage, DXGI_FORMAT* pOutHostFormat);
 ID3D11Texture3D* GetHostVolumeTexture(xbox::X_D3DResource* pXboxResource, int iTextureStage = 0);
 void ClearAllResourceCaches();
 uint32_t GetPixelContainerWidth(xbox::X_D3DPixelContainer *pPixelContainer);
