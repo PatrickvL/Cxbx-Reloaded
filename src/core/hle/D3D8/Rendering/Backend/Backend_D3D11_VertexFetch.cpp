@@ -94,6 +94,7 @@ static ID3D11ShaderResourceView* s_pLastBoundUNormSRV = nullptr;
 static ID3D11Buffer*             s_pLastBoundLayoutCB = nullptr;
 static ID3D11Buffer*             s_pLastBoundDefaultsCB = nullptr;
 static bool                      s_IAAlreadyNull = false;   // IA null-binding elimination
+static D3D_PRIMITIVE_TOPOLOGY    s_LastTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED; // Topology caching
 
 // Layout CB caching: generation counter bumped on state changes
 static UINT                      s_LayoutCBGeneration = 0;
@@ -672,7 +673,10 @@ skip_layout_upload:
 		g_pD3DDeviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_R16_UINT, 0);
 		s_IAAlreadyNull = true;
 	}
-	g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
+	if (hostTopology != s_LastTopology) {
+		g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
+		s_LastTopology = hostTopology;
+	}
 
 	// Bind SRVs to VS: t0 = vertex data (raw), t1 = index data,
 	// t2 = vertex data (R16G16_SNORM), t3 = vertex data (R8G8B8A8_UNORM)
@@ -876,7 +880,10 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 		g_pD3DDeviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_R16_UINT, 0);
 		s_IAAlreadyNull = true;
 	}
-	g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
+	if (hostTopology != s_LastTopology) {
+		g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
+		s_LastTopology = hostTopology;
+	}
 
 	// Bind UP staging SRVs to VS (t0=raw, t1=null, t2=snorm, t3=unorm)
 	{
