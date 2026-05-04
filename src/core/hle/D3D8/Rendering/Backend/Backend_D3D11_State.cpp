@@ -24,6 +24,37 @@
 #include "Backend_D3D11_Internal.h"
 #include "devices\video\nv2a.h"        // PGRAPHState, nv2a_regs.h, GET_MASK, RI
 #include <algorithm>                    // std::min
+#include <unordered_map>
+
+// ******************************************************************
+// * State object cache — avoids redundant Create*State calls.
+// * Xbox games use a small number of unique state combinations;
+// * the cache typically holds < 50 entries for each type.
+// ******************************************************************
+namespace {
+	struct DescHash {
+		template <typename T>
+		size_t operator()(const T& desc) const {
+			// FNV-1a over raw bytes of the descriptor
+			const uint8_t* p = reinterpret_cast<const uint8_t*>(&desc);
+			size_t h = static_cast<size_t>(14695981039346656037ull);
+			for (size_t i = 0; i < sizeof(T); i++) {
+				h ^= p[i];
+				h *= static_cast<size_t>(1099511628211ull);
+			}
+			return h;
+		}
+	};
+	struct DescEqual {
+		template <typename T>
+		bool operator()(const T& a, const T& b) const {
+			return std::memcmp(&a, &b, sizeof(T)) == 0;
+		}
+	};
+	std::unordered_map<D3D11_RASTERIZER_DESC, Microsoft::WRL::ComPtr<ID3D11RasterizerState>, DescHash, DescEqual> s_RasterizerCache;
+	std::unordered_map<D3D11_DEPTH_STENCIL_DESC, Microsoft::WRL::ComPtr<ID3D11DepthStencilState>, DescHash, DescEqual> s_DepthStencilCache;
+	std::unordered_map<D3D11_BLEND_DESC, Microsoft::WRL::ComPtr<ID3D11BlendState>, DescHash, DescEqual> s_BlendCache;
+}
 
 // ******************************************************************
 // * Unified D3D11 render state mapping
@@ -602,28 +633,49 @@ void CxbxD3D11ApplyDirtyStates()
 	LOG_INIT;
 
 	if (g_bD3D11RasterizerStateDirty) {
-		HRESULT hr = g_pD3DDevice->CreateRasterizerState(&g_D3D11RasterizerDesc, g_pD3DRasterizerState.ReleaseAndGetAddressOf());
-		DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateRasterizerState");
-		if (SUCCEEDED(hr)) {
+		auto it = s_RasterizerCache.find(g_D3D11RasterizerDesc);
+		if (it != s_RasterizerCache.end()) {
+			g_pD3DRasterizerState = it->second;
 			g_pD3DDeviceContext->RSSetState(g_pD3DRasterizerState.Get());
+		} else {
+			HRESULT hr = g_pD3DDevice->CreateRasterizerState(&g_D3D11RasterizerDesc, g_pD3DRasterizerState.ReleaseAndGetAddressOf());
+			DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateRasterizerState");
+			if (SUCCEEDED(hr)) {
+				s_RasterizerCache[g_D3D11RasterizerDesc] = g_pD3DRasterizerState;
+				g_pD3DDeviceContext->RSSetState(g_pD3DRasterizerState.Get());
+			}
 		}
 		g_bD3D11RasterizerStateDirty = false;
 	}
 
 	if (g_bD3D11DepthStencilStateDirty) {
-		HRESULT hr = g_pD3DDevice->CreateDepthStencilState(&g_D3D11DepthStencilDesc, g_pD3DDepthStencilState.ReleaseAndGetAddressOf());
-		DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateDepthStencilState");
-		if (SUCCEEDED(hr)) {
+		auto it = s_DepthStencilCache.find(g_D3D11DepthStencilDesc);
+		if (it != s_DepthStencilCache.end()) {
+			g_pD3DDepthStencilState = it->second;
 			g_pD3DDeviceContext->OMSetDepthStencilState(g_pD3DDepthStencilState.Get(), g_D3D11StencilRef);
+		} else {
+			HRESULT hr = g_pD3DDevice->CreateDepthStencilState(&g_D3D11DepthStencilDesc, g_pD3DDepthStencilState.ReleaseAndGetAddressOf());
+			DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateDepthStencilState");
+			if (SUCCEEDED(hr)) {
+				s_DepthStencilCache[g_D3D11DepthStencilDesc] = g_pD3DDepthStencilState;
+				g_pD3DDeviceContext->OMSetDepthStencilState(g_pD3DDepthStencilState.Get(), g_D3D11StencilRef);
+			}
 		}
 		g_bD3D11DepthStencilStateDirty = false;
 	}
 
 	if (g_bD3D11BlendStateDirty) {
-		HRESULT hr = g_pD3DDevice->CreateBlendState(&g_D3D11BlendDesc, g_pD3DBlendState.ReleaseAndGetAddressOf());
-		DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateBlendState");
-		if (SUCCEEDED(hr)) {
+		auto it = s_BlendCache.find(g_D3D11BlendDesc);
+		if (it != s_BlendCache.end()) {
+			g_pD3DBlendState = it->second;
 			g_pD3DDeviceContext->OMSetBlendState(g_pD3DBlendState.Get(), g_D3D11BlendFactor, g_D3D11SampleMask);
+		} else {
+			HRESULT hr = g_pD3DDevice->CreateBlendState(&g_D3D11BlendDesc, g_pD3DBlendState.ReleaseAndGetAddressOf());
+			DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateBlendState");
+			if (SUCCEEDED(hr)) {
+				s_BlendCache[g_D3D11BlendDesc] = g_pD3DBlendState;
+				g_pD3DDeviceContext->OMSetBlendState(g_pD3DBlendState.Get(), g_D3D11BlendFactor, g_D3D11SampleMask);
+			}
 		}
 		g_bD3D11BlendStateDirty = false;
 	}
