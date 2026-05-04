@@ -633,7 +633,14 @@ void CxbxUpdateHostVertexDeclaration()
 		}
 	}
 
-	CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_SIZE);
+	// Only upload if the flags changed since last draw
+	static float s_CachedVertexDefaultFlags[X_VSH_MAX_ATTRIBUTES] = {};
+	static bool s_FirstDefaultFlagsCall = true;
+	if (s_FirstDefaultFlagsCall || std::memcmp(vertexDefaultFlags, s_CachedVertexDefaultFlags, sizeof(vertexDefaultFlags)) != 0) {
+		std::memcpy(s_CachedVertexDefaultFlags, vertexDefaultFlags, sizeof(vertexDefaultFlags));
+		s_FirstDefaultFlagsCall = false;
+		CxbxSetVertexShaderConstantF(CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_BASE, vertexDefaultFlags, CXBX_D3DVS_CONSTREG_VREGDEFAULTS_FLAG_SIZE);
+	}
 }
 
 void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT *pData)

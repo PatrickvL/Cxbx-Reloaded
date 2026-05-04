@@ -330,6 +330,25 @@ void CxbxD3D11UpdateVertexDefaultsBuffer()
 	if (g_pD3D11VertexDefaultsBuffer == nullptr)
 		return;
 
+	// Skip upload if vertex attribute defaults haven't changed since last upload.
+	// This avoids a Map/DISCARD + 256-byte copy on every draw.
+	{
+		static float s_CachedDefaults[X_VSH_MAX_ATTRIBUTES * 4] = {};
+		static bool s_FirstCall = true;
+		bool changed = s_FirstCall;
+		for (unsigned i = 0; i < X_VSH_MAX_ATTRIBUTES && !changed; i++) {
+			float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
+			if (std::memcmp(pSrc, &s_CachedDefaults[i * 4], sizeof(float) * 4) != 0)
+				changed = true;
+		}
+		if (!changed) return;
+		for (unsigned i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
+			float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
+			std::memcpy(&s_CachedDefaults[i * 4], pSrc, sizeof(float) * 4);
+		}
+		s_FirstCall = false;
+	}
+
 	D3D11_MAPPED_SUBRESOURCE mapped = {};
 	HRESULT hr = g_pD3DDeviceContext->Map(g_pD3D11VertexDefaultsBuffer, 0,
 		D3D11_MAP_WRITE_DISCARD, 0, &mapped);
@@ -657,7 +676,11 @@ void CxbxD3D11SetVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration
 
 HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader)
 {
-	g_pD3DDeviceContext->VSSetShader(pHostVertexShader, nullptr, 0);
+	static ID3D11VertexShader* s_LastBoundVS = nullptr;
+	if (pHostVertexShader != s_LastBoundVS) {
+		g_pD3DDeviceContext->VSSetShader(pHostVertexShader, nullptr, 0);
+		s_LastBoundVS = pHostVertexShader;
+	}
 	return S_OK;
 }
 

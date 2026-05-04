@@ -654,10 +654,14 @@ void CxbxD3D11ApplyDirtyStates()
 
 	// Bind or unbind the point sprite geometry shader
 	// (Thick line GS is bound at draw time since it depends on primitive type)
-	if (g_bPointSpriteEnabled && g_pD3D11PointSpriteGS) {
-		g_pD3DDeviceContext->GSSetShader(g_pD3D11PointSpriteGS, nullptr, 0);
-	} else {
-		g_pD3DDeviceContext->GSSetShader(nullptr, nullptr, 0);
+	{
+		static ID3D11GeometryShader* s_LastBoundGS = (ID3D11GeometryShader*)~0ull; // sentinel
+		ID3D11GeometryShader* desiredGS = (g_bPointSpriteEnabled && g_pD3D11PointSpriteGS)
+			? g_pD3D11PointSpriteGS : nullptr;
+		if (desiredGS != s_LastBoundGS) {
+			g_pD3DDeviceContext->GSSetShader(desiredGS, nullptr, 0);
+			s_LastBoundGS = desiredGS;
+		}
 	}
 }
 
