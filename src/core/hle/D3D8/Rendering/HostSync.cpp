@@ -26,6 +26,29 @@
 #include "Backend\Backend_D3D11.h"
 #include <algorithm> // std::min
 
+// NV2A-native linear format check.  On NV2A, linear (pitch-based) textures
+// use format color codes with the LU_IMAGE or LC_IMAGE prefix.
+// These occupy specific ranges in the 8-bit color code field.
+static inline bool IsNV2AColorFormatLinear(uint32_t colorFmt) {
+	// LU_IMAGE range 1: 0x10..0x20
+	if (colorFmt >= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A1R5G5B5
+		&& colorFmt <= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8Y8)
+		return true;
+	// LC_IMAGE (YUV): 0x24..0x26
+	if (colorFmt >= NV097_SET_TEXTURE_FORMAT_COLOR_LC_IMAGE_CR8YB8CB8YA8
+		&& colorFmt <= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8CR8CB8Y8)
+		return true;
+	// LU_IMAGE depth: 0x2E..0x31
+	if (colorFmt >= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_X8_Y24_FIXED
+		&& colorFmt <= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FLOAT)
+		return true;
+	// LU_IMAGE range 2: 0x35..0x40
+	if (colorFmt >= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_Y16
+		&& colorFmt <= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_B8G8R8A8)
+		return true;
+	return false;
+}
+
 // Thread-local flag: true when executing on the PFIFO puller thread.
 // When set, CxbxUpdateNativeD3DResources skips pfifo_flush_to_pgraph
 // because PGRAPH registers are already current (we ARE the puller).
@@ -38,13 +61,13 @@ void CxbxSetPullerContext(bool active) { g_bInPullerContext = active; }
 // texture format/offset/size to the NV2A pushbuffer, so PGRAPH has all
 // the information needed to reconstruct the Xbox texture descriptor.
 // One per texture stage; updated each draw by CxbxUpdateHostTextures.
-static xbox::X_D3DBaseTexture s_SyntheticTextures[xbox::X_D3DTS_STAGECOUNT] = {};
+static xbox::X_D3DBaseTexture s_SyntheticTextures[NV2A_MAX_TEXTURES] = {};
 
 // Per-stage SRV cache: avoids recreating SRVs every frame for the same resource.
 // Promoted to file scope so CxbxD3D11InvalidateCachedSRVForTexture can access them.
-static ID3D11Resource*           s_CachedResource[xbox::X_D3DTS_STAGECOUNT] = {};
-static ID3D11ShaderResourceView* s_CachedSRV[xbox::X_D3DTS_STAGECOUNT] = {};
-static D3D11_SRV_DIMENSION       s_CachedDim[xbox::X_D3DTS_STAGECOUNT] = {};
+static ID3D11Resource*           s_CachedResource[NV2A_MAX_TEXTURES] = {};
+static ID3D11ShaderResourceView* s_CachedSRV[NV2A_MAX_TEXTURES] = {};
+static D3D11_SRV_DIMENSION       s_CachedDim[NV2A_MAX_TEXTURES] = {};
 
 // Shared texture state generation counter — incremented by CxbxUpdateHostTextures
 // when TEXOFFSET/TEXCTL0/TEXFMT change.  CxbxUpdateHostTextureScaling uses this to
@@ -62,7 +85,7 @@ static uint32_t s_CachedTexFmt[4] = {};
 // to eliminate SRV/UAV resource hazards that can trigger GPU TDRs.
 void CxbxD3D11InvalidateCachedSRVForTexture(ID3D11Resource* pTexture)
 {
-	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
+	for (int stage = 0; stage < NV2A_MAX_TEXTURES; stage++) {
 		if (s_CachedResource[stage] == pTexture) {
 			if (s_CachedSRV[stage]) {
 				ID3D11ShaderResourceView* pNullSRV = nullptr;
@@ -104,7 +127,7 @@ void CxbxUpdateHostTextures()
 	}
 
 	// Set the host texture for each stage
-	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
+	for (int stage = 0; stage < NV2A_MAX_TEXTURES; stage++) {
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
 
 		// Check PGRAPH TEXCTL0 enable bit.  When the Xbox D3D runtime disables
@@ -204,7 +227,7 @@ void CxbxUpdateHostTextures()
 					// Reconstruct the Size field for linear textures.
 					// Swizzled textures use Size=0 (dimensions from Format log2 bits).
 					uint32_t fmtColor = GET_MASK(synth.Format, NV097_SET_TEXTURE_FORMAT_COLOR);
-					if (EmuXBFormatIsLinear((xbox::X_D3DFORMAT)fmtColor)) {
+					if (IsNV2AColorFormatLinear(fmtColor)) {
 						uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
 						uint32_t texCtl1 = pg->regs[RI(NV_PGRAPH_TEXCTL1_0 + stage * 4)];
 						uint32_t width = (texImageRect >> 16) & 0x1FFF;
@@ -384,10 +407,10 @@ void CxbxUpdateHostTextureScaling()
 
 	// Each texture stage has one texture coordinate set associated with it
 	// We'll store scale factors for each texture coordinate set
-	std::array<std::array<float, 4>, xbox::X_D3DTS_STAGECOUNT> texcoordScales;
+	std::array<std::array<float, 4>, NV2A_MAX_TEXTURES> texcoordScales;
 	texcoordScales.fill({ 1, 1, 1, 1 });
 
-	for (int stage = 0; stage < xbox::X_D3DTS_STAGECOUNT; stage++) {
+	for (int stage = 0; stage < NV2A_MAX_TEXTURES; stage++) {
 		// Reuse cached register values from CxbxUpdateHostTextures (avoids re-reading PGRAPH)
 		uint32_t texFmt = s_CachedTexFmt[stage];
 		uint32_t texOffset = s_CachedTexOff[stage];
@@ -425,7 +448,7 @@ void CxbxUpdateHostTextureScaling()
 
 		// Check for active linear textures.
 		// NV2A linear formats use LU_IMAGE/LC_IMAGE color codes (ranges 0x10-0x20, 0x24-0x26, 0x2E-0x31, 0x35-0x40).
-		if (EmuXBFormatIsLinear((xbox::X_D3DFORMAT)colorFmt)) {
+		if (IsNV2AColorFormatLinear(colorFmt)) {
 			// Test-case : This is often hit by the help screen in XDK samples.
 			// Set scaling factor for this texture, which will be applied to
 			// all texture-coordinates in the vertex shader
@@ -438,9 +461,15 @@ void CxbxUpdateHostTextureScaling()
 			// Account for MSAA when texture is the current render target (backbuffer)
 			if (texOffset == pg->surface_color.offset) {
 				// Test case: Max Payne 2 (bullet time)
-				if (g_Xbox_MultiSampleType & xbox::X_D3DMULTISAMPLE_SAMPLING_MULTI) {
-					float aaX, aaY;
-					GetMultiSampleScaleRaw(aaX, aaY);
+				// Use PGRAPH anti_aliasing directly instead of g_Xbox_MultiSampleType HLE global
+				if (pg->surface_shape.anti_aliasing != NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1) {
+					float aaX = 1.0f, aaY = 1.0f;
+					switch (pg->surface_shape.anti_aliasing) {
+					case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
+						aaX = 2.0f; break;
+					case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_SQUARE_OFFSET_4:
+						aaX = 2.0f; aaY = 2.0f; break;
+					}
 					width /= aaX;
 					height /= aaY;
 				}
@@ -487,8 +516,8 @@ void CxbxUpdateHostTextureScaling()
 	}
 	// Convert texture scales to reciprocals for GPU-side multiply (cheaper than divide).
 	// Upload as xboxTextureScaleRcp[4] at c214.
-	std::array<std::array<float, 4>, xbox::X_D3DTS_STAGECOUNT> texcoordScaleRcp;
-	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
+	std::array<std::array<float, 4>, NV2A_MAX_TEXTURES> texcoordScaleRcp;
+	for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
 		for (int j = 0; j < 4; j++) {
 			texcoordScaleRcp[i][j] = 1.0f / texcoordScales[i][j];
 		}

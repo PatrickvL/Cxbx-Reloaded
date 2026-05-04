@@ -826,7 +826,7 @@ void UpdateFixedFunctionVertexShaderState()
 	}
 
 	// Texture state — read from PGRAPH (authoritative, no HLE dependency)
-	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
+	for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
 		// TextureTransformFlags: derived from PGRAPH texture_matrix_enable[]
 		// and the shader stage program mode (for PROJECTED).
 		// When texture_matrix_enable is true, the NV2A always does a full 4x4
@@ -874,7 +874,7 @@ void UpdateFixedFunctionVertexShaderState()
 	// format commands from the push buffer before each draw. The HLE
 	// GetXboxVertexAttributeFormat() only works when SetVertexShader was
 	// intercepted, which doesn't happen for push-buffer-only games.
-	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
+	for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
 		int attrIdx = NV2A_VERTEX_ATTR_TEXTURE0 + i;
 		const VertexAttribute& attr = pg->vertex_attributes[attrIdx];
 		float componentCount;
