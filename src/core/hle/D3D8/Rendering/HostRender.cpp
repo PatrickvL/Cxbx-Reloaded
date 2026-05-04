@@ -424,12 +424,19 @@ bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, ID3D11
 		return false;
 	}
 
-	// Get current host render target dimensions
-	D3D11_TEXTURE2D_DESC HostRenderTarget_Desc;
-	pHostRenderTarget->GetDesc(&HostRenderTarget_Desc);
+	// Cache RT dimensions — GetDesc is a COM virtual call; skip when RT unchanged
+	static ID3D11Texture2D* s_CachedRT = nullptr;
+	static DWORD s_CachedWidth = 0, s_CachedHeight = 0;
+	if (pHostRenderTarget != s_CachedRT) {
+		D3D11_TEXTURE2D_DESC HostRenderTarget_Desc;
+		pHostRenderTarget->GetDesc(&HostRenderTarget_Desc);
+		s_CachedRT = pHostRenderTarget;
+		s_CachedWidth = HostRenderTarget_Desc.Width;
+		s_CachedHeight = HostRenderTarget_Desc.Height;
+	}
 
-	*pHostWidth = HostRenderTarget_Desc.Width;
-	*pHostHeight = HostRenderTarget_Desc.Height;
+	*pHostWidth = s_CachedWidth;
+	*pHostHeight = s_CachedHeight;
 
 	return true;
 }

@@ -335,9 +335,8 @@ void CxbxSetVertexShaderConstantF(UINT startRegister, const float* pConstantData
 	if (endRegister > CXBX_D3D11_VS_CB_COUNT)
 		endRegister = CXBX_D3D11_VS_CB_COUNT;
 
-	for (UINT i = startRegister; i < endRegister; i++) {
-		memcpy(g_D3D11VSConstants[i], pConstantData + (i - startRegister) * 4, sizeof(float) * 4);
-	}
+	UINT count = endRegister - startRegister;
+	memcpy(g_D3D11VSConstants[startRegister], pConstantData, count * sizeof(float) * 4);
 	g_bD3D11VSConstantsDirty = true;
 }
 
