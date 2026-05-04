@@ -635,6 +635,7 @@ void pgraph_handle_method(NV2AState *d,
 					NV_PGRAPH_SURFACE_WRITE_3D) + 1)
 				% GET_MASK(pg->regs[RI(NV_PGRAPH_SURFACE)],
 					NV_PGRAPH_SURFACE_MODULO_3D));
+			pg->regs_generation++;
 			NV2A_DPRINTF("%d\n",
 				GET_MASK(pg->regs[RI(NV_PGRAPH_SURFACE)],
 					NV_PGRAPH_SURFACE_WRITE_3D));
@@ -749,6 +750,7 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
 				NV_PGRAPH_CONTROL_0_CSCONVERT,
 				color_space_convert);
+			pg->regs_generation++;
 			break;
 		}
 
@@ -774,6 +776,7 @@ void pgraph_handle_method(NV2AState *d,
 			}
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_3)], NV_PGRAPH_CONTROL_3_FOG_MODE,
 				mode);
+			pg->regs_generation++;
 			break;
 		}
 		case NV097_SET_FOG_GEN_MODE: {
@@ -794,6 +797,7 @@ void pgraph_handle_method(NV2AState *d,
 				break;
 			}
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_FOGGENMODE, mode);
+			pg->regs_generation++;
 			break;
 		}
 		case NV097_SET_FOG_COLOR: {
@@ -806,6 +810,7 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_FOGCOLOR)], NV_PGRAPH_FOGCOLOR_RED, red);
 			SET_MASK(pg->regs[RI(NV_PGRAPH_FOGCOLOR)], NV_PGRAPH_FOGCOLOR_GREEN, green);
 			SET_MASK(pg->regs[RI(NV_PGRAPH_FOGCOLOR)], NV_PGRAPH_FOGCOLOR_BLUE, blue);
+			pg->regs_generation++; // table wrote raw param; switch rewrote with channel reorder
 			break;
 		}
 		case NV097_SET_BLEND_FUNC_SFACTOR: {
@@ -847,7 +852,7 @@ void pgraph_handle_method(NV2AState *d,
 				break;
 			}
 			SET_MASK(pg->regs[RI(NV_PGRAPH_BLEND)], NV_PGRAPH_BLEND_SFACTOR, factor);
-
+			pg->regs_generation++;
 			break;
 		}
 
@@ -890,7 +895,7 @@ void pgraph_handle_method(NV2AState *d,
 				break;
 			}
 			SET_MASK(pg->regs[RI(NV_PGRAPH_BLEND)], NV_PGRAPH_BLEND_DFACTOR, factor);
-
+			pg->regs_generation++;
 			break;
 		}
 
@@ -916,7 +921,7 @@ void pgraph_handle_method(NV2AState *d,
 				break;
 			}
 			SET_MASK(pg->regs[RI(NV_PGRAPH_BLEND)], NV_PGRAPH_BLEND_EQN, equation);
-
+			pg->regs_generation++;
 			break;
 		}
 
@@ -937,6 +942,7 @@ void pgraph_handle_method(NV2AState *d,
 				NV_PGRAPH_CONTROL_0_GREEN_WRITE_ENABLE, green);
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
 				NV_PGRAPH_CONTROL_0_BLUE_WRITE_ENABLE, blue);
+			pg->regs_generation++;
 			break;
 		}
 		case NV097_SET_DEPTH_MASK:
@@ -947,27 +953,32 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_2)],
 				NV_PGRAPH_CONTROL_2_STENCIL_OP_FAIL,
 				kelvin_map_stencil_op(parameter));
+			pg->regs_generation++;
 			break;
 		case NV097_SET_STENCIL_OP_ZFAIL:
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_2)],
 				NV_PGRAPH_CONTROL_2_STENCIL_OP_ZFAIL,
 				kelvin_map_stencil_op(parameter));
+			pg->regs_generation++;
 			break;
 		case NV097_SET_STENCIL_OP_ZPASS:
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_2)],
 				NV_PGRAPH_CONTROL_2_STENCIL_OP_ZPASS,
 				kelvin_map_stencil_op(parameter));
+			pg->regs_generation++;
 			break;
 
 		case NV097_SET_FRONT_POLYGON_MODE:
 			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
 				NV_PGRAPH_SETUPRASTER_FRONTFACEMODE,
 				kelvin_map_polygon_mode(parameter));
+			pg->regs_generation++;
 			break;
 		case NV097_SET_BACK_POLYGON_MODE:
 			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
 				NV_PGRAPH_SETUPRASTER_BACKFACEMODE,
 				kelvin_map_polygon_mode(parameter));
+			pg->regs_generation++;
 			break;
 		case NV097_SET_CULL_FACE: {
 			unsigned int face;
@@ -985,6 +996,7 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
 				NV_PGRAPH_SETUPRASTER_CULLCTRL,
 				face);
+			pg->regs_generation++;
 			break;
 		}
 		case NV097_SET_FRONT_FACE: {
@@ -1002,6 +1014,7 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_SETUPRASTER)],
 				NV_PGRAPH_SETUPRASTER_FRONTFACE,
 				ccw ? 1 : 0);
+			pg->regs_generation++;
 			break;
 		}
 		CASE_4(NV097_SET_TEXGEN_S, 16) : {
@@ -1011,6 +1024,7 @@ void pgraph_handle_method(NV2AState *d,
 			unsigned int mask = (slot % 2) ? NV_PGRAPH_CSV1_A_T1_S
 				: NV_PGRAPH_CSV1_A_T0_S;
 			SET_MASK(pg->regs[RI(reg)], mask, kelvin_map_texgen(parameter, 0));
+			pg->regs_generation++;
 			break;
 		}
 		CASE_4(NV097_SET_TEXGEN_T, 16) : {
@@ -1020,6 +1034,7 @@ void pgraph_handle_method(NV2AState *d,
 			unsigned int mask = (slot % 2) ? NV_PGRAPH_CSV1_A_T1_T
 				: NV_PGRAPH_CSV1_A_T0_T;
 			SET_MASK(pg->regs[RI(reg)], mask, kelvin_map_texgen(parameter, 1));
+			pg->regs_generation++;
 			break;
 		}
 		CASE_4(NV097_SET_TEXGEN_R, 16) : {
@@ -1029,6 +1044,7 @@ void pgraph_handle_method(NV2AState *d,
 			unsigned int mask = (slot % 2) ? NV_PGRAPH_CSV1_A_T1_R
 				: NV_PGRAPH_CSV1_A_T0_R;
 			SET_MASK(pg->regs[RI(reg)], mask, kelvin_map_texgen(parameter, 2));
+			pg->regs_generation++;
 			break;
 		}
 		CASE_4(NV097_SET_TEXGEN_Q, 16) : {
@@ -1038,6 +1054,7 @@ void pgraph_handle_method(NV2AState *d,
 			unsigned int mask = (slot % 2) ? NV_PGRAPH_CSV1_A_T1_Q
 				: NV_PGRAPH_CSV1_A_T0_Q;
 			SET_MASK(pg->regs[RI(reg)], mask, kelvin_map_texgen(parameter, 3));
+			pg->regs_generation++;
 			break;
 		}
 
@@ -1452,6 +1469,7 @@ void pgraph_handle_method(NV2AState *d,
 			pg->regs[RI(NV_PGRAPH_SETUPRASTER)] =
 				(pg->regs[RI(NV_PGRAPH_SETUPRASTER)] & ~(1 << 30))
 				| ((parameter ? 1 : 0) << 30);
+			pg->regs_generation++;
 			break;
 
 		case NV097_SET_LINE_WIDTH:
@@ -1716,7 +1734,7 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(*reg, NV_PGRAPH_TEXPALETTE0_CONTEXT_DMA, dma_select);
 			SET_MASK(*reg, NV_PGRAPH_TEXPALETTE0_LENGTH, length);
 			SET_MASK(*reg, NV_PGRAPH_TEXPALETTE0_OFFSET, offset);
-
+			pg->regs_generation++;
 			// Also wrote: pg->texture_dirty[slot] = true; (field deleted)
 			break;
 		}
@@ -1905,6 +1923,7 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_RANGE_MODE,
 				GET_MASK(parameter,
 					NV097_SET_TRANSFORM_EXECUTION_MODE_RANGE_MODE));
+			pg->regs_generation++;
 			break;
 		case NV097_SET_TRANSFORM_PROGRAM_LOAD:
 			assert(parameter < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
@@ -1930,17 +1949,20 @@ void pgraph_handle_method(NV2AState *d,
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_AMBIENT,  (parameter >> 2) & 3);
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_DIFFUSE,  (parameter >> 4) & 3);
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_SPECULAR, (parameter >> 6) & 3);
+			pg->regs_generation++;
 			break;
 		}
 
 		case NV097_SET_TWO_SIDED_LIGHT_EN:
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_TWO_SIDE_LIGHTING, parameter ? 1 : 0);
+			pg->regs_generation++;
 			break;
 
 		case NV097_SET_POINT_PARAMS_ENABLE:
 			// Writes to BOTH CSV0_D and CONTROL_3
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_POINTPARAMSENABLE, parameter ? 1 : 0);
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_3)], NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE, parameter ? 1 : 0);
+			pg->regs_generation++;
 			break;
 
 		case NV097_SET_LIGHT_CONTROL: {
@@ -1951,6 +1973,7 @@ void pgraph_handle_method(NV2AState *d,
 				(parameter & NV097_SET_LIGHT_CONTROL_LOCALEYE) ? 1 : 0);
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)], NV_PGRAPH_CSV0_C_ALPHA_FROM_MATERIAL_SPECULAR,
 				(parameter & NV097_SET_LIGHT_CONTROL_ALPHA_FROM_MATERIAL_SPECULAR) ? 1 : 0);
+			pg->regs_generation++;
 			break;
 		}
 
@@ -1966,6 +1989,7 @@ void pgraph_handle_method(NV2AState *d,
 				break;
 			}
 			pg->regs[RI(NV_PGRAPH_POINTSIZE)] = parameter;
+			pg->regs_generation++;
 			break;
 
 		// TODO: Implement these methods (not table-compatible due to value remapping or multi-reg writes).
