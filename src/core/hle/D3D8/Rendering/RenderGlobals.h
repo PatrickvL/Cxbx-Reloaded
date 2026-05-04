@@ -207,7 +207,6 @@ HRESULT CxbxSetStreamSource(UINT HostStreamNumber, ID3D11Buffer* pHostVertexBuff
 HRESULT CxbxCreateVertexBuffer(UINT Length, ID3D11Buffer** ppVertexBuffer);
 void*   CxbxLockVertexBuffer(ID3D11Buffer* pVertexBuffer); // Returns mapped pointer, or nullptr on failure
 void    CxbxUnlockVertexBuffer(ID3D11Buffer* pVertexBuffer);
-HRESULT CxbxCreatePixelShader(const void* pFunction, SIZE_T FunctionSize, ID3D11PixelShader** ppShader);
 void    CxbxRawSetPixelShader(ID3D11PixelShader* pPixelShader);
 void    CxbxInvalidateActivePixelShader(); // Reset PS state tracking after blit/present
 HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader);
@@ -386,7 +385,6 @@ inline void SetHostCubeTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture
 }
 
 // HostRender.cpp
-float GetZScaleForPixelContainer(xbox::X_D3DPixelContainer* pSurface);
 bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, ID3D11Texture2D* pHostRenderTarget = nullptr);
 void UpdateFixedFunctionVertexShaderState();
 void CxbxUpdateHostViewPortOffsetAndScaleConstants();

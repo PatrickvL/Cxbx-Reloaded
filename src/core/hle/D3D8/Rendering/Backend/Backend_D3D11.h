@@ -347,10 +347,6 @@ std::vector<D3D11_INPUT_ELEMENT_DESC> BuildCompleteInputLayout(
 // Called once during device initialization.
 void CxbxD3D11CreateVertexDefaultsBuffer();
 
-// Upload current NV2A sticky attribute values to the vertex defaults buffer.
-// Call before each draw to ensure non-streamed attributes have correct values.
-void CxbxD3D11UpdateVertexDefaultsBuffer();
-
 // Lazily create the D3D11 input layout for a vertex declaration (if not yet
 // created) and bind it via IASetInputLayout.  Encapsulates all device access
 // so callers outside the Rendering folder never touch g_pD3DDevice directly.

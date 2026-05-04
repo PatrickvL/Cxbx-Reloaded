@@ -441,52 +441,6 @@ bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, ID3D11
 	return true;
 }
 
-DWORD ScaleDWORD(DWORD Value, DWORD FromMax, DWORD ToMax)
-{
-	uint64_t tmp = Value;
-	tmp *= ToMax;
-	tmp /= FromMax;
-	return (DWORD)tmp;
-}
-
-// ValidateRenderTargetDimensions removed: was dead code (never called),
-// and its g_pXbox_RenderTarget/DepthStencil reads are now obsolete.
-// PGRAPH RT path (CxbxD3D11UpdateRenderTargetFromPGRAPH) handles dimension changes
-// by creating host resources from current PGRAPH surface_shape clip dimensions.
-
-float GetZScaleForPixelContainer(xbox::X_D3DPixelContainer* pSurface)
-{
-   	// If no surface was present, fallback to 1
-   	if (pSurface == xbox::zeroptr) {
-   	   	return 1.0f;
-   	}
-
-   	auto format = GetXboxPixelContainerFormat(pSurface);
-   	switch (format) {
-   	   	case xbox::X_D3DFMT_D16:
-   	   	case xbox::X_D3DFMT_LIN_D16:
-   	   	   	return 65535.0f;
-
-   	   	case xbox::X_D3DFMT_D24S8:
-   	   	case xbox::X_D3DFMT_LIN_D24S8:
-   	   	   	return 16777215.0f;
-
-   	   	case xbox::X_D3DFMT_F16:
-   	   	case xbox::X_D3DFMT_LIN_F16:
-   	   	   	return 511.9375f;
-
-   	   	case xbox::X_D3DFMT_F24S8:
-   	   	case xbox::X_D3DFMT_LIN_F24S8:
-   	   	   	// 24bit floating point is close to precision maximum, so a lower value is used
-   	   	   	// We can't use a double here since the vertex shader is only at float precision
-   	   	   	return 1.0e30f; 
-   	}
-
-   	// Default to 1 if unknown depth format
-   	LOG_TEST_CASE("GetZScaleForSurface: Unknown Xbox Depth Format");
-   	return 1.0f;
-}
-
 void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 {
 	// Xbox outputs vertex positions in rendertarget pixel coordinate space, with non-normalized Z

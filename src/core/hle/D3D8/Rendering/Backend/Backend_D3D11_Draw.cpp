@@ -332,61 +332,6 @@ void CxbxD3D11CreateVertexDefaultsBuffer()
 		&g_pD3D11VertexDefaultsBuffer, &stride, &offset);
 }
 
-void CxbxD3D11UpdateVertexDefaultsBuffer()
-{
-	if (g_pD3D11VertexDefaultsBuffer == nullptr)
-		return;
-
-	// Skip upload if vertex attribute defaults haven't changed since last upload.
-	// This avoids a Map/DISCARD + 256-byte copy on every draw.
-	{
-		static float s_CachedDefaults[X_VSH_MAX_ATTRIBUTES * 4] = {};
-		static bool s_FirstCall = true;
-		bool changed = s_FirstCall;
-		for (unsigned i = 0; i < X_VSH_MAX_ATTRIBUTES && !changed; i++) {
-			float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
-			if (std::memcmp(pSrc, &s_CachedDefaults[i * 4], sizeof(float) * 4) != 0)
-				changed = true;
-		}
-		if (!changed) return;
-		for (unsigned i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
-			float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
-			std::memcpy(&s_CachedDefaults[i * 4], pSrc, sizeof(float) * 4);
-		}
-		s_FirstCall = false;
-	}
-
-	D3D11_MAPPED_SUBRESOURCE mapped = {};
-	HRESULT hr = g_pD3DDeviceContext->Map(g_pD3D11VertexDefaultsBuffer, 0,
-		D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-	if (FAILED(hr))
-		return;
-
-	float* pDst = static_cast<float*>(mapped.pData);
-	for (unsigned i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
-		// TODO: NV2A hardware updates inline_value[] with the last vertex's data
-		// after each streamed draw, so a subsequent draw that doesn't stream an
-		// attribute reads the value from the final vertex of the previous draw.
-		// Currently, inline_value[] is only written by explicit pushbuffer commands
-		// (NV097_SET_VERTEX_DATA4F etc.), not by the streamed vertex path.  To fix
-		// this, after each draw we'd need to read back the last vertex's attribute
-		// values from the CPU-side vertex data and write them to inline_value[].
-		float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
-		pDst[i * 4 + 0] = pSrc[0];
-		pDst[i * 4 + 1] = pSrc[1];
-		pDst[i * 4 + 2] = pSrc[2];
-		pDst[i * 4 + 3] = pSrc[3];
-	}
-
-	g_pD3DDeviceContext->Unmap(g_pD3D11VertexDefaultsBuffer, 0);
-
-	// Re-bind after Map/Unmap with WRITE_DISCARD (buffer may have been reallocated)
-	UINT stride = 0;
-	UINT offset = 0;
-	g_pD3DDeviceContext->IASetVertexBuffers(CXBX_D3D11_VERTEX_DEFAULTS_SLOT, 1,
-		&g_pD3D11VertexDefaultsBuffer, &stride, &offset);
-}
-
 HRESULT CxbxCreateVertexBuffer(UINT Length, ID3D11Buffer** ppVertexBuffer)
 {
 	D3D11_BUFFER_DESC bufDesc = {};
@@ -449,11 +394,6 @@ void CxbxDynBuffer::Release()
 		pBuffer = nullptr;
 	}
 	capacity = 0;
-}
-
-HRESULT CxbxCreatePixelShader(const void* pFunction, SIZE_T FunctionSize, ID3D11PixelShader** ppShader)
-{
-	return g_pD3DDevice->CreatePixelShader(pFunction, FunctionSize, nullptr, ppShader);
 }
 
 void CxbxRawSetPixelShader(ID3D11PixelShader* pPixelShader)
