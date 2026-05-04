@@ -59,52 +59,6 @@ void CxbxReleaseOverlayResources()
 
 const char *NV2AMethodToString(DWORD dwMethod); // forward
 
-void EmuExecutePushBuffer
-(
-	xbox::X_D3DPushBuffer       *pPushBuffer,
-	xbox::X_D3DFixup            *pFixup
-)
-{
-	//Check whether Fixup exists or not. 
-	if (pFixup != xbox::zeroptr) {
-		LOG_TEST_CASE("PushBuffer has fixups");
-		//Interpret address of PushBuffer Data and Fixup Data
-		UINT8* pPushBufferData = (UINT8*)pPushBuffer->Data;
-		UINT8* pFixupData = (UINT8*)(pFixup->Data + pFixup->Run);
-		UINT32 SizeInBytes = 0;
-		UINT32 OffsetInBytes = 0;
-
-		while (TRUE) {
-			SizeInBytes = *(UINT32*)pFixupData;
-			//If SizeInBytes==0xFFFFFFFF, end of Fixup Data.
-			if (SizeInBytes == 0xFFFFFFFF)
-				break;
-			pFixupData += 4;
-			OffsetInBytes = *(UINT32*)pFixupData;
-			pFixupData += 4;
-			//fixup must not exceed the pushbuffer data range.
-			if ((OffsetInBytes + SizeInBytes) <= pPushBuffer->Size)
-			{
-				memcpy(pPushBufferData + OffsetInBytes, pFixupData, SizeInBytes);
-			}
-			pFixupData += SizeInBytes;
-			/*
-			When IDirect3DDevice8::RunPushBuffer is called with a fix-up object specified,
-			it will parse the fix-up data pointed to by pFixup and with a byte offset of Run.
-			The fix-up data is encoded as follows.The first DWORD is the size, in bytes,
-			of the push-buffer fix-up to be modified.The second DWORD is the offset, in bytes,
-			from the start of the push-buffer where the fix-up is to be modified.
-			The subsequent DWORDS are the data to be copied. This encoding repeats for every fix-up to be done,
-			until it terminates with a size value of 0xffffffff.
-			The offsets must be in an increasing order.
-			*/
-		}
-	}
-    pfifo_submit_pushbuffer(g_NV2A->GetDeviceState(), (void*)pPushBuffer->Data, pPushBuffer->Size);
-
-    return;
-}
-
 void D3D11_draw_arrays(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
@@ -117,8 +71,6 @@ void D3D11_draw_arrays(NV2AState *d)
 		DrawContext.dwVertexCount = pg->gl_draw_arrays_count[i];
 
 		CxbxD3D11VertexFetchDraw(DrawContext);
-		g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(
-			DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 	}
 }
 
@@ -130,9 +82,6 @@ void D3D11_draw_inline_buffer(NV2AState *d)
 		return;
 
 	CxbxD3D11DrawInlineBuffer(pg);
-
-	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(
-		(xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode, pg->inline_buffer_length);
 }
 
 void D3D11_draw_inline_array(NV2AState *d)
@@ -167,7 +116,7 @@ void D3D11_draw_inline_array(NV2AState *d)
 	DrawContext.uiXboxVertexStreamZeroStride = nv2a_stride;
 	DrawContext.bNV2AInlineData = true;
 
-	CxbxDrawPrimitiveUP(DrawContext);
+	CxbxD3D11VertexFetchDraw(DrawContext);
 }
 
 void D3D11_draw_inline_elements(NV2AState *d)
@@ -182,8 +131,6 @@ void D3D11_draw_inline_elements(NV2AState *d)
 	DrawContext.pXboxIndexData = d->pgraph.inline_elements;
 
 	CxbxD3D11VertexFetchDraw(DrawContext);
-	g_dwPrimPerFrame += ConvertXboxVertexCountToPrimitiveCount(
-		DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount);
 }
 
 void D3D11_draw_state_update(NV2AState *d)
@@ -541,9 +488,6 @@ static void D3D11_flip_stall(NV2AState *d)
 
 	// Update FPS counter
 	g_renderbase->UpdateFPSCounter();
-
-	// Reset per-frame counters
-	g_dwPrimPerFrame = 0;
 }
 
 void D3D11_init_pgraph_plugins()

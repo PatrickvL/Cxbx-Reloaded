@@ -161,28 +161,12 @@ void CxbxUpdateHostTextures()
 		uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
 
 		if (texOffset != 0) {
-			// Check if this offset corresponds to a render target or depth stencil surface.
+			// Check if this texture offset corresponds to a render target:
+			// the game may render caustics/shadows to an offscreen RT, then
+			// sample that RT as a texture in a later draw.
 			// Exclude the current depth/stencil surface (identified by PGRAPH
 			// surface_zeta.offset) — it cannot be sampled while bound as depth.
-			auto pXboxSurface = CxbxLookupSurfaceByDataAddr(texOffset);
-			if (pXboxSurface && texOffset != pg->surface_zeta.offset) {
-				auto pHostRT = GetHostSurface(pXboxSurface, D3DUSAGE_RENDERTARGET);
-				if (!pHostRT) {
-					// Also try depth stencil — shadow mapping binds a depth surface as texture
-					pHostRT = GetHostSurface(pXboxSurface, D3DUSAGE_DEPTHSTENCIL);
-				}
-				if (pHostRT) {
-					pHostBaseTexture = pHostRT;
-					bIsRenderTargetTexture = true;
-				}
-			}
-
-			// If no Xbox surface registered (SetRenderTarget patches disabled),
-			// check the PGRAPH RT cache for render targets created directly
-			// from PGRAPH surface state.  This enables render-to-texture:
-			// the game renders caustics/shadows to an offscreen RT, then
-			// samples that RT as a texture in a later draw.
-			if (!bIsRenderTargetTexture && texOffset != pg->surface_zeta.offset) {
+			if (texOffset != pg->surface_zeta.offset) {
 				auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
 				if (pPgraphRT) {
 					pHostBaseTexture = pPgraphRT;
@@ -264,8 +248,16 @@ void CxbxUpdateHostTextures()
 			case X_D3DCOMMON_TYPE_SURFACE:
 				// Surfaces can be set in the texture stages, instead of textures
 				LOG_TEST_CASE("ActiveTexture set to a surface (non-texture) resource"); // Test cases : Burnout, Outrun 2006
-				// We must wrap the surface before using it as a texture
-				pHostBaseTexture = CxbxConvertXboxSurfaceToHostTexture(pXboxBaseTexture);
+				// For D3D11, the surface IS already the texture (ID3D11Texture2D)
+				{
+					ID3D11Texture2D* pHostSurface = GetHostSurface(pXboxBaseTexture);
+					if (pHostSurface) {
+						pHostSurface->AddRef();
+						pHostBaseTexture = pHostSurface;
+					} else {
+						LOG_TEST_CASE("Failed to get host surface");
+					}
+				}
 				// Release this texture (after SetTexture) when we succeeded in creating it :
 				bNeedRelease = pHostBaseTexture != nullptr;
 				break;

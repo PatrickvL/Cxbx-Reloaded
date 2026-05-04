@@ -370,10 +370,6 @@ void CreateDefaultDevice
    	   	   	// Create a D3D event query to handle "wait-for-idle" with
    	   	   	hr = g_pD3DDevice->CreateQuery(&QueryDesc, &g_pHostQueryWaitForIdle);
    	   	   	DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateQuery (wait for idle)");
-
-   	   	   	// Create a D3D event query to handle "callback events" with
-   	   	   	hr = g_pD3DDevice->CreateQuery(&QueryDesc, &g_pHostQueryCallbackEvent);
-   	   	   	DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateQuery (callback event)");
    	   	}
    	} else {
    	   	LOG_TEST_CASE("Can't CreateQuery(D3DQUERYTYPE_EVENT) on host!");
@@ -521,7 +517,6 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 // ******************************************************************
 void UpdateFixedFunctionVertexShaderState()
 {
-	extern xbox::X_VERTEXATTRIBUTEFORMAT* GetXboxVertexAttributeFormat(); // TMP glue
 	using namespace xbox;
 
 	PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
@@ -827,9 +822,7 @@ void UpdateFixedFunctionVertexShaderState()
 
 	// Read current TexCoord component counts from PGRAPH vertex attributes.
 	// PGRAPH is the authoritative source since the puller processes attribute
-	// format commands from the push buffer before each draw. The HLE
-	// GetXboxVertexAttributeFormat() only works when SetVertexShader was
-	// intercepted, which doesn't happen for push-buffer-only games.
+	// format commands from the push buffer before each draw.
 	for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
 		int attrIdx = NV2A_VERTEX_ATTR_TEXTURE0 + i;
 		const VertexAttribute& attr = pg->vertex_attributes[attrIdx];
@@ -837,14 +830,7 @@ void UpdateFixedFunctionVertexShaderState()
 		if (attr.count > 0) {
 			componentCount = (float)attr.count;
 		} else {
-			// Attribute not set in PGRAPH — fall back to HLE vertex shader if available
-			xbox::X_VERTEXATTRIBUTEFORMAT* pFmt = GetXboxVertexAttributeFormat();
-			if (pFmt) {
-				auto vertexDataFormat = pFmt->Slots[attrIdx].Format;
-				componentCount = (float)GetXboxVertexDataComponentCount(vertexDataFormat);
-			} else {
-				componentCount = 2.0f; // Safe default (2D texcoords)
-			}
+			componentCount = 2.0f; // Safe default (2D texcoords)
 		}
 		reinterpret_cast<float*>(&ffShaderState.TexCoordComponentCount)[i] = componentCount;
 	}

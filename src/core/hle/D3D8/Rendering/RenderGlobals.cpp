@@ -27,7 +27,6 @@
 #include "EmuD3D8_common.h"
 
 XboxRenderStateConverter XboxRenderStates;
-XboxTextureStateConverter XboxTextureStates;
 
 FixedFunctionVertexShaderState ffShaderState = {}; // TODO find a home for this and associated code
 
@@ -35,9 +34,9 @@ FixedFunctionVertexShaderState ffShaderState = {}; // TODO find a home for this 
 using namespace std::literals::chrono_literals;
 
 // Global(s)
-HWND                                g_hEmuWindow   = NULL; // rendering window
-bool                                g_bClipCursor  = false; // indicates that the mouse cursor should be confined inside the rendering window
-ID3D11Device                    *g_pD3DDevice   = nullptr; // Direct3D Device
+HWND                         g_hEmuWindow   = NULL; // rendering window
+bool                         g_bClipCursor  = false; // indicates that the mouse cursor should be confined inside the rendering window
+ID3D11Device                *g_pD3DDevice   = nullptr; // Direct3D Device
 
 // Shared Variable(s)
 bool                         g_bSupportsFormatSurface[xbox::X_D3DFMT_LAST + 1]; // Does device support surface format?
@@ -51,48 +50,19 @@ bool                         g_bSupportsFormatCubeTexture[xbox::X_D3DFMT_LAST + 
 bool                         g_bHack_UnlockFramerate = false; // ignore the xbox presentation interval
 bool                         g_bHasDepth = false;    // Does device have a Depth Buffer?
 bool                         g_bHasStencil = false;  // Does device have a Stencil Buffer?
-DWORD						 g_dwPrimPerFrame = 0;	// Number of primitives within one frame
+
 float                        g_AspectRatioScale = 1.0f;
 UINT                         g_AspectRatioScaleWidth = 0;
 UINT                         g_AspectRatioScaleHeight = 0;
-D3D11_TEXTURE2D_DESC               g_HostBackBufferDesc;
+D3D11_TEXTURE2D_DESC         g_HostBackBufferDesc;
 Settings::s_video            g_XBVideo;
 
 bool                         g_bEnableHostQueryVisibilityTest = true;
 
-OverlayProxy g_OverlayProxy;
-
 bool                         g_bHack_DisableHostGPUQueries = false; // TODO : Make configurable
-ID3D11Query              *g_pHostQueryWaitForIdle = nullptr;
-ID3D11Query              *g_pHostQueryCallbackEvent = nullptr;
+ID3D11Query                 *g_pHostQueryWaitForIdle = nullptr;
 int                          g_RenderUpscaleFactor = 1;
-
-xbox::dword_xt                   g_Xbox_PresentationInterval_Default = D3DPRESENT_INTERVAL_IMMEDIATE;
-xbox::dword_xt                   g_Xbox_PresentationInterval_Override = 0;
-xbox::X_D3DSWAPDATA			g_Xbox_SwapData = {0}; // current swap information
-xbox::X_D3DSWAPCALLBACK		g_pXbox_SwapCallback = xbox::zeroptr;	// Swap/Present callback routine
-xbox::X_D3DVBLANKDATA			g_Xbox_VBlankData = {0}; // current vertical blank information
-
-xbox::X_D3DSurface           *g_pXbox_BackBufferSurface = xbox::zeroptr;
-xbox::X_D3DSurface           *g_pXbox_DefaultDepthStencilSurface = xbox::zeroptr;
-xbox::X_D3DSurface           *g_pXbox_RenderTarget = xbox::zeroptr;
-xbox::X_D3DSurface           *g_pXbox_DepthStencil = xbox::zeroptr;
-xbox::X_D3DMULTISAMPLE_TYPE   g_Xbox_MultiSampleType = xbox::X_D3DMULTISAMPLE_NONE;
-
-// Side-map: VRAM data offset → Xbox surface pointer
-static std::unordered_map<xbox::addr_xt, xbox::X_D3DSurface*> g_SurfacesByDataAddr;
-
-void CxbxRegisterSurfaceByDataAddr(xbox::addr_xt dataAddr, xbox::X_D3DSurface *pSurface)
-{
-	if (dataAddr != xbox::zero)
-		g_SurfacesByDataAddr[dataAddr] = pSurface;
-}
-
-xbox::X_D3DSurface* CxbxLookupSurfaceByDataAddr(xbox::addr_xt dataAddr)
-{
-	auto it = g_SurfacesByDataAddr.find(dataAddr);
-	return (it != g_SurfacesByDataAddr.end()) ? it->second : nullptr;
-}
+xbox::X_D3DMULTISAMPLE_TYPE  g_Xbox_MultiSampleType = xbox::X_D3DMULTISAMPLE_NONE;
 
 // Side-map: VRAM data offset → Xbox texture pointer
 static std::unordered_map<xbox::addr_xt, xbox::X_D3DBaseTexture*> g_TexturesByDataAddr;
@@ -115,11 +85,6 @@ unsigned                     g_Xbox_Palette_Size[xbox::X_D3DTS_STAGECOUNT] = { 0
 
 DXGI_FORMAT               g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT]; // Updated by CxbxUpdateHostTextures(), read by CxbxCalcColorSign
 xbox::X_D3DBaseTexture       *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by our D3DDevice_SetTexture and D3DDevice_SwitchTexture patches
-
-// g_Xbox_Viewport removed — PGRAPH VPSCL/VPOFF are the authority for viewport state.
-float g_Xbox_BackbufferScaleX = 1;
-float g_Xbox_BackbufferScaleY = 1;
-xbox::X_D3DSWAP g_LastD3DSwap = (xbox::X_D3DSWAP) -1;
 
 
 static void							UpdateCurrentMSpFAndFPS(); // Used for benchmarking/fps count

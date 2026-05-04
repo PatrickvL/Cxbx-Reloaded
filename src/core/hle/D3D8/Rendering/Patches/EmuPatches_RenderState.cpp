@@ -42,61 +42,12 @@
 // D3D_CommonSetRenderTarget, D3DDevice_SetRenderTargetFast — disabled.
 // Xbox native SetRenderTarget writes NV097_SET_SURFACE_COLOR_OFFSET and related
 // PGRAPH surface registers. Host RT is now created from PGRAPH surface state by
-// CxbxD3D11UpdateRenderTargetFromPGRAPH. Backbuffer detection handled in CreateDevice.
+// CxbxD3D11UpdateRenderTargetFromPGRAPH.
 // Patch disabled in Patches.cpp — let Xbox code run unpatched.
 
-// CxbxImpl_SetRenderTarget — still used by CreateDevice path (HostDraw.cpp)
-// to register backbuffer/depth stencil surfaces for PGRAPH-based RT resolution.
-void CxbxImpl_SetRenderTarget
-(
-	xbox::X_D3DSurface    *pRenderTarget,
-	xbox::X_D3DSurface    *pNewZStencil
-)
-{
-	LOG_INIT;
-
-	// In Xbox titles, CreateDevice calls SetRenderTarget for the back buffer
-	// We can use this to determine the Xbox backbuffer surface for later use!
-	if (g_pXbox_BackBufferSurface == xbox::zeroptr) {
-		g_pXbox_BackBufferSurface = pRenderTarget;
-		// TODO : Some titles might render to another backbuffer later on,
-		// if that happens, we might need to skip the first one or two calls?
-	}
-
-	// In Xbox titles, CreateDevice calls SetRenderTarget (our caller) for the depth stencil
-	// We can use this to determine the Xbox depth stencil surface for later use!
-	if (g_pXbox_DefaultDepthStencilSurface == xbox::zeroptr) {
-		g_pXbox_DefaultDepthStencilSurface = pNewZStencil;
-		// TODO : Some titles might set another depth stencil later on,
-		// if that happens, we might need to skip the first one or two calls?
-	}
-
-	// The current render target is only replaced if it's passed in here non-null
-	if (pRenderTarget != xbox::zeroptr) {
-		g_pXbox_RenderTarget = pRenderTarget;
-		CxbxRegisterSurfaceByDataAddr(pRenderTarget->Data, pRenderTarget);
-	}
-	else if (g_pXbox_RenderTarget == xbox::zeroptr) {
-		// No explicit render target and none was set yet.
-		// Try the backbuffer (set by the first SetRenderTarget from CreateDevice).
-		// When SetRenderTarget patches are disabled and trampolines aren't found,
-		// g_pXbox_BackBufferSurface may also be null — that's fine because
-		// CxbxD3D11UpdateRenderTargetFromPGRAPH creates host resources directly.
-		if (g_pXbox_BackBufferSurface != xbox::zeroptr) {
-			g_pXbox_RenderTarget = g_pXbox_BackBufferSurface;
-			CxbxRegisterSurfaceByDataAddr(g_pXbox_BackBufferSurface->Data, g_pXbox_BackBufferSurface);
-		}
-	}
-
-	// The currenct depth stencil is always replaced by whats passed in here (even a null)
-	g_pXbox_DepthStencil = pNewZStencil;
-	if (pNewZStencil != xbox::zeroptr)
-		CxbxRegisterSurfaceByDataAddr(pNewZStencil->Data, pNewZStencil);
-
-	// Host D3D11 render target and depth stencil creation + binding
-	// is now fully handled by CxbxD3D11UpdateRenderTargetFromPGRAPH,
-	// which creates host resources directly from PGRAPH surface state.
-}
+// CxbxImpl_SetRenderTarget — removed.
+// Was only called from Direct3D_CreateDevice_End trampoline path which no longer exists.
+// Host D3D11 render target creation is fully handled by CxbxD3D11UpdateRenderTargetFromPGRAPH.
 
 // D3DDevice_SetPalette, D3DDevice_SetPalette_4__LTCG_eax1 — disabled.
 // Xbox native SetPalette pushes NV097_SET_TEXTURE_PALETTE.

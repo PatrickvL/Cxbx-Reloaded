@@ -162,8 +162,7 @@ void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg);
 void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg);
 
 // Read PGRAPH surface_color/zeta offsets and rebind D3D11 render target / depth-stencil
-// if they differ from what's currently bound.  Uses the Data-address side-map populated
-// by CxbxImpl_SetRenderTarget to resolve PGRAPH offsets to host D3D11 textures.
+// if they differ from what's currently bound. Creates host surfaces directly from PGRAPH state.
 void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg);
 
 // Recreate D3D11 state objects that have been marked dirty, and flush constant buffers
@@ -328,20 +327,6 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext);
 void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg);
 void CxbxD3D11VertexFetchInvalidateLayout();  // Bump layout CB generation counter
 extern bool g_bD3D11VertexFetchDefaultsDirty; // Set true when vertex defaults change
-
-struct ID3D11ShaderResourceView;
-std::vector<D3D11_INPUT_ELEMENT_DESC> FilterInputElementsByShaderSignature(
-	const D3D11_INPUT_ELEMENT_DESC* pElements, UINT elementCount,
-	const void* bytecode, size_t bytecodeSize);
-
-// Build a complete D3D11 input layout with all 16 TEXCOORD attributes.
-// Streamed attributes use their declared slot/format/offset; non-streamed
-// attributes read from the zero-stride vertex defaults buffer on slot
-// CXBX_D3D11_VERTEX_DEFAULTS_SLOT.  This satisfies DXVK's requirement
-// that every ISGN entry has a matching input layout element.
-std::vector<D3D11_INPUT_ELEMENT_DESC> BuildCompleteInputLayout(
-	const D3D11_INPUT_ELEMENT_DESC* pElements, UINT elementCount,
-	const bool* vRegisterInDeclaration);
 
 // Create the vertex defaults buffer and bind it to the defaults slot.
 // Called once during device initialization.

@@ -156,33 +156,3 @@ void CxbxReleaseQuadListToTriangleListIndexData(void* pHostIndexData)
 {
 	free(pHostIndexData);
 }
-
-// ******************************************************************
-// * Line loop closing-line helpers
-// ******************************************************************
-
-void CxbxDrawIndexedClosingLineUP(INDEX16 LowIndex, INDEX16 HighIndex, void *pHostVertexStreamZeroData, UINT uiHostVertexStreamZeroStride)
-{
-	// Close the line by copying the two endpoint vertices and drawing them as a LINELIST.
-	uint8_t VertexData[512]; assert(512 >= 2 * uiHostVertexStreamZeroStride);
-	uint8_t *FirstVertex = (uint8_t *)pHostVertexStreamZeroData + (LowIndex * uiHostVertexStreamZeroStride);
-	uint8_t *SecondVertex = (uint8_t *)pHostVertexStreamZeroData + (HighIndex * uiHostVertexStreamZeroStride);
-
-	memcpy(VertexData, FirstVertex, uiHostVertexStreamZeroStride);
-	memcpy(VertexData + uiHostVertexStreamZeroStride, SecondVertex, uiHostVertexStreamZeroStride);
-
-	static CxbxDynBuffer s_ClosingLineVB = { nullptr, 0, D3D11_BIND_VERTEX_BUFFER };
-	UINT dataSize = 2 * uiHostVertexStreamZeroStride;
-	ID3D11Buffer* pVB = s_ClosingLineVB.Update(VertexData, dataSize);
-	if (pVB != nullptr) {
-		UINT stride = uiHostVertexStreamZeroStride;
-		UINT offset = 0;
-		g_pD3DDeviceContext->IASetVertexBuffers(0, 1, &pVB, &stride, &offset);
-		CxbxBindThickLineGS(NV097_SET_BEGIN_END_OP_LINES);
-		g_pD3DDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
-		g_pD3DDeviceContext->Draw(2, 0);
-		CxbxUnbindThickLineGS(NV097_SET_BEGIN_END_OP_LINES);
-	}
-
-	g_dwPrimPerFrame++;
-}

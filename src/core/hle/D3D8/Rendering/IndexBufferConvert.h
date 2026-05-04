@@ -41,7 +41,4 @@ INDEX16* CxbxCreateQuadListToTriangleListIndexData(INDEX16* pXboxQuadIndexData, 
 // Release helpers
 void CxbxReleaseQuadListToTriangleListIndexData(void* pHostIndexData);
 
-// Line loop closing-line helper (UP draw path)
-void CxbxDrawIndexedClosingLineUP(INDEX16 LowIndex, INDEX16 HighIndex, void *pHostVertexStreamZeroData, UINT uiHostVertexStreamZeroStride);
-
 #endif // INDEXBUFFERCONVERT_H

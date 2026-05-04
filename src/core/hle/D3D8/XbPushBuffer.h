@@ -32,13 +32,4 @@ extern NV2ADevice* g_NV2A;
 extern uint32_t NV2A_read_pgraph_register(const int reg);
 extern float* NV2A_get_vertex_attribute_value_pointer(unsigned VertexSlot);
 
-extern void CxbxDrawIndexed(CxbxDrawContext &DrawContext);
-extern void CxbxDrawPrimitiveUP(CxbxDrawContext &DrawContext);
-
-extern void EmuExecutePushBuffer
-(
-	xbox::X_D3DPushBuffer       *pPushBuffer,
-	xbox::X_D3DFixup            *pFixup
-);
-
 #endif

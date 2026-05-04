@@ -501,40 +501,6 @@ LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
    	return S_OK; // = Is not part of D3D8 handling.
 }
 
-std::chrono::steady_clock::time_point GetNextVBlankTime()
-{
-	using namespace std::chrono;
-	// TODO: Read display frequency from Xbox Display Adapter
-	// This is accessed by calling CMiniport::GetRefreshRate(); 
-	// This reads from the structure located at CMinpPort::m_CurrentAvInfo
-	// This will require at least Direct3D_CreateDevice being unpatched
-	// otherwise, m_CurrentAvInfo will never be initialised!
-	// 20ms should be used in the case of 50hz
-	auto ms = 16.6666666667ms;
-	return steady_clock::now() + duration_cast<steady_clock::duration>(ms);
-}
-
-void hle_vblank()
-{
-	// Note: This whole code block can be removed once NV2A interrupts are implemented
-	// And Both Swap and Present can be ran unpatched
-	// Once that is in place, MiniPort + Direct3D will handle this on it's own!
-	g_Xbox_VBlankData.VBlank++;
-
-	// TODO: Fixme.  This may not be right...
-	g_Xbox_SwapData.SwapVBlank = 1;
-
-	g_Xbox_VBlankData.Swap = 0;
-
-	// TODO: This can't be accurate...
-	g_Xbox_SwapData.TimeUntilSwapVBlank = 0;
-
-	// TODO: Recalculate this for PAL version if necessary.
-	// Also, we should check the D3DPRESENT_INTERVAL value for accurracy.
-	// g_Xbox_SwapData.TimeBetweenSwapVBlanks = 1/60;
-	g_Xbox_SwapData.TimeBetweenSwapVBlanks = 0;
-}
-
 void UpdateDepthStencilFlags(ID3D11Texture2D *pDepthStencilSurface)
 {
 	g_bHasDepth = false;
@@ -569,9 +535,7 @@ void SetupPresentationParameters
 
    	params.Windowed = !g_XBVideo.bFullScreen;
 
-   	if (pXboxPresentationParameters) {
-   		g_Xbox_PresentationInterval_Default = pXboxPresentationParameters->FullScreen_PresentationInterval;
-   	}
+    (void)pXboxPresentationParameters; // Presentation interval handled by PGRAPH flip_stall
 
    	// retrieve resolution from configuration
    	char szBackBufferFormat[16] = {};
@@ -767,12 +731,6 @@ void GetScreenScaleFactors(float& scaleX, float& scaleY) {
 		}
 	}
 
-	if (g_LastD3DSwap == xbox::X_D3DSWAP_COPY) {
-		// HACK: Pretend we are drawing to the frontbuffer
-		// by disabling scale factors.
-		return;
-	}
-
 	// Example:
 	// NFS HP2 renders in-game at 640*480
 	// The title uses MSAA, which increases the rendertarget size, but leaves the screen scale unaffected
@@ -795,12 +753,6 @@ void GetScreenScaleFactors(float& scaleX, float& scaleY) {
 		GetMultiSampleScaleRaw(scaleX, scaleY);
 	}
 
-	// Account for the backbuffer scale
-	// Test cases:
-	// Vertex program passthrough equivalent (title does apply backbuffer scale):
-	// - NFS:HP2 (car speed and other in-game UI elements)
-	scaleX *= g_Xbox_BackbufferScaleX;
-	scaleY *= g_Xbox_BackbufferScaleY;
 }
 
 // GetRenderTargetRawDimensions, GetBackBufferPixelDimensions removed:

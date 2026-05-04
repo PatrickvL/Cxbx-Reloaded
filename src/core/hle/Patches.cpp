@@ -237,7 +237,6 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetRenderState_Simple", xbox::EMUPATCH(D3DDevice_SetRenderState_Simple), PATCH_HLE_D3D),
 	// Disabled: CxbxD3D11UpdateRenderTargetFromPGRAPH creates host RTs/DSs directly from PGRAPH state.
 	// Present uses g_pHostPgraphBackBuffer instead of g_pXbox_BackBufferSurface.
-	// Direct3D_CreateDevice_End still optionally populates side-map via trampolines.
 	//PATCH_ENTRY("D3DDevice_SetRenderTarget", xbox::EMUPATCH(D3DDevice_SetRenderTarget), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetRenderTargetFast", xbox::EMUPATCH(D3DDevice_SetRenderTargetFast), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2", xbox::EMUPATCH(D3DDevice_SetRenderTarget_0__LTCG_ecx1_eax2), PATCH_HLE_D3D),

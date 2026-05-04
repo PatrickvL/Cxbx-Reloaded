@@ -901,29 +901,9 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		UINT mipSlice = 0;
 		UINT faceIndex = 0;
 
-		// Try the side-map first (populated by CreateDevice_End for the backbuffer)
-		xbox::X_D3DSurface *pXboxRT = CxbxLookupSurfaceByDataAddr(colorOffset);
-		if (pXboxRT) {
-			pHostRT = GetHostSurface(pXboxRT, D3DUSAGE_RENDERTARGET);
-
-			// Determine mip level and cubemap face for surfaces that are children of a texture
-			xbox::X_D3DBaseTexture* pParent = pXboxRT->Parent;
-			if (pParent != xbox::zeroptr && pXboxRT->Format == pParent->Format) {
-				int face = 0;
-				GetSurfaceFaceAndLevelWithinTexture(pXboxRT, pParent, mipSlice, face);
-				faceIndex = static_cast<UINT>(face);
-				if (GetXboxD3DResourceType(pParent) == xbox::X_D3DRTYPE_CUBETEXTURE) {
-					auto pParentHost = (ID3D11Texture2D*)GetHostBaseTexture(pParent, D3DUSAGE_RENDERTARGET);
-					if (pParentHost) {
-						pHostRT = pParentHost;
-					}
-				}
-			}
-		} else {
-			// No Xbox surface registered — create host RT directly from PGRAPH state
-			DXGI_FORMAT colorFmt = NV097ColorFormatToDXGI(pg->surface_shape.color_format);
-			pHostRT = CreateHostSurfaceFromPGRAPH(colorOffset, colorFmt, rtWidth, rtHeight, false);
-		}
+		// Create host RT directly from PGRAPH surface state
+		DXGI_FORMAT colorFmt = NV097ColorFormatToDXGI(pg->surface_shape.color_format);
+		pHostRT = CreateHostSurfaceFromPGRAPH(colorOffset, colorFmt, rtWidth, rtHeight, false);
 
 		if (pHostRT) {
 			CxbxSetRenderTarget(pHostRT, mipSlice, faceIndex);
@@ -955,14 +935,9 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		if (zetaOffset != 0) {
 			ID3D11Texture2D *pHostDS = nullptr;
 
-			xbox::X_D3DSurface *pXboxDS = CxbxLookupSurfaceByDataAddr(zetaOffset);
-			if (pXboxDS) {
-				pHostDS = GetHostSurface(pXboxDS, D3DUSAGE_DEPTHSTENCIL);
-			} else {
-				// No Xbox surface registered — create host DS directly from PGRAPH state
-				DXGI_FORMAT zetaFmt = NV097ZetaFormatToDXGI(pg->surface_shape.zeta_format);
-				pHostDS = CreateHostSurfaceFromPGRAPH(zetaOffset, zetaFmt, rtWidth, rtHeight, true);
-			}
+			// Create host DS directly from PGRAPH state
+			DXGI_FORMAT zetaFmt = NV097ZetaFormatToDXGI(pg->surface_shape.zeta_format);
+			pHostDS = CreateHostSurfaceFromPGRAPH(zetaOffset, zetaFmt, rtWidth, rtHeight, true);
 
 			if (pHostDS) {
 				// D3D11 requires RTV and DSV dimensions to match.

@@ -23,8 +23,7 @@
 // *
 // ******************************************************************
 // ******************************************************************
-// *  CPU-side tessellation of rect and tri patches for D3D11
-// *  (D3D11 has no DrawRectPatch/DrawTriPatch API)
+// *  NV2A Hardware Tessellation for D3D11
 // ******************************************************************
 #ifndef PATCHDRAW_H
 #define PATCHDRAW_H
@@ -34,20 +33,6 @@
 
 // Forward declare NV2A types
 struct NV2AState;
-
-// Tessellate a rectangular patch and draw it via D3D11
-HRESULT CxbxDrawRectPatchD3D11(
-	UINT Handle,
-	const float *pNumSegs,
-	const xbox::X_D3DRECTPATCH_INFO *pRectPatchInfo
-);
-
-// Tessellate a triangular patch and draw it via D3D11
-HRESULT CxbxDrawTriPatchD3D11(
-	UINT Handle,
-	const float *pNumSegs,
-	const xbox::X_D3DTRIPATCH_INFO *pTriPatchInfo
-);
 
 // NV2A hardware tessellation: called from PGRAPH on SET_END_PATCH
 void D3D11_draw_patch(NV2AState *d);

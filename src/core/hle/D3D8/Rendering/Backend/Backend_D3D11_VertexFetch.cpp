@@ -1,4 +1,4 @@
-// ******************************************************************
+﻿// ******************************************************************
 // *
 // *  This file is part of the Cxbx project.
 // *
@@ -280,36 +280,6 @@ static UINT NV2AFormatToVtxFmt(unsigned format, unsigned count)
 }
 
 // ******************************************************************
-// * Map Xbox vertex format to CXBX_VTXFMT_* constant
-// ******************************************************************
-static UINT XboxFormatToVtxFmt(UINT xboxType)
-{
-	switch (xboxType) {
-	case 0x12: return CXBX_VTXFMT_FLOAT1;       // X_D3DVSDT_FLOAT1
-	case 0x22: return CXBX_VTXFMT_FLOAT2;       // X_D3DVSDT_FLOAT2
-	case 0x32: return CXBX_VTXFMT_FLOAT3;       // X_D3DVSDT_FLOAT3
-	case 0x42: return CXBX_VTXFMT_FLOAT4;       // X_D3DVSDT_FLOAT4
-	case 0x40: return CXBX_VTXFMT_D3DCOLOR;     // X_D3DVSDT_D3DCOLOR
-	case 0x25: return CXBX_VTXFMT_SHORT2;       // X_D3DVSDT_SHORT2
-	case 0x45: return CXBX_VTXFMT_SHORT4;       // X_D3DVSDT_SHORT4
-	case 0x16: return CXBX_VTXFMT_NORMPACKED3;  // X_D3DVSDT_NORMPACKED3
-	case 0x11: return CXBX_VTXFMT_SHORT1N;       // X_D3DVSDT_NORMSHORT1 (1 short → float4(x,0,0,1))
-	case 0x21: return CXBX_VTXFMT_SHORT2N;       // X_D3DVSDT_NORMSHORT2
-	case 0x31: return CXBX_VTXFMT_SHORT3N;       // X_D3DVSDT_NORMSHORT3 (3 shorts → float4(x,y,z,1))
-	case 0x41: return CXBX_VTXFMT_SHORT4N;       // X_D3DVSDT_NORMSHORT4
-	case 0x14: return CXBX_VTXFMT_PBYTE1;        // X_D3DVSDT_PBYTE1 (1 byte → float4(x,0,0,1))
-	case 0x24: return CXBX_VTXFMT_PBYTE2;        // X_D3DVSDT_PBYTE2 (2 bytes → float4(x,y,0,1))
-	case 0x34: return CXBX_VTXFMT_PBYTE3;        // X_D3DVSDT_PBYTE3 (3 bytes → float4(x,y,z,1))
-	case 0x44: return CXBX_VTXFMT_PBYTE4;        // X_D3DVSDT_PBYTE4
-	case 0x15: return CXBX_VTXFMT_SHORT1;        // X_D3DVSDT_SHORT1 (1 short unnormalized)
-	case 0x35: return CXBX_VTXFMT_SHORT3;        // X_D3DVSDT_SHORT3 (3 shorts unnormalized)
-	case 0x72: return CXBX_VTXFMT_FLOAT2H;      // X_D3DVSDT_FLOAT2H
-	case 0x02: return CXBX_VTXFMT_NONE;         // X_D3DVSDT_NONE
-	default:   return CXBX_VTXFMT_NONE;
-	}
-}
-
-// ******************************************************************
 // * Initialize vertex fetch resources (called once during device init)
 // ******************************************************************
 void CxbxD3D11VertexFetchInit()
@@ -461,11 +431,6 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 	if (!s_pLayoutCB || !s_pDefaultsCB)
 		return;
 
-	// pDecl is only needed by the HLE fallback path (below).
-	// Defer the call until we know PGRAPH path didn't suffice,
-	// because CxbxGetVertexDeclaration crashes when g_Xbox_VertexShader_Handle is 0.
-	CxbxVertexDeclaration* pDecl = nullptr;
-
 	// ---------------------------------------------------------------
 	// Step 1: Determine topology and host vertex count
 	// ---------------------------------------------------------------
@@ -606,20 +571,12 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 			pCB->Attribs[a][3] = 0;  // streamBase
 		}
 
-		// Two vertex layout paths:
-		// 1. PGRAPH path: reads vertex_attributes[] directly from NV2A state.
-		//    Used for push buffer draws (HLE_draw_arrays) where PGRAPH is the
-		//    authoritative source and g_Xbox_SetStreamSource[] is not populated.
-		// 2. HLE path: reads CxbxVertexDeclaration + g_Xbox_SetStreamSource[].
-		//    Used for HLE-intercepted draws where SetStreamSource patches populate
-		//    the HLE state before DrawPrimitive is called.
-		//
-		// Strategy: use PGRAPH for non-UP draws and for NV2A inline data UP draws;
-		// fall back to HLE path for HLE-patched UP draws.
-		bool bUsedPGRAPH = false;
+		// PGRAPH path: reads vertex_attributes[] directly from NV2A state.
+		// All draws come through push buffer → PFIFO → PGRAPH, so PGRAPH is
+		// the authoritative source for vertex layout information.
 		PGRAPHState* pg = (g_NV2A != nullptr) ? &g_NV2A->GetDeviceState()->pgraph : nullptr;
 
-		if (pg && (!bIsUPDraw || DrawContext.bNV2AInlineData)) {
+		if (pg) {
 			if (DrawContext.bNV2AInlineData) {
 				// NV2A inline_array path: data is packed contiguously per vertex
 				// with enabled attributes in register order. Compute element offsets
@@ -633,7 +590,6 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 					pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
 					pCB->Attribs[i][3] = 0; // streamBase = 0 (UP staging buffer)
 					packedOffset += attr.count * attr.size;
-					bUsedPGRAPH = true;
 				}
 			} else {
 				// VB draw path: slot index = register index, offset = physical address
@@ -645,75 +601,11 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 					pCB->Attribs[i][1] = attr.stride;
 					pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
 					pCB->Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
-					bUsedPGRAPH = true;
 				}
 			}
-		}
-
-		if (!bUsedPGRAPH)
-		{
-			// HLE fallback: walk CxbxVertexDeclaration + g_Xbox_SetStreamSource[]
-			// Lazy-init pDecl here to avoid crashing when g_Xbox_VertexShader_Handle is 0.
-			pDecl = CxbxGetVertexDeclaration();
-			if (!pDecl || pDecl->NumberOfVertexStreams == 0) {
-				g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
-				return; // No PGRAPH data and no HLE declaration — can't draw
-			}
-			for (UINT s = 0; s < pDecl->NumberOfVertexStreams; s++) {
-				auto& streamInfo = pDecl->VertexStreams[s];
-				UINT streamIdx = streamInfo.XboxStreamIndex;
-				auto& streamInput = g_Xbox_SetStreamSource[streamIdx];
-
-				UINT stride;
-				if (s == 0 && bIsUPDraw) {
-					stride = DrawContext.uiXboxVertexStreamZeroStride;
-				} else {
-					stride = streamInput.Stride;
-					if (stride == 0) stride = streamInfo.HostVertexStride;
-				}
-
-				UINT elemOffset = 0;
-				UINT hostElemOffset = 0;
-				for (UINT e = 0; e < streamInfo.NumberOfVertexElements; e++) {
-					auto& elem = streamInfo.VertexElements[e];
-					if (elem.XboxType == 0)
-						continue;
-
-					UINT regIdx = 0;
-					bool found = false;
-					if (pDecl->pD3D11InputElements) {
-						for (UINT ie = 0; ie < pDecl->D3D11InputElementCount; ie++) {
-							auto& inputElem = pDecl->pD3D11InputElements[ie];
-							if (inputElem.InputSlot == streamIdx
-								&& inputElem.AlignedByteOffset == hostElemOffset) {
-								regIdx = inputElem.SemanticIndex;
-								found = true;
-								break;
-							}
-						}
-					}
-
-					if (found && regIdx < 16) {
-						INT streamBase;
-						if (bIsUPDraw && s == 0) {
-							streamBase = -(INT)vertexStart * (INT)stride;
-						} else if (streamInput.VertexBuffer) {
-							uintptr_t vbAddr = (uintptr_t)GetDataFromXboxResource(streamInput.VertexBuffer);
-							streamBase = (INT)(vbAddr - CONTIGUOUS_MEMORY_BASE) + (INT)streamInput.Offset;
-						} else {
-							streamBase = 0;
-						}
-
-						pCB->Attribs[regIdx][0] = elemOffset;
-						pCB->Attribs[regIdx][1] = stride;
-						pCB->Attribs[regIdx][2] = XboxFormatToVtxFmt(elem.XboxType);
-						pCB->Attribs[regIdx][3] = (UINT)streamBase;
-					}
-
-					elemOffset += elem.XboxByteSize;
-					hostElemOffset += elem.HostByteSize;
-				}
-			}
+		} else {
+			g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
+			return; // No NV2A state — can't draw
 		}
 
 		g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
@@ -905,258 +797,3 @@ void CxbxD3D11CreateVertexDefaultsBuffer()
 	g_pD3DDeviceContext->IASetVertexBuffers(CXBX_D3D11_VERTEX_DEFAULTS_SLOT, 1,
 		&g_pD3D11VertexDefaultsBuffer, &stride, &offset);
 }
-
-HRESULT CxbxCreateVertexBuffer(UINT Length, ID3D11Buffer** ppVertexBuffer)
-{
-	D3D11_BUFFER_DESC bufDesc = {};
-	bufDesc.ByteWidth = Length;
-	bufDesc.Usage = D3D11_USAGE_DYNAMIC;
-	bufDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-	bufDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	return g_pD3DDevice->CreateBuffer(&bufDesc, nullptr, ppVertexBuffer);
-}
-
-void* CxbxLockVertexBuffer(ID3D11Buffer* pVertexBuffer)
-{
-	D3D11_MAPPED_SUBRESOURCE mappedResource = {};
-	if (FAILED(g_pD3DDeviceContext->Map(pVertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource))) {
-		return nullptr;
-	}
-	return mappedResource.pData;
-}
-
-void CxbxUnlockVertexBuffer(ID3D11Buffer* pVertexBuffer)
-{
-	g_pD3DDeviceContext->Unmap(pVertexBuffer, 0);
-}
-
-// Filter D3D11 input layout elements to only include semantics present in
-// the shader's input signature (ISGN/ISG1 chunk in DXBC bytecode).
-// D3D11 returns E_INVALIDARG from CreateInputLayout when an element references
-// a semantic the vertex shader doesn't declare (e.g. the HLSL compiler optimized
-// away an unused TEXCOORD slot).  The NV2A has 16 attribute slots that all map
-// to TEXCOORD0-15, but a given shader may only use a subset.
-std::vector<D3D11_INPUT_ELEMENT_DESC> FilterInputElementsByShaderSignature(
-	const D3D11_INPUT_ELEMENT_DESC* pElements, UINT elementCount,
-	const void* bytecode, size_t bytecodeSize)
-{
-	std::vector<D3D11_INPUT_ELEMENT_DESC> result;
-
-	// Parse DXBC header to find the ISGN (or ISG1) chunk
-	auto data = static_cast<const uint8_t*>(bytecode);
-	if (bytecodeSize < 32 || memcmp(data, "DXBC", 4) != 0) {
-		// Not valid DXBC — return all elements unfiltered
-		result.assign(pElements, pElements + elementCount);
-		return result;
-	}
-
-	uint32_t chunkCount = *reinterpret_cast<const uint32_t*>(data + 28);
-	if (32 + chunkCount * 4 > bytecodeSize) {
-		result.assign(pElements, pElements + elementCount);
-		return result;
-	}
-
-	const uint8_t* isgnData = nullptr;
-	uint32_t isgnSize = 0;
-	bool isISG1 = false;
-	for (uint32_t i = 0; i < chunkCount; i++) {
-		uint32_t offset = *reinterpret_cast<const uint32_t*>(data + 32 + i * 4);
-		if (offset + 8 > bytecodeSize)
-			continue;
-		uint32_t fourCC = *reinterpret_cast<const uint32_t*>(data + offset);
-		// ISGN = 0x4E475349 ("ISGN"), ISG1 = 0x31475349 ("ISG1")
-		if (fourCC == 0x4E475349 || fourCC == 0x31475349) {
-			isgnSize = *reinterpret_cast<const uint32_t*>(data + offset + 4);
-			isgnData = data + offset + 8;
-			isISG1 = (fourCC == 0x31475349);
-			break;
-		}
-	}
-
-	if (isgnData == nullptr || isgnSize < 8) {
-		result.assign(pElements, pElements + elementCount);
-		return result;
-	}
-
-	uint32_t sigElementCount = *reinterpret_cast<const uint32_t*>(isgnData);
-	// ISG1 uses 32 bytes per element (extra Stream field), ISGN uses 24
-	uint32_t elemStride = isISG1 ? 32 : 24;
-	// ISG1 element layout: Stream(4), NameOffset(4), SemanticIndex(4), SystemValue(4), ...
-	// ISGN element layout: NameOffset(4), SemanticIndex(4), SystemValue(4), ...
-	uint32_t nameFieldOff   = isISG1 ? 4 : 0;
-	uint32_t semIdxFieldOff = isISG1 ? 8 : 4;
-
-	if (8 + sigElementCount * elemStride > isgnSize) {
-		result.assign(pElements, pElements + elementCount);
-		return result;
-	}
-
-	// Build a set of (semantic name, index) pairs present in ISGN
-	// so we can filter input elements that the shader doesn't use
-	for (UINT e = 0; e < elementCount; e++) {
-		bool found = false;
-		for (uint32_t s = 0; s < sigElementCount; s++) {
-			const uint8_t* sigElem = isgnData + 8 + s * elemStride;
-			uint32_t nameOffset = *reinterpret_cast<const uint32_t*>(sigElem + nameFieldOff);
-			uint32_t semIndex   = *reinterpret_cast<const uint32_t*>(sigElem + semIdxFieldOff);
-			if (nameOffset >= isgnSize)
-				continue;
-			const char* sigName = reinterpret_cast<const char*>(isgnData + nameOffset);
-			if (semIndex == pElements[e].SemanticIndex
-				&& pElements[e].SemanticName != nullptr
-				&& _stricmp(sigName, pElements[e].SemanticName) == 0) {
-				found = true;
-				break;
-			}
-		}
-		if (found) {
-			result.push_back(pElements[e]);
-		}
-	}
-
-	return result;
-}
-
-// Build a complete input layout with all 16 TEXCOORD attributes.
-// Streamed attributes (present in pElements) use their declared slot/format/offset.
-// Non-streamed attributes read from the zero-stride vertex defaults buffer
-// on slot CXBX_D3D11_VERTEX_DEFAULTS_SLOT, providing NV2A "sticky" values.
-// This satisfies DXVK's requirement that every ISGN entry has a corresponding
-// input layout element, and supplies correct default values for non-streamed
-// attributes without relying on constant buffer lerp workarounds.
-static std::vector<D3D11_INPUT_ELEMENT_DESC> BuildCompleteInputLayout(
-	const D3D11_INPUT_ELEMENT_DESC* pElements, UINT elementCount,
-	const bool* vRegisterInDeclaration)
-{
-	std::vector<D3D11_INPUT_ELEMENT_DESC> result;
-
-	// Track which TEXCOORD indices are provided by real streamed elements
-	bool hasElement[X_VSH_MAX_ATTRIBUTES] = {};
-	for (UINT e = 0; e < elementCount; e++) {
-		if (pElements[e].SemanticName != nullptr
-			&& _stricmp(pElements[e].SemanticName, "TEXCOORD") == 0
-			&& pElements[e].SemanticIndex < X_VSH_MAX_ATTRIBUTES) {
-			hasElement[pElements[e].SemanticIndex] = true;
-			result.push_back(pElements[e]);
-		}
-	}
-
-	// For any TEXCOORD index not covered by a real element, add a defaults-slot element.
-	// These read from the zero-stride vertex defaults buffer (16 × float4 = 256 bytes)
-	// at offset (semanticIndex * 16), providing the NV2A's sticky attribute value.
-	for (UINT i = 0; i < X_VSH_MAX_ATTRIBUTES; i++) {
-		if (hasElement[i])
-			continue;
-
-		D3D11_INPUT_ELEMENT_DESC desc = {};
-		desc.SemanticName = "TEXCOORD";
-		desc.SemanticIndex = i;
-		desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;  // Match NV2A's float4 register width
-		desc.InputSlot = CXBX_D3D11_VERTEX_DEFAULTS_SLOT;
-		desc.AlignedByteOffset = i * 4 * sizeof(float); // offset into 256-byte defaults buffer
-		desc.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
-		desc.InstanceDataStepRate = 0;
-		result.push_back(desc);
-	}
-
-	return result;
-}
-
-void CxbxD3D11SetVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration)
-{
-	// Lazily create the input layout when we have elements but no layout yet
-	if (pCxbxVertexDeclaration != nullptr && pCxbxVertexDeclaration->pHostVertexDeclaration == nullptr
-		&& pCxbxVertexDeclaration->pD3D11InputElements != nullptr && pCxbxVertexDeclaration->D3D11InputElementCount > 0) {
-		ID3DBlob* pBytecode = CxbxGetActiveVertexShaderBytecode();
-		if (pBytecode == nullptr) {
-			// No active VS available; try the fixed-function bytecode
-			pBytecode = CxbxGetFixedFunctionVertexShaderBytecode();
-		}
-		if (pBytecode != nullptr) {
-			// Build a complete input layout with all 16 TEXCOORD attributes:
-			// - Streamed attributes use their declared slot/format/offset
-			// - Non-streamed attributes read from the zero-stride defaults buffer
-			auto complete = BuildCompleteInputLayout(
-				pCxbxVertexDeclaration->pD3D11InputElements,
-				pCxbxVertexDeclaration->D3D11InputElementCount,
-				pCxbxVertexDeclaration->vRegisterInDeclaration);
-
-			// Filter to only include elements the shader's ISGN actually declares,
-			// since D3D11 rejects CreateInputLayout when an element references a
-			// semantic not present in the shader's input signature
-			// (the compiler may have optimized away unused TEXCOORD slots)
-			auto filtered = FilterInputElementsByShaderSignature(
-				complete.data(),
-				(UINT)complete.size(),
-				pBytecode->GetBufferPointer(),
-				pBytecode->GetBufferSize());
-
-			HRESULT hRet = E_FAIL;
-			if (!filtered.empty()) {
-				hRet = g_pD3DDevice->CreateInputLayout(
-					filtered.data(),
-					(UINT)filtered.size(),
-					pBytecode->GetBufferPointer(),
-					pBytecode->GetBufferSize(),
-					&pCxbxVertexDeclaration->pHostVertexDeclaration
-				);
-				if (FAILED(hRet)) {
-					EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11SetVertexDeclaration: CreateInputLayout failed (0x%08X) filtered=%u complete=%u bytecodeSize=%zu",
-						hRet, (unsigned)filtered.size(), (unsigned)complete.size(), pBytecode->GetBufferSize());
-					for (UINT i = 0; i < (UINT)filtered.size(); i++) {
-						auto& e = filtered[i];
-						EmuLog(LOG_LEVEL::WARNING, "  [%u] Semantic=%s/%u Fmt=%u Slot=%u Offset=%u",
-							i, e.SemanticName ? e.SemanticName : "(null)", e.SemanticIndex,
-							e.Format, e.InputSlot, e.AlignedByteOffset);
-					}
-				}
-			}
-
-			// If layout creation still failed, retry with the FixedFunction
-			// shader bytecode which declares all 16 TEXCOORD inputs.
-			if (FAILED(hRet)) {
-				ID3DBlob* pFallback = CxbxGetFixedFunctionVertexShaderBytecode();
-				if (pFallback != nullptr && pFallback != pBytecode) {
-					auto fbFiltered = FilterInputElementsByShaderSignature(
-						complete.data(),
-						(UINT)complete.size(),
-						pFallback->GetBufferPointer(),
-						pFallback->GetBufferSize());
-					if (!fbFiltered.empty()) {
-						hRet = g_pD3DDevice->CreateInputLayout(
-							fbFiltered.data(),
-							(UINT)fbFiltered.size(),
-							pFallback->GetBufferPointer(),
-							pFallback->GetBufferSize(),
-							&pCxbxVertexDeclaration->pHostVertexDeclaration
-						);
-						if (FAILED(hRet)) {
-							EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11SetVertexDeclaration: Fallback CreateInputLayout also failed (0x%08X)", hRet);
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Vertex defaults buffer is updated later in CxbxUpdateNativeD3DResources
-	// (after all constants are uploaded), so no need to do it here.
-
-	g_pD3DDeviceContext->IASetInputLayout(
-		pCxbxVertexDeclaration != nullptr ? pCxbxVertexDeclaration->pHostVertexDeclaration : nullptr);
-}
-
-ID3D11InputLayout* CxbxCreateHostVertexDeclaration(D3D11_INPUT_ELEMENT_DESC *pDeclaration)
-{
-	// For D3D11, we cannot create an input layout without compiled shader bytecode.
-	// Return nullptr here; the actual ID3D11InputLayout will be created lazily
-	// in CxbxSetHostVertexDeclaration when both elements and a compiled shader are available.
-	(void)pDeclaration;
-	return nullptr;
-}
-
-void CxbxSetHostVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration)
-{
-	CxbxD3D11SetVertexDeclaration(pCxbxVertexDeclaration);
-}
-

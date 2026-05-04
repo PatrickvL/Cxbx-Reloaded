@@ -290,18 +290,11 @@ const NV2ABlockInfo* EmuNV2A_Block(xbox::addr_xt addr)
 	return nullptr;
 }
 
-// HACK: Until we implement VGA/proper interrupt generation
-// we simulate VBLANK by calling the interrupt at 60Hz
-extern std::chrono::steady_clock::time_point GetNextVBlankTime();
-extern void hle_vblank();
-
 void NV2ADevice::UpdateHostDisplay(NV2AState *d)
 {
 	g_renderbase->UpdateFPSCounter();
 }
 
-// TODO: Fix this properly
-template<bool should_update_hle>
 void nv2a_vblank_interrupt(void *opaque)
 {
 	NV2AState *d = static_cast<NV2AState *>(opaque);
@@ -322,10 +315,6 @@ void nv2a_vblank_interrupt(void *opaque)
 		// TODO: We should swap here for the purposes of supporting overlays + direct framebuffer access
 		// But it causes crashes on AMD hardware for reasons currently unknown...
 		//NV2ADevice::UpdateHostDisplay(d);
-
-		if constexpr (should_update_hle) {
-			hle_vblank();
-		}
 	}
 }
 
@@ -413,7 +402,7 @@ void NV2ADevice::Init()
 	pgraph_init(d);
 
 	d->vblank_last = get_now();
-	d->vblank_cb = nv2a_vblank_interrupt<true>;
+	d->vblank_cb = nv2a_vblank_interrupt;
 
     qemu_mutex_init(&d->pfifo.pfifo_lock);
     qemu_cond_init(&d->pfifo.puller_cond);

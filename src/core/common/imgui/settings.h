@@ -52,6 +52,5 @@ typedef struct {
 } imgui_audio_windows;
 
 typedef struct {
-	bool cache_stats_vertex;
-	bool Reserved[3];
+	bool Reserved[4];
 } imgui_video_windows;
