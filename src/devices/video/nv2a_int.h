@@ -288,6 +288,7 @@ typedef struct PGRAPHState {
 
 	uint32_t vsh_constants[NV2A_VERTEXSHADER_CONSTANTS][4]; // XFCTX RAM mirror: NV2A Transform Context RAM (on-chip XF SRAM, 192 × float4)
 	bool vsh_constants_dirty[NV2A_VERTEXSHADER_CONSTANTS];
+	uint32_t vsh_constants_generation; // Bumped when any vsh_constant is written; consumer skips dirty scan if unchanged
 
 	/* lighting constant arrays */
 	uint32_t ltctxa[NV2A_LTCTXA_COUNT][4];

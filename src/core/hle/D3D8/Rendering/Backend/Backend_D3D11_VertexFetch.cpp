@@ -303,6 +303,18 @@ static void UploadVertexDefaults()
 
 	g_bD3D11VertexFetchDefaultsDirty = false;
 
+	// Compare actual attribute values to skip Map/Unmap when nothing changed
+	static float s_CachedDefaults[16 * 4] = {};
+	static bool s_FirstCall = true;
+	bool changed = s_FirstCall;
+	for (int i = 0; i < 16 && !changed; i++) {
+		const float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
+		if (std::memcmp(pSrc, &s_CachedDefaults[i * 4], sizeof(float) * 4) != 0)
+			changed = true;
+	}
+	if (!changed) return;
+	s_FirstCall = false;
+
 	D3D11_MAPPED_SUBRESOURCE mapped = {};
 	HRESULT hr = g_pD3DDeviceContext->Map(s_pDefaultsCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
 	if (FAILED(hr)) return;
@@ -314,6 +326,7 @@ static void UploadVertexDefaults()
 		pDst[i * 4 + 1] = pSrc[1];
 		pDst[i * 4 + 2] = pSrc[2];
 		pDst[i * 4 + 3] = pSrc[3];
+		std::memcpy(&s_CachedDefaults[i * 4], pSrc, sizeof(float) * 4);
 	}
 
 	g_pD3DDeviceContext->Unmap(s_pDefaultsCB, 0);
