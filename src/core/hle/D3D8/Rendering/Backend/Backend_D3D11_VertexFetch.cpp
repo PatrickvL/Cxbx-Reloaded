@@ -96,6 +96,11 @@ static ID3D11Buffer*             s_pLastBoundDefaultsCB = nullptr;
 static bool                      s_IAAlreadyNull = false;   // IA null-binding elimination
 static D3D_PRIMITIVE_TOPOLOGY    s_LastTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED; // Topology caching
 
+void CxbxInvalidateTopologyCache()
+{
+	s_LastTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+}
+
 // Layout CB caching: generation counter bumped on state changes
 static UINT                      s_LayoutCBGeneration = 0;
 static UINT                      s_LastLayoutCBGeneration = UINT_MAX;

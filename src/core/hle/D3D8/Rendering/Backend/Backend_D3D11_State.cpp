@@ -140,6 +140,9 @@ static uint32_t s_CachedBlendColorReg = ~0u;
 static uint32_t s_CachedControl0Reg = ~0u;
 static uint32_t s_CachedControl1Reg = ~0u;
 static uint32_t s_CachedControl2Reg = ~0u;
+
+// Geometry shader binding cache
+static ID3D11GeometryShader* s_LastBoundGS = (ID3D11GeometryShader*)~0ull;
 static uint32_t s_CachedControl3Reg = ~0u;
 static uint32_t s_CachedSetupRasterReg = ~0u;
 static uint32_t s_CachedZOffsetBiasReg = ~0u;
@@ -715,7 +718,6 @@ void CxbxD3D11ApplyDirtyStates()
 	// Bind or unbind the point sprite geometry shader
 	// (Thick line GS is bound at draw time since it depends on primitive type)
 	{
-		static ID3D11GeometryShader* s_LastBoundGS = (ID3D11GeometryShader*)~0ull; // sentinel
 		ID3D11GeometryShader* desiredGS = (g_bPointSpriteEnabled && g_pD3D11PointSpriteGS)
 			? g_pD3D11PointSpriteGS : nullptr;
 		if (desiredGS != s_LastBoundGS) {
@@ -723,6 +725,11 @@ void CxbxD3D11ApplyDirtyStates()
 			s_LastBoundGS = desiredGS;
 		}
 	}
+}
+
+void CxbxInvalidateGSCache()
+{
+	s_LastBoundGS = (ID3D11GeometryShader*)~0ull;
 }
 
 // ******************************************************************

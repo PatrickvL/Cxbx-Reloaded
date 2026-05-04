@@ -846,6 +846,10 @@ HRESULT CxbxD3D11Blt(
 	// call would skip rebinding the game's pixel shader.
 	CxbxInvalidateActivePixelShader();
 
+	// Invalidate VS/GS/topology caches since we bound blit shaders directly
+	extern void CxbxInvalidateVertexShaderCache();
+	CxbxInvalidateVertexShaderCache();
+
 	pRTV->Release();
 	pSRV->Release();
 

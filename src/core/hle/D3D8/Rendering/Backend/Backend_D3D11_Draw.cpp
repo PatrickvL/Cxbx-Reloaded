@@ -681,14 +681,26 @@ void CxbxD3D11SetVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration
 // * Dual-backend wrappers — D3D11 implementations
 // ******************************************************************
 
+static ID3D11VertexShader* s_LastBoundVS = nullptr;
+
 HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader)
 {
-	static ID3D11VertexShader* s_LastBoundVS = nullptr;
 	if (pHostVertexShader != s_LastBoundVS) {
 		g_pD3DDeviceContext->VSSetShader(pHostVertexShader, nullptr, 0);
 		s_LastBoundVS = pHostVertexShader;
 	}
 	return S_OK;
+}
+
+void CxbxInvalidateVertexShaderCache()
+{
+	s_LastBoundVS = nullptr;
+	// Also invalidate topology — blit sets TRIANGLELIST directly
+	extern void CxbxInvalidateTopologyCache();
+	CxbxInvalidateTopologyCache();
+	// Also invalidate GS — blit sets GS=nullptr directly
+	extern void CxbxInvalidateGSCache();
+	CxbxInvalidateGSCache();
 }
 
 ID3D11InputLayout* CxbxCreateHostVertexDeclaration(D3D11_INPUT_ELEMENT_DESC *pDeclaration)
@@ -704,5 +716,3 @@ void CxbxSetHostVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration)
 {
 	CxbxD3D11SetVertexDeclaration(pCxbxVertexDeclaration);
 }
-
-
