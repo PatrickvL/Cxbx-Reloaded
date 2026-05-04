@@ -601,6 +601,9 @@ void CxbxUpdateNativeD3DResources()
 		pgraph_locked = true;
 	}
 
+	// Single pg pointer for the entire per-draw state update sequence.
+	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+
 	// Derive the vertex shader mode entirely from PGRAPH state.
 	// g_Xbox_VertexShaderMode is ONLY written here on the render thread;
 	// the game-thread patches no longer touch it, eliminating the race.
@@ -617,7 +620,6 @@ void CxbxUpdateNativeD3DResources()
 	// runtime sets VPSCL to identity (1,1,1,0) since the VS outputs screen-space
 	// positions directly.  Normal VS programs have VPSCL = (W/2, -H/2, zScale, 0).
 	{
-		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 		uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
 		uint32_t pgraph_mode = GET_MASK(csv0d, NV_PGRAPH_CSV0_D_MODE);
 
@@ -691,10 +693,10 @@ void CxbxUpdateNativeD3DResources()
 	// small offscreen target (e.g. 256x256 caustic texture) to the backbuffer
 	// (640x480), GetHostRenderTargetDimensions returns the old (small) size,
 	// causing the scissor rect to clip the viewport incorrectly.
-	CxbxD3D11UpdateRenderTargetFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
+	CxbxD3D11UpdateRenderTargetFromPGRAPH(pg);
 
 	// Set viewport from PGRAPH registers (authoritative).
-	CxbxD3D11UpdateViewportFromPGRAPH(&g_NV2A->GetDeviceState()->pgraph);
+	CxbxD3D11UpdateViewportFromPGRAPH(pg);
 
 	CxbxUpdateHostTextures();
 	CxbxUpdateHostTextureScaling();
@@ -703,10 +705,9 @@ void CxbxUpdateNativeD3DResources()
 	// This replaces the former XboxRenderStates.Apply() (blend/depth/stencil/rasterizer)
 	// and XboxTextureStates.Apply() (sampler configuration) which read from Xbox D3D
 	// runtime memory. All state is now sourced from NV2A PGRAPH registers directly.
+	CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
+	CxbxD3D11UpdateSamplersFromPGRAPH(pg);
 	{
-		auto pg = &g_NV2A->GetDeviceState()->pgraph;
-		CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
-		CxbxD3D11UpdateSamplersFromPGRAPH(pg);
 		extern float g_fLineWidth;
 		g_fLineWidth = pg->line_width;
 	}
@@ -735,7 +736,7 @@ void CxbxUpdateNativeD3DResources()
 	// Release pgraph_lock — all PGRAPH register reads for this draw are done.
 	// The puller thread is now free to process new commands for the next draw.
 	if (pgraph_locked) {
-		qemu_mutex_unlock(&g_NV2A->GetDeviceState()->pgraph.pgraph_lock);
+		qemu_mutex_unlock(&pg->pgraph_lock);
 		pgraph_locked = false;
 	}
 
