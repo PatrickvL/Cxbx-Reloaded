@@ -55,22 +55,35 @@ static const float CXBX_NEG_INF = asfloat(0xFF800000u);
 //
 // Guard register optimisation
 // ---------------------------
-// s_r[] and s_c[] are each padded with one zero-valued "guard" element
-// at the start and end.  Every runtime index is biased by +1 and clamped
-// to [0, arraySize-1], so out-of-bounds accesses (e.g. c[-1] via a0.x,
-// or r13-r15) silently land on a guard that reads as zero — matching
-// NV2A hardware behaviour without a conditional branch.
+// s_r[] is padded with one zero-valued "guard" element at the start and end.
+// Every runtime index is biased by +1 and clamped to [0, arraySize-1], so
+// out-of-bounds accesses (e.g. r13-r15) silently land on a guard that reads
+// as zero — matching NV2A hardware behaviour without a conditional branch.
+//
+// Constants (c0-c191) are read directly from the cbuffer C[] to avoid a
+// massive 192×float4 per-thread indexable temp array that would destroy GPU
+// occupancy.  Out-of-range reads (via a0.x) return zero via clamp+select.
+// A small 4-entry context-write cache handles the rare case where a vertex
+// program writes back to constant registers (NV2A context writes, out_orb==0).
 // ============================================================
 #define X_D3DVS_TEMPREG_COUNT  12
 #define S_R_GUARD_SIZE (X_D3DVS_TEMPREG_COUNT + 2) // 14: [0]=lo guard, [1..12]=r0-r11, [13]=hi guard
-#define S_C_GUARD_SIZE (X_D3DVS_CONSTREG_COUNT + 2) // 194: [0]=lo guard, [1..192]=c0-c191, [193]=hi guard
 #define GUARD_BIAS 1
 
 static float4 s_r[S_R_GUARD_SIZE];  // temporary registers r0-r11 + 2 zero guards
 static float4 s_v[16];      // input (vertex attribute) registers v0-v15
 static float4 s_oRegs[16];  // output registers (indexed by OUTPUT_REG_*)
-static float4 s_c[S_C_GUARD_SIZE];  // writable shadow of c0-c191 + 2 zero guards
 static int    s_a0;         // address register
+
+// Context register write cache — tiny associative cache for the rare case
+// where a vertex program writes back to constant registers (out_orb==0).
+// NV2A programs can write to c[] so subsequent reads see updated values.
+// Only 4 slots needed: no known Xbox title writes more than 2-3 constants
+// per vertex program.  If all slots are full, the oldest is evicted (FIFO).
+#define CTX_CACHE_SIZE 4
+static float4 s_ctx_val[CTX_CACHE_SIZE];
+static uint   s_ctx_idx[CTX_CACHE_SIZE]; // 0xFFFFFFFF = empty slot
+static uint   s_ctx_count;               // number of valid entries (0..CTX_CACHE_SIZE)
 
 // Named indices into s_oRegs[].  These match the NV2A output address
 // encoding: the 4-bit out_address field maps directly to these slots.
@@ -123,11 +136,20 @@ float4 fetch_input(uint mux, uint r_idx, uint v_idx, uint const_idx,
     }
     else {
         // Constant register c0..c191, optionally offset by a0.
-        // Reads from writable shadow s_c[] (initialised from cbuffer C[]
-        // at shader entry; vertex programs can write back via out_orb==0).
-        // Guard slots absorb out-of-range indices (e.g. c[-1] via a0.x).
+        // Read from cbuffer C[] (fast path) with context-write cache overlay.
+        // Out-of-range indices return zero.
         int c_index = (int)(const_idx & 0xFF) + s_a0 * (int)use_a0x;
-        raw = s_c[clamp(c_index + GUARD_BIAS, 0, S_C_GUARD_SIZE - 1)];
+        if (c_index >= 0 && c_index < X_D3DVS_CONSTREG_COUNT) {
+            // Check context write cache first (most recent writes win)
+            raw = C[c_index];
+            uint ci = (uint)c_index;
+            [unroll] for (uint k = 0; k < CTX_CACHE_SIZE; k++) {
+                if (k < s_ctx_count && s_ctx_idx[k] == ci)
+                    raw = s_ctx_val[k];
+            }
+        } else {
+            raw = float4(0, 0, 0, 0);
+        }
     }
 
     float4 sw = apply_swizzle(raw, swz);
@@ -155,6 +177,32 @@ void write_r(uint dest, float4 result, uint mask)
 {
     if (dest == 12)     write_masked(s_oRegs[OUTPUT_REG_OPOS], result, mask);
     else if (dest < 12) write_masked(s_r[dest + GUARD_BIAS],  result, mask);
+}
+
+// ============================================================
+// Write to context register cache (constant write-back).
+// If the index already exists in the cache, update in-place.
+// Otherwise allocate the next free slot (FIFO eviction when full).
+// ============================================================
+void write_ctx(uint addr, float4 result, uint mask)
+{
+    // Find existing entry or allocate a new slot
+    uint slot = s_ctx_count < CTX_CACHE_SIZE ? s_ctx_count : (CTX_CACHE_SIZE - 1);
+    bool found = false;
+    [unroll] for (uint k = 0; k < CTX_CACHE_SIZE; k++) {
+        if (k < s_ctx_count && s_ctx_idx[k] == addr) {
+            slot = k;
+            found = true;
+        }
+    }
+    if (!found) {
+        // New slot — seed with cbuffer value so partial-mask writes
+        // preserve the unwritten components (e.g. MOV c58.xy keeps .zw).
+        s_ctx_idx[slot] = addr;
+        s_ctx_val[slot] = C[addr];
+        s_ctx_count = min(s_ctx_count + 1, CTX_CACHE_SIZE);
+    }
+    write_masked(s_ctx_val[slot], result, mask);
 }
 
 // NV2A-accurate multiply and dot product helpers are in CxbxNV2AMathHelpers.hlsli
@@ -326,15 +374,15 @@ VS_OUTPUT main(const VS_INPUT xIn)
     // Zero r0-r11 plus guard slots (Xbox semantics: all temp regs start at zero).
     [unroll] for (uint ri = 0; ri < S_R_GUARD_SIZE; ri++) s_r[ri] = float4(0, 0, 0, 0);
 
-    // Copy cbuffer constants to writable shadow array (biased by GUARD_BIAS).
-    // Guard slots s_c[0] and s_c[S_C_GUARD_SIZE-1] stay zero so that
-    // out-of-range reads (via a0.x) return zero without a branch.
-    // NV2A vertex programs can write back to constant registers (context
-    // writes, out_orb==0).  Subsequent reads must see the written values.
-    // FXC compiles this to an indexable temp (x[]) in thread-local memory.
-    s_c[0] = float4(0, 0, 0, 0);
-    [unroll] for (uint ci = 0; ci < X_D3DVS_CONSTREG_COUNT; ci++) s_c[ci + GUARD_BIAS] = C[ci];
-    s_c[S_C_GUARD_SIZE - 1] = float4(0, 0, 0, 0);
+    // Context write cache starts empty.
+    s_ctx_count = 0;
+    [unroll] for (uint ci = 0; ci < CTX_CACHE_SIZE; ci++) {
+        s_ctx_idx[ci] = 0xFFFFFFFFu;
+        s_ctx_val[ci] = float4(0, 0, 0, 0);
+    }
+
+    // Constants are read from cbuffer C[] with a small context-write cache
+    // overlay for the rare case where a vertex program writes back to c[].
 
     // Populate v0-v15 directly into the static array.
     FetchAllAttributes(ResolveVertexIndex(xIn.vertexId), s_v);
@@ -411,9 +459,6 @@ VS_OUTPUT main(const VS_INPUT xIn)
         bool mac_is_output = (out_mux == 0);
         bool do_out        = (out_o_mask != 0) && out_orb;
         bool do_ctx        = (out_o_mask != 0) && !out_orb;
-        // Context register writes (out_orb==false) write to s_c[].
-        // Subsequent constant reads from the same vertex program see
-        // the updated value.  Matches nv2a_vsh_cpu NV2ART_CONTEXT.
 
         // ========================================================
         // Snapshot inputs BEFORE either unit writes back.
@@ -454,7 +499,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
                     write_output(out_address, mac_result, out_o_mask);
 
                 if (mac_is_output && do_ctx && out_address < X_D3DVS_CONSTREG_COUNT)
-                    write_masked(s_c[out_address + GUARD_BIAS], mac_result, out_o_mask);
+                    write_ctx(out_address, mac_result, out_o_mask);
             }
         }
 
@@ -473,7 +518,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
                 write_output(out_address, ilu_result, out_o_mask);
 
             if (!mac_is_output && do_ctx && out_address < X_D3DVS_CONSTREG_COUNT)
-                write_masked(s_c[out_address + GUARD_BIAS], ilu_result, out_o_mask);
+                write_ctx(out_address, ilu_result, out_o_mask);
         }
 
         if (is_final) break;

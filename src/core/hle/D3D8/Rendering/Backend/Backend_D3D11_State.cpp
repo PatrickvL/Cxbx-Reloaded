@@ -403,11 +403,9 @@ void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg)
 		s_CachedTexCtl0[stage] = texCtl0;
 		s_CachedBorderColor[stage] = borderCol;
 
-		// Release old sampler
-		if (s_CachedSamplers[stage]) {
-			s_CachedSamplers[stage]->Release();
-			s_CachedSamplers[stage] = nullptr;
-		}
+		// Don't Release the old sampler — it's owned by s_SamplerCache below
+		// and may be reused when the same descriptor is requested again.
+		s_CachedSamplers[stage] = nullptr;
 
 		// Decode address modes
 		unsigned int addrU = GET_MASK(texAddr, NV_PGRAPH_TEXADDRESS0_ADDRU);
