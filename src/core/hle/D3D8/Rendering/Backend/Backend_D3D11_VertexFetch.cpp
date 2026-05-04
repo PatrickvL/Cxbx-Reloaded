@@ -101,6 +101,110 @@ void CxbxInvalidateTopologyCache()
 	s_LastTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
 }
 
+// ******************************************************************
+// * Map Xbox primitive type to host topology and compute host vertex count.
+// * Returns false if the primitive type is unsupported (caller should skip draw).
+// ******************************************************************
+static bool ResolveTopology(xbox::X_D3DPRIMITIVETYPE xboxPrimType, UINT vertexCount,
+	UINT& outPrimType, D3D_PRIMITIVE_TOPOLOGY& outTopology, UINT& outHostVertexCount)
+{
+	outPrimType = CXBX_PRIM_NORMAL;
+	outHostVertexCount = vertexCount;
+	outTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+
+	switch (xboxPrimType) {
+	case xbox::X_D3DPT_QUADLIST:
+		outPrimType = CXBX_PRIM_QUAD;
+		outHostVertexCount = (vertexCount / 4) * 6;
+		break;
+	case xbox::X_D3DPT_QUADSTRIP:
+		outPrimType = CXBX_PRIM_QUADSTRIP;
+		outHostVertexCount = (vertexCount >= 4) ? ((vertexCount - 2) / 2) * 6 : 0;
+		break;
+	case xbox::X_D3DPT_TRIANGLEFAN:
+	case xbox::X_D3DPT_POLYGON:
+		outPrimType = CXBX_PRIM_FAN;
+		outHostVertexCount = (vertexCount >= 3) ? (vertexCount - 2) * 3 : 0;
+		break;
+	case xbox::X_D3DPT_TRIANGLELIST:
+		break;
+	case xbox::X_D3DPT_TRIANGLESTRIP:
+		outTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+		break;
+	case xbox::X_D3DPT_LINELIST:
+		outTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+		break;
+	case xbox::X_D3DPT_LINESTRIP:
+		outTopology = D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;
+		break;
+	case xbox::X_D3DPT_POINTLIST:
+		outTopology = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+		break;
+	case xbox::X_D3DPT_LINELOOP:
+		outPrimType = CXBX_PRIM_LINELOOP;
+		outHostVertexCount = vertexCount * 2;
+		outTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+		break;
+	default:
+		return false; // Unsupported
+	}
+	return outHostVertexCount > 0;
+}
+
+// ******************************************************************
+// * Shared draw tail: unbind IA, set topology, bind SRVs/CBs, issue draw.
+// ******************************************************************
+static void BindAndIssueDraw(UINT primType, D3D_PRIMITIVE_TOPOLOGY hostTopology,
+	UINT hostVertexCount, xbox::X_D3DPRIMITIVETYPE xboxPrimType,
+	ID3D11ShaderResourceView* pVtxSRV, ID3D11ShaderResourceView* pIdxSRV,
+	ID3D11ShaderResourceView* pSNormSRV, ID3D11ShaderResourceView* pUNormSRV)
+{
+	// Unbind IA state (skip if already nulled from a prior vertex fetch draw)
+	if (!s_IAAlreadyNull) {
+		g_pD3DDeviceContext->IASetInputLayout(nullptr);
+		ID3D11Buffer* nullBufs[17] = {};
+		UINT nullStrides[17] = {};
+		UINT nullOffsets[17] = {};
+		g_pD3DDeviceContext->IASetVertexBuffers(0, 17, nullBufs, nullStrides, nullOffsets);
+		g_pD3DDeviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_R16_UINT, 0);
+		s_IAAlreadyNull = true;
+	}
+	if (hostTopology != s_LastTopology) {
+		g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
+		s_LastTopology = hostTopology;
+	}
+
+	// Bind SRVs to VS: t0=vertex data, t1=index data, t2=snorm, t3=unorm
+	if (pVtxSRV != s_pLastBoundVtxSRV || pIdxSRV != s_pLastBoundIdxSRV
+		|| pSNormSRV != s_pLastBoundSNormSRV || pUNormSRV != s_pLastBoundUNormSRV) {
+		ID3D11ShaderResourceView* vsSRVs[4] = { pVtxSRV, pIdxSRV, pSNormSRV, pUNormSRV };
+		g_pD3DDeviceContext->VSSetShaderResources(0, 4, vsSRVs);
+		s_pLastBoundVtxSRV = pVtxSRV;
+		s_pLastBoundIdxSRV = pIdxSRV;
+		s_pLastBoundSNormSRV = pSNormSRV;
+		s_pLastBoundUNormSRV = pUNormSRV;
+	}
+
+	// Bind CBs: b1=layout, b2=defaults (skip if unchanged)
+	if (s_pLayoutCB != s_pLastBoundLayoutCB || s_pDefaultsCB != s_pLastBoundDefaultsCB) {
+		ID3D11Buffer* vsCBs[2] = { s_pLayoutCB, s_pDefaultsCB };
+		g_pD3DDeviceContext->VSSetConstantBuffers(1, 2, vsCBs);
+		s_pLastBoundLayoutCB = s_pLayoutCB;
+		s_pLastBoundDefaultsCB = s_pDefaultsCB;
+	}
+
+	// Bind thick line GS if needed
+	if (primType == CXBX_PRIM_NORMAL) {
+		CxbxBindThickLineGS(xboxPrimType);
+	}
+
+	g_pD3DDeviceContext->Draw(hostVertexCount, 0);
+
+	if (primType == CXBX_PRIM_NORMAL) {
+		CxbxUnbindThickLineGS(xboxPrimType);
+	}
+}
+
 // Layout CB caching: generation counter bumped on state changes
 static UINT                      s_LayoutCBGeneration = 0;
 static UINT                      s_LastLayoutCBGeneration = UINT_MAX;
@@ -358,61 +462,11 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 	// ---------------------------------------------------------------
 	// Step 1: Determine topology and host vertex count
 	// ---------------------------------------------------------------
-	UINT primType = CXBX_PRIM_NORMAL;
-	UINT hostVertexCount = DrawContext.dwVertexCount;
-	D3D_PRIMITIVE_TOPOLOGY hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-
-	switch (DrawContext.XboxPrimitiveType) {
-	case xbox::X_D3DPT_QUADLIST:
-		primType = CXBX_PRIM_QUAD;
-		hostVertexCount = (DrawContext.dwVertexCount / 4) * 6;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		break;
-	case xbox::X_D3DPT_QUADSTRIP:
-		primType = CXBX_PRIM_QUADSTRIP;
-		// Each pair of vertices adds a quad (2 triangles) after the first 2 vertices
-		hostVertexCount = (DrawContext.dwVertexCount >= 4) ? ((DrawContext.dwVertexCount - 2) / 2) * 6 : 0;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		break;
-	case xbox::X_D3DPT_TRIANGLEFAN:
-	case xbox::X_D3DPT_POLYGON:
-		primType = CXBX_PRIM_FAN;
-		hostVertexCount = (DrawContext.dwVertexCount >= 3) ? (DrawContext.dwVertexCount - 2) * 3 : 0;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		break;
-	case xbox::X_D3DPT_TRIANGLELIST:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		break;
-	case xbox::X_D3DPT_TRIANGLESTRIP:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
-		break;
-	case xbox::X_D3DPT_LINELIST:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
-		break;
-	case xbox::X_D3DPT_LINESTRIP:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;
-		break;
-	case xbox::X_D3DPT_POINTLIST:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
-		break;
-	case xbox::X_D3DPT_LINELOOP:
-		primType = CXBX_PRIM_LINELOOP;
-		// N vertices → N line segments → 2N host vertices as LINELIST
-		hostVertexCount = DrawContext.dwVertexCount * 2;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
-		break;
-	default:
-		// Unsupported topology — skip draw (can't fall back, shader expects SV_VertexID)
-		return;
-	}
-
-	if (hostVertexCount == 0)
-		return; // Nothing to draw — handled
+	UINT primType, hostVertexCount;
+	D3D_PRIMITIVE_TOPOLOGY hostTopology;
+	if (!ResolveTopology(DrawContext.XboxPrimitiveType, DrawContext.dwVertexCount,
+		primType, hostTopology, hostVertexCount))
+		return; // Unsupported topology
 
 	// ---------------------------------------------------------------
 	// Step 2: Determine data source — mirror (VB draws) or staging (UP draws)
@@ -666,25 +720,6 @@ skip_layout_upload:
 	// ---------------------------------------------------------------
 	// Step 6: Bind resources and issue draw
 	// ---------------------------------------------------------------
-
-	// Unbind IA state — null input layout, null vertex/index buffers
-	// (skip if already nulled from a prior vertex fetch draw)
-	if (!s_IAAlreadyNull) {
-		g_pD3DDeviceContext->IASetInputLayout(nullptr);
-		ID3D11Buffer* nullBufs[17] = {};
-		UINT nullStrides[17] = {};
-		UINT nullOffsets[17] = {};
-		g_pD3DDeviceContext->IASetVertexBuffers(0, 17, nullBufs, nullStrides, nullOffsets);
-		g_pD3DDeviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_R16_UINT, 0);
-		s_IAAlreadyNull = true;
-	}
-	if (hostTopology != s_LastTopology) {
-		g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
-		s_LastTopology = hostTopology;
-	}
-
-	// Bind SRVs to VS: t0 = vertex data (raw), t1 = index data,
-	// t2 = vertex data (R16G16_SNORM), t3 = vertex data (R8G8B8A8_UNORM)
 	// VB draws: SRVs from the 64 MiB page-tracked mirror.
 	// UP draws: SRVs from the per-draw staging buffer.
 	ID3D11ShaderResourceView* pActiveVtxSRV = bIsUPDraw ? s_pUPVtxDataSRV : pMirrorSRV;
@@ -694,38 +729,8 @@ skip_layout_upload:
 	ID3D11ShaderResourceView* pActiveUNormSRV = bIsUPDraw
 		? s_pUPVtxDataSRV_UNORM8x4 : CxbxPageTrackerGetMirrorSRV_UNORM8x4();
 
-	if (pActiveVtxSRV != s_pLastBoundVtxSRV || pActiveIdxSRV != s_pLastBoundIdxSRV
-		|| pActiveSNormSRV != s_pLastBoundSNormSRV || pActiveUNormSRV != s_pLastBoundUNormSRV) {
-		ID3D11ShaderResourceView* vsSRVs[4] = { pActiveVtxSRV, pActiveIdxSRV, pActiveSNormSRV, pActiveUNormSRV };
-		g_pD3DDeviceContext->VSSetShaderResources(0, 4, vsSRVs);
-		s_pLastBoundVtxSRV = pActiveVtxSRV;
-		s_pLastBoundIdxSRV = pActiveIdxSRV;
-		s_pLastBoundSNormSRV = pActiveSNormSRV;
-		s_pLastBoundUNormSRV = pActiveUNormSRV;
-	}
-
-	// Bind CBs to VS: b1 = layout, b2 = defaults (skip if unchanged)
-	// (b0 is already bound for VS constants by CxbxD3D11FlushVertexShaderConstants)
-	if (s_pLayoutCB != s_pLastBoundLayoutCB || s_pDefaultsCB != s_pLastBoundDefaultsCB) {
-		ID3D11Buffer* vsCBs[2] = { s_pLayoutCB, s_pDefaultsCB };
-		g_pD3DDeviceContext->VSSetConstantBuffers(1, 2, vsCBs);
-		s_pLastBoundLayoutCB = s_pLayoutCB;
-		s_pLastBoundDefaultsCB = s_pDefaultsCB;
-	}
-
-	// Bind thick line GS if needed (only for line primitives that aren't topology-converted)
-	if (primType == CXBX_PRIM_NORMAL) {
-		CxbxBindThickLineGS(DrawContext.XboxPrimitiveType);
-	}
-
-	// Issue the draw
-	g_pD3DDeviceContext->Draw(hostVertexCount, 0);
-
-	if (primType == CXBX_PRIM_NORMAL) {
-		CxbxUnbindThickLineGS(DrawContext.XboxPrimitiveType);
-	}
-
-	return;
+	BindAndIssueDraw(primType, hostTopology, hostVertexCount, DrawContext.XboxPrimitiveType,
+		pActiveVtxSRV, pActiveIdxSRV, pActiveSNormSRV, pActiveUNormSRV);
 }
 
 // ******************************************************************
@@ -784,58 +789,11 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	// ---------------------------------------------------------------
 	// Step 2: Determine topology and host vertex count
 	// ---------------------------------------------------------------
-	UINT primType = CXBX_PRIM_NORMAL;
-	UINT hostVertexCount = vertexCount;
-	D3D_PRIMITIVE_TOPOLOGY hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-
-	switch ((xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode) {
-	case xbox::X_D3DPT_QUADLIST:
-		primType = CXBX_PRIM_QUAD;
-		hostVertexCount = (vertexCount / 4) * 6;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		break;
-	case xbox::X_D3DPT_QUADSTRIP:
-		primType = CXBX_PRIM_QUADSTRIP;
-		hostVertexCount = (vertexCount >= 4) ? ((vertexCount - 2) / 2) * 6 : 0;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		break;
-	case xbox::X_D3DPT_TRIANGLEFAN:
-	case xbox::X_D3DPT_POLYGON:
-		primType = CXBX_PRIM_FAN;
-		hostVertexCount = (vertexCount >= 3) ? (vertexCount - 2) * 3 : 0;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		break;
-	case xbox::X_D3DPT_TRIANGLELIST:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		break;
-	case xbox::X_D3DPT_TRIANGLESTRIP:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
-		break;
-	case xbox::X_D3DPT_LINELIST:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
-		break;
-	case xbox::X_D3DPT_LINESTRIP:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;
-		break;
-	case xbox::X_D3DPT_POINTLIST:
-		primType = CXBX_PRIM_NORMAL;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
-		break;
-	case xbox::X_D3DPT_LINELOOP:
-		primType = CXBX_PRIM_LINELOOP;
-		hostVertexCount = vertexCount * 2;
-		hostTopology = D3D_PRIMITIVE_TOPOLOGY_LINELIST;
-		break;
-	default:
-		return;
-	}
-
-	if (hostVertexCount == 0)
-		return;
+	UINT primType, hostVertexCount;
+	D3D_PRIMITIVE_TOPOLOGY hostTopology;
+	xbox::X_D3DPRIMITIVETYPE xboxPrimType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
+	if (!ResolveTopology(xboxPrimType, vertexCount, primType, hostTopology, hostVertexCount))
+		return; // Unsupported topology
 
 	// ---------------------------------------------------------------
 	// Step 3: Fill layout CB with float4 layout for all 16 attributes
@@ -876,50 +834,8 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	// ---------------------------------------------------------------
 	// Step 5: Bind resources and issue draw
 	// ---------------------------------------------------------------
-	if (!s_IAAlreadyNull) {
-		g_pD3DDeviceContext->IASetInputLayout(nullptr);
-		ID3D11Buffer* nullBufs[17] = {};
-		UINT nullStrides[17] = {};
-		UINT nullOffsets[17] = {};
-		g_pD3DDeviceContext->IASetVertexBuffers(0, 17, nullBufs, nullStrides, nullOffsets);
-		g_pD3DDeviceContext->IASetIndexBuffer(nullptr, DXGI_FORMAT_R16_UINT, 0);
-		s_IAAlreadyNull = true;
-	}
-	if (hostTopology != s_LastTopology) {
-		g_pD3DDeviceContext->IASetPrimitiveTopology(hostTopology);
-		s_LastTopology = hostTopology;
-	}
-
-	// Bind UP staging SRVs to VS (t0=raw, t1=null, t2=snorm, t3=unorm)
-	{
-		ID3D11ShaderResourceView* vsSRVs[4] = {
-			s_pUPVtxDataSRV, nullptr,
-			s_pUPVtxDataSRV_SNORM16x2, s_pUPVtxDataSRV_UNORM8x4
-		};
-		g_pD3DDeviceContext->VSSetShaderResources(0, 4, vsSRVs);
-		s_pLastBoundVtxSRV = s_pUPVtxDataSRV;
-		s_pLastBoundIdxSRV = nullptr;
-		s_pLastBoundSNormSRV = s_pUPVtxDataSRV_SNORM16x2;
-		s_pLastBoundUNormSRV = s_pUPVtxDataSRV_UNORM8x4;
-	}
-
-	// Bind CBs: b1=layout, b2=defaults
-	{
-		ID3D11Buffer* vsCBs[2] = { s_pLayoutCB, s_pDefaultsCB };
-		g_pD3DDeviceContext->VSSetConstantBuffers(1, 2, vsCBs);
-		s_pLastBoundLayoutCB = s_pLayoutCB;
-		s_pLastBoundDefaultsCB = s_pDefaultsCB;
-	}
-
-	if (primType == CXBX_PRIM_NORMAL) {
-		CxbxBindThickLineGS((xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode);
-	}
-
-	g_pD3DDeviceContext->Draw(hostVertexCount, 0);
-
-	if (primType == CXBX_PRIM_NORMAL) {
-		CxbxUnbindThickLineGS((xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode);
-	}
+	BindAndIssueDraw(primType, hostTopology, hostVertexCount, xboxPrimType,
+		s_pUPVtxDataSRV, nullptr, s_pUPVtxDataSRV_SNORM16x2, s_pUPVtxDataSRV_UNORM8x4);
 
 	// Free per-attribute inline buffers (same protocol as xemu)
 	for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
