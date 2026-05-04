@@ -575,22 +575,21 @@ void UpdateFixedFunctionVertexShaderState()
 
 	// Vertex blending — read from PGRAPH CSV0_D SKIN field
 	// SKIN values 0..6 map directly to D3D VertexBlend (DISABLE, 1WEIGHTS, 2W2M, 2WEIGHTS, 3W3M, 3WEIGHTS, 4W4M)
-	auto VertexBlend = GET_MASK(csv0d, NV_PGRAPH_CSV0_D_SKIN);
-	// Xbox and host D3DVERTEXBLENDFLAGS :
-	//     D3DVBF_DISABLE           = 0 : 1 matrix,   0 weights => final weight 1
-	//     D3DVBF_1WEIGHTS          = 1 : 2 matrices, 1 weights => final weight calculated
-	//     D3DVBF_2WEIGHTS          = 3 : 3 matrices, 2 weights => final weight calculated
-	//     D3DVBF_3WEIGHTS          = 5 : 4 matrices, 3 weights => final weight calculated
-	// Xbox X_D3DVERTEXBLENDFLAGS :
-	//   X_D3DVBF_2WEIGHTS2MATRICES = 2 : 2 matrices, 2 weights
-	//   X_D3DVBF_3WEIGHTS3MATRICES = 4 : 3 matrices, 3 weights
-	//   X_D3DVBF_4WEIGHTS4MATRICES = 6 : 4 matrices, 4 weights
+	uint32_t skinMode = GET_MASK(csv0d, NV_PGRAPH_CSV0_D_SKIN);
+	// NV2A SKIN field values:
+	//   OFF  = 0 : 1 matrix,   0 weights => final weight 1
+	//   2G   = 1 : 2 matrices, 1 weight,  generate last
+	//   2    = 2 : 2 matrices, 2 weights
+	//   3G   = 3 : 3 matrices, 2 weights, generate last
+	//   3    = 4 : 3 matrices, 3 weights
+	//   4G   = 5 : 4 matrices, 3 weights, generate last
+	//   4    = 6 : 4 matrices, 4 weights
 	//
-	if (VertexBlend > xbox::X_D3DVBF_4WEIGHTS4MATRICES) LOG_TEST_CASE("X_D3DRS_VERTEXBLEND out of range");
+	if (skinMode > NV_PGRAPH_CSV0_D_SKIN_4) LOG_TEST_CASE("PGRAPH CSV0_D SKIN out of range");
 	// Calculate the number of matrices, by adding the LSB to turn (0,1,3,5) and (0,2,4,6) into (0,2,4,6); Then divide by 2 to get (0,1,2,3), and add 1 to get 1, 2, 3 or 4 matrices :
-	auto NrBlendMatrices = ((VertexBlend + (VertexBlend & 1)) / 2) + 1;
-	// Looking at the above values, 0 or the LSB of VertexBlend signals that the final weight needs to be calculated from all previous weigths (deducting them all from an initial 1) :
-	auto CalcLastBlendWeight = (VertexBlend == xbox::X_D3DVBF_DISABLE) || (VertexBlend & 1);
+	auto NrBlendMatrices = ((skinMode + (skinMode & 1)) / 2) + 1;
+	// Looking at the above values, 0 or the LSB of skinMode signals that the final weight needs to be calculated from all previous weigths (deducting them all from an initial 1) :
+	auto CalcLastBlendWeight = (skinMode == NV_PGRAPH_CSV0_D_SKIN_OFF) || (skinMode & 1);
 	// Copy the resulting values over to shader state :
 	ffShaderState.Modes.VertexBlend_NrOfMatrices = NrBlendMatrices;
 	ffShaderState.Modes.VertexBlend_CalcLastWeight = CalcLastBlendWeight;
@@ -631,7 +630,7 @@ void UpdateFixedFunctionVertexShaderState()
 		D3DXMATRIX projVP;
 		bool validProjVP = false;
 
-		if (VertexBlend != xbox::X_D3DVBF_DISABLE) {
+		if (skinMode != NV_PGRAPH_CSV0_D_SKIN_OFF) {
 			// Skinning active: CMAT is already VP * Proj (no ModelView baked in)
 			projVP = cmat;
 			validProjVP = (cmat.m[3][2] != 0.0f); // sanity: perspective w-row should have non-zero z
@@ -876,7 +875,7 @@ void UpdateFixedFunctionVertexShaderState()
 	// GetXboxVertexAttributeFormat() only works when SetVertexShader was
 	// intercepted, which doesn't happen for push-buffer-only games.
 	for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
-		int attrIdx = xbox::X_D3DVSDE_TEXCOORD0 + i; // PGRAPH attribute indices match Xbox VSDE
+		int attrIdx = NV2A_VERTEX_ATTR_TEXTURE0 + i;
 		const VertexAttribute& attr = pg->vertex_attributes[attrIdx];
 		float componentCount;
 		if (attr.count > 0) {

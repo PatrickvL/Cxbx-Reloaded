@@ -203,8 +203,8 @@ void CxbxUpdateHostTextures()
 
 					// Reconstruct the Size field for linear textures.
 					// Swizzled textures use Size=0 (dimensions from Format log2 bits).
-					xbox::X_D3DFORMAT xboxFmt = GetXboxPixelContainerFormat(synth.Format);
-					if (EmuXBFormatIsLinear(xboxFmt)) {
+					uint32_t fmtColor = GET_MASK(synth.Format, NV097_SET_TEXTURE_FORMAT_COLOR);
+					if (EmuXBFormatIsLinear((xbox::X_D3DFORMAT)fmtColor)) {
 						uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
 						uint32_t texCtl1 = pg->regs[RI(NV_PGRAPH_TEXCTL1_0 + stage * 4)];
 						uint32_t width = (texImageRect >> 16) & 0x1FFF;
@@ -399,7 +399,7 @@ void CxbxUpdateHostTextureScaling()
 			continue;
 		}
 
-		xbox::X_D3DFORMAT XboxFormat = GetXboxPixelContainerFormat(texFmt);
+		uint32_t colorFmt = GET_MASK(texFmt, NV097_SET_TEXTURE_FORMAT_COLOR);
 
 		// Texcoord index. Just the texture stage unless fixed function or passthrough mode
 		int texCoordIndex = stage;
@@ -424,7 +424,8 @@ void CxbxUpdateHostTextureScaling()
 		auto texCoordScale = &texcoordScales[texCoordIndex];
 
 		// Check for active linear textures.
-		if (EmuXBFormatIsLinear(XboxFormat)) {
+		// NV2A linear formats use LU_IMAGE/LC_IMAGE color codes (ranges 0x10-0x20, 0x24-0x26, 0x2E-0x31, 0x35-0x40).
+		if (EmuXBFormatIsLinear((xbox::X_D3DFORMAT)colorFmt)) {
 			// Test-case : This is often hit by the help screen in XDK samples.
 			// Set scaling factor for this texture, which will be applied to
 			// all texture-coordinates in the vertex shader
@@ -461,18 +462,24 @@ void CxbxUpdateHostTextureScaling()
 		// - X_D3DRS_SHADOWFUNC
 		// - X_D3DRS_POLYGONOFFSETZSLOPESCALE
 		// - X_D3DRS_POLYGONOFFSETZOFFSET
-		if (EmuXBFormatIsDepthBuffer(XboxFormat)) {
-			// Derive Z scale from PGRAPH-sourced format (no Xbox object needed)
+		// NV2A depth texture format codes are 0x2A-0x31 (swizzled and linear depth)
+		if (colorFmt >= NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_X8_Y24_FIXED
+			&& colorFmt <= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FLOAT) {
+			// Derive Z scale from the NV2A texture format color code
 			float zScale = 1.0f;
-			switch (XboxFormat) {
-				case xbox::X_D3DFMT_D16:
-				case xbox::X_D3DFMT_LIN_D16:     zScale = 65535.0f;    break;
-				case xbox::X_D3DFMT_D24S8:
-				case xbox::X_D3DFMT_LIN_D24S8:   zScale = 16777215.0f; break;
-				case xbox::X_D3DFMT_F16:
-				case xbox::X_D3DFMT_LIN_F16:     zScale = 511.9375f;   break;
-				case xbox::X_D3DFMT_F24S8:
-				case xbox::X_D3DFMT_LIN_F24S8:   zScale = 1.0e30f;     break;
+			switch (colorFmt) {
+				case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_Y16_FIXED:
+				case NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FIXED:
+					zScale = 65535.0f;    break;
+				case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_X8_Y24_FIXED:
+				case NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_X8_Y24_FIXED:
+					zScale = 16777215.0f; break;
+				case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_Y16_FLOAT:
+				case NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_Y16_FLOAT:
+					zScale = 511.9375f;   break;
+				case NV097_SET_TEXTURE_FORMAT_COLOR_SZ_DEPTH_X8_Y24_FLOAT:
+				case NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_DEPTH_X8_Y24_FLOAT:
+					zScale = 1.0e30f;     break;
 				default: break;
 			}
 			(*texCoordScale)[2] = zScale;
