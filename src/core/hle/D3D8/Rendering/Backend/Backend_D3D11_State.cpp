@@ -490,7 +490,7 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		static uint32_t s_LastVpScl[4] = { ~0u, ~0u, ~0u, ~0u };
 		static uint32_t s_LastClipX = ~0u, s_LastClipY = ~0u, s_LastClipW = ~0u, s_LastClipH = ~0u;
 		static uint32_t s_LastAA = ~0u;
-		static uint32_t s_LastCsv0d = ~0u;
+		static VertexShaderMode s_LastMode = (VertexShaderMode)~0u;
 		bool changed = false;
 		for (int i = 0; i < 4; i++) {
 			if (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i] != s_LastVpOff[i]) {
@@ -505,8 +505,7 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		if (pg->surface_shape.clip_width != s_LastClipW) { s_LastClipW = pg->surface_shape.clip_width; changed = true; }
 		if (pg->surface_shape.clip_height != s_LastClipH) { s_LastClipH = pg->surface_shape.clip_height; changed = true; }
 		if (pg->surface_shape.anti_aliasing != s_LastAA) { s_LastAA = pg->surface_shape.anti_aliasing; changed = true; }
-		uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
-		if (csv0d != s_LastCsv0d) { s_LastCsv0d = csv0d; changed = true; }
+		if (g_Xbox_VertexShaderMode != s_LastMode) { s_LastMode = g_Xbox_VertexShaderMode; changed = true; }
 		if (!changed) return;
 	}
 
@@ -536,35 +535,11 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		return; // can't set viewport without RT dimensions
 	}
 
-	// For passthrough mode (XYZRHW/pre-transformed vertices), detect using
-	// the same logic as HostSync mode detection:
-	// - FIXED mode: CMAT ≈ identity
-	// - PROGRAM mode: VPSCL ≈ (1, ±1, ...) i.e. no viewport scaling
+	// For passthrough mode (XYZRHW/pre-transformed vertices), use the mode
+	// already determined by the orchestrator (CxbxUpdateNativeD3DResources).
+	// This avoids redundantly re-reading CMAT/VPSCL and doing identity checks.
 	{
-		uint32_t pgraph_mode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
-		bool isPassthrough = false;
-
-		if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-			// PROGRAM mode: check VPSCL for identity (small magnitudes)
-			if (fabsf(vpscl[0]) <= 1.5f && fabsf(vpscl[1]) <= 1.5f) {
-				isPassthrough = true;
-			}
-		} else {
-			// FIXED mode: check CMAT for identity
-			float cmat[4][4];
-			for (int row = 0; row < 4; row++)
-				std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
-			isPassthrough = true;
-			for (int r = 0; r < 4 && isPassthrough; r++) {
-				for (int c = 0; c < 4 && isPassthrough; c++) {
-					float expected = (r == c) ? 1.0f : 0.0f;
-					if (fabsf(cmat[r][c] - expected) > 0.01f)
-						isPassthrough = false;
-				}
-			}
-		}
-
-		if (isPassthrough) {
+		if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough) {
 			D3D11_VIEWPORT hostViewport;
 			hostViewport.TopLeftX = 0;
 			hostViewport.TopLeftY = 0;
