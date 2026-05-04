@@ -549,8 +549,17 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 
 	float screenspaceScale[4] = { xboxScreenspaceWidth / 2,  -xboxScreenspaceHeight / 2, zOutputScale, 1 };
 	float screenspaceOffset[4] = { xboxScreenspaceWidth / 2 + aaOffsetX, xboxScreenspaceHeight / 2 + aaOffsetY, 0, 0 };
-	CxbxSetVertexShaderConstantF(CXBX_D3DVS_SCREENSPACE_SCALE_BASE, screenspaceScale, CXBX_D3DVS_NORMALIZE_SCALE_SIZE);
-	CxbxSetVertexShaderConstantF(CXBX_D3DVS_SCREENSPACE_OFFSET_BASE, screenspaceOffset, CXBX_D3DVS_NORMALIZE_OFFSET_SIZE);
+
+	// Skip VS constant upload if the computed values haven't changed
+	static float s_LastScale[4] = { 0, 0, 0, 0 };
+	static float s_LastOffset[4] = { 0, 0, 0, 0 };
+	if (std::memcmp(screenspaceScale, s_LastScale, sizeof(s_LastScale)) != 0 ||
+	    std::memcmp(screenspaceOffset, s_LastOffset, sizeof(s_LastOffset)) != 0) {
+		std::memcpy(s_LastScale, screenspaceScale, sizeof(s_LastScale));
+		std::memcpy(s_LastOffset, screenspaceOffset, sizeof(s_LastOffset));
+		CxbxSetVertexShaderConstantF(CXBX_D3DVS_SCREENSPACE_SCALE_BASE, screenspaceScale, CXBX_D3DVS_NORMALIZE_SCALE_SIZE);
+		CxbxSetVertexShaderConstantF(CXBX_D3DVS_SCREENSPACE_OFFSET_BASE, screenspaceOffset, CXBX_D3DVS_NORMALIZE_OFFSET_SIZE);
+	}
 
 	// Reserved constants c[-38] (slot 58) and c[-37] (slot 59) hold viewport
 	// scale/offset for screen-space transformation in programmable VS programs.

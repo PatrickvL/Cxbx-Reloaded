@@ -442,6 +442,32 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 {
 	if (!pg) return;
 
+	// Fast path: skip if viewport-related registers are unchanged.
+	{
+		static uint32_t s_LastVpOff[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastVpScl[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastClipX = ~0u, s_LastClipY = ~0u, s_LastClipW = ~0u, s_LastClipH = ~0u;
+		static uint32_t s_LastAA = ~0u;
+		static uint32_t s_LastCsv0d = ~0u;
+		bool changed = false;
+		for (int i = 0; i < 4; i++) {
+			if (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i] != s_LastVpOff[i]) {
+				s_LastVpOff[i] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i]; changed = true;
+			}
+			if (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][i] != s_LastVpScl[i]) {
+				s_LastVpScl[i] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][i]; changed = true;
+			}
+		}
+		if (pg->surface_shape.clip_x != s_LastClipX) { s_LastClipX = pg->surface_shape.clip_x; changed = true; }
+		if (pg->surface_shape.clip_y != s_LastClipY) { s_LastClipY = pg->surface_shape.clip_y; changed = true; }
+		if (pg->surface_shape.clip_width != s_LastClipW) { s_LastClipW = pg->surface_shape.clip_width; changed = true; }
+		if (pg->surface_shape.clip_height != s_LastClipH) { s_LastClipH = pg->surface_shape.clip_height; changed = true; }
+		if (pg->surface_shape.anti_aliasing != s_LastAA) { s_LastAA = pg->surface_shape.anti_aliasing; changed = true; }
+		uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
+		if (csv0d != s_LastCsv0d) { s_LastCsv0d = csv0d; changed = true; }
+		if (!changed) return;
+	}
+
 	// Read viewport offset and scale from XFCTX constants
 	float vpoff[4], vpscl[4];
 	for (int i = 0; i < 4; i++) {

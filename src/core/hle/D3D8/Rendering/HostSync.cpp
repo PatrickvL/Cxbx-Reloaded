@@ -350,6 +350,30 @@ void CxbxUpdateHostTextureScaling()
 {
 	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 
+	// Fast path: skip if texture format/offset/ctl/imagerect registers unchanged.
+	// This avoids format decoding, division, and VS constant upload every draw.
+	{
+		static uint32_t s_LastFmt[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastOff[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastCtl[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastRect[4] = { ~0u, ~0u, ~0u, ~0u };
+		static uint32_t s_LastSurfColor = ~0u;
+		bool anyChanged = false;
+		uint32_t surfColor = pg->surface_color.offset;
+		if (surfColor != s_LastSurfColor) { s_LastSurfColor = surfColor; anyChanged = true; }
+		for (int i = 0; i < 4; i++) {
+			uint32_t fmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
+			uint32_t off = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + i * 4)];
+			uint32_t ctl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
+			uint32_t rect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + i * 4)];
+			if (fmt != s_LastFmt[i] || off != s_LastOff[i] || ctl != s_LastCtl[i] || rect != s_LastRect[i]) {
+				s_LastFmt[i] = fmt; s_LastOff[i] = off; s_LastCtl[i] = ctl; s_LastRect[i] = rect;
+				anyChanged = true;
+			}
+		}
+		if (!anyChanged) return;
+	}
+
 	// Xbox works with "Linear" and "Swizzled" texture formats
 	// Linear formats are not addressed with normalized coordinates (similar to https://www.khronos.org/opengl/wiki/Rectangle_Texture?)
 	// We want to use normalized coordinates in our shaders, so need to be able to scale the coordinates back
