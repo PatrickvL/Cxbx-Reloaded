@@ -30,7 +30,7 @@
 #include "core\kernel\init\CxbxKrnl.h"
 #include "core\kernel\support\Emu.h"
 #include "core\hle\D3D8\Rendering\RenderGlobals.h"
-#include "core\hle\D3D8\Rendering\Shaders\Shader.h" // For LoadPrecompiledCSO
+#include "core\hle\D3D8\Rendering\Backend\Shading\Shader.h" // For LoadPrecompiledCSO
 
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A
@@ -44,7 +44,8 @@
 #include "common\Settings.hpp" // for g_LibVersion_D3D8
 
 #include "nv2a_vsh_emulator.h"
-#include "Rendering/Backend/CxbxVertexShaderJIT.h"
+#include "Rendering/Backend/Shading/VertexShaderCache.h"
+#include "Rendering/Backend/Backend_D3D11_Profiler.h"
 
 VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 // Retained bytecode for FixedFunction and Passthrough vertex shaders (needed for input layout creation)
@@ -185,10 +186,12 @@ void CxbxUpdateHostVertexShader()
 
 		// Try JIT compilation first (10-100x faster than interpreter)
 		{
+			CXBX_PROFILE_SCOPE(PROF_VS_SHADER);
 			ID3DBlob* pJITBytecode = nullptr;
-			ID3D11VertexShader* pJITVS = CxbxJITVertexShader(
+			ID3D11VertexShader* pJITVS = g_VertexShaderCache.GetShader(
 				pg->program_data, startAddr, g_pD3DDevice, &pJITBytecode);
 			if (pJITVS) {
+				InterlockedIncrement(&g_ProfileVSJITHits);
 				// Release previous JIT bytecode ref
 				if (g_pD3D11JITVSBytecode) { g_pD3D11JITVSBytecode->Release(); g_pD3D11JITVSBytecode = nullptr; }
 				g_pD3D11JITVSBytecode = pJITBytecode;
@@ -201,6 +204,7 @@ void CxbxUpdateHostVertexShader()
 		}
 
 		if (g_bUseVSInterpreter && CxbxD3D11InitVSInterpreter()) {
+			InterlockedIncrement(&g_ProfileVSInterpreterHits);
 			// Upload the raw NV2A microcode to the interpreter constant buffer
 			CxbxD3D11UploadVSInterpreterState(pTokens);
 			HRESULT hRet = CxbxSetVertexShader(g_pD3D11VSInterpreterVS);

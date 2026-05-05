@@ -1,13 +1,15 @@
-// CxbxVertexShaderJIT.cpp — Runtime NV2A→HLSL JIT compiler
+// VertexShaderCache.cpp — Runtime NV2A→HLSL JIT compiler + cache
 //
 // Translates NV2A vertex transform microcode into straight-line HLSL,
-// compiles with D3DCompile, caches by xxHash of program tokens.
+// compiles with D3DCompile, caches by FNV-1a hash of program tokens.
 // A typical 20-instruction NV2A program becomes ~30 lines of HLSL
 // with zero loops — orders of magnitude faster than interpreting.
 
 #define LOG_PREFIX CXBXR_MODULE::VTXSH
 
-#include "CxbxVertexShaderJIT.h"
+#include "VertexShaderCache.h"
+#include "ShaderDiskCache.h"
+#include "../Backend_D3D11_Profiler.h"
 #include "core/kernel/init/CxbxKrnl.h" // EmuLog
 #include "common/Logging.h"
 
@@ -50,7 +52,9 @@ struct CachedShader {
 static std::unordered_map<uint64_t, CachedShader> g_JITCache;
 static std::mutex g_JITMutex;
 
-void CxbxJITVertexShaderClearCache()
+VertexShaderCache g_VertexShaderCache;
+
+void VertexShaderCache::Clear()
 {
     std::lock_guard<std::mutex> lock(g_JITMutex);
     for (auto& pair : g_JITCache) {
@@ -357,7 +361,7 @@ static bool ValidateProgram(const uint32_t program_data[][4], uint32_t startAddr
 // ============================================================
 bool g_bEnableVSJIT = true; // Set false to disable JIT and use interpreter
 
-ID3D11VertexShader* CxbxJITVertexShader(
+ID3D11VertexShader* VertexShaderCache::GetShader(
     const uint32_t program_data[][4],
     uint32_t startAddr,
     ID3D11Device* pDevice,
@@ -394,13 +398,32 @@ ID3D11VertexShader* CxbxJITVertexShader(
         }
     }
 
-    // Cache miss — translate and compile
+    // Cache miss — try disk cache first, then translate and compile
+    InterlockedIncrement(&g_ProfileVSJITCompiles);
+    CXBX_PROFILE_SCOPE(PROF_VS_JIT_COMPILE);
+
+    ID3DBlob* pCode = ShaderDiskCache::TryLoad(hash);
+    if (pCode) {
+        // Disk cache hit — create shader from cached bytecode
+        ID3D11VertexShader* pVS = nullptr;
+        HRESULT hr = pDevice->CreateVertexShader(pCode->GetBufferPointer(), pCode->GetBufferSize(), nullptr, &pVS);
+        if (SUCCEEDED(hr)) {
+            std::lock_guard<std::mutex> lock(g_JITMutex);
+            g_JITCache[hash] = { pVS, pCode };
+            *ppBytecode = pCode;
+            pCode->AddRef();
+            return pVS;
+        }
+        pCode->Release();
+        // Fall through to recompile if cached blob is invalid
+    }
+
     std::string hlsl = TranslateToHLSL(program_data, startAddr, instrCount);
     if (hlsl.empty()) return nullptr; // Translation failed
 
     // Build include path for D3DCompile
     // The shader #includes headers from the Shaders directory
-    ID3DBlob* pCode = nullptr;
+    pCode = nullptr;
     ID3DBlob* pErrors = nullptr;
 
     // Use D3DCompile with a custom include handler that resolves relative paths
@@ -446,6 +469,9 @@ ID3D11VertexShader* CxbxJITVertexShader(
 
     EmuLog(LOG_LEVEL::INFO, "VS JIT: compiled %u-instruction program (hash=%016llX)",
         instrCount, hash);
+
+    // Save to disk cache for next session
+    ShaderDiskCache::Save(hash, pCode);
 
     // Cache it
     {

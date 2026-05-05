@@ -49,7 +49,7 @@
 #include "core\hle\D3D8\ResourceTracker.h"
 #include "core\hle\D3D8\Rendering\RenderGlobals.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
-#include "core\hle\D3D8\Rendering\Shaders\Shader.h"
+#include "core\hle\D3D8\Rendering\Backend\Shading\Shader.h"
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPixelShader.h"

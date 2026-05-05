@@ -1,4 +1,4 @@
-// CxbxPixelShaderJIT.cpp — Runtime NV2A register combiner → HLSL JIT compiler
+// PixelShaderCache.cpp — Runtime NV2A register combiner → HLSL JIT compiler + cache
 //
 // Reads the current PGRAPH register combiner topology (input routing,
 // output destinations, texture modes, final combiner config) and generates
@@ -12,13 +12,15 @@
 
 #define LOG_PREFIX CXBXR_MODULE::PXSH
 
-#include "CxbxPixelShaderJIT.h"
+#include "PixelShaderCache.h"
+#include "ShaderDiskCache.h"
 #include "core/kernel/init/CxbxKrnl.h"
 #include "common/Logging.h"
 #include "core/hle/D3D8/Rendering/Shaders/CxbxNV2APixelShaderConstants.hlsli"
 #include "core/hle/D3D8/Rendering/Shaders/CxbxRegisterCombinerInterpreterState.hlsli"
 #include "devices/Xbox.h"
 #include "devices/video/nv2a.h"
+#include "../Backend_D3D11_Profiler.h"
 
 #include <unordered_map>
 #include <string>
@@ -75,7 +77,9 @@ struct CachedPSShader {
 static std::unordered_map<uint64_t, CachedPSShader> g_PSJITCache;
 static std::mutex g_PSJITMutex;
 
-void CxbxJITPixelShaderClearCache()
+PixelShaderCache g_PixelShaderCache;
+
+void PixelShaderCache::Clear()
 {
     std::lock_guard<std::mutex> lock(g_PSJITMutex);
     for (auto& pair : g_PSJITCache) {
@@ -590,18 +594,18 @@ static std::string GenerateHLSL(const PSJITKey& key)
     ss << "    uint av = (uint)(saturate(a)*255.0+0.5);\n";
     ss << "    uint ar = (uint)(saturate(at.y)*255.0+0.5);\n";
     ss << "    int af = (int)at.z;\n";
-    ss << "    bool pass;\n";
+    ss << "    bool alphaPass;\n";
     ss << "    switch(af) {\n";
-    ss << "        case 0: pass=false; break;\n";
-    ss << "        case 1: pass=(av<ar); break;\n";
-    ss << "        case 2: pass=(av==ar); break;\n";
-    ss << "        case 3: pass=(av<=ar); break;\n";
-    ss << "        case 4: pass=(av>ar); break;\n";
-    ss << "        case 5: pass=(av!=ar); break;\n";
-    ss << "        case 6: pass=(av>=ar); break;\n";
-    ss << "        default: pass=true; break;\n";
+    ss << "        case 0: alphaPass=false; break;\n";
+    ss << "        case 1: alphaPass=(av<ar); break;\n";
+    ss << "        case 2: alphaPass=(av==ar); break;\n";
+    ss << "        case 3: alphaPass=(av<=ar); break;\n";
+    ss << "        case 4: alphaPass=(av>ar); break;\n";
+    ss << "        case 5: alphaPass=(av!=ar); break;\n";
+    ss << "        case 6: alphaPass=(av>=ar); break;\n";
+    ss << "        default: alphaPass=true; break;\n";
     ss << "    }\n";
-    ss << "    if (!pass) clip(-1);\n";
+    ss << "    if (!alphaPass) clip(-1);\n";
     ss << "}\n\n";
 
     // Shadow compare helper
@@ -899,9 +903,9 @@ static std::string GenerateHLSL(const PSJITKey& key)
         uint32_t fReg = (fcEFG >> 16) & 0xFF;
         uint32_t gReg = (fcEFG >>  8) & 0xFF;
 
-        ss << "    float3 fcE = " << EmitFinalInput(eReg, false) << ".rgb;\n";
-        ss << "    float3 fcF = " << EmitFinalInput(fReg, false) << ".rgb;\n";
-        ss << "    float  fcG = " << EmitFinalInput(gReg, false) << ".a;\n";
+        ss << "    float3 fcE = (" << EmitFinalInput(eReg, false) << ").rgb;\n";
+        ss << "    float3 fcF = (" << EmitFinalInput(fReg, false) << ").rgb;\n";
+        ss << "    float  fcG = (" << EmitFinalInput(gReg, false) << ").a;\n";
 
         ss << "    EF_PROD = float4(fcE * fcF, 1.0);\n";
 
@@ -958,7 +962,7 @@ static std::string GenerateHLSL(const PSJITKey& key)
 // JIT entry point
 // ============================================================
 
-ID3D11PixelShader* CxbxJITPixelShader(ID3D11Device* pDevice)
+ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
 {
     extern NV2ADevice* g_NV2A;
     if (!g_NV2A) return nullptr;
@@ -1018,10 +1022,27 @@ ID3D11PixelShader* CxbxJITPixelShader(ID3D11Device* pDevice)
            hash, key.numStages, key.textureModes, key.fcABCD, key.fcEFG, key.combinectl);
 
     // Generate HLSL
+    InterlockedIncrement(&g_ProfilePSJITCompiles);
+    CXBX_PROFILE_SCOPE(PROF_PS_JIT_COMPILE);
+
+    // Try disk cache first
+    ID3DBlob* pCode = ShaderDiskCache::TryLoad(hash);
+    if (pCode) {
+        ID3D11PixelShader* pPS = nullptr;
+        HRESULT hr = pDevice->CreatePixelShader(pCode->GetBufferPointer(), pCode->GetBufferSize(), nullptr, &pPS);
+        pCode->Release();
+        if (SUCCEEDED(hr)) {
+            std::lock_guard<std::mutex> lock(g_PSJITMutex);
+            g_PSJITCache[hash] = { pPS };
+            return pPS;
+        }
+        // Fall through to recompile if cached blob is invalid
+    }
+
     std::string hlsl = GenerateHLSL(key);
 
     // Compile
-    ID3DBlob* pCode = nullptr;
+    pCode = nullptr;
     ID3DBlob* pErrors = nullptr;
     HRESULT hr = D3DCompile(
         hlsl.c_str(), hlsl.size(),
@@ -1046,14 +1067,18 @@ ID3D11PixelShader* CxbxJITPixelShader(ID3D11Device* pDevice)
     // Create pixel shader
     ID3D11PixelShader* pPS = nullptr;
     hr = pDevice->CreatePixelShader(pCode->GetBufferPointer(), pCode->GetBufferSize(), nullptr, &pPS);
-    pCode->Release();
 
     if (FAILED(hr)) {
+        pCode->Release();
         EmuLog(LOG_LEVEL::WARNING, "PS JIT CreatePixelShader failed (0x%08X)", hr);
         std::lock_guard<std::mutex> lock(g_PSJITMutex);
         g_PSJITCache[hash] = { nullptr };
         return nullptr;
     }
+
+    // Save to disk cache for next session
+    ShaderDiskCache::Save(hash, pCode);
+    pCode->Release();
 
     EmuLog(LOG_LEVEL::DEBUG, "PS JIT: compiled new shader (hash=%016llX, stages=%u)", hash, key.numStages);
 

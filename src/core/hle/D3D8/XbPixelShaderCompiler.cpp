@@ -29,7 +29,7 @@
 
 #include "core\kernel\support\Emu.h"
 #include "core\hle\D3D8\Rendering\RenderGlobals.h"
-#include "core\hle\D3D8\Rendering\Shaders\Shader.h"
+#include "core\hle\D3D8\Rendering\Backend\Shading\Shader.h"
 #include "core\hle\D3D8\XbPixelShader.h"
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbD3D8Logging.h"
@@ -53,7 +53,8 @@ static constexpr float TEXFMTFIXUP_OPAQUEA  = 5.0f; // X8R8G8B8/X1R5G5B5: force 
 #include <cstring> // For std::memcpy
 #include "Rendering\Backend\Backend_D3D11.h"
 #include "Rendering\Backend\Backend_D3D11_Internal.h"
-#include "Rendering\Backend\CxbxPixelShaderJIT.h"
+#include "Rendering\Backend\Shading\PixelShaderCache.h"
+#include "Rendering\Backend\Backend_D3D11_Profiler.h"
 
 float AsFloat(uint32_t value)
 {
@@ -453,8 +454,9 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 
   // Try JIT-compiled pixel shader first
   try {
-      ID3D11PixelShader* pJIT = CxbxJITPixelShader(g_pD3DDevice);
+      ID3D11PixelShader* pJIT = g_PixelShaderCache.GetShader(g_pD3DDevice);
       if (pJIT) {
+          InterlockedIncrement(&g_ProfilePSJITHits);
           CxbxSetPixelShader(pJIT);
           return;
       }
@@ -470,5 +472,6 @@ void CxbxUpdateActivePixelShader() // NOPATCH
   }
 
   // Fall back to the interpreter ubershader
+  InterlockedIncrement(&g_ProfilePSInterpreterHits);
   CxbxSetPixelShader(g_pD3D11RCInterpreterPS);
 }

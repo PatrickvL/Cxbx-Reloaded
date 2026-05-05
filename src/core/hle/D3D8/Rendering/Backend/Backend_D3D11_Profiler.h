@@ -17,11 +17,14 @@ enum CxbxProfilePhase {
     // --- Render thread phases (single-threaded, no atomics) ---
     PROF_PFIFO_FLUSH = 0,   // Inline pfifo_flush_to_pgraph on render thread
     PROF_PGRAPH_LOCK_WAIT,  // Time waiting to acquire pgraph_lock
+    PROF_VS_SHADER,         // Vertex shader selection (JIT attempt + fallback)
+    PROF_VS_JIT_COMPILE,    // VS JIT D3DCompile (cache miss only)
     PROF_VS_CONSTANTS,      // Upload VS constants (cbuffer map)
     PROF_TEXTURES,          // Texture lookup + SRV creation + scaling
     PROF_PIPELINE_STATE,    // Blend/depth/rasterizer state objects
     PROF_SAMPLERS,          // Sampler state creation/cache
-    PROF_PIXEL_SHADER,      // Pixel shader update (register combiner interpreter)
+    PROF_PIXEL_SHADER,      // Pixel shader update (JIT attempt + fallback)
+    PROF_PS_JIT_COMPILE,    // PS JIT D3DCompile (cache miss only)
     PROF_RENDER_TARGET,     // RT resolve from PGRAPH surface offsets
     PROF_VIEWPORT,          // Viewport/scissor from PGRAPH
     PROF_PAGE_FLUSH,        // GetWriteWatch + memcpy dirty pages to GPU mirror
@@ -45,11 +48,14 @@ enum CxbxProfilePhase {
 inline const char* g_ProfilePhaseNames[PROF_PHASE_COUNT] = {
     "PfifoFlush",
     "PgraphLockWait",
+    "VSShader",
+    "VSJitCompile",
     "VSConstants",
     "Textures",
     "PipelineState",
     "Samplers",
     "PixelShader",
+    "PSJitCompile",
     "RenderTarget",
     "Viewport",
     "PageFlush",
@@ -75,6 +81,14 @@ inline LONGLONG g_ProfileAccum[PROF_PHASE_COUNT] = {};
 inline volatile LONG g_ProfileMMIOCount = 0;     // Number of MMIO accesses
 inline volatile LONG g_ProfilePusherMethods = 0; // Number of PFIFO methods dispatched
 inline volatile LONG g_ProfileCSDispatchCount = 0; // Number of CS dispatches
+
+// JIT vs interpreter hit counters
+inline volatile LONG g_ProfileVSJITHits = 0;       // VS JIT cache hits
+inline volatile LONG g_ProfileVSJITCompiles = 0;   // VS JIT cache misses (new compiles)
+inline volatile LONG g_ProfileVSInterpreterHits = 0; // VS interpreter fallback
+inline volatile LONG g_ProfilePSJITHits = 0;       // PS JIT cache hits
+inline volatile LONG g_ProfilePSJITCompiles = 0;   // PS JIT cache misses (new compiles)
+inline volatile LONG g_ProfilePSInterpreterHits = 0; // PS interpreter fallback
 
 inline LARGE_INTEGER g_ProfileLastReport = {};
 
@@ -129,10 +143,12 @@ inline void CxbxProfilerFrameTick()
     if (elapsed < 1.0) return;
 
     // Dump breakdown
-    char buf[2048];
-    int pos = sprintf_s(buf, "[CXBX-PROF] %u frames, %u draws, %ld MMIOs, %ld methods, %ld CS | ",
+    char buf[4096];
+    int pos = sprintf_s(buf, "[CXBX-PROF] %u frames, %u draws, %ld MMIOs, %ld methods, %ld CS | VS(jit=%ld comp=%ld interp=%ld) PS(jit=%ld comp=%ld interp=%ld) | ",
         g_ProfileFrameCount, g_ProfileDrawCount,
-        (long)g_ProfileMMIOCount, (long)g_ProfilePusherMethods, (long)g_ProfileCSDispatchCount);
+        (long)g_ProfileMMIOCount, (long)g_ProfilePusherMethods, (long)g_ProfileCSDispatchCount,
+        (long)g_ProfileVSJITHits, (long)g_ProfileVSJITCompiles, (long)g_ProfileVSInterpreterHits,
+        (long)g_ProfilePSJITHits, (long)g_ProfilePSJITCompiles, (long)g_ProfilePSInterpreterHits);
 
     for (int i = 0; i < PROF_PHASE_COUNT; i++) {
         LONGLONG ticks = (i >= PROF_CROSS_THREAD_START)
@@ -149,11 +165,16 @@ inline void CxbxProfilerFrameTick()
     fflush(stdout);
     OutputDebugStringA(buf);
 
-    // Write to a fixed log file (survives stdout redirection)
+    // Write to a log file next to the executable (survives stdout redirection)
     {
         static HANDLE s_hLog = INVALID_HANDLE_VALUE;
         if (s_hLog == INVALID_HANDLE_VALUE) {
-            s_hLog = CreateFileA("C:\\Temp\\CxbxProfiler.log",
+            char exePath[MAX_PATH] = {};
+            GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+            char* lastSlash = strrchr(exePath, '\\');
+            if (lastSlash) *(lastSlash + 1) = '\0';
+            strcat_s(exePath, "CxbxProfiler.log");
+            s_hLog = CreateFileA(exePath,
                 GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
                 FILE_ATTRIBUTE_NORMAL, NULL);
         }
@@ -172,5 +193,11 @@ inline void CxbxProfilerFrameTick()
     InterlockedExchange(&g_ProfileMMIOCount, 0);
     InterlockedExchange(&g_ProfilePusherMethods, 0);
     InterlockedExchange(&g_ProfileCSDispatchCount, 0);
+    InterlockedExchange(&g_ProfileVSJITHits, 0);
+    InterlockedExchange(&g_ProfileVSJITCompiles, 0);
+    InterlockedExchange(&g_ProfileVSInterpreterHits, 0);
+    InterlockedExchange(&g_ProfilePSJITHits, 0);
+    InterlockedExchange(&g_ProfilePSJITCompiles, 0);
+    InterlockedExchange(&g_ProfilePSInterpreterHits, 0);
     g_ProfileLastReport = now;
 }

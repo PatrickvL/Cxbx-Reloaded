@@ -35,7 +35,7 @@
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "../TextureStates.h"
-#include "core\hle\D3D8\Rendering\Shaders\Shader.h"
+#include "core\hle\D3D8\Rendering\Backend\Shading\Shader.h"
 
 #include <cstring>
 #include <unordered_map>
