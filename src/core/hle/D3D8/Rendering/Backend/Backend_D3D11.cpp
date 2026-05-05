@@ -430,11 +430,6 @@ fail:
 	return false;
 }
 
-// Variant selection — with JIT active, just returns the default interpreter
-ID3D11PixelShader* CxbxSelectRCInterpreterPS(uint32_t numStages, uint32_t numTexStages)
-{
-	return g_pD3D11RCInterpreterPS;
-}
 
 // ******************************************************************
 // * Vertex shader interpreter — init (loads precompiled CSO)

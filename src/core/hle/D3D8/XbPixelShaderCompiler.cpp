@@ -53,6 +53,7 @@ static constexpr float TEXFMTFIXUP_OPAQUEA  = 5.0f; // X8R8G8B8/X1R5G5B5: force 
 #include <cstring> // For std::memcpy
 #include "Rendering\Backend\Backend_D3D11.h"
 #include "Rendering\Backend\Backend_D3D11_Internal.h"
+#include "Rendering\Backend\CxbxPixelShaderJIT.h"
 
 float AsFloat(uint32_t value)
 {
@@ -242,6 +243,9 @@ void CxbxSetPixelShader(ID3D11PixelShader* pPixelShader)
 	g_pActivePixelShader = pPixelShader;
 }
 
+// Global copy of last-built aux CB, readable by the PS JIT for state hashing
+PSAuxCBLayout g_LastPSAuxCB = {};
+
 // Upload PGRAPH register combiner state to GPU buffers.
 // PGRAPH is always authoritative — Xbox native D3D code pushes all combiner,
 // texture, and fog state through PFIFO → PGRAPH before each draw.
@@ -426,6 +430,9 @@ void CxbxD3D11UploadRCInterpreterState()
 			s_AuxCBBound = true;
 		}
 	}
+
+	// Store a copy for the PS JIT to use for hashing
+	g_LastPSAuxCB = aux;
 }
 
 void CxbxUpdateActivePixelShader() // NOPATCH
@@ -441,9 +448,27 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 	}
   }
 
-  // Bind the ubershader
-  CxbxSetPixelShader(g_pD3D11RCInterpreterPS);
-
-  // Upload combiner state as cbuffer
+  // Upload combiner state first (needed by both JIT and interpreter — same bindings)
   CxbxD3D11UploadRCInterpreterState();
+
+  // Try JIT-compiled pixel shader first
+  try {
+      ID3D11PixelShader* pJIT = CxbxJITPixelShader(g_pD3DDevice);
+      if (pJIT) {
+          CxbxSetPixelShader(pJIT);
+          return;
+      }
+      // JIT returned nullptr — will use interpreter fallback
+  } catch (const std::exception& e) {
+      static int s_ExcCount = 0;
+      if (s_ExcCount++ < 5)
+          EmuLog(LOG_LEVEL::WARNING, "PS JIT exception: %s", e.what());
+  } catch (...) {
+      static int s_ExcCount2 = 0;
+      if (s_ExcCount2++ < 5)
+          EmuLog(LOG_LEVEL::WARNING, "PS JIT unknown exception");
+  }
+
+  // Fall back to the interpreter ubershader
+  CxbxSetPixelShader(g_pD3D11RCInterpreterPS);
 }
