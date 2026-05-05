@@ -288,6 +288,10 @@ void CxbxD3D11DispatchCS(
 	static ID3D11ShaderResourceView* const nullPSSRVs[12] = {};
 	g_pD3DDeviceContext->PSSetShaderResources(0, 12, nullPSSRVs);
 
+	// Invalidate texture state cache so the next draw rebinds PS SRVs
+	extern void CxbxInvalidateTextureStateCache();
+	CxbxInvalidateTextureStateCache();
+
 	g_pD3DDeviceContext->CSSetShader(pShader, nullptr, 0);
 	g_pD3DDeviceContext->CSSetConstantBuffers(0, 1, &pCB);
 	if (numSRVs > 0)
@@ -424,6 +428,12 @@ fail:
 	if (g_pD3D11RCInterpreterAuxCB) { g_pD3D11RCInterpreterAuxCB->Release(); g_pD3D11RCInterpreterAuxCB = nullptr; }
 	if (g_pD3D11RCInterpreterPS) { g_pD3D11RCInterpreterPS->Release(); g_pD3D11RCInterpreterPS = nullptr; }
 	return false;
+}
+
+// Variant selection — with JIT active, just returns the default interpreter
+ID3D11PixelShader* CxbxSelectRCInterpreterPS(uint32_t numStages, uint32_t numTexStages)
+{
+	return g_pD3D11RCInterpreterPS;
 }
 
 // ******************************************************************
@@ -843,6 +853,10 @@ HRESULT CxbxD3D11Blt(
 	// Unbind source SRV to avoid hazard
 	ID3D11ShaderResourceView* pNullSRV = nullptr;
 	g_pD3DDeviceContext->PSSetShaderResources(0, 1, &pNullSRV);
+
+	// Invalidate texture state cache so the next draw rebinds PS SRVs
+	extern void CxbxInvalidateTextureStateCache();
+	CxbxInvalidateTextureStateCache();
 
 	// Invalidate the PS state tracking since we bypassed CxbxSetPixelShader
 	// to bind the blit PS directly. Without this, the next CxbxSetPixelShader

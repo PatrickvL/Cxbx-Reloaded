@@ -113,10 +113,13 @@ extern ID3D11Buffer              *g_pD3D11FormatConvertCB;
 // ******************************************************************
 // * Register combiner interpreter (PS ubershader)
 // ******************************************************************
-extern ID3D11PixelShader         *g_pD3D11RCInterpreterPS;
+extern ID3D11PixelShader         *g_pD3D11RCInterpreterPS;       // Default (8-stage, 4-tex) fallback
 extern ID3D11Buffer              *g_pD3D11RCInterpreterAuxCB;  // PSAuxCBLayout (software-computed fields)
 extern ID3D11Buffer              *g_pD3D11PGRegsBuf;            // pg->regs[] raw StructuredBuffer
 extern ID3D11ShaderResourceView  *g_pD3D11PGRegsSRV;            // SRV for g_PGRegs : register(t12)
+
+// Select the RC PS (returns default interpreter; JIT is tried first in the caller)
+ID3D11PixelShader* CxbxSelectRCInterpreterPS(uint32_t numStages, uint32_t numTexStages);
 
 // RC interpreter constant buffer layout — shared with the HLSL cbuffer
 // definition in CxbxRegisterCombinerInterpreterState.hlsli.

@@ -81,6 +81,21 @@ static uint32_t s_CachedTexOff[4] = {};
 static uint32_t s_CachedTexCtl[4] = {};
 static uint32_t s_CachedTexFmt[4] = {};
 
+// Force CxbxUpdateHostTextures to rebind SRVs on the next draw call.
+// Must be called whenever PS SRV bindings are disturbed externally
+// (e.g., blit/present unbinding slot 0, CS dispatch unbinding all slots).
+static bool s_TextureSRVsDirty = false;
+void CxbxInvalidateTextureStateCache()
+{
+    // Setting cached values to ~0 guarantees the fast-path check will detect a "change"
+    for (int i = 0; i < 4; i++) {
+        s_CachedTexOff[i] = ~0u;
+        s_CachedTexCtl[i] = ~0u;
+        s_CachedTexFmt[i] = ~0u;
+    }
+    s_TextureSRVsDirty = true;
+}
+
 // Invalidate any cached SRV that wraps pTexture and unbind it from all PS slots.
 // Must be called before binding pTexture as a UAV for a compute shader dispatch
 // to eliminate SRV/UAV resource hazards that can trigger GPU TDRs.
@@ -271,8 +286,14 @@ void CxbxUpdateHostTextures()
 		if (pHostBaseTexture != nullptr) {
 			// Reuse cached SRV if the underlying resource hasn't changed
 			if (s_CachedResource[stage] == pHostBaseTexture && s_CachedSRV[stage] != nullptr) {
-				// SRV already cached and resource unchanged — skip rebind
-				// (the PSSetShaderResources call from the last time is still in effect)
+				// SRV already cached and resource unchanged — rebind only if externally dirtied
+				if (s_TextureSRVsDirty) {
+					g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &s_CachedSRV[stage]);
+					if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURE3D)
+						g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &s_CachedSRV[stage]);
+					else if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURECUBE)
+						g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &s_CachedSRV[stage]);
+				}
 			} else {
 				// Release old cached SRV
 				if (s_CachedSRV[stage]) {
@@ -364,6 +385,7 @@ void CxbxUpdateHostTextures()
 			pHostBaseTexture->Release();
 		}
 	}
+	s_TextureSRVsDirty = false;
 }
 
 void CxbxUpdateHostTextureScaling()
