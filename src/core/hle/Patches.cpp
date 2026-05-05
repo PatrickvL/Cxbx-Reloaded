@@ -81,10 +81,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_BeginVisibilityTest", xbox::EMUPATCH(D3DDevice_BeginVisibilityTest), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code writes harmless debug regs
 	//PATCH_ENTRY("D3DDevice_BlockOnFence", xbox::EMUPATCH(D3DDevice_BlockOnFence), PATCH_HLE_D3D),
-	// Disabled: Xbox native BlockUntilVerticalBlank waits on m_VerticalBlankEvent KEVENT
-	// which lives inside the Xbox D3D device struct. Since CxbxInitHostD3DDevice() creates
-	// the host D3D11 device before emulation, native Direct3D_CreateDevice runs (via trampoline)
-	// and populates D3D_g_pDevice, so native BlockUntilVerticalBlank reads a valid KEVENT.
+	// Disabled: Native BlockUntilVerticalBlank waits on m_VerticalBlankEvent KEVENT via
+	// KeWaitForSingleObject.  The miniport DPC signals it via KeSetEvent.  The kernel
+	// missed-wakeup fix (re-checking SignalState in WaitApc) ensures this works correctly.
 	//PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
 	// Disabled: Clear now handled by D3D11_draw_clear via NV097_CLEAR_SURFACE → pgraph_handle_method
 	//PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
@@ -301,13 +300,12 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_UpdateOverlay_16__LTCG_eax2", xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code polls resource state
 	//PATCH_ENTRY("D3DResource_BlockUntilNotBusy", xbox::EMUPATCH(D3DResource_BlockUntilNotBusy), PATCH_HLE_D3D),
-	// D3D_BlockOnTime: must be patched — the Xbox D3D runtime enables the DMA pusher
-	// (PUSH0_ACCESS=1, DMA_PUSH_ACCESS=1) during CreateDevice, so the PFIFO fast-path
-	// does NOT fake GET=PUT.  Without this patch the native polling loop spins forever,
-	// causing a lockup.  The patch drains pending PGRAPH commands via pfifo_flush_to_pgraph
-	// and returns, bypassing the native spin entirely.
-	PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
+	// D3D_BlockOnTime: unpatched — native D3D_BlockOnTime polls NV_USER_DMA_GET
+	// in a loop.  The DMA_GET read handler now calls pfifo_flush_to_pgraph inline,
+	// which drains pending commands and advances GET.  The native polling loop
+	// sees GET catch up to PUT and returns naturally, no patch needed.
+	//PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3D_CommonSetRenderTarget", xbox::EMUPATCH(D3D_CommonSetRenderTarget), PATCH_HLE_D3D),
 	// Disabled: host resources are NV2A-derived (PGRAPH RT cache, texture cache keyed by VRAM).
 	// Dirty page tracking invalidates stale host resources. FreeHostResource on Xbox D3D keys is vestigial.

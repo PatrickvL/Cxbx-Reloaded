@@ -2396,11 +2396,39 @@ XBSYSAPI EXPORTNUM(158) xbox::ntstatus_xt NTAPI xbox::KeWaitForMultipleObjects
 			//}
 
 			// TODO: Remove this after we have our own scheduler and the above is implemented
-			WaitStatus = WaitApc<false>([](PKTHREAD Thread) -> std::optional<ntstatus_xt> {
+			WaitStatus = WaitApc<false>([Count, &Object, WaitType](PKTHREAD Thread) -> std::optional<ntstatus_xt> {
 				if (Thread->State == Ready) {
 					// We have been readied to resume execution, so exit the wait
 					return std::make_optional<ntstatus_xt>(Thread->WaitStatus);
 				}
+				// Re-check SignalState to handle the missed-wakeup race (see KeWaitForSingleObject).
+				KiWaitListLock();
+				for (ulong_xt i = 0; i < Count; i++) {
+					PKMUTANT ObjectMutant = (PKMUTANT)Object[i];
+					if (ObjectMutant->Header.SignalState > 0) {
+						if (WaitType == WaitAny) {
+							KiWaitSatisfyOther(ObjectMutant);
+							KiWaitListUnlock();
+							Thread->WaitStatus = (ntstatus_xt)i;
+							Thread->State = Ready;
+							return std::make_optional<ntstatus_xt>((ntstatus_xt)i);
+						}
+					} else if (WaitType == WaitAll) {
+						KiWaitListUnlock();
+						return std::nullopt;
+					}
+				}
+				if (WaitType == WaitAll) {
+					// All signaled — satisfy all
+					for (ulong_xt i = 0; i < Count; i++) {
+						KiWaitSatisfyOther((PKMUTANT)Object[i]);
+					}
+					KiWaitListUnlock();
+					Thread->WaitStatus = X_STATUS_SUCCESS;
+					Thread->State = Ready;
+					return std::make_optional<ntstatus_xt>(X_STATUS_SUCCESS);
+				}
+				KiWaitListUnlock();
 				return std::nullopt;
 				}, Timeout, Alertable, WaitMode, Thread);
 
@@ -2584,10 +2612,27 @@ XBSYSAPI EXPORTNUM(159) xbox::ntstatus_xt NTAPI xbox::KeWaitForSingleObject
 			KiWaitListUnlock();
 
 			// TODO: Remove this after we have our own scheduler and the above is implemented
-			WaitStatus = WaitApc<false>([](PKTHREAD Thread) -> std::optional<ntstatus_xt> {
+			WaitStatus = WaitApc<false>([Object](PKTHREAD Thread) -> std::optional<ntstatus_xt> {
 				if (Thread->State == Ready) {
 					// We have been readied to resume execution, so exit the wait
 					return std::make_optional<ntstatus_xt>(Thread->WaitStatus);
+				}
+				// Re-check SignalState to handle the race where KeSetEvent fired
+				// between our initial SignalState check and the WaitBlock insertion.
+				// In that case KeSetEvent sees an empty WaitList, sets SignalState=1,
+				// and returns without waking anyone.  Without this re-check the
+				// thread would spin in WaitApc forever (missed-wakeup bug).
+				PKMUTANT ObjectMutant = (PKMUTANT)Object;
+				if (ObjectMutant->Header.SignalState > 0) {
+					KiWaitListLock();
+					if (ObjectMutant->Header.SignalState > 0) {
+						KiWaitSatisfyOther(ObjectMutant);
+						KiWaitListUnlock();
+						Thread->WaitStatus = X_STATUS_SUCCESS;
+						Thread->State = Ready;
+						return std::make_optional<ntstatus_xt>(X_STATUS_SUCCESS);
+					}
+					KiWaitListUnlock();
 				}
 				return std::nullopt;
 				}, Timeout, Alertable, WaitMode, Thread);

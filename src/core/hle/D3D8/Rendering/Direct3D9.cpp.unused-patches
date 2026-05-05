@@ -5103,13 +5103,25 @@ xbox::bool_xt WINAPI xbox::EMUPATCH(D3DDevice_IsBusy)()
 // ******************************************************************
 // * patch: D3D_BlockOnTime
 // ******************************************************************
+// Disabled: DMA_GET read handler now calls pfifo_flush_to_pgraph inline,
+// so the native polling loop sees GET advance and returns naturally.
+#include "devices/Xbox.h"              // For extern NV2ADevice* g_NV2A
+#include "devices/video/nv2a.h"        // For pfifo_flush_to_pgraph
+#include "core/hle/D3D8/Rendering/Backend/Backend_D3D11_Profiler.h"
+
 void WINAPI xbox::EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace)
 {
 	LOG_FUNC_BEGIN
 		LOG_FUNC_ARG(Time)
 		LOG_FUNC_ARG(MakeSpace)
 		LOG_FUNC_END;
-	LOG_UNIMPLEMENTED();
+
+	// Drain pending PFIFO commands so the DMA pusher advances GET,
+	// freeing ring buffer space for the caller.
+	if (g_NV2A) {
+		CXBX_PROFILE_SCOPE(PROF_BLOCKONTTIME);
+		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
+	}
 }
 
 // LTCG specific D3D_BlockOnTime function

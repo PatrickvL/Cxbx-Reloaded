@@ -42,7 +42,8 @@ DEVICE_READ32(USER)
 	// Fast path for DMA_GET reads.  When the DMA pusher cannot process
 	// (access flags not set in HLE mode), advance GET to PUT so polls
 	// like BlockUntilIdle() return immediately.  When the pusher CAN
-	// process, leave GET alone — the pusher/puller threads advance it.
+	// process, drain pending commands inline so the native polling loop
+	// (e.g. D3D_BlockOnTime) sees GET advance and exits naturally.
 	if ((addr & 0xFFFF) == NV_USER_DMA_GET) {
 		uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
 		uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
@@ -55,9 +56,29 @@ DEVICE_READ32(USER)
 			if (!pusher_can_run) {
 				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = put_v;
 				get_v = put_v;
+			} else {
+				// Drain pending commands inline — this is what enables
+				// native D3D_BlockOnTime to work without a patch.
+				pfifo_flush_to_pgraph(d);
+				get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
 			}
 		}
 		uint32_t result = get_v;
+		DEVICE_READ32_END(USER);
+	}
+
+	// Fast path for NV_USER_REF reads (reference counter).  Native
+	// D3D_BlockOnTime polls this waiting for REF >= Time.  The value is
+	// updated by SET_REFERENCE (method 0x0050) during command processing,
+	// so we must flush pending commands first — otherwise the polling loop
+	// never sees REF advance.
+	if ((addr & 0xFFFF) == NV_USER_REF) {
+		uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
+		uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
+		if (get_v != put_v) {
+			pfifo_flush_to_pgraph(d);
+		}
+		uint32_t result = d->pfifo.regs[RI(NV_PFIFO_CACHE1_REF)];
 		DEVICE_READ32_END(USER);
 	}
 
@@ -120,6 +141,22 @@ DEVICE_WRITE32(USER)
 			switch (addr & 0xFFFF) {
 			case NV_USER_DMA_PUT:
 				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)] = value;
+				// Process commands inline immediately.  Native D3D runtime
+				// may wait for completion signals (FLIP_STALL, semaphore)
+				// BEFORE polling DMA_GET.  If we don't process here, those
+				// signals never fire and the game thread deadlocks.
+				{
+					uint32_t push0    = d->pfifo.regs[RI(NV_PFIFO_CACHE1_PUSH0)];
+					uint32_t dma_push = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUSH)];
+					bool pusher_can_run = GET_MASK(push0, NV_PFIFO_CACHE1_PUSH0_ACCESS)
+					                   && GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_ACCESS)
+					                   && !GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_STATUS);
+					if (pusher_can_run) {
+						CxbxSetPullerContext(true);
+						pfifo_run_pusher(d);
+						CxbxSetPullerContext(false);
+					}
+				}
 				break;
 			case NV_USER_DMA_GET:
 				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = value;
@@ -132,8 +169,12 @@ DEVICE_WRITE32(USER)
 				break;
 			}
 
-            // kick pfifo
-            qemu_cond_broadcast(&d->pfifo.pusher_cond);
+            // Kick puller thread (for auto-present fallback on raw-pushbuffer
+            // games without explicit FLIP_STALL).  Do NOT signal pusher_cond:
+            // command processing is driven exclusively by inline flushes
+            // (pfifo_flush_to_pgraph called from DMA_GET reads and before draws).
+            // Signaling the pusher would cause it to race for pfifo_lock,
+            // introducing intermittent stalls in the game thread.
             qemu_cond_broadcast(&d->pfifo.puller_cond);
 		} else {
 			/* ramfc */
