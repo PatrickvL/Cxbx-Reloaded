@@ -98,6 +98,14 @@ bool CxbxPageTrackerIsGPUDirty(uint32_t pageIndex);
 void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size);
 
 // ******************************************************************
+// * VEH fault handler (called from unified lleException VEH)
+// ******************************************************************
+
+// Handle an access violation at faultAddress. Returns true if it was a
+// GPU-dirty page or tiled memory fault that was resolved.
+bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite);
+
+// ******************************************************************
 // * GPU mirror buffer access (for draw path)
 // ******************************************************************
 

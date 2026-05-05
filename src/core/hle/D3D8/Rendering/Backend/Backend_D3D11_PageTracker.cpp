@@ -130,12 +130,12 @@ static inline bool TestBit(const uint32_t* bitmap, uint32_t index)
 
 // ******************************************************************
 // * Handle a fault (GPU-dirty pages or tiled redirect)
-// * Called by PageTrackerVEH below.
+// * Called directly from the unified VEH in lleException.
 // ******************************************************************
 
 // Try to handle an access violation in the contiguous or tiled region.
 // Returns true if the fault was handled (page committed/restored).
-static bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
+bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 {
 	uintptr_t addr = (uintptr_t)faultAddress;
 
@@ -186,19 +186,8 @@ static bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 // ******************************************************************
 // * VEH handler — GPU-dirty faults + tiled memory redirect
 // ******************************************************************
-static long WINAPI PageTrackerVEH(EXCEPTION_POINTERS* e)
-{
-	if (e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
-		return EXCEPTION_CONTINUE_SEARCH;
-
-	uintptr_t faultAddr = (uintptr_t)e->ExceptionRecord->ExceptionInformation[1];
-	bool isWrite = (e->ExceptionRecord->ExceptionInformation[0] == 1);
-
-	if (CxbxPageTrackerHandleFault((void*)faultAddr, isWrite))
-		return EXCEPTION_CONTINUE_EXECUTION;
-
-	return EXCEPTION_CONTINUE_SEARCH;
-}
+// PageTrackerVEH removed — fault handling is now inlined in lleException
+// to avoid paying double VEH dispatch overhead on every MMIO access.
 
 // ******************************************************************
 // * Sync committed tiled pages back to contiguous memory, then decommit
@@ -337,11 +326,8 @@ void CxbxPageTrackerInit()
 		}
 	}
 
-	// Register VEH for GPU-dirty page faults and tiled memory redirect
-	s_hVEH = AddVectoredExceptionHandler(1, PageTrackerVEH);
-	if (!s_hVEH) {
-		EmuLog(LOG_LEVEL::WARNING, "PageTrackerInit: Failed to register VEH");
-	}
+	// VEH for page faults is now handled by the unified lleException handler.
+	// No separate VEH registration needed here.
 
 	EmuLog(LOG_LEVEL::INFO, "PageTracker: Initialized (%s, %u pages tracked)",
 		s_bWineFallback ? "Wine full-upload" : "MEM_WRITE_WATCH", PAGE_COUNT);

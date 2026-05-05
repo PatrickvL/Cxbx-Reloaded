@@ -36,6 +36,7 @@
 #include "EmuShared.h"
 #include "core\hle\Intercept.hpp"
 #include "CxbxDebugger.h"
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
 
 #ifdef _DEBUG
 #include <Dbghelp.h>
@@ -261,9 +262,19 @@ bool lleTryHandleException(EXCEPTION_POINTERS *e)
 	return false;
 }
 
-// Only for LLE emulation coding (to help performance a little bit better)
+// Unified VEH: handles page tracker faults + LLE MMIO in a single dispatch.
+// This eliminates the overhead of a separate PageTrackerVEH being called on every exception.
 long WINAPI lleException(EXCEPTION_POINTERS *e)
 {
+	// Fast path: page tracker faults (GPU-dirty pages + tiled memory redirect)
+	if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+		uintptr_t faultAddr = (uintptr_t)e->ExceptionRecord->ExceptionInformation[1];
+		bool isWrite = (e->ExceptionRecord->ExceptionInformation[0] == 1);
+		if (CxbxPageTrackerHandleFault((void*)faultAddr, isWrite))
+			return EXCEPTION_CONTINUE_EXECUTION;
+	}
+
+	// LLE exception handling
 	g_bEmuException = true;
 	long result = lleTryHandleException(e) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 	g_bEmuException = false;
