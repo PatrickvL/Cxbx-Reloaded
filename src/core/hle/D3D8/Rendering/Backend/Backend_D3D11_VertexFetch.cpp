@@ -29,6 +29,7 @@
 
 #include "Backend_D3D11_Internal.h"
 #include "Backend_D3D11_PageTracker.h"
+#include "Backend_D3D11_Profiler.h"
 #include "common/AddressRanges.h"
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
@@ -198,7 +199,11 @@ static void BindAndIssueDraw(UINT primType, D3D_PRIMITIVE_TOPOLOGY hostTopology,
 		CxbxBindThickLineGS(primitiveMode);
 	}
 
-	g_pD3DDeviceContext->Draw(hostVertexCount, 0);
+	{
+		CXBX_PROFILE_SCOPE(PROF_DRAW_CALL);
+		g_pD3DDeviceContext->Draw(hostVertexCount, 0);
+	}
+	g_ProfileDrawCount++;
 
 	if (primType == CXBX_PRIM_NORMAL) {
 		CxbxUnbindThickLineGS(primitiveMode);
@@ -454,7 +459,10 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 	// s_TextureDirtyBitmap is updated (for texture re-upload detection).
 	// Must run for both UP and non-UP draws: UP draws skip the mirror
 	// but still need texture dirty tracking via GetWriteWatch().
-	CxbxPageTrackerFlushToGPU();
+	{
+		CXBX_PROFILE_SCOPE(PROF_PAGE_FLUSH);
+		CxbxPageTrackerFlushToGPU();
+	}
 
 	// ---------------------------------------------------------------
 	// Step 2b: Upload UP vertex data to staging buffer

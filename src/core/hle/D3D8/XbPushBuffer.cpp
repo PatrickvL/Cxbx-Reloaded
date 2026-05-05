@@ -36,6 +36,7 @@
 #include "core\hle\D3D8\XbPushBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11VertexFetchDraw
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 #include "core\hle\D3D8\Rendering\PatchDraw.h" // For D3D11_draw_patch
 #include "common/AddressRanges.h" // For CONTIGUOUS_MEMORY_BASE
 #include "core/common/video/RenderBase.hpp" // For g_renderbase
@@ -374,11 +375,15 @@ static void D3D11_flip_stall(NV2AState *d)
 		dest.right = (LONG)(dest.left + width);
 		dest.bottom = (LONG)(dest.top + height);
 
-		CxbxBltSurface(pXboxBackBufferHostSurface, nullptr, pHostBackBuffer, &dest, D3DTEXF_LINEAR);
+		{
+			CXBX_PROFILE_SCOPE(PROF_PRESENT_BLIT);
+			CxbxBltSurface(pXboxBackBufferHostSurface, nullptr, pHostBackBuffer, &dest, D3DTEXF_LINEAR);
+		}
 	}
 
 	// Composite PVIDEO overlay (if enabled by Xbox D3DDevice_UpdateOverlay → PVIDEO registers)
 	if (d->enable_overlay) {
+		CXBX_PROFILE_SCOPE(PROF_PRESENT_OVERLAY);
 		// Determine which buffer is active (bit 0 = buffer 0, bit 4 = buffer 1)
 		uint32_t pvideo_buffer = d->pvideo.regs[RI(NV_PVIDEO_BUFFER)];
 		int buf = (pvideo_buffer & NV_PVIDEO_BUFFER_0_USE) ? 0 : 1;
@@ -483,11 +488,17 @@ static void D3D11_flip_stall(NV2AState *d)
 
 	pHostBackBuffer->Release();
 
-	// Present to display
-	CxbxPresent();
+	// Present to display.
+	{
+		CXBX_PROFILE_SCOPE(PROF_PRESENT_SWAP);
+		CxbxPresent();
+	}
 
 	// Update FPS counter
 	g_renderbase->UpdateFPSCounter();
+
+	// Profiler: tick frame and dump timing breakdown once per second
+	CxbxProfilerFrameTick();
 }
 
 void D3D11_init_pgraph_plugins()

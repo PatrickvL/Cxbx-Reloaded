@@ -36,6 +36,7 @@
 #include "EmuShared.h"
 #include "core\hle\Intercept.hpp"
 #include "CxbxDebugger.h"
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
 
 #ifdef _DEBUG
@@ -272,6 +273,9 @@ long WINAPI lleException(EXCEPTION_POINTERS *e)
 		bool isWrite = (e->ExceptionRecord->ExceptionInformation[0] == 1);
 		if (CxbxPageTrackerHandleFault((void*)faultAddr, isWrite))
 			return EXCEPTION_CONTINUE_EXECUTION;
+		// Count only Xbox-code AVs as MMIO (NV2A register accesses)
+		if (IsXboxCodeAddress(e->ContextRecord->Eip))
+			InterlockedIncrement(&g_ProfileMMIOCount);
 	}
 
 	// LLE exception handling

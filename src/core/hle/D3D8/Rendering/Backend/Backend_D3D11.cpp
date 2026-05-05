@@ -23,6 +23,7 @@
 
 #include "Backend_D3D11_Internal.h"
 #include "Backend_D3D11_PageTracker.h"
+#include "Backend_D3D11_Profiler.h"
 
 // ******************************************************************
 // * D3D11 device globals — definitions
@@ -292,6 +293,7 @@ void CxbxD3D11DispatchCS(
 		g_pD3DDeviceContext->CSSetShaderResources(0, numSRVs, ppSRVs);
 	g_pD3DDeviceContext->CSSetUnorderedAccessViews(0, 1, &pUAV, nullptr);
 	g_pD3DDeviceContext->Dispatch(groupsX, groupsY, groupsZ);
+	InterlockedIncrement(&g_ProfileCSDispatchCount);
 
 	// Unbind CS resources to avoid hazards
 	ID3D11ShaderResourceView* nullSRVs[2] = { nullptr, nullptr };

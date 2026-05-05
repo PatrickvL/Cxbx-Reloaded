@@ -25,6 +25,7 @@
 #include "../EmuD3D8_common.h"
 #include "devices/Xbox.h"              // For extern NV2ADevice* g_NV2A
 #include "devices/video/nv2a.h"        // For pfifo_flush_to_pgraph
+#include "core/hle/D3D8/Rendering/Backend/Backend_D3D11_Profiler.h"
 
 // ******************************************************************
 // * patch: D3D_BlockOnTime
@@ -48,6 +49,7 @@ void WINAPI xbox::EMUPATCH(D3D_BlockOnTime)(dword_xt Time, int MakeSpace)
 	// Drain pending PFIFO commands so the DMA pusher advances GET,
 	// freeing ring buffer space for the caller.
 	if (g_NV2A) {
+		CXBX_PROFILE_SCOPE(PROF_BLOCKONTTIME);
 		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
 	}
 }

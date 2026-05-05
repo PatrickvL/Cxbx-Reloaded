@@ -24,6 +24,7 @@
 // ******************************************************************
 #include "EmuD3D8_common.h"
 #include "Backend\Backend_D3D11.h"
+#include "Backend\Backend_D3D11_Profiler.h"
 #include <algorithm> // std::min
 
 // NV2A-native linear format check.  On NV2A, linear (pitch-based) textures
@@ -615,8 +616,11 @@ void CxbxUpdateNativeD3DResources()
 	// interpreters that read register state at draw time.
 	// Skip when called from the puller thread itself (registers are
 	// already current, and calling flush would deadlock on pfifo_lock).
-	if (!g_bInPullerContext) {
-		pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
+	{
+		CXBX_PROFILE_SCOPE(PROF_PFIFO_FLUSH);
+		if (!g_bInPullerContext) {
+			pfifo_flush_to_pgraph(g_NV2A->GetDeviceState());
+		}
 	}
 
 	// Hold pgraph_lock while reading PGRAPH registers for this draw.
@@ -628,6 +632,7 @@ void CxbxUpdateNativeD3DResources()
 	// The lock is released after all PGRAPH reads and before the D3D11 draw.
 	bool pgraph_locked = false;
 	if (!g_bInPullerContext) {
+		CXBX_PROFILE_SCOPE(PROF_PGRAPH_LOCK_WAIT);
 		qemu_mutex_lock(&g_NV2A->GetDeviceState()->pgraph.pgraph_lock);
 		pgraph_locked = true;
 	}
@@ -716,7 +721,10 @@ void CxbxUpdateNativeD3DResources()
 
 	CxbxUpdateHostVertexDeclaration();
 
-	CxbxUpdateHostVertexShaderConstants();
+	{
+		CXBX_PROFILE_SCOPE(PROF_VS_CONSTANTS);
+		CxbxUpdateHostVertexShaderConstants();
+	}
 
 	// Bind render target from PGRAPH surface offsets BEFORE viewport setup.
 	// The viewport dimensions are clamped to the render target size, so the
@@ -724,20 +732,35 @@ void CxbxUpdateNativeD3DResources()
 	// small offscreen target (e.g. 256x256 caustic texture) to the backbuffer
 	// (640x480), GetHostRenderTargetDimensions returns the old (small) size,
 	// causing the scissor rect to clip the viewport incorrectly.
-	CxbxD3D11UpdateRenderTargetFromPGRAPH(pg);
+	{
+		CXBX_PROFILE_SCOPE(PROF_RENDER_TARGET);
+		CxbxD3D11UpdateRenderTargetFromPGRAPH(pg);
+	}
 
 	// Set viewport from PGRAPH registers (authoritative).
-	CxbxD3D11UpdateViewportFromPGRAPH(pg);
+	{
+		CXBX_PROFILE_SCOPE(PROF_VIEWPORT);
+		CxbxD3D11UpdateViewportFromPGRAPH(pg);
+	}
 
-	CxbxUpdateHostTextures();
-	CxbxUpdateHostTextureScaling();
+	{
+		CXBX_PROFILE_SCOPE(PROF_TEXTURES);
+		CxbxUpdateHostTextures();
+		CxbxUpdateHostTextureScaling();
+	}
 
 	// Pipeline state and sampler states from PGRAPH registers.
 	// This replaces the former XboxRenderStates.Apply() (blend/depth/stencil/rasterizer)
 	// and XboxTextureStates.Apply() (sampler configuration) which read from Xbox D3D
 	// runtime memory. All state is now sourced from NV2A PGRAPH registers directly.
-	CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
-	CxbxD3D11UpdateSamplersFromPGRAPH(pg);
+	{
+		CXBX_PROFILE_SCOPE(PROF_PIPELINE_STATE);
+		CxbxD3D11UpdatePipelineStateFromPGRAPH(pg);
+	}
+	{
+		CXBX_PROFILE_SCOPE(PROF_SAMPLERS);
+		CxbxD3D11UpdateSamplersFromPGRAPH(pg);
+	}
 	{
 		extern float g_fLineWidth;
 		g_fLineWidth = pg->line_width;
@@ -754,10 +777,13 @@ void CxbxUpdateNativeD3DResources()
 		if (pSRV) pSRV->Release();
 	}
 
-   	// If Pixel Shaders are not disabled, process them
-   	if (!g_DisablePixelShaders) {
-   	   	CxbxUpdateActivePixelShader();
-   	}
+	// If Pixel Shaders are not disabled, process them
+	{
+		CXBX_PROFILE_SCOPE(PROF_PIXEL_SHADER);
+		if (!g_DisablePixelShaders) {
+			CxbxUpdateActivePixelShader();
+		}
+	}
 
 	// Note: Vertex defaults upload (NV2A sticky attribute values) is handled
 	// internally by CxbxD3D11VertexFetchDraw's UploadVertexDefaults() at draw

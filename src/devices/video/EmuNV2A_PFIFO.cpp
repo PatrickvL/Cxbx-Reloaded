@@ -41,6 +41,8 @@ typedef struct RAMHTEntry {
 	bool valid;
 } RAMHTEntry;
 
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
+
 static RAMHTEntry ramht_lookup(NV2AState *d, uint32_t handle); // forward declaration
 static void pfifo_run_puller(NV2AState *d); // forward declaration
 static void pfifo_run_pusher(NV2AState *d); // forward declaration
@@ -625,7 +627,10 @@ int pfifo_pusher_thread(NV2AState *d)
 
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
     while (true) {
-        pfifo_run_pusher(d);
+        {
+            CXBX_PROFILE_SCOPE(PROF_PFIFO_PUSHER);
+            pfifo_run_pusher(d);
+        }
 
         // flush_requested is no longer set by pfifo_flush_to_pgraph (flush now
         // processes the pushbuffer inline on the calling thread).  The check
