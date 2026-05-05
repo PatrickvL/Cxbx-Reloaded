@@ -226,7 +226,7 @@ void CreateDefaultDevice
 	SwapChainDesc.SampleDesc.Count = 1;
 	SwapChainDesc.SampleDesc.Quality = 0;
 	SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	SwapChainDesc.BufferCount = 2;
+	SwapChainDesc.BufferCount = 3;  // Triple buffer to avoid Present blocking on buffer availability
 	SwapChainDesc.Scaling = DXGI_SCALING_STRETCH;
 	SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	SwapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
@@ -261,7 +261,11 @@ void CreateDefaultDevice
 	// Prevent DXGI from interfering with ALT+ENTER fullscreen toggle
 	dxgiFactory->MakeWindowAssociation(g_hEmuWindow, DXGI_MWA_NO_ALT_ENTER);
 
-	dxgiDevice->SetMaximumFrameLatency(1);
+	// Allow up to 2 frames in the present queue so the CPU can prepare
+	// the next frame while the GPU composites the previous one.
+	// (Default is 3, but 2 keeps input latency reasonable while avoiding
+	// the Present-blocks-every-frame bottleneck of latency=1.)
+	dxgiDevice->SetMaximumFrameLatency(2);
 
 	// Configure the back buffer as a render target
 	ComPtr<ID3D11Texture2D> backBuffer;
