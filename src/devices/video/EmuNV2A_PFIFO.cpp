@@ -53,7 +53,8 @@ DEVICE_READ32(PFIFO)
     // Fast path for DMA_GET reads.  When the DMA pusher cannot process
     // (access flags not set in HLE mode), advance GET to PUT so polls
     // like BlockUntilIdle() return immediately.  When the pusher CAN
-    // process, leave GET alone — the pusher/puller threads advance it.
+    // process, drain pending commands inline so the native polling loop
+    // (e.g. D3D_BlockOnTime) sees GET advance and exits naturally.
     if (addr == NV_PFIFO_CACHE1_DMA_GET) {
         uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
         uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
@@ -66,6 +67,11 @@ DEVICE_READ32(PFIFO)
             if (!pusher_can_run) {
                 d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = put_v;
                 get_v = put_v;
+            } else {
+                // Drain pending commands inline — enables native polling loops
+                // (D3D_BlockOnTime, BlockUntilIdle) to work without patches.
+                pfifo_flush_to_pgraph(d);
+                get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
             }
         }
         uint32_t result = get_v;
@@ -174,12 +180,16 @@ static void pfifo_run_puller(NV2AState *d)
         uint32_t method = method_entry & 0x1FFC;
         uint32_t subchannel = GET_MASK(method_entry, NV_PFIFO_CACHE1_METHOD_SUBCHANNEL);
 
-        // Process pushbuffer methods into PGRAPH register state so the
-        // RC/VS interpreters can read from it.  Skip object binding
-        // (method 0) and object-reference methods (0x180..0x1FF) which
-        // require RAMHT lookups.  Skip context-switch / FIFO-wait —
-        // Xbox uses a single GPU channel, so it's safe to write directly.
-        if (method >= 0x100 && !(method >= 0x180 && method < 0x200)) {
+        // Process pushbuffer methods into PGRAPH register state.
+        // Skip object binding (method 0) — Xbox uses a single channel.
+        if (method >= 0x180 && method < 0x200) {
+            // DMA context binding methods: parameter is a handle that must
+            // be resolved via RAMHT to get the PRAMIN instance address.
+            RAMHTEntry entry = ramht_lookup(d, parameter);
+            if (entry.valid) {
+                pgraph_handle_method(d, subchannel, method, entry.instance);
+            }
+        } else if (method >= 0x100) {
             pgraph_handle_method(d, subchannel, method, parameter);
         }
 
@@ -293,7 +303,16 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
             // matching the old EmuExecutePushBufferRaw behaviour.
             // pgraph_lock is held for the whole buffer (acquired above).
             if (state.subc == 0) {
-                pgraph_handle_method(d, state.subc, state.mthd << 2, word);
+                uint32_t method = state.mthd << 2;
+                if (method >= 0x180 && method < 0x200) {
+                    // DMA context binding: resolve handle via RAMHT
+                    RAMHTEntry entry = ramht_lookup(d, word);
+                    if (entry.valid) {
+                        pgraph_handle_method(d, state.subc, method, entry.instance);
+                    }
+                } else {
+                    pgraph_handle_method(d, state.subc, method, word);
+                }
             }
 
             if (!state.ni)
@@ -499,14 +518,24 @@ static void pfifo_run_pusher(NV2AState *d)
             /* data word of methods command */
             d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_DATA_SHADOW)] = word;
 
+            // Handle PFIFO-level class methods that don't go to PGRAPH:
+            // NV06E_SET_REFERENCE (0x0050): updates the reference counter
+            // that D3D_BlockOnTime polls via NV_USER_REF.
+            if (method == 0x0050) {
+                d->pfifo.regs[RI(NV_PFIFO_CACHE1_REF)] = word;
+            }
             // Bypass CACHE1: dispatch directly to PGRAPH instead of staging in
             // the CACHE1 ring buffer for the puller thread to pick up later.
             // This eliminates a full OS thread wake cycle per command batch.
-            // Apply the same filter as pfifo_run_puller: skip object-binding
-            // (method 0) and reference-object methods (0x180-0x1FF) that
-            // require RAMHT lookups which we don't emulate.
             // pgraph_lock is held for the whole buffer (acquired above).
-            if (method >= 0x100 && !(method >= 0x180 && method < 0x200)) {
+            else if (method >= 0x180 && method < 0x200) {
+                // DMA context binding methods: parameter is a handle that must
+                // be resolved via RAMHT to get the PRAMIN instance address.
+                RAMHTEntry entry = ramht_lookup(d, word);
+                if (entry.valid) {
+                    pgraph_handle_method(d, method_subchannel, method, entry.instance);
+                }
+            } else if (method >= 0x100) {
                 pgraph_handle_method(d, method_subchannel, method, word);
             }
 
