@@ -30,6 +30,7 @@
 // ******************************************************************
 IDXGISwapChain                     *g_pSwapChain   = nullptr;
 ID3D11DeviceContext                *g_pD3DDeviceContext = nullptr;
+bool                                g_bTearingSupported = false;
 
 // D3D11 render target and depth stencil views for the back buffer
 ID3D11RenderTargetView             *g_pD3DBackBufferView = nullptr;

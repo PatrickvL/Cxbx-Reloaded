@@ -23,6 +23,7 @@
 // *
 // ******************************************************************
 #include "EmuD3D8_common.h"
+#include <dxgi1_5.h> // IDXGIFactory5, DXGI_FEATURE_PRESENT_ALLOW_TEARING
 #include "Backend/Backend_D3D11_PageTracker.h"
 #include "devices\video\nv2a.h" // NV2AState
 
@@ -202,6 +203,20 @@ void CreateDefaultDevice
 	ComPtr<IDXGIFactory2> dxgiFactory;
 	dxgiAdapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(dxgiFactory.GetAddressOf()));
 
+	// Check if the system supports tearing (variable refresh rate / no-vsync fast path)
+	bool bTearingSupported = false;
+	{
+		IDXGIFactory5* factory5 = nullptr;
+		if (SUCCEEDED(dxgiFactory->QueryInterface(__uuidof(IDXGIFactory5), reinterpret_cast<void**>(&factory5)))) {
+			BOOL allowTearing = FALSE;
+			if (SUCCEEDED(factory5->CheckFeatureSupport(
+					DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing)))) {
+				bTearingSupported = (allowTearing == TRUE);
+			}
+			factory5->Release();
+		}
+	}
+
 	// Configure swap chain description for Win32 HWND
 	DXGI_SWAP_CHAIN_DESC1 SwapChainDesc = {};
 	SwapChainDesc.Width = g_EmuCDPD.HostPresentationParameters.BackBufferWidth;
@@ -215,7 +230,7 @@ void CreateDefaultDevice
 	SwapChainDesc.Scaling = DXGI_SCALING_STRETCH;
 	SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	SwapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
-	SwapChainDesc.Flags = 0;
+	SwapChainDesc.Flags = bTearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
 
 	DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc = {};
 	fullscreenDesc.RefreshRate.Numerator = g_EmuCDPD.HostPresentationParameters.FullScreen_RefreshRateInHz;
@@ -238,6 +253,10 @@ void CreateDefaultDevice
 		CxbxrAbort("IDXGIFactory2::CreateSwapChainForHwnd failed");
 
 	swapChain1->QueryInterface(__uuidof(IDXGISwapChain), reinterpret_cast<void**>(&g_pSwapChain));
+	g_bTearingSupported = bTearingSupported;
+	if (bTearingSupported) {
+		printf("[CXBX] DXGI: Tearing (ALLOW_TEARING) is supported and enabled\n");
+	}
 
 	// Prevent DXGI from interfering with ALT+ENTER fullscreen toggle
 	dxgiFactory->MakeWindowAssociation(g_hEmuWindow, DXGI_MWA_NO_ALT_ENTER);
@@ -1006,7 +1025,7 @@ HRESULT CxbxPresent()
 		CxbxApplyNV2AGamma(d);
 	}
 
-	HRESULT hRet = g_pSwapChain->Present(0, 0);
+	HRESULT hRet = g_pSwapChain->Present(0, g_bTearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0);
 	DEBUG_D3DRESULT(hRet, "g_pSwapChain->Present");
 	// Allow the next page tracker flush to use DISCARD (safe at frame boundary
 	// since no draw calls from this frame are still referencing the buffer)

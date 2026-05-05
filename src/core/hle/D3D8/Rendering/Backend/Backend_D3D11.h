@@ -33,6 +33,7 @@ typedef struct _CxbxVertexDeclaration CxbxVertexDeclaration;
 // * D3D11 device globals
 // ******************************************************************
 extern IDXGISwapChain              *g_pSwapChain;
+extern bool                         g_bTearingSupported;
 extern ID3D11DeviceContext         *g_pD3DDeviceContext;
 extern ID3D11RenderTargetView      *g_pD3DBackBufferView;
 extern ID3D11DepthStencilView      *g_pD3DDepthStencilView;
