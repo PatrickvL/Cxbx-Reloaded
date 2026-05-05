@@ -31,10 +31,14 @@ StructuredBuffer<uint4> g_XFPR : register(t5);
 
 // XFPR capacity: 136 instruction slots (indices 0-0x87), shared across all VPEs.
 // On Kelvin each slot is a 128-bit container with 92 bits of actual instruction data.
+// MAX_VS_SLOTS can be overridden at compile time to produce shorter variants.
 #ifdef __cplusplus
 static constexpr uint32_t XFPR_LENGTH = 136;
 #else
-static const uint XFPR_LENGTH = 136;
+#ifndef MAX_VS_SLOTS
+#define MAX_VS_SLOTS 136
+#endif
+static const uint XFPR_LENGTH = MAX_VS_SLOTS;
 #endif
 
 // ============================================================

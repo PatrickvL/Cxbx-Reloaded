@@ -172,6 +172,7 @@ target_link_libraries(${PROJECT_NAME}
  imgui
  libusb
  nv2a_vsh_emulator
+ nv2a_vsh_disassembler
  mio::mio_min_winapi
 
  ${WINS_LIB}

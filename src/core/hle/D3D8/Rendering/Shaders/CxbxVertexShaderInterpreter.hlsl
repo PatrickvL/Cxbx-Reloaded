@@ -80,10 +80,17 @@ static int    s_a0;         // address register
 // NV2A programs can write to c[] so subsequent reads see updated values.
 // Only 4 slots needed: no known Xbox title writes more than 2-3 constants
 // per vertex program.  If all slots are full, the oldest is evicted (FIFO).
+// ENABLE_CTX_WRITES can be set to 0 at compile time to produce a variant
+// that skips context write support entirely (faster for the common case).
+#ifndef ENABLE_CTX_WRITES
+#define ENABLE_CTX_WRITES 1
+#endif
+#if ENABLE_CTX_WRITES
 #define CTX_CACHE_SIZE 4
 static float4 s_ctx_val[CTX_CACHE_SIZE];
 static uint   s_ctx_idx[CTX_CACHE_SIZE]; // 0xFFFFFFFF = empty slot
 static uint   s_ctx_count;               // number of valid entries (0..CTX_CACHE_SIZE)
+#endif
 
 // Named indices into s_oRegs[].  These match the NV2A output address
 // encoding: the 4-bit out_address field maps directly to these slots.
@@ -142,11 +149,13 @@ float4 fetch_input(uint mux, uint r_idx, uint v_idx, uint const_idx,
         if (c_index >= 0 && c_index < X_D3DVS_CONSTREG_COUNT) {
             // Check context write cache first (most recent writes win)
             raw = C[c_index];
+#if ENABLE_CTX_WRITES
             uint ci = (uint)c_index;
             [unroll] for (uint k = 0; k < CTX_CACHE_SIZE; k++) {
                 if (k < s_ctx_count && s_ctx_idx[k] == ci)
                     raw = s_ctx_val[k];
             }
+#endif
         } else {
             raw = float4(0, 0, 0, 0);
         }
@@ -184,6 +193,7 @@ void write_r(uint dest, float4 result, uint mask)
 // If the index already exists in the cache, update in-place.
 // Otherwise allocate the next free slot (FIFO eviction when full).
 // ============================================================
+#if ENABLE_CTX_WRITES
 void write_ctx(uint addr, float4 result, uint mask)
 {
     // Find existing entry or allocate a new slot
@@ -204,6 +214,7 @@ void write_ctx(uint addr, float4 result, uint mask)
     }
     write_masked(s_ctx_val[slot], result, mask);
 }
+#endif // ENABLE_CTX_WRITES
 
 // NV2A-accurate multiply and dot product helpers are in CxbxNV2AMathHelpers.hlsli
 
@@ -375,11 +386,13 @@ VS_OUTPUT main(const VS_INPUT xIn)
     [unroll] for (uint ri = 0; ri < S_R_GUARD_SIZE; ri++) s_r[ri] = float4(0, 0, 0, 0);
 
     // Context write cache starts empty.
+#if ENABLE_CTX_WRITES
     s_ctx_count = 0;
     [unroll] for (uint ci = 0; ci < CTX_CACHE_SIZE; ci++) {
         s_ctx_idx[ci] = 0xFFFFFFFFu;
         s_ctx_val[ci] = float4(0, 0, 0, 0);
     }
+#endif
 
     // Constants are read from cbuffer C[] with a small context-write cache
     // overlay for the rare case where a vertex program writes back to c[].
@@ -458,7 +471,9 @@ VS_OUTPUT main(const VS_INPUT xIn)
         bool is_paired     = has_mac && has_ilu;
         bool mac_is_output = (out_mux == 0);
         bool do_out        = (out_o_mask != 0) && out_orb;
+#if ENABLE_CTX_WRITES
         bool do_ctx        = (out_o_mask != 0) && !out_orb;
+#endif
 
         // ========================================================
         // Snapshot inputs BEFORE either unit writes back.
@@ -498,8 +513,10 @@ VS_OUTPUT main(const VS_INPUT xIn)
                 if (mac_is_output && do_out)
                     write_output(out_address, mac_result, out_o_mask);
 
+#if ENABLE_CTX_WRITES
                 if (mac_is_output && do_ctx && out_address < X_D3DVS_CONSTREG_COUNT)
                     write_ctx(out_address, mac_result, out_o_mask);
+#endif
             }
         }
 
@@ -517,8 +534,10 @@ VS_OUTPUT main(const VS_INPUT xIn)
             if (!mac_is_output && do_out)
                 write_output(out_address, ilu_result, out_o_mask);
 
+#if ENABLE_CTX_WRITES
             if (!mac_is_output && do_ctx && out_address < X_D3DVS_CONSTREG_COUNT)
                 write_ctx(out_address, ilu_result, out_o_mask);
+#endif
         }
 
         if (is_final) break;

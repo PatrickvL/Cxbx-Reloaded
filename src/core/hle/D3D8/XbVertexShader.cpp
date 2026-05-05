@@ -44,11 +44,14 @@
 #include "common\Settings.hpp" // for g_LibVersion_D3D8
 
 #include "nv2a_vsh_emulator.h"
+#include "Rendering/Backend/CxbxVertexShaderJIT.h"
 
 VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
 // Retained bytecode for FixedFunction and Passthrough vertex shaders (needed for input layout creation)
 static ID3DBlob* g_pD3D11FixedFunctionBytecode = nullptr;
 static ID3DBlob* g_pD3D11PassthroughBytecode = nullptr;
+static ID3DBlob* g_pD3D11JITVSBytecode = nullptr; // JIT-compiled VS bytecode for current draw
+static ID3D11VertexShader* g_pD3D11JITCurrentVS = nullptr; // Currently active JIT VS
 
 extern bool g_bUsePassthroughHLSL; // defined in HostDevice.cpp
 
@@ -169,17 +172,32 @@ void CxbxUpdateHostVertexShader()
 		// The start address comes from CSV0_C CHEOPS_PROGRAM_START, which
 		// the puller sets from NV097_SET_TRANSFORM_PROGRAM_START.
 		xbox::dword_xt *pTokens = nullptr;
-		{
-			PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
-			uint32_t startAddr = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
-				NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START);
-			if (startAddr < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH) {
-				pTokens = (xbox::dword_xt*)&pg->program_data[startAddr][0];
-			}
+		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+		uint32_t startAddr = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
+			NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START);
+		if (startAddr < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH) {
+			pTokens = (xbox::dword_xt*)&pg->program_data[startAddr][0];
 		}
 		if (!pTokens) {
 			LOG_TEST_CASE("PGRAPH program_data not available");
 			return;
+		}
+
+		// Try JIT compilation first (10-100x faster than interpreter)
+		{
+			ID3DBlob* pJITBytecode = nullptr;
+			ID3D11VertexShader* pJITVS = CxbxJITVertexShader(
+				pg->program_data, startAddr, g_pD3DDevice, &pJITBytecode);
+			if (pJITVS) {
+				// Release previous JIT bytecode ref
+				if (g_pD3D11JITVSBytecode) { g_pD3D11JITVSBytecode->Release(); g_pD3D11JITVSBytecode = nullptr; }
+				g_pD3D11JITVSBytecode = pJITBytecode;
+				g_pD3D11JITCurrentVS = pJITVS;
+				HRESULT hRet = CxbxSetVertexShader(pJITVS);
+				DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(JIT)");
+
+				return; // Skip interpreter path
+			}
 		}
 
 		if (g_bUseVSInterpreter && CxbxD3D11InitVSInterpreter()) {
@@ -198,6 +216,11 @@ ID3DBlob* CxbxGetActiveVertexShaderBytecode()
 	// Return passthrough bytecode when the passthrough HLSL shader is active
 	if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL)
 		return g_pD3D11PassthroughBytecode;
+	// JIT-compiled VS provides its own bytecode
+	if (g_pD3D11JITVSBytecode &&
+		(g_Xbox_VertexShaderMode == VertexShaderMode::ShaderProgram ||
+		 g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough))
+		return g_pD3D11JITVSBytecode;
 	// VS interpreter provides its own bytecode for input layout creation
 	if (g_bUseVSInterpreter && g_pD3D11VSInterpreterBytecode &&
 		(g_Xbox_VertexShaderMode == VertexShaderMode::ShaderProgram ||

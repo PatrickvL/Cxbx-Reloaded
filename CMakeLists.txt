@@ -361,6 +361,8 @@ file (GLOB CXBXR_SOURCE_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_Draw.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_VertexFetch.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_PageTracker.cpp"
+ "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/CxbxVertexShaderJIT.cpp"
+ "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/CxbxPixelShaderJIT.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/RenderGlobals.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Patches/EmuPatches_Device.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Patches/EmuPatches_Draw.cpp"
@@ -673,6 +675,48 @@ foreach(I RANGE 0 ${SHADER_LAST})
 
     list(APPEND CSO_HEADERS "${HDR_PATH}")
 endforeach()
+
+# ---------------------------------------------------------------------------
+# Specialized shader variants — compile the same HLSL source with different
+# /D defines to produce optimized variants for common configurations.
+# ---------------------------------------------------------------------------
+
+# Helper: compile a variant with extra /D defines
+# Args: HLSL_FILE PROFILE ARRAY_NAME DEFINES (semicolon-separated /Dkey=val)
+function(compile_shader_variant HLSL_FILE PROFILE ARRAY_NAME)
+    set(EXTRA_DEFINES ${ARGN})
+    set(HLSL_PATH "${CXBXR_HLSL_DIR}/${HLSL_FILE}")
+    set(CSO_PATH "${SHADER_OUT_DIR}/${ARRAY_NAME}.cso")
+    set(HDR_PATH "${SHADER_OUT_DIR}/${ARRAY_NAME}.h")
+
+    add_custom_command(
+        OUTPUT "${CSO_PATH}"
+        COMMAND fxc /nologo /T ${PROFILE} /E main /O1
+                /I "${CXBXR_HLSL_DIR}"
+                ${EXTRA_DEFINES}
+                /Fo "${CSO_PATH}"
+                "${HLSL_PATH}"
+        DEPENDS "${HLSL_PATH}" ${CXBXR_HLSLI_DEPS}
+        COMMENT "HLSL->CSO variant: ${ARRAY_NAME} (${PROFILE})"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${HDR_PATH}"
+        COMMAND ${CMAKE_COMMAND}
+                -DCSO_FILE=${CSO_PATH}
+                -DHEADER_FILE=${HDR_PATH}
+                -DARRAY_NAME=${ARRAY_NAME}
+                -P "${CSO_HEADER_SCRIPT}"
+        DEPENDS "${CSO_PATH}" "${CSO_HEADER_SCRIPT}"
+        COMMENT "CSO->header: ${ARRAY_NAME}.h"
+        VERBATIM
+    )
+    # Propagate to parent scope
+    set(CSO_HEADERS ${CSO_HEADERS} "${HDR_PATH}" PARENT_SCOPE)
+endfunction()
+
+# RC Pixel Shader — single base variant (JIT replaces specialized variants)
+# VS Interpreter — single base variant (JIT replaces NoCtx optimization)
 
 add_custom_target(compile-shaders ALL DEPENDS ${CSO_HEADERS})
 set_target_properties(compile-shaders PROPERTIES FOLDER "Cxbx-Reloaded/tools")
