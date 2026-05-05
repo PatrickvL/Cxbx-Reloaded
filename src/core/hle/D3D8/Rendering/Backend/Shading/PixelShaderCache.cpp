@@ -969,7 +969,17 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
 
     PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
 
-    // Capture current state
+    // Fast path: if PGRAPH registers haven't changed since last call,
+    // the combiner topology is identical — return cached result directly
+    // without rebuilding the key or hashing.
+    static uint32_t s_LastPSRegsGen = ~0u;
+    static ID3D11PixelShader* s_LastPSResult = nullptr;
+    static PSJITKey s_LastKey = {};
+    if (pg->regs_generation == s_LastPSRegsGen)
+        return s_LastPSResult;
+
+    // Capture current state — read directly from PGRAPH registers
+    // (no dependency on g_LastPSAuxCB or CxbxD3D11UploadRCInterpreterState)
     PSJITKey key = {};
     key.combinectl = pg->regs[0x1940 >> 2];
     key.numStages = key.combinectl & 0xFF;
@@ -1009,13 +1019,25 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     key.alphaKill[2] = aux.AlphaKill.z;
     key.alphaKill[3] = aux.AlphaKill.w;
 
+    // Second fast path: if the key matches the last one (combiner state unchanged
+    // despite regs_generation bumping from non-combiner register writes like VS
+    // constants), skip the expensive hash + mutex + map lookup.
+    if (memcmp(&key, &s_LastKey, sizeof(PSJITKey)) == 0) {
+        s_LastPSRegsGen = pg->regs_generation;
+        return s_LastPSResult;
+    }
+
     // Hash and cache lookup
     uint64_t hash = HashKey(key);
     {
         std::lock_guard<std::mutex> lock(g_PSJITMutex);
         auto it = g_PSJITCache.find(hash);
-        if (it != g_PSJITCache.end())
-            return it->second.pPS; // nullptr = known failure
+        if (it != g_PSJITCache.end()) {
+            s_LastKey = key;
+            s_LastPSRegsGen = pg->regs_generation;
+            s_LastPSResult = it->second.pPS;
+            return s_LastPSResult; // nullptr = known failure
+        }
     }
 
     EmuLog(LOG_LEVEL::DEBUG, "PS JIT: new key hash=%016llX stages=%u texModes=0x%08X fcABCD=0x%08X fcEFG=0x%08X combinectl=0x%08X",
@@ -1034,6 +1056,9 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
         if (SUCCEEDED(hr)) {
             std::lock_guard<std::mutex> lock(g_PSJITMutex);
             g_PSJITCache[hash] = { pPS };
+            s_LastKey = key;
+            s_LastPSRegsGen = pg->regs_generation;
+            s_LastPSResult = pPS;
             return pPS;
         }
         // Fall through to recompile if cached blob is invalid
@@ -1060,6 +1085,9 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
         // Cache the failure
         std::lock_guard<std::mutex> lock(g_PSJITMutex);
         g_PSJITCache[hash] = { nullptr };
+        s_LastKey = key;
+        s_LastPSRegsGen = pg->regs_generation;
+        s_LastPSResult = nullptr;
         return nullptr;
     }
     if (pErrors) pErrors->Release();
@@ -1073,6 +1101,9 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
         EmuLog(LOG_LEVEL::WARNING, "PS JIT CreatePixelShader failed (0x%08X)", hr);
         std::lock_guard<std::mutex> lock(g_PSJITMutex);
         g_PSJITCache[hash] = { nullptr };
+        s_LastKey = key;
+        s_LastPSRegsGen = pg->regs_generation;
+        s_LastPSResult = nullptr;
         return nullptr;
     }
 
@@ -1085,5 +1116,8 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     // Cache
     std::lock_guard<std::mutex> lock(g_PSJITMutex);
     g_PSJITCache[hash] = { pPS };
+    s_LastKey = key;
+    s_LastPSRegsGen = pg->regs_generation;
+    s_LastPSResult = pPS;
     return pPS;
 }

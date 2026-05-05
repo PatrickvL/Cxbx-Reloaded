@@ -261,6 +261,8 @@ void CxbxD3D11UploadRCInterpreterState()
 	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
 	// Only re-upload when regs actually changed (generation counter bumped
 	// by nv097_dispatch_method on any register write).
+	// NOTE: Both JIT and interpreter shaders read dynamic constants (C0/C1,
+	// fog color, bump matrices) from this SRV at runtime, so upload is required.
 	{
 		static uint32_t s_LastRegsGeneration = ~0u;
 		if (pg->regs_generation != s_LastRegsGeneration) {
@@ -449,7 +451,8 @@ void CxbxUpdateActivePixelShader() // NOPATCH
 	}
   }
 
-  // Upload combiner state first (needed by both JIT and interpreter — same bindings)
+  // Upload combiner state (aux CB + regs SRV). The JIT needs g_LastPSAuxCB for
+  // key building, and the interpreter needs both the aux CB and regs SRV.
   CxbxD3D11UploadRCInterpreterState();
 
   // Try JIT-compiled pixel shader first
