@@ -150,6 +150,9 @@ void LookupTrampolinesD3D();
 // initialize render window
 extern void CxbxInitWindow();
 
+// Save window state (position, size, faux fullscreen) to shared memory for reboot persistence
+extern void CxbxSaveWindowStateForReboot();
+
 void CxbxUpdateNativeD3DResources();
 
 // Shader constant helpers

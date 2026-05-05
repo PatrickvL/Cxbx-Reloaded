@@ -30,8 +30,20 @@ static bool g_bIsFauxFullscreen = false;
 static int g_iWireframe = 0; // wireframe toggle
 bool g_bUsePassthroughHLSL = true;
 
+void CxbxSaveWindowStateForReboot()
+{
+	if (g_hEmuWindow == NULL)
+		return;
+
+	RECT rect;
+	if (GetWindowRect(g_hEmuWindow, &rect)) {
+		g_EmuShared->SetSavedWindowState(&rect, g_bIsFauxFullscreen);
+	}
+}
+
 // Forward declarations (defined later in this file)
 LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+void ToggleFauxFullscreen(HWND hWnd);
 
 // Forward declarations (defined in XbPushBuffer.cpp)
 extern void D3D11_init_pgraph_plugins();
@@ -133,6 +145,27 @@ DWORD WINAPI EmuRenderWindow(LPVOID lpParam)
 
    	ShowWindow(g_hEmuWindow, ((CxbxKrnl_hEmuParent == 0) || g_XBVideo.bFullScreen) ? SW_SHOWDEFAULT : SW_SHOWMAXIMIZED);
    	UpdateWindow(g_hEmuWindow);
+
+	// Restore window state from a previous reboot (secondary XBE load)
+	{
+		RECT savedRect;
+		bool bSavedFaux, bValid;
+		g_EmuShared->GetSavedWindowState(&savedRect, &bSavedFaux, &bValid);
+		if (bValid) {
+			g_EmuShared->ClearSavedWindowState();
+			if (bSavedFaux) {
+				// Restore faux fullscreen mode
+				ToggleFauxFullscreen(g_hEmuWindow);
+			} else if (!g_XBVideo.bFullScreen && !CxbxKrnl_hEmuParent) {
+				// Restore standalone window position and size
+				SetWindowPos(g_hEmuWindow, NULL,
+					savedRect.left, savedRect.top,
+					savedRect.right - savedRect.left,
+					savedRect.bottom - savedRect.top,
+					SWP_NOZORDER | SWP_NOACTIVATE);
+			}
+		}
+	}
 
    	if(!g_XBVideo.bFullScreen && (CxbxKrnl_hEmuParent != NULL))
    	{

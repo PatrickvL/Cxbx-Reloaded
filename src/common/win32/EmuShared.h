@@ -252,6 +252,27 @@ class EmuShared : public Mutex
 		void SetDataLocation(const char *path) { Lock(); strncpy(m_core.szStorageLocation, path, xbox::max_path); Unlock(); }
 
 		// ******************************************************************
+		// * Window state Accessors (for preserving across reboot)
+		// ******************************************************************
+		void GetSavedWindowState(RECT *rect, bool *bFauxFullscreen, bool *bValid)
+		{
+			Lock();
+			*rect = m_SavedWindowRect;
+			*bFauxFullscreen = m_bSavedFauxFullscreen;
+			*bValid = m_bSavedWindowStateValid;
+			Unlock();
+		}
+		void SetSavedWindowState(const RECT *rect, bool bFauxFullscreen)
+		{
+			Lock();
+			m_SavedWindowRect = *rect;
+			m_bSavedFauxFullscreen = bFauxFullscreen;
+			m_bSavedWindowStateValid = true;
+			Unlock();
+		}
+		void ClearSavedWindowState() { Lock(); m_bSavedWindowStateValid = false; Unlock(); }
+
+		// ******************************************************************
 		// * ClipCursor flag Accessors
 		// ******************************************************************
 		void GetClipCursorFlag(bool *value) { Lock(); *value = m_bClipCursor; Unlock(); }
@@ -392,6 +413,11 @@ class EmuShared : public Mutex
 		overlay_settings m_imgui_overlay_settings;
 		imgui_audio_windows m_imgui_audio_windows;
 		imgui_video_windows m_imgui_video_windows;
+
+		// Window state saved across reboots
+		RECT         m_SavedWindowRect;
+		bool         m_bSavedFauxFullscreen;
+		bool         m_bSavedWindowStateValid;
 };
 
 // ******************************************************************

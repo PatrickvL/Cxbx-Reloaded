@@ -44,6 +44,7 @@
 #include "devices\Xbox.h" // For g_SMBus, SMBUS_ADDRESS_SYSTEM_MICRO_CONTROLLER
 #include "devices\SMCDevice.h" // For SMC_COMMAND_SCRATCH
 #include "core\kernel\memory-manager\VMManager.h"
+#include "core\hle\D3D8\Rendering\RenderGlobals.h" // For CxbxSaveWindowStateForReboot
 #include "common/FilePaths.hpp"
 
 #include <algorithm> // for std::replace
@@ -567,6 +568,9 @@ XBSYSAPI EXPORTNUM(49) xbox::void_xt DECLSPEC_NORETURN NTAPI xbox::HalReturnToFi
 				QuickReboot |= BOOT_QUICK_REBOOT;
 				g_EmuShared->SetBootFlags(&QuickReboot);
 				is_reboot = true;
+
+				// Save window state so the new process can restore position/fullscreen
+				CxbxSaveWindowStateForReboot();
 
 				g_VMManager.SavePersistentMemory();
 
