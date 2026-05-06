@@ -1035,6 +1035,12 @@ HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice, U
 {
 	LOG_INIT;
 	HRESULT hRet;
+
+	// D3D11 automatically unbinds any SRV referencing the new render target
+	// (resource hazard prevention). Mark SRVs dirty so the next draw call
+	// rebinds PS SRVs, without forcing expensive full texture re-upload.
+	extern void CxbxMarkTextureSRVsDirty();
+	CxbxMarkTextureSRVsDirty();
 	if (pHostRenderTarget == nullptr) {
 		g_pD3DCurrentHostRenderTarget = g_pD3DBackBufferSurface;
 		if (g_pD3DCurrentRTV != nullptr && g_pD3DCurrentRTV != g_pD3DBackBufferView) {
@@ -1131,6 +1137,10 @@ HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice, U
 
 void CxbxSetDepthStencilSurface(ID3D11Texture2D* pHostDepthStencil)
 {
+	// D3D11 unbinds SRVs that conflict with the new DSV resource
+	extern void CxbxMarkTextureSRVsDirty();
+	CxbxMarkTextureSRVsDirty();
+
 	ID3D11DepthStencilView* pDSV = nullptr;
 	if (pHostDepthStencil != nullptr) {
 		D3D11_TEXTURE2D_DESC texDesc = {};

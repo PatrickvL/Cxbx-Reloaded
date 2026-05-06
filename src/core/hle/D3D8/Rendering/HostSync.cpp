@@ -85,6 +85,16 @@ static uint32_t s_CachedTexFmt[4] = {};
 // Must be called whenever PS SRV bindings are disturbed externally
 // (e.g., blit/present unbinding slot 0, CS dispatch unbinding all slots).
 static bool s_TextureSRVsDirty = false;
+
+// Lightweight: only forces SRV rebinding on next draw without trashing
+// the register cache (avoids expensive full texture re-upload).
+// Clears cached resource pointers so the full lookup path runs and
+// correctly resolves RT-as-texture scenarios.
+void CxbxMarkTextureSRVsDirty()
+{
+    s_TextureSRVsDirty = true;
+}
+
 void CxbxInvalidateTextureStateCache()
 {
     // Setting cached values to ~0 guarantees the fast-path check will detect a "change"
@@ -137,9 +147,10 @@ void CxbxUpdateHostTextures()
 				anyChanged = true;
 			}
 		}
-		if (!anyChanged)
-			return; // All texture state unchanged — skip expensive work
-		s_TextureStateGeneration++; // Signal CxbxUpdateHostTextureScaling
+		if (!anyChanged && !s_TextureSRVsDirty)
+			return; // All texture state unchanged and SRVs still bound — skip expensive work
+		if (anyChanged)
+			s_TextureStateGeneration++; // Signal CxbxUpdateHostTextureScaling
 	}
 
 	// Set the host texture for each stage
@@ -180,9 +191,11 @@ void CxbxUpdateHostTextures()
 			// Check if this texture offset corresponds to a render target:
 			// the game may render caustics/shadows to an offscreen RT, then
 			// sample that RT as a texture in a later draw.
-			// Exclude the current depth/stencil surface (identified by PGRAPH
-			// surface_zeta.offset) — it cannot be sampled while bound as depth.
-			if (texOffset != pg->surface_zeta.offset) {
+			// Only treat as RT-texture if the offset is NOT the currently bound
+			// color surface (sampling the active RT is undefined) and is not the
+			// current depth surface (can't sample while bound as DSV).
+			if (texOffset != pg->surface_zeta.offset
+				&& texOffset != pg->surface_color.offset) {
 				auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
 				if (pPgraphRT) {
 					pHostBaseTexture = pPgraphRT;
