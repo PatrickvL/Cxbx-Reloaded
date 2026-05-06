@@ -795,9 +795,9 @@ void GetScreenScaleFactors(float& scaleX, float& scaleY) {
 // e.g. a raw 1280*960 rendertarget with 2x MSAA would be have a base 640*480
 void GetRenderTargetBaseDimensions(float& x, float& y) {
 	// Read render target dimensions from PGRAPH surface clip (replaces HLE g_pXbox_RenderTarget lookup)
-	auto& pg = g_NV2A->GetDeviceState()->pgraph;
-	x = (float)pg.surface_shape.clip_width;
-	y = (float)pg.surface_shape.clip_height;
+	auto surf = NV2AGetSurfaceState();
+	x = (float)surf.clipWidth;
+	y = (float)surf.clipHeight;
 
 	float aaX, aaY;
 	GetMultiSampleScaleRaw(aaX, aaY);

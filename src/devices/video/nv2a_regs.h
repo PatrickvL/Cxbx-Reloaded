@@ -341,6 +341,9 @@
 #   define NV_PGRAPH_RDI_INDEX_SELECT                         0x01FF0000
 #define NV_PGRAPH_RDI_DATA                               0x00000754
 #define NV_PGRAPH_FFINTFC_ST2                            0x00000764
+#define NV_PGRAPH_DMA_PITCH                              0x00000770
+#   define NV_PGRAPH_DMA_PITCH_COLOR                          0x0000FFFF
+#   define NV_PGRAPH_DMA_PITCH_ZETA                           0xFFFF0000
 #define NV_PGRAPH_CHANNEL_CTX_TABLE                      0x00000780
 #   define NV_PGRAPH_CHANNEL_CTX_TABLE_INST                   0x0000FFFF
 #define NV_PGRAPH_CHANNEL_CTX_POINTER                    0x00000784
@@ -348,6 +351,10 @@
 #define NV_PGRAPH_CHANNEL_CTX_TRIGGER                    0x00000788
 #   define NV_PGRAPH_CHANNEL_CTX_TRIGGER_READ_IN                (1 << 0)
 #   define NV_PGRAPH_CHANNEL_CTX_TRIGGER_WRITE_OUT              (1 << 1)
+#define NV_PGRAPH_BOFFSET3                               0x0000082C
+#define NV_PGRAPH_BOFFSET4                               0x00000830
+#define NV_PGRAPH_BPITCH3                                0x0000085C
+#define NV_PGRAPH_BPITCH4                                0x00000860
 #define NV_PGRAPH_DEBUG_2                                0x00000880
 #define NV_PGRAPH_TTILE(i)                               0x00000900 + (i * 0x10)
 #define NV_PGRAPH_TLIMIT(i)                              0x00000904 + (i * 0x10)
@@ -607,6 +614,12 @@
 #define NV_PGRAPH_SHADOWZSLOPETHRESHOLD                  0x000019A8
 #define NV_PGRAPH_SPECFOGFACTOR0                         0x000019AC
 #define NV_PGRAPH_SPECFOGFACTOR1                         0x000019B0
+#define NV_PGRAPH_SURFACECLIPX                           0x000019B4
+#   define NV_PGRAPH_SURFACECLIPX_X                           0x0000FFFF
+#   define NV_PGRAPH_SURFACECLIPX_WIDTH                       0xFFFF0000
+#define NV_PGRAPH_SURFACECLIPY                           0x000019B8
+#   define NV_PGRAPH_SURFACECLIPY_Y                           0x0000FFFF
+#   define NV_PGRAPH_SURFACECLIPY_HEIGHT                      0xFFFF0000
 #define NV_PGRAPH_TEXADDRESS0                            0x000019BC
 #   define NV_PGRAPH_TEXADDRESS0_ADDRU                          0x00000007
 #       define NV_PGRAPH_TEXADDRESS0_ADDRU_WRAP                      1

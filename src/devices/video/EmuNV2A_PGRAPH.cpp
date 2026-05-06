@@ -673,7 +673,7 @@ void pgraph_handle_method(NV2AState *d,
 
 		case NV097_SET_SURFACE_CLIP_HORIZONTAL:
 			pgraph_update_surface(d, false, true, true);
-
+			// Register write handled by method table -> NV_PGRAPH_SURFACECLIPX
 			pg->surface_shape.clip_x =
 				GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_X);
 			pg->surface_shape.clip_width =
@@ -681,7 +681,7 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		case NV097_SET_SURFACE_CLIP_VERTICAL:
 			pgraph_update_surface(d, false, true, true);
-			
+			// Register write handled by method table -> NV_PGRAPH_SURFACECLIPY
 			pg->surface_shape.clip_y =
 				GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_Y);
 			pg->surface_shape.clip_height =
@@ -705,25 +705,19 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		case NV097_SET_SURFACE_PITCH:
 			pgraph_update_surface(d, false, true, true);
-
-			pg->surface_color.pitch =
-				GET_MASK(parameter, NV097_SET_SURFACE_PITCH_COLOR);
-			pg->surface_zeta.pitch =
-				GET_MASK(parameter, NV097_SET_SURFACE_PITCH_ZETA);
-        pg->surface_color.buffer_dirty = true;
-        pg->surface_zeta.buffer_dirty = true;
+			// Register write handled by method table -> NV_PGRAPH_DMA_PITCH
+			pg->surface_color.buffer_dirty = true;
+			pg->surface_zeta.buffer_dirty = true;
 			break;
 		case NV097_SET_SURFACE_COLOR_OFFSET:
 			pgraph_update_surface(d, false, true, true);
-
-			pg->surface_color.offset = parameter;
-        pg->surface_color.buffer_dirty = true;
+			// Register write handled by method table -> NV_PGRAPH_BOFFSET3
+			pg->surface_color.buffer_dirty = true;
 			break;
 		case NV097_SET_SURFACE_ZETA_OFFSET:
 			pgraph_update_surface(d, false, true, true);
-
-			pg->surface_zeta.offset = parameter;
-        pg->surface_zeta.buffer_dirty = true;
+			// Register write handled by method table -> NV_PGRAPH_BOFFSET4
+			pg->surface_zeta.buffer_dirty = true;
 			break;
 
 		case NV097_SET_CONTROL0: {

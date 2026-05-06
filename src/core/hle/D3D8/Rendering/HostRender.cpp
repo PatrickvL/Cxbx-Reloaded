@@ -494,7 +494,8 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	if (!isPassthrough) {
 		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
 		// Derive Z output scale from PGRAPH depth surface format (replaces HLE g_ZScale)
-		switch (pg_z->surface_shape.zeta_format) {
+		auto surf = NV2AGetSurfaceState(pg_z);
+		switch (surf.zetaFormat) {
 			case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   zOutputScale = 65535.0f;    break;
 			case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: zOutputScale = 16777215.0f; break;
 			default:                                  zOutputScale = 65535.0f;    break;
@@ -647,7 +648,7 @@ void UpdateFixedFunctionVertexShaderState()
 
 			// Z-buffer depth scale from surface format
 			float sz = 1.0f;
-			switch (pg->surface_shape.zeta_format) {
+			switch (NV2AGetSurfaceState(pg).zetaFormat) {
 				case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   sz = 65535.0f;    break;
 				case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: sz = 16777215.0f; break;
 				default:                                  sz = 65535.0f;    break;
@@ -745,7 +746,7 @@ void UpdateFixedFunctionVertexShaderState()
 	float pointScale_B = pg->point_params[1];
 	float pointScale_C = pg->point_params[2];
 	// Read render target height from PGRAPH surface clip (replaces HLE g_pXbox_RenderTarget lookup)
-	float renderTargetHeight = (float)pg->surface_shape.clip_height;
+	float renderTargetHeight = (float)NV2AGetSurfaceState(pg).clipHeight;
 	// Make sure to disable point scaling when point sprites are not enabled
 	PointScaleEnable &= PointSpriteEnable;
 	// Set variables in shader state

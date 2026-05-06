@@ -203,8 +203,8 @@ void CxbxUpdateHostTextures()
 			// Only treat as RT-texture if the offset is NOT the currently bound
 			// color surface (sampling the active RT is undefined) and is not the
 			// current depth surface (can't sample while bound as DSV).
-			if (texOffset != pg->surface_zeta.offset
-				&& texOffset != pg->surface_color.offset) {
+			if (texOffset != pg->regs[RI(NV_PGRAPH_BOFFSET4)]
+				&& texOffset != pg->regs[RI(NV_PGRAPH_BOFFSET3)]) {
 				auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
 				if (pPgraphRT) {
 					pHostBaseTexture = pPgraphRT;
@@ -432,7 +432,7 @@ void CxbxUpdateHostTextureScaling()
 			s_LastTexGen = s_TextureStateGeneration;
 			anyChanged = true;
 		}
-		uint32_t surfColor = pg->surface_color.offset;
+		uint32_t surfColor = pg->regs[RI(NV_PGRAPH_BOFFSET3)];
 		if (surfColor != s_LastSurfColor) { s_LastSurfColor = surfColor; anyChanged = true; }
 		for (int i = 0; i < 4; i++) {
 			uint32_t rect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + i * 4)];
@@ -501,7 +501,7 @@ void CxbxUpdateHostTextureScaling()
 			float height = (float)(texImageRect & 0x1FFF);
 
 			// Account for MSAA when texture is the current render target (backbuffer)
-			if (texOffset == pg->surface_color.offset) {
+			if (texOffset == pg->regs[RI(NV_PGRAPH_BOFFSET3)]) {
 				// Test case: Max Payne 2 (bullet time)
 				// Use PGRAPH anti_aliasing directly instead of g_Xbox_MultiSampleType HLE global
 				if (pg->surface_shape.anti_aliasing != NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1) {

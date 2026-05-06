@@ -42,6 +42,7 @@
 #include "core/common/video/RenderBase.hpp" // For g_renderbase
 #include "devices/video/nv2a.h" // For g_NV2A, PGRAPHState
 #include "devices/video/nv2a_int.h" // For NV** defines
+#include "core/hle/D3D8/Rendering/NV2A_PGRAPH_Helpers.h"
 #include "Logging.h"
 
 // TODO: Find somewhere to put this that doesn't conflict with xbox::
@@ -280,7 +281,7 @@ void D3D11_draw_clear(NV2AState *d)
 	// Z24S8 (format 2): 24-bit depth in bits [31:8], 8-bit stencil in bits [7:0]
 	float z;
 	DWORD stencil;
-	unsigned int zeta_format = pg->surface_shape.zeta_format;
+	unsigned int zeta_format = NV2AGetSurfaceState(pg).zetaFormat;
 	if (zeta_format == NV097_SET_SURFACE_FORMAT_ZETA_Z16) {
 		z = (float)(zstencil & 0xFFFF) / (float)0xFFFF;
 		stencil = 0;

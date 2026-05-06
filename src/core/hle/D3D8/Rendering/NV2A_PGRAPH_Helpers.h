@@ -14,6 +14,7 @@
 #include <cstdint>
 
 struct NV2AState; // Forward declaration
+struct PGRAPHState; // Forward declaration
 
 // ---- Texture Stage State ----
 
@@ -78,11 +79,16 @@ NV2ATextureControl NV2AGetTextureControl(NV2AState* d, int stage);
 NV2ATextureControl NV2AGetTextureControl(int stage);
 
 // ---- Surface State ----
-// Unlike textures (which have explicit NV_PGRAPH_TEX* MMIO registers),
-// NV2A surfaces have no register-file representation.  The NV097
-// SET_SURFACE_* methods write to internal PGRAPH side-structs (surface_color,
-// surface_zeta, surface_shape) which are the canonical storage.  This helper
-// reads those structs directly.
+// NV2A surfaces use the same PGRAPH register file as textures.
+// NV097 SET_SURFACE_* methods write to these PGRAPH registers:
+//   NV_PGRAPH_SURFACECLIPX  (0x19B4) - clip_x and clip_width
+//   NV_PGRAPH_SURFACECLIPY  (0x19B8) - clip_y and clip_height
+//   NV_PGRAPH_DMA_PITCH     (0x0770) - color pitch (15:0), zeta pitch (31:16)
+//   NV_PGRAPH_BOFFSET3      (0x082C) - color surface offset
+//   NV_PGRAPH_BOFFSET4      (0x0830) - zeta surface offset
+// Format fields (color_format, zeta_format, anti_aliasing) are decomposed
+// from NV097_SET_SURFACE_FORMAT into the surface_shape struct (no single
+// register holds the full format parameter).
 
 struct NV2ASurfaceState {
 	uint32_t colorOffset;     // Raw color surface offset (relative to dma_color context)
@@ -99,6 +105,7 @@ struct NV2ASurfaceState {
 
 // Read current surface configuration from PGRAPH.
 NV2ASurfaceState NV2AGetSurfaceState(NV2AState* d);
+NV2ASurfaceState NV2AGetSurfaceState(PGRAPHState* pg);
 NV2ASurfaceState NV2AGetSurfaceState();
 
 // ---- DMA Resolution ----

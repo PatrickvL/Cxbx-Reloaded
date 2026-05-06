@@ -103,17 +103,28 @@ NV2ATextureControl NV2AGetTextureControl(NV2AState* d, int stage)
 
 NV2ASurfaceState NV2AGetSurfaceState(NV2AState* d)
 {
-	NV2ASurfaceState result = {};
-	auto pg = &d->pgraph;
+	return NV2AGetSurfaceState(&d->pgraph);
+}
 
-	result.colorOffset = pg->surface_color.offset;
-	result.zetaOffset = pg->surface_zeta.offset;
-	result.colorPitch = pg->surface_color.pitch;
-	result.zetaPitch = pg->surface_zeta.pitch;
-	result.clipX = pg->surface_shape.clip_x;
-	result.clipY = pg->surface_shape.clip_y;
-	result.clipWidth = pg->surface_shape.clip_width;
-	result.clipHeight = pg->surface_shape.clip_height;
+NV2ASurfaceState NV2AGetSurfaceState(PGRAPHState* pg)
+{
+	NV2ASurfaceState result = {};
+
+	result.colorOffset = pg->regs[RI(NV_PGRAPH_BOFFSET3)];
+	result.zetaOffset = pg->regs[RI(NV_PGRAPH_BOFFSET4)];
+
+	uint32_t dmaPitch = pg->regs[RI(NV_PGRAPH_DMA_PITCH)];
+	result.colorPitch = GET_MASK(dmaPitch, NV_PGRAPH_DMA_PITCH_COLOR);
+	result.zetaPitch = GET_MASK(dmaPitch, NV_PGRAPH_DMA_PITCH_ZETA);
+
+	uint32_t clipX = pg->regs[RI(NV_PGRAPH_SURFACECLIPX)];
+	result.clipX = GET_MASK(clipX, NV_PGRAPH_SURFACECLIPX_X);
+	result.clipWidth = GET_MASK(clipX, NV_PGRAPH_SURFACECLIPX_WIDTH);
+
+	uint32_t clipY = pg->regs[RI(NV_PGRAPH_SURFACECLIPY)];
+	result.clipY = GET_MASK(clipY, NV_PGRAPH_SURFACECLIPY_Y);
+	result.clipHeight = GET_MASK(clipY, NV_PGRAPH_SURFACECLIPY_HEIGHT);
+
 	result.antiAliasing = pg->surface_shape.anti_aliasing;
 	result.colorFormat = pg->surface_shape.color_format;
 	result.zetaFormat = pg->surface_shape.zeta_format;

@@ -483,7 +483,7 @@ static void CreateHostPixelContainer(
 	if (EmuXBFormatIsDepthBuffer(X_Format)) {
 		D3DUsage |= D3DUSAGE_DEPTHSTENCIL;
 	}
-	else if (VirtualAddr != 0 && (VirtualAddr & ~PHYSICAL_MAP_BASE) == g_NV2A->GetDeviceState()->pgraph.surface_color.offset) {
+	else if (VirtualAddr != 0 && (VirtualAddr & ~PHYSICAL_MAP_BASE) == g_NV2A->GetDeviceState()->pgraph.regs[RI(NV_PGRAPH_BOFFSET3)]) {
 		// Resource data matches current PGRAPH color render target address
 		if (EmuXBFormatIsRenderTarget(X_Format))
 			D3DUsage |= D3DUSAGE_RENDERTARGET;

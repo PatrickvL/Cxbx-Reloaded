@@ -24,6 +24,7 @@
 #include "Backend_D3D11_Internal.h"
 #include "Backend_D3D11_PageTracker.h"
 #include "devices\video\nv2a.h"        // PGRAPHState, nv2a_regs.h, GET_MASK, RI
+#include "core\hle\D3D8\Rendering\NV2A_PGRAPH_Helpers.h"
 #include <algorithm>                    // std::min
 #include <unordered_map>
 
@@ -493,7 +494,7 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 	{
 		static uint32_t s_LastVpOff[4] = { ~0u, ~0u, ~0u, ~0u };
 		static uint32_t s_LastVpScl[4] = { ~0u, ~0u, ~0u, ~0u };
-		static uint32_t s_LastClipX = ~0u, s_LastClipY = ~0u, s_LastClipW = ~0u, s_LastClipH = ~0u;
+		static uint32_t s_LastClipX = ~0u, s_LastClipY = ~0u;
 		static uint32_t s_LastAA = ~0u;
 		static VertexShaderMode s_LastMode = (VertexShaderMode)~0u;
 		bool changed = false;
@@ -505,10 +506,8 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 				s_LastVpScl[i] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][i]; changed = true;
 			}
 		}
-		if (pg->surface_shape.clip_x != s_LastClipX) { s_LastClipX = pg->surface_shape.clip_x; changed = true; }
-		if (pg->surface_shape.clip_y != s_LastClipY) { s_LastClipY = pg->surface_shape.clip_y; changed = true; }
-		if (pg->surface_shape.clip_width != s_LastClipW) { s_LastClipW = pg->surface_shape.clip_width; changed = true; }
-		if (pg->surface_shape.clip_height != s_LastClipH) { s_LastClipH = pg->surface_shape.clip_height; changed = true; }
+		if (pg->regs[RI(NV_PGRAPH_SURFACECLIPX)] != s_LastClipX) { s_LastClipX = pg->regs[RI(NV_PGRAPH_SURFACECLIPX)]; changed = true; }
+		if (pg->regs[RI(NV_PGRAPH_SURFACECLIPY)] != s_LastClipY) { s_LastClipY = pg->regs[RI(NV_PGRAPH_SURFACECLIPY)]; changed = true; }
 		if (pg->surface_shape.anti_aliasing != s_LastAA) { s_LastAA = pg->surface_shape.anti_aliasing; changed = true; }
 		if (g_Xbox_VertexShaderMode != s_LastMode) { s_LastMode = g_Xbox_VertexShaderMode; changed = true; }
 		if (!changed) return;
@@ -574,14 +573,15 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 
 		// Apply AA factor first (from surface_shape.anti_aliasing), then upscale.
 		// Matches xemu: pgraph_apply_anti_aliasing_factor then pgraph_apply_scaling_factor.
-		unsigned int clipX = pg->surface_shape.clip_x;
-		unsigned int clipY = pg->surface_shape.clip_y;
-		unsigned int clipW = pg->surface_shape.clip_width;
-		unsigned int clipH = pg->surface_shape.clip_height;
+		auto surf = NV2AGetSurfaceState(pg);
+		unsigned int clipX = surf.clipX;
+		unsigned int clipY = surf.clipY;
+		unsigned int clipW = surf.clipWidth;
+		unsigned int clipH = surf.clipHeight;
 
 		// AA factor: matches pgraph_apply_anti_aliasing_factor in EmuNV2A_PGRAPH.cpp
 		unsigned int aaFactorX = 1, aaFactorY = 1;
-		switch (pg->surface_shape.anti_aliasing) {
+		switch (surf.antiAliasing) {
 		case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
 			aaFactorX = 2;
 			aaFactorY = 1;
@@ -884,15 +884,16 @@ static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 
 void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 {
-	xbox::addr_xt colorOffset = pg->surface_color.offset;
-	xbox::addr_xt zetaOffset  = pg->surface_zeta.offset;
+	auto surf = NV2AGetSurfaceState(pg);
+	xbox::addr_xt colorOffset = surf.colorOffset;
+	xbox::addr_xt zetaOffset  = surf.zetaOffset;
 
 	// Skip if nothing changed
 	if (colorOffset == g_LastBoundColorOffset && zetaOffset == g_LastBoundZetaOffset)
 		return;
 
-	UINT rtWidth = pg->surface_shape.clip_width;
-	UINT rtHeight = pg->surface_shape.clip_height;
+	UINT rtWidth = surf.clipWidth;
+	UINT rtHeight = surf.clipHeight;
 
 	// Color render target
 	if (colorOffset != g_LastBoundColorOffset && colorOffset != 0) {
@@ -901,7 +902,7 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		UINT faceIndex = 0;
 
 		// Create host RT directly from PGRAPH surface state
-		DXGI_FORMAT colorFmt = NV097ColorFormatToDXGI(pg->surface_shape.color_format);
+		DXGI_FORMAT colorFmt = NV097ColorFormatToDXGI(surf.colorFormat);
 		pHostRT = CreateHostSurfaceFromPGRAPH(colorOffset, colorFmt, rtWidth, rtHeight, false);
 
 		if (pHostRT) {
@@ -912,7 +913,7 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 			uint32_t colorBpp = (colorFmt == DXGI_FORMAT_B8G8R8A8_UNORM) ? 4 :
 				(colorFmt == DXGI_FORMAT_R8_UNORM) ? 1 :
 				(colorFmt == DXGI_FORMAT_R8G8_UNORM) ? 2 : 2;
-			uint32_t colorPitch = pg->surface_color.pitch;
+			uint32_t colorPitch = surf.colorPitch;
 			uint32_t rtSize = colorPitch * rtHeight;
 			CxbxPageTrackerMarkGPUDirty(colorOffset, rtSize);
 			CxbxPageTrackerRegisterRT(colorOffset, colorPitch,
@@ -946,7 +947,7 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 			ID3D11Texture2D *pHostDS = nullptr;
 
 			// Create host DS directly from PGRAPH state
-			DXGI_FORMAT zetaFmt = NV097ZetaFormatToDXGI(pg->surface_shape.zeta_format);
+			DXGI_FORMAT zetaFmt = NV097ZetaFormatToDXGI(surf.zetaFormat);
 			pHostDS = CreateHostSurfaceFromPGRAPH(zetaOffset, zetaFmt, rtWidth, rtHeight, true);
 
 			if (pHostDS) {
