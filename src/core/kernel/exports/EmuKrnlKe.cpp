@@ -88,7 +88,10 @@ namespace NtDll
 #include <ntstatus.h>
 
 #include <chrono>
+#include <float.h>
 #include <thread>
+#include <utility>
+#include <vector>
 #include <windows.h>
 #include <map>
 
@@ -1512,7 +1515,7 @@ XBSYSAPI EXPORTNUM(124) xbox::long_xt NTAPI xbox::KeQueryBasePriorityThread
 	KIRQL OldIrql;
 	KiLockDispatcherDatabase(&OldIrql);
 
-	long_xt ret = Thread->Priority;
+	long_xt ret = Thread->BasePriority;
 
 	KiUnlockDispatcherDatabase(OldIrql);
 
@@ -1983,11 +1986,13 @@ XBSYSAPI EXPORTNUM(139) xbox::ntstatus_xt NTAPI xbox::KeRestoreFloatingPointStat
 {
 	LOG_FUNC_ONE_ARG(PublicFloatSave);
 
-	NTSTATUS ret = X_STATUS_SUCCESS;
+	// Restore the x87 FPU control word that was saved by KeSaveFloatingPointState.
+	// _controlfp_s takes a mask of bits to change; pass _MCW_PC | _MCW_RC to
+	// restore both precision and rounding fields that are saved in ControlWord.
+	unsigned int _;
+	_controlfp_s(&_, PublicFloatSave->ControlWord, _MCW_PC | _MCW_RC);
 
-	LOG_UNIMPLEMENTED();
-
-	RETURN(ret);
+	RETURN(X_STATUS_SUCCESS);
 }
 
 // ******************************************************************
@@ -2061,11 +2066,27 @@ XBSYSAPI EXPORTNUM(142) xbox::ntstatus_xt NTAPI xbox::KeSaveFloatingPointState
 {
 	LOG_FUNC_ONE_ARG_OUT(PublicFloatSave);
 
-	NTSTATUS ret = X_STATUS_SUCCESS;
+	// Save the current x87 FPU control word and then switch to a known default
+	// state (extended precision, round-to-nearest) for use during the kernel
+	// operation that follows.  Only the control word is meaningful for emulation
+	// purposes; the other fields are zeroed so that callers see a clean structure.
+	unsigned int savedCW = 0;
+	_controlfp_s(&savedCW, 0, 0);
 
-	LOG_UNIMPLEMENTED();
+	PublicFloatSave->ControlWord = savedCW;
+	PublicFloatSave->StatusWord  = 0;
+	PublicFloatSave->ErrorOffset = 0;
+	PublicFloatSave->ErrorSelector = 0;
+	PublicFloatSave->DataOffset   = 0;
+	PublicFloatSave->DataSelector = 0;
+	PublicFloatSave->Cr0NpxState  = 0;
+	PublicFloatSave->Spare1       = 0;
 
-	RETURN(ret);
+	// Set default FPU state: extended precision, round-to-nearest
+	unsigned int _;
+	_controlfp_s(&_, _CW_DEFAULT, _MCW_PC | _MCW_RC);
+
+	RETURN(X_STATUS_SUCCESS);
 }
 
 // ******************************************************************
@@ -2085,12 +2106,26 @@ XBSYSAPI EXPORTNUM(143) xbox::long_xt NTAPI xbox::KeSetBasePriorityThread
 	KIRQL oldIRQL;
 	KiLockDispatcherDatabase(&oldIRQL);
 
-	Thread->Priority = Priority;
-	long_xt ret = Thread->Priority;
+	long_xt oldBasePriority = Thread->BasePriority;
+	Thread->BasePriority = (char_xt)Priority;
+	// Also update the running priority to match the new base when there is no
+	// active boost (PriorityDecrement == 0 means no temporary boost is pending).
+	if (Thread->PriorityDecrement == 0) {
+		Thread->Priority = (char_xt)Priority;
+	}
 
 	KiUnlockDispatcherDatabase(oldIRQL);
 
-	RETURN(ret);
+	// Mirror to host thread via SetThreadPriority (same mapping as KeSetPriorityThread)
+	int winPriority = Priority - 16;
+	if (winPriority < THREAD_PRIORITY_IDLE) winPriority = THREAD_PRIORITY_IDLE;
+	if (winPriority > THREAD_PRIORITY_TIME_CRITICAL) winPriority = THREAD_PRIORITY_TIME_CRITICAL;
+
+	if (const auto &nativeHandle = GetNativeHandle<true>(reinterpret_cast<PETHREAD>(Thread)->UniqueThread)) {
+		SetThreadPriority(*nativeHandle, winPriority);
+	}
+
+	RETURN(oldBasePriority);
 }
 
 XBSYSAPI EXPORTNUM(144) xbox::boolean_xt NTAPI xbox::KeSetDisableBoostThread
@@ -2227,9 +2262,40 @@ XBSYSAPI EXPORTNUM(147) xbox::KPRIORITY NTAPI xbox::KeSetPriorityProcess
 		LOG_FUNC_ARG(BasePriority)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	KIRQL oldIRQL;
+	KiLockDispatcherDatabase(&oldIRQL);
 
-	RETURN(BasePriority);
+	KPRIORITY oldBasePriority = Process->BasePriority;
+	Process->BasePriority = (char_xt)BasePriority;
+
+	// Collect the UniqueThread handles of threads that are not individually boosted
+	// so we can update the host thread priorities after releasing the dispatcher lock.
+	std::vector<std::pair<HANDLE, int>> threadUpdates;
+	for (PLIST_ENTRY entry = Process->ThreadListHead.Flink;
+		entry != &Process->ThreadListHead;
+		entry = entry->Flink) {
+		PKTHREAD thread = CONTAINING_RECORD(entry, KTHREAD, ThreadListEntry);
+		if (thread->PriorityDecrement == 0) {
+			thread->BasePriority = (char_xt)BasePriority;
+			thread->Priority = (char_xt)BasePriority;
+			// Xbox priorities range 0..31 with 16 as "normal"; map to Windows range
+			int winPri = (int)BasePriority - 16;
+			if (winPri < THREAD_PRIORITY_IDLE) winPri = THREAD_PRIORITY_IDLE;
+			if (winPri > THREAD_PRIORITY_TIME_CRITICAL) winPri = THREAD_PRIORITY_TIME_CRITICAL;
+			threadUpdates.emplace_back(reinterpret_cast<PETHREAD>(thread)->UniqueThread, winPri);
+		}
+	}
+
+	KiUnlockDispatcherDatabase(oldIRQL);
+
+	// Apply host priority changes outside the dispatcher lock to avoid lock ordering issues
+	for (const auto& [uniqueThread, winPri] : threadUpdates) {
+		if (const auto& nativeHandle = GetNativeHandle<true>(uniqueThread)) {
+			SetThreadPriority(*nativeHandle, winPri);
+		}
+	}
+
+	RETURN(oldBasePriority);
 }
 
 
