@@ -125,9 +125,13 @@ NV2ASurfaceState NV2AGetSurfaceState(PGRAPHState* pg)
 	result.clipY = GET_MASK(clipY, NV_PGRAPH_SURFACECLIPY_Y);
 	result.clipHeight = GET_MASK(clipY, NV_PGRAPH_SURFACECLIPY_HEIGHT);
 
-	result.antiAliasing = pg->surface_shape.anti_aliasing;
-	result.colorFormat = pg->surface_shape.color_format;
-	result.zetaFormat = pg->surface_shape.zeta_format;
+	uint32_t fmt = pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)];
+	result.colorFormat = GET_MASK(fmt, NV_PGRAPH_SURFACEFORMAT_COLOR);
+	result.zetaFormat = GET_MASK(fmt, NV_PGRAPH_SURFACEFORMAT_ZETA);
+	result.surfaceType = GET_MASK(fmt, NV_PGRAPH_SURFACEFORMAT_TYPE);
+	result.antiAliasing = GET_MASK(fmt, NV_PGRAPH_SURFACEFORMAT_ANTI_ALIASING);
+	result.logWidth = GET_MASK(fmt, NV_PGRAPH_SURFACEFORMAT_WIDTH);
+	result.logHeight = GET_MASK(fmt, NV_PGRAPH_SURFACEFORMAT_HEIGHT);
 	return result;
 }
 

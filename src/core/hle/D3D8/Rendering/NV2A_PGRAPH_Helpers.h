@@ -81,14 +81,13 @@ NV2ATextureControl NV2AGetTextureControl(int stage);
 // ---- Surface State ----
 // NV2A surfaces use the same PGRAPH register file as textures.
 // NV097 SET_SURFACE_* methods write to these PGRAPH registers:
-//   NV_PGRAPH_SURFACECLIPX  (0x19B4) - clip_x and clip_width
-//   NV_PGRAPH_SURFACECLIPY  (0x19B8) - clip_y and clip_height
-//   NV_PGRAPH_DMA_PITCH     (0x0770) - color pitch (15:0), zeta pitch (31:16)
-//   NV_PGRAPH_BOFFSET3      (0x082C) - color surface offset
-//   NV_PGRAPH_BOFFSET4      (0x0830) - zeta surface offset
-// Format fields (color_format, zeta_format, anti_aliasing) are decomposed
-// from NV097_SET_SURFACE_FORMAT into the surface_shape struct (no single
-// register holds the full format parameter).
+//   NV_PGRAPH_SURFACECLIPX   (0x19B4) - clip_x and clip_width
+//   NV_PGRAPH_SURFACECLIPY   (0x19B8) - clip_y and clip_height
+//   NV_PGRAPH_SURFACEFORMAT  (0x0714) - color/zeta format, type, AA, log width/height
+//   NV_PGRAPH_DMA_PITCH      (0x0770) - color pitch (15:0), zeta pitch (31:16)
+//   NV_PGRAPH_BOFFSET3       (0x082C) - color surface offset
+//   NV_PGRAPH_BOFFSET4       (0x0830) - zeta surface offset
+// All fields are decoded from register state; no side-struct is needed.
 
 struct NV2ASurfaceState {
 	uint32_t colorOffset;     // Raw color surface offset (relative to dma_color context)
@@ -101,6 +100,9 @@ struct NV2ASurfaceState {
 	uint32_t antiAliasing;    // NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_* value
 	uint32_t colorFormat;     // Surface color format
 	uint32_t zetaFormat;      // Surface zeta format
+	uint32_t surfaceType;     // NV097_SET_SURFACE_FORMAT_TYPE_PITCH or _SWIZZLE
+	uint32_t logWidth;        // log2(base width) for swizzle surfaces
+	uint32_t logHeight;       // log2(base height) for swizzle surfaces
 };
 
 // Read current surface configuration from PGRAPH.

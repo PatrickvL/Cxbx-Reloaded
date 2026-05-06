@@ -504,9 +504,10 @@ void CxbxUpdateHostTextureScaling()
 			if (texOffset == pg->regs[RI(NV_PGRAPH_BOFFSET3)]) {
 				// Test case: Max Payne 2 (bullet time)
 				// Use PGRAPH anti_aliasing directly instead of g_Xbox_MultiSampleType HLE global
-				if (pg->surface_shape.anti_aliasing != NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1) {
+				auto surf = NV2AGetSurfaceState(pg);
+				if (surf.antiAliasing != NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1) {
 					float aaX = 1.0f, aaY = 1.0f;
-					switch (pg->surface_shape.anti_aliasing) {
+					switch (surf.antiAliasing) {
 					case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
 						aaX = 2.0f; break;
 					case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_SQUARE_OFFSET_4:

@@ -42,6 +42,7 @@
 
 #include "nv2a_debug.h" // For HWADDR_PRIx, NV2A_DPRINTF, NV2A_GL_DPRINTF, etc.
 #include "nv2a_regs.h" // For NV2A_MAX_TEXTURES, etc
+#include "core\\hle\\D3D8\\Rendering\\NV2A_PGRAPH_Helpers.h" // For NV2ASurfaceState
 
 
 typedef xbox::addr_xt hwaddr; // Compatibility; Cxbx uses xbox::addr_xt, xqemu and OpenXbox use hwaddr 
@@ -164,22 +165,8 @@ typedef struct VertexAttribute {
 
 typedef struct Surface {
 	bool draw_dirty;
-	bool buffer_dirty;
 	bool write_enabled_cache;
-	unsigned int pitch;
-
-	xbox::addr_xt offset;
 } Surface;
-
-typedef struct SurfaceShape {
-	unsigned int z_format;
-	unsigned int color_format;
-	unsigned int zeta_format;
-	unsigned int log_width, log_height;
-	unsigned int clip_x, clip_y;
-	unsigned int clip_width, clip_height;
-	unsigned int anti_aliasing;
-} SurfaceShape;
 
 typedef struct TextureShape {
 	bool cubemap;
@@ -268,9 +255,7 @@ typedef struct PGRAPHState {
 	QemuCond flip_3d;
 
 	Surface surface_color, surface_zeta;
-	unsigned int surface_type;
-	SurfaceShape surface_shape;
-	SurfaceShape last_surface_shape;
+	NV2ASurfaceState surface_state;
 
 	xbox::addr_xt dma_semaphore;
 

@@ -331,6 +331,13 @@
 #   define NV_PGRAPH_SURFACE_WRITE_3D                         0x00700000
 #   define NV_PGRAPH_SURFACE_READ_3D                          0x07000000
 #   define NV_PGRAPH_SURFACE_MODULO_3D                        0x70000000
+#define NV_PGRAPH_SURFACEFORMAT                           0x00000714
+#   define NV_PGRAPH_SURFACEFORMAT_COLOR                      0x0000000F
+#   define NV_PGRAPH_SURFACEFORMAT_ZETA                       0x000000F0
+#   define NV_PGRAPH_SURFACEFORMAT_TYPE                       0x00000F00
+#   define NV_PGRAPH_SURFACEFORMAT_ANTI_ALIASING              0x0000F000
+#   define NV_PGRAPH_SURFACEFORMAT_WIDTH                      0x00FF0000
+#   define NV_PGRAPH_SURFACEFORMAT_HEIGHT                     0xFF000000
 #define NV_PGRAPH_INCREMENT                              0x0000071C
 #   define NV_PGRAPH_INCREMENT_READ_BLIT                        (1 << 0)
 #   define NV_PGRAPH_INCREMENT_READ_3D                          (1 << 1)

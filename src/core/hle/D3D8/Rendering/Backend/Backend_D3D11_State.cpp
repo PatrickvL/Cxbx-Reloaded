@@ -481,8 +481,8 @@ void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg)
 // *   vsh_constants[VPSCL] = { Width/2, -Height/2, zScale, 0 }
 // *   vsh_constants[VPOFF] = { X+Width/2, Y+Height/2, zOffset, 0 }
 // *
-// * Scissor: surface_shape.clip_x/y/width/height (from NV097_SET_SURFACE_CLIP_HORIZONTAL/VERTICAL)
-// *   AA factor (surface_shape.anti_aliasing) is applied first, then the host upscale factor.
+// * Scissor: NV2ASurfaceState clip_x/y/width/height (from NV097_SET_SURFACE_CLIP_HORIZONTAL/VERTICAL)
+// *   AA factor (NV2ASurfaceState.antiAliasing) is applied first, then the host upscale factor.
 // *   This matches xemu's pgraph_apply_anti_aliasing_factor + pgraph_apply_scaling_factor ordering.
 // * Depth clip: NV_PGRAPH_ZCLIPMIN / NV_PGRAPH_ZCLIPMAX
 // ******************************************************************
@@ -508,7 +508,7 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		}
 		if (pg->regs[RI(NV_PGRAPH_SURFACECLIPX)] != s_LastClipX) { s_LastClipX = pg->regs[RI(NV_PGRAPH_SURFACECLIPX)]; changed = true; }
 		if (pg->regs[RI(NV_PGRAPH_SURFACECLIPY)] != s_LastClipY) { s_LastClipY = pg->regs[RI(NV_PGRAPH_SURFACECLIPY)]; changed = true; }
-		if (pg->surface_shape.anti_aliasing != s_LastAA) { s_LastAA = pg->surface_shape.anti_aliasing; changed = true; }
+		if (pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)] != s_LastAA) { s_LastAA = pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)]; changed = true; }
 		if (g_Xbox_VertexShaderMode != s_LastMode) { s_LastMode = g_Xbox_VertexShaderMode; changed = true; }
 		if (!changed) return;
 	}
@@ -571,7 +571,7 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		hostViewport.MaxDepth = 1.0f;
 		CxbxSetViewport(&hostViewport);
 
-		// Apply AA factor first (from surface_shape.anti_aliasing), then upscale.
+		// Apply AA factor first (from NV2ASurfaceState.antiAliasing), then upscale.
 		// Matches xemu: pgraph_apply_anti_aliasing_factor then pgraph_apply_scaling_factor.
 		auto surf = NV2AGetSurfaceState(pg);
 		unsigned int clipX = surf.clipX;
@@ -715,9 +715,9 @@ void CxbxInvalidateGSCache()
 // * Render target update from PGRAPH surface state
 // ******************************************************************
 
-// Track the last PGRAPH surface offsets we bound, so we only rebind on change
-static xbox::addr_xt g_LastBoundColorOffset = ~0u;
-static xbox::addr_xt g_LastBoundZetaOffset  = ~0u;
+// Track the last PGRAPH surface state we bound, so we only rebind on change.
+// Covers offsets, pitches, formats, clip rect, AA, surface type — not just offsets.
+static NV2ASurfaceState g_LastBoundSurfaceState = {};
 
 // PGRAPH backbuffer tracking — first color offset bound becomes the backbuffer
 static xbox::addr_xt g_PgraphBackBufferOffset = 0;
@@ -789,8 +789,7 @@ static std::unordered_map<PgraphRTKey, Microsoft::WRL::ComPtr<ID3D11Texture2D>, 
 
 void CxbxResetPgraphSurfaceTracking()
 {
-	g_LastBoundColorOffset = ~0u;
-	g_LastBoundZetaOffset = ~0u;
+	memset(&g_LastBoundSurfaceState, 0, sizeof(g_LastBoundSurfaceState));
 	g_PgraphBackBufferOffset = 0;
 	g_pHostPgraphBackBuffer = nullptr;
 	g_PgraphBackBufferWidth = 0;
@@ -812,8 +811,7 @@ void CxbxInvalidatePgraphRTBinding()
 	// Force CxbxD3D11UpdateRenderTargetFromPGRAPH to rebind on the next draw.
 	// Must be called after binding a PGRAPH RT as a texture (SRV), because
 	// D3D11 automatically unbinds the RTV when the same resource is bound as SRV.
-	g_LastBoundColorOffset = ~0u;
-	g_LastBoundZetaOffset = ~0u;
+	memset(&g_LastBoundSurfaceState, 0, sizeof(g_LastBoundSurfaceState));
 }
 
 // Create a D3D11 render target or depth stencil directly from PGRAPH surface state
@@ -885,18 +883,26 @@ static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 {
 	auto surf = NV2AGetSurfaceState(pg);
+
+	// Skip if nothing changed (full state comparison: offsets, pitches, formats, clip, AA)
+	if (memcmp(&surf, &g_LastBoundSurfaceState, sizeof(NV2ASurfaceState)) == 0)
+		return;
+
 	xbox::addr_xt colorOffset = surf.colorOffset;
 	xbox::addr_xt zetaOffset  = surf.zetaOffset;
-
-	// Skip if nothing changed
-	if (colorOffset == g_LastBoundColorOffset && zetaOffset == g_LastBoundZetaOffset)
-		return;
+	xbox::addr_xt prevColorOffset = g_LastBoundSurfaceState.colorOffset;
+	xbox::addr_xt prevZetaOffset  = g_LastBoundSurfaceState.zetaOffset;
 
 	UINT rtWidth = surf.clipWidth;
 	UINT rtHeight = surf.clipHeight;
 
-	// Color render target
-	if (colorOffset != g_LastBoundColorOffset && colorOffset != 0) {
+	// Color render target (rebind if offset changed, or if format/pitch/clip changed)
+	bool colorChanged = (colorOffset != prevColorOffset) ||
+		(surf.colorFormat != g_LastBoundSurfaceState.colorFormat) ||
+		(surf.colorPitch != g_LastBoundSurfaceState.colorPitch) ||
+		(surf.clipWidth != g_LastBoundSurfaceState.clipWidth) ||
+		(surf.clipHeight != g_LastBoundSurfaceState.clipHeight);
+	if (colorChanged && colorOffset != 0) {
 		ID3D11Texture2D *pHostRT = nullptr;
 		UINT mipSlice = 0;
 		UINT faceIndex = 0;
@@ -938,11 +944,13 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 			g_PgraphBackBufferHeight = rtHeight;
 		}
 
-		g_LastBoundColorOffset = colorOffset;
 	}
 
-	// Depth/stencil target
-	if (zetaOffset != g_LastBoundZetaOffset) {
+	// Depth/stencil target (rebind if offset or format changed)
+	bool zetaChanged = (zetaOffset != prevZetaOffset) ||
+		(surf.zetaFormat != g_LastBoundSurfaceState.zetaFormat) ||
+		(surf.zetaPitch != g_LastBoundSurfaceState.zetaPitch);
+	if (zetaChanged) {
 		if (zetaOffset != 0) {
 			ID3D11Texture2D *pHostDS = nullptr;
 
@@ -954,9 +962,9 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 				// D3D11 requires RTV and DSV dimensions to match.
 				// If the new DS has different dimensions from the current color RT
 				// (e.g. depth-only shadow pass with 512x512 DS vs 640x480 backbuffer),
-				// unbind the color RT for depth-only rendering.  We keep
-				// g_LastBoundColorOffset at its real value so the color section
-				// is correctly skipped on subsequent depth-only draws.
+				// unbind the color RT for depth-only rendering.  We keep the color
+				// offset in g_LastBoundSurfaceState so the color section is correctly
+				// skipped on subsequent depth-only draws.
 				bool unboundColorForDepthOnly = false;
 				if (g_pD3DCurrentHostRenderTarget) {
 					D3D11_TEXTURE2D_DESC dsDesc = {}, rtDesc = {};
@@ -971,7 +979,7 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 						g_pD3DCurrentHostRenderTarget = nullptr;
 						unboundColorForDepthOnly = true;
 					}
-				} else if (g_pD3DCurrentRTV == nullptr && g_LastBoundColorOffset != 0) {
+				} else if (g_pD3DCurrentRTV == nullptr && g_LastBoundSurfaceState.colorOffset != 0) {
 					// Color was already unbound from a previous depth-only pass.
 					// Check if the NEW DS matches the color surface dimensions,
 					// which means we're transitioning out of depth-only mode.
@@ -981,7 +989,7 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 					UINT expectedH = rtHeight * g_RenderUpscaleFactor;
 					if (dsDesc.Width == expectedW && dsDesc.Height == expectedH) {
 						// DS now matches color dimensions — force color rebind
-						g_LastBoundColorOffset = ~0u;
+						g_LastBoundSurfaceState.colorOffset = 0;
 					}
 				}
 				CxbxSetDepthStencilSurface(pHostDS);
@@ -990,8 +998,10 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		} else {
 			CxbxSetDepthStencilSurface(nullptr);
 		}
-		g_LastBoundZetaOffset = zetaOffset;
 	}
+
+	// Commit: record new surface state so subsequent calls see "nothing changed"
+	g_LastBoundSurfaceState = surf;
 }
 
 // RTV cache: maps (texture pointer, mip slice) to its render target view, avoiding

@@ -53,9 +53,6 @@
 #define GL_BGRA           0x80E1
 #endif
 
-// Stub: surface management was GL-specific, now a no-op until DX11 backend takes over
-static inline void pgraph_update_surface(NV2AState *, bool, bool, bool) {}
-
 // ---- NV097 method trace infrastructure ----
 // Scans push buffer commands written by Xbox D3D API trampolines.
 // pgraph_trace_begin/end bracket a trampoline call; pgraph_trace_log_pushbuffer
@@ -196,7 +193,6 @@ void pgraph_handle_method(NV2AState *d, unsigned int subchannel, unsigned int me
 static void pgraph_log_method(unsigned int subchannel, unsigned int graphics_class, unsigned int method, uint32_t parameter);
 static void pgraph_allocate_inline_buffer_vertices(PGRAPHState *pg, unsigned int attr);
 static void pgraph_finish_inline_buffer_vertex(PGRAPHState *pg);
-static bool pgraph_get_framebuffer_dirty(PGRAPHState *pg);
 static bool pgraph_get_color_write_enabled(PGRAPHState *pg);
 static bool pgraph_get_zeta_write_enabled(PGRAPHState *pg);
 static void pgraph_set_surface_dirty(PGRAPHState *pg, bool color, bool zeta);
@@ -620,10 +616,9 @@ void pgraph_handle_method(NV2AState *d,
 			}
 			break;
 
-		case NV097_WAIT_FOR_IDLE:
-			pgraph_update_surface(d, false, true, true);
-			break;
-
+		// NV097_WAIT_FOR_IDLE: On real HW this drains the 3D pipeline before PFIFO
+		// continues. In our architecture, D3D11 draw calls execute synchronously on
+		// the puller thread, so the pipeline is already idle — intentional no-op.
 
 		case NV097_FLIP_INCREMENT_WRITE: {
 			NV2A_DPRINTF("flip increment write %d -> ",
@@ -643,8 +638,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 		case NV097_FLIP_STALL:
-			pgraph_update_surface(d, false, true, true);
-
 			// Title is using explicit flips — disable puller auto-present fallback.
 			g_pgraph_explicit_flip_stall_seen = true;
 
@@ -659,11 +652,6 @@ void pgraph_handle_method(NV2AState *d,
 			NV2A_DPRINTF("flip stall done\n");
 			break;
 
-		case NV097_SET_CONTEXT_DMA_COLOR:
-			/* try to get any straggling draws in before the surface's changed :/ */
-			pgraph_update_surface(d, false, true, true);
-			// Also wrote: pg->dma_color = parameter; (field deleted)
-			break;
 		case NV097_SET_CONTEXT_DMA_SEMAPHORE:
 			pg->dma_semaphore = parameter;
 			break;
@@ -671,58 +659,7 @@ void pgraph_handle_method(NV2AState *d,
 			pg->dma_report = parameter;
 			break;
 
-		case NV097_SET_SURFACE_CLIP_HORIZONTAL:
-			pgraph_update_surface(d, false, true, true);
-			// Register write handled by method table -> NV_PGRAPH_SURFACECLIPX
-			pg->surface_shape.clip_x =
-				GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_X);
-			pg->surface_shape.clip_width =
-				GET_MASK(parameter, NV097_SET_SURFACE_CLIP_HORIZONTAL_WIDTH);
-			break;
-		case NV097_SET_SURFACE_CLIP_VERTICAL:
-			pgraph_update_surface(d, false, true, true);
-			// Register write handled by method table -> NV_PGRAPH_SURFACECLIPY
-			pg->surface_shape.clip_y =
-				GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_Y);
-			pg->surface_shape.clip_height =
-				GET_MASK(parameter, NV097_SET_SURFACE_CLIP_VERTICAL_HEIGHT);
-			break;
-		case NV097_SET_SURFACE_FORMAT:
-			pgraph_update_surface(d, false, true, true);
-
-			pg->surface_shape.color_format =
-				GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_COLOR);
-			pg->surface_shape.zeta_format =
-				GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_ZETA);
-			pg->surface_type =
-				GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_TYPE);
-			pg->surface_shape.anti_aliasing =
-				GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_ANTI_ALIASING);
-			pg->surface_shape.log_width =
-				GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_WIDTH);
-			pg->surface_shape.log_height =
-				GET_MASK(parameter, NV097_SET_SURFACE_FORMAT_HEIGHT);
-			break;
-		case NV097_SET_SURFACE_PITCH:
-			pgraph_update_surface(d, false, true, true);
-			// Register write handled by method table -> NV_PGRAPH_DMA_PITCH
-			pg->surface_color.buffer_dirty = true;
-			pg->surface_zeta.buffer_dirty = true;
-			break;
-		case NV097_SET_SURFACE_COLOR_OFFSET:
-			pgraph_update_surface(d, false, true, true);
-			// Register write handled by method table -> NV_PGRAPH_BOFFSET3
-			pg->surface_color.buffer_dirty = true;
-			break;
-		case NV097_SET_SURFACE_ZETA_OFFSET:
-			pgraph_update_surface(d, false, true, true);
-			// Register write handled by method table -> NV_PGRAPH_BOFFSET4
-			pg->surface_zeta.buffer_dirty = true;
-			break;
-
 		case NV097_SET_CONTROL0: {
-			pgraph_update_surface(d, false, true, true);
-
 			bool stencil_write_enable =
 				parameter & NV097_SET_CONTROL0_STENCIL_WRITE_ENABLE;
 			SET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_0)],
@@ -1873,8 +1810,6 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 		case NV097_BACK_END_WRITE_SEMAPHORE_RELEASE: {
-			pgraph_update_surface(d, false, true, true);
-
 			//qemu_mutex_unlock(&pg->pgraph_lock);
 			//qemu_mutex_lock_iothread();
 
@@ -2334,17 +2269,6 @@ void pgraph_destroy(PGRAPHState *pg)
 	qemu_cond_destroy(&pg->flip_3d);
 }
 
-static bool pgraph_get_framebuffer_dirty(PGRAPHState *pg)
-{
-    bool shape_changed = memcmp(&pg->surface_shape, &pg->last_surface_shape,
-                                sizeof(SurfaceShape)) != 0;
-    if (!shape_changed || (!pg->surface_shape.color_format
-            && !pg->surface_shape.zeta_format)) {
-        return false;
-    }
-    return true;
-}
-
 static bool pgraph_get_color_write_enabled(PGRAPHState *pg)
 {
 	return pg->regs[RI(NV_PGRAPH_CONTROL_0)] & (
@@ -2377,7 +2301,8 @@ static void pgraph_apply_anti_aliasing_factor(PGRAPHState *pg,
                                               unsigned int *width,
                                               unsigned int *height)
 {
-    switch (pg->surface_shape.anti_aliasing) {
+    auto surf = NV2AGetSurfaceState(pg);
+    switch (surf.antiAliasing) {
     case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_1:
         break;
     case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
@@ -2397,13 +2322,14 @@ static void pgraph_get_surface_dimensions(PGRAPHState *pg,
                                           unsigned int *width,
                                           unsigned int *height)
 {
-    bool swizzle = (pg->surface_type == NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE);
+    auto surf = NV2AGetSurfaceState(pg);
+    bool swizzle = (surf.surfaceType == NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE);
     if (swizzle) {
-        *width = 1 << pg->surface_shape.log_width;
-        *height = 1 << pg->surface_shape.log_height;
+        *width = 1 << surf.logWidth;
+        *height = 1 << surf.logHeight;
     } else {
-        *width = pg->surface_shape.clip_width;
-        *height = pg->surface_shape.clip_height;
+        *width = surf.clipWidth;
+        *height = surf.clipHeight;
     }
 }
 

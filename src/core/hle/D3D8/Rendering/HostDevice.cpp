@@ -789,7 +789,7 @@ void GetScreenScaleFactors(float& scaleX, float& scaleY) {
 }
 
 // GetRenderTargetRawDimensions, GetBackBufferPixelDimensions removed:
-// dead code (never called). PGRAPH surface_shape.clip_width/height is used instead.
+// dead code (never called). PGRAPH NV2ASurfaceState.clipWidth/clipHeight is used instead.
 
 // Get the base rendertarget dimensions excluding multisample scaling
 // e.g. a raw 1280*960 rendertarget with 2x MSAA would be have a base 640*480
