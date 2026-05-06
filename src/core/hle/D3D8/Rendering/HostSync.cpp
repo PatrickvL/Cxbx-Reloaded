@@ -232,7 +232,7 @@ void CxbxUpdateHostTextures()
 					// the NV097_SET_TEXTURE_FORMAT argument, so PGRAPH TEXFMT
 					// contains the exact Xbox Format field value.
 					auto& synth = s_SyntheticTextures[stage];
-					synth.Common = X_D3DCOMMON_TYPE_TEXTURE | 1; // type + refcount
+					synth.Common = X_D3DCOMMON_TYPE_TEXTURE | X_D3DCOMMON_D3DCREATED | 1; // type + d3d-created + refcount
 					synth.Data = texOffset;
 					synth.Lock = 0;
 					synth.Format = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
