@@ -22,6 +22,7 @@
 // ******************************************************************
 
 #include "Backend_D3D11_Internal.h"
+#include "Backend_D3D11_PageTracker.h"
 #include "devices\video\nv2a.h"        // PGRAPHState, nv2a_regs.h, GET_MASK, RI
 #include <algorithm>                    // std::min
 #include <unordered_map>
@@ -905,6 +906,17 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 
 		if (pHostRT) {
 			CxbxSetRenderTarget(pHostRT, mipSlice, faceIndex);
+
+			// Mark RT pages as GPU-dirty and register for readback.
+			// This sets PAGE_NOACCESS so CPU reads trigger a fault → readback.
+			uint32_t colorBpp = (colorFmt == DXGI_FORMAT_B8G8R8A8_UNORM) ? 4 :
+				(colorFmt == DXGI_FORMAT_R8_UNORM) ? 1 :
+				(colorFmt == DXGI_FORMAT_R8G8_UNORM) ? 2 : 2;
+			uint32_t colorPitch = pg->surface_color.pitch;
+			uint32_t rtSize = colorPitch * rtHeight;
+			CxbxPageTrackerMarkGPUDirty(colorOffset, rtSize);
+			CxbxPageTrackerRegisterRT(colorOffset, colorPitch,
+				rtWidth, rtHeight, colorBpp, pHostRT);
 		}
 
 		// Track the backbuffer by matching RT dimensions against presentation parameters.

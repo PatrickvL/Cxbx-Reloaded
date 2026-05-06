@@ -90,6 +90,20 @@ void CxbxPageTrackerOnPresent();
 // size: byte size of the render target surface.
 void CxbxPageTrackerMarkGPUDirty(uint32_t startOffset, uint32_t size);
 
+// Register a render target for GPU→CPU readback. Stores the metadata needed
+// to copy D3D11 texture data back to Xbox RAM when the CPU faults on a
+// GPU-dirty page. pTexture is NOT AddRef'd — caller must ensure lifetime.
+struct ID3D11Texture2D;
+void CxbxPageTrackerRegisterRT(uint32_t startOffset, uint32_t pitch,
+	uint32_t width, uint32_t height, uint32_t bpp,
+	ID3D11Texture2D* pTexture);
+
+// Lock/unlock the D3D11 context for the render path (puller thread).
+// The readback VEH uses TryEnter — if the puller holds the lock, readback
+// is skipped (graceful degradation, same as pre-readback behavior).
+void CxbxPageTrackerLockD3D11Context();
+void CxbxPageTrackerUnlockD3D11Context();
+
 // Check if a specific contiguous page is GPU-dirty.
 // Used by CPU read paths to trigger readback before accessing the data.
 bool CxbxPageTrackerIsGPUDirty(uint32_t pageIndex);

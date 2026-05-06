@@ -93,6 +93,29 @@ static bool s_bHasTiledPages = false;
 static bool s_bFirstFlushOfFrame = true;
 
 // ******************************************************************
+// * Registered RT metadata for GPU→CPU readback
+// ******************************************************************
+struct RegisteredRT {
+	uint32_t offset;        // VRAM byte offset from CONTIGUOUS_MEMORY_BASE
+	uint32_t pitch;         // Xbox row pitch in bytes
+	uint32_t width;         // Xbox width in pixels
+	uint32_t height;        // Xbox height in pixels
+	uint32_t bpp;           // Bytes per pixel (2 or 4)
+	ID3D11Texture2D* pTexture; // Host RT (NOT AddRef'd — owned by g_PgraphRTCache)
+};
+
+static constexpr uint32_t MAX_REGISTERED_RTS = 16;
+static RegisteredRT s_RegisteredRTs[MAX_REGISTERED_RTS] = {};
+static uint32_t s_NumRegisteredRTs = 0;
+
+// Critical section for serializing D3D11 device context access between the
+// puller thread (normal rendering) and the VEH readback path (CPU thread).
+// The readback uses TryEnterCriticalSection — if the puller holds it, readback
+// is skipped (graceful degradation to stale data, same as pre-fix behavior).
+static CRITICAL_SECTION s_D3D11ContextLock;
+static bool s_D3D11ContextLockInitialized = false;
+
+// ******************************************************************
 // * GPU mirror buffer (64 MiB ByteAddressBuffer + typed SRV views)
 // ******************************************************************
 static ID3D11Buffer*             s_pMirrorBuf = nullptr;
@@ -168,8 +191,91 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 		uint32_t pageIdx = offset / PAGE_SIZE_;
 
 		if (TestBit(s_GpuDirtyBitmap, pageIdx)) {
-			// TODO: Trigger readback from D3D11 render target into Xbox memory.
-			// For now, clear the flag and restore access.
+			// Perform readback from D3D11 render target into Xbox memory.
+			// On CPU reads, copy the entire RT back to Xbox RAM so all pages
+			// in the RT are restored at once (amortizes the GPU stall).
+			// On CPU writes, skip readback — the CPU is overwriting the data.
+			if (!isWrite && g_pD3DDeviceContext != nullptr &&
+				s_D3D11ContextLockInitialized &&
+				TryEnterCriticalSection(&s_D3D11ContextLock)) {
+				// Find which registered RT covers this page
+				const RegisteredRT* pRT = nullptr;
+				for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
+					uint32_t rtEnd = s_RegisteredRTs[i].offset +
+						s_RegisteredRTs[i].pitch * s_RegisteredRTs[i].height;
+					if (offset >= s_RegisteredRTs[i].offset && offset < rtEnd) {
+						pRT = &s_RegisteredRTs[i];
+						break;
+					}
+				}
+
+				if (pRT && pRT->pTexture) {
+					// FIRST: Clear GPU-dirty and restore access for the ENTIRE RT
+					// before any memcpy. Otherwise the row-by-row copy would fault
+					// on adjacent pages that are still PAGE_NOACCESS.
+					uint32_t rtSize = pRT->pitch * pRT->height;
+					uint32_t rtFirstPage = pRT->offset / PAGE_SIZE_;
+					uint32_t rtLastPage = (pRT->offset + rtSize - 1) / PAGE_SIZE_;
+					for (uint32_t p = rtFirstPage; p <= rtLastPage; p++) {
+						if (TestBit(s_GpuDirtyBitmap, p)) {
+							ClearBit(s_GpuDirtyBitmap, p);
+							DWORD oldProtect;
+							VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
+								PAGE_SIZE_, PAGE_READWRITE, &oldProtect);
+						}
+					}
+
+					// Now perform the actual GPU→CPU readback via staging texture
+					D3D11_TEXTURE2D_DESC desc = {};
+					pRT->pTexture->GetDesc(&desc);
+
+					D3D11_TEXTURE2D_DESC stagingDesc = desc;
+					stagingDesc.Usage = D3D11_USAGE_STAGING;
+					stagingDesc.BindFlags = 0;
+					stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+					stagingDesc.MiscFlags = 0;
+
+					ID3D11Texture2D* pStaging = nullptr;
+					HRESULT hr = g_pD3DDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
+					if (SUCCEEDED(hr)) {
+						g_pD3DDeviceContext->CopyResource(pStaging, pRT->pTexture);
+
+						D3D11_MAPPED_SUBRESOURCE mapped = {};
+						hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
+						if (SUCCEEDED(hr)) {
+							// Copy from staging to Xbox RAM, row by row.
+							// Host RT may have different pitch than Xbox RT.
+							uint8_t* pDst = (uint8_t*)(CONTIG_BASE + pRT->offset);
+							uint8_t* pSrc = (uint8_t*)mapped.pData;
+							uint32_t xboxRowBytes = pRT->width * pRT->bpp;
+							uint32_t copyRows = pRT->height;
+
+							// If host is upscaled, only copy the top-left 1x region
+							if (desc.Width > pRT->width || desc.Height > pRT->height) {
+								// Can't directly copy upscaled data — skip readback
+								// (would need a resolve/downscale pass)
+							} else {
+								for (uint32_t row = 0; row < copyRows; row++) {
+									memcpy(pDst, pSrc, xboxRowBytes);
+									pDst += pRT->pitch;
+									pSrc += mapped.RowPitch;
+								}
+							}
+
+							g_pD3DDeviceContext->Unmap(pStaging, 0);
+						}
+						pStaging->Release();
+					}
+
+					LeaveCriticalSection(&s_D3D11ContextLock);
+					return true;
+				}
+
+				LeaveCriticalSection(&s_D3D11ContextLock);
+			}
+
+			// Fallback: no matching RT found, write access, or lock contended —
+			// just restore the page (graceful degradation to stale data).
 			ClearBit(s_GpuDirtyBitmap, pageIdx);
 
 			DWORD oldProtect;
@@ -233,6 +339,12 @@ void CxbxPageTrackerInit()
 	memset(s_TiledCommittedBitmap, 0, sizeof(s_TiledCommittedBitmap));
 	// All pages start texture-dirty so the first deswizzle for each texture is triggered
 	memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
+
+	// Initialize D3D11 context lock for thread-safe readback from VEH
+	if (!s_D3D11ContextLockInitialized) {
+		InitializeCriticalSection(&s_D3D11ContextLock);
+		s_D3D11ContextLockInitialized = true;
+	}
 
 	// Create 64 MiB GPU mirror buffer (DYNAMIC ByteAddressBuffer with SRV)
 	D3D11_BUFFER_DESC desc = {};
@@ -501,6 +613,21 @@ void CxbxPageTrackerOnPresent()
 }
 
 // ******************************************************************
+// * Public: Lock/unlock D3D11 context for puller thread
+// ******************************************************************
+void CxbxPageTrackerLockD3D11Context()
+{
+	if (s_D3D11ContextLockInitialized)
+		EnterCriticalSection(&s_D3D11ContextLock);
+}
+
+void CxbxPageTrackerUnlockD3D11Context()
+{
+	if (s_D3D11ContextLockInitialized)
+		LeaveCriticalSection(&s_D3D11ContextLock);
+}
+
+// ******************************************************************
 // * Public: Check if any pages are CPU-dirty
 // ******************************************************************
 bool CxbxPageTrackerHasDirtyPages()
@@ -537,6 +664,31 @@ void CxbxPageTrackerMarkGPUDirty(uint32_t startOffset, uint32_t size)
 		VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
 			PAGE_SIZE_, PAGE_NOACCESS, &oldProtect);
 	}
+}
+
+// ******************************************************************
+// * Public: Register an RT for readback (called alongside MarkGPUDirty)
+// ******************************************************************
+void CxbxPageTrackerRegisterRT(uint32_t startOffset, uint32_t pitch,
+	uint32_t width, uint32_t height, uint32_t bpp,
+	ID3D11Texture2D* pTexture)
+{
+	// Check if already registered at this offset — update in place
+	for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
+		if (s_RegisteredRTs[i].offset == startOffset) {
+			s_RegisteredRTs[i] = { startOffset, pitch, width, height, bpp, pTexture };
+			return;
+		}
+	}
+
+	// Add new entry (evict oldest if full)
+	if (s_NumRegisteredRTs >= MAX_REGISTERED_RTS) {
+		// Shift down (FIFO eviction — oldest RT is least likely to be read back)
+		memmove(&s_RegisteredRTs[0], &s_RegisteredRTs[1],
+			(MAX_REGISTERED_RTS - 1) * sizeof(RegisteredRT));
+		s_NumRegisteredRTs = MAX_REGISTERED_RTS - 1;
+	}
+	s_RegisteredRTs[s_NumRegisteredRTs++] = { startOffset, pitch, width, height, bpp, pTexture };
 }
 
 // ******************************************************************
