@@ -1200,9 +1200,30 @@ XBSYSAPI EXPORTNUM(116) xbox::long_xt NTAPI xbox::KeInsertHeadQueue
 		LOG_FUNC_ARG(Entry)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	UCHAR orig_irql = KeRaiseIrqlToDpcLevel();
+	LONG prev_state = Queue->Header.SignalState;
 
-	RETURN(0);
+	// Check for direct delivery: a thread waiting in KeRemoveQueue
+	KiWaitListLock();
+	if (!IsListEmpty(&Queue->Header.WaitListHead) && (Queue->CurrentCount < Queue->MaximumCount)) {
+		PLIST_ENTRY WaitEntry = Queue->Header.WaitListHead.Flink;
+		PKWAIT_BLOCK WaitBlock = CONTAINING_RECORD(WaitEntry, KWAIT_BLOCK, WaitListEntry);
+		PKTHREAD WaitThread = WaitBlock->Thread;
+		// Deliver entry directly to the waiting thread
+		WaitThread->WaitStatus = (ulong_xt)(ULONG_PTR)Entry;
+		Queue->CurrentCount++;
+		KiUnwaitThread(WaitThread, (long_ptr_xt)(ULONG_PTR)Entry, 0);
+		KiWaitListUnlock();
+	} else {
+		KiWaitListUnlock();
+		// No eligible waiter — enqueue at head and bump signal state
+		InsertHeadList(&Queue->EntryListHead, Entry);
+		Queue->Header.SignalState++;
+	}
+
+	KiUnlockDispatcherDatabase(orig_irql);
+
+	RETURN(prev_state);
 }
 
 XBSYSAPI EXPORTNUM(117) xbox::long_xt NTAPI xbox::KeInsertQueue
@@ -1216,9 +1237,30 @@ XBSYSAPI EXPORTNUM(117) xbox::long_xt NTAPI xbox::KeInsertQueue
 		LOG_FUNC_ARG(Entry)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	UCHAR orig_irql = KeRaiseIrqlToDpcLevel();
+	LONG prev_state = Queue->Header.SignalState;
 
-	RETURN(0);
+	// Check for direct delivery: a thread waiting in KeRemoveQueue
+	KiWaitListLock();
+	if (!IsListEmpty(&Queue->Header.WaitListHead) && (Queue->CurrentCount < Queue->MaximumCount)) {
+		PLIST_ENTRY WaitEntry = Queue->Header.WaitListHead.Flink;
+		PKWAIT_BLOCK WaitBlock = CONTAINING_RECORD(WaitEntry, KWAIT_BLOCK, WaitListEntry);
+		PKTHREAD WaitThread = WaitBlock->Thread;
+		// Deliver entry directly to the waiting thread
+		WaitThread->WaitStatus = (ulong_xt)(ULONG_PTR)Entry;
+		Queue->CurrentCount++;
+		KiUnwaitThread(WaitThread, (long_ptr_xt)(ULONG_PTR)Entry, 0);
+		KiWaitListUnlock();
+	} else {
+		KiWaitListUnlock();
+		// No eligible waiter — enqueue at tail and bump signal state
+		InsertTailList(&Queue->EntryListHead, Entry);
+		Queue->Header.SignalState++;
+	}
+
+	KiUnlockDispatcherDatabase(orig_irql);
+
+	RETURN(prev_state);
 }
 
 // ******************************************************************
@@ -1532,9 +1574,47 @@ XBSYSAPI EXPORTNUM(131) xbox::long_xt NTAPI xbox::KeReleaseMutant
 		LOG_FUNC_ARG(Wait)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
-	
-	RETURN(0);
+	UCHAR orig_irql = KeRaiseIrqlToDpcLevel();
+	PKTHREAD Thread = KeGetCurrentThread();
+	LONG prev_state = Mutant->Header.SignalState;
+
+	if (Abandoned) {
+		Mutant->Header.SignalState = 1;
+		Mutant->Abandoned = TRUE;
+	} else {
+		// Ownership check: only the owning thread may release
+		if (Mutant->OwnerThread != Thread) {
+			KiUnlockDispatcherDatabase(orig_irql);
+			ExRaiseStatus(X_STATUS_MUTANT_NOT_OWNED);
+		}
+		Mutant->Header.SignalState += 1;
+	}
+
+	// If fully released (SignalState transitions to 1), detach from thread
+	if (Mutant->Header.SignalState == 1) {
+		if (prev_state <= 0) {
+			RemoveEntryList(&Mutant->MutantListEntry);
+		}
+		Mutant->OwnerThread = zeroptr;
+
+		// Wake waiters
+		KiWaitListLock();
+		if (IsListEmpty(&Mutant->Header.WaitListHead) == FALSE) {
+			KiWaitTest(&Mutant->Header, Increment);
+			std::this_thread::yield();
+		} else {
+			KiWaitListUnlock();
+		}
+	}
+
+	if (Wait) {
+		Thread->WaitNext = TRUE;
+		Thread->WaitIrql = orig_irql;
+	} else {
+		KiUnlockDispatcherDatabase(orig_irql);
+	}
+
+	RETURN(prev_state);
 }
 
 XBSYSAPI EXPORTNUM(132) xbox::long_xt NTAPI xbox::KeReleaseSemaphore
@@ -1695,9 +1775,85 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 		LOG_FUNC_ARG(Timeout)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	UCHAR orig_irql = KeRaiseIrqlToDpcLevel();
+	PKTHREAD Thread = KeGetCurrentThread();
 
-	RETURN(NULL);
+	// Track thread–queue association
+	PRKQUEUE OldQueue = (PRKQUEUE)Thread->Queue;
+	if (OldQueue != Queue) {
+		// Dissociate from previous queue
+		if (OldQueue != zeroptr) {
+			OldQueue->CurrentCount--;
+			RemoveEntryList(&Thread->QueueListEntry);
+		}
+		// Associate with new queue
+		InsertTailList(&Queue->ThreadListHead, &Thread->QueueListEntry);
+		Thread->Queue = Queue;
+	} else {
+		// Re-entering the same queue — decrement CurrentCount (was bumped on wake)
+		Queue->CurrentCount--;
+	}
+
+	// Fast-path: entry available and concurrency not exceeded
+	if (!IsListEmpty(&Queue->EntryListHead) && (Queue->CurrentCount < Queue->MaximumCount)) {
+		PLIST_ENTRY Entry = RemoveHeadList(&Queue->EntryListHead);
+		Queue->Header.SignalState--;
+		Queue->CurrentCount++;
+		KiUnlockDispatcherDatabase(orig_irql);
+		RETURN(Entry);
+	}
+
+	// Blocking path — wait for an entry
+	KWAIT_BLOCK WaitBlock;
+	memset(&WaitBlock, 0, sizeof(WaitBlock));
+	WaitBlock.Thread = Thread;
+	WaitBlock.Object = Queue;
+	WaitBlock.WaitKey = (cshort_xt)X_STATUS_SUCCESS;
+	WaitBlock.WaitType = WaitAny;
+
+	Thread->WaitBlockList = &WaitBlock;
+	Thread->Alertable = FALSE;
+	Thread->WaitMode = (char_xt)WaitMode;
+	Thread->WaitReason = 0;
+	Thread->WaitTime = KeTickCount;
+	Thread->State = Waiting;
+
+	// Insert wait block into Queue's WaitListHead for direct-wake by KeInsertQueue
+	KiWaitListLock();
+	InsertTailList(&Queue->Header.WaitListHead, &WaitBlock.WaitListEntry);
+	KiWaitListUnlock();
+
+	KiUnlockDispatcherDatabase(orig_irql);
+
+	// Use WaitApc with a missed-wakeup poll of EntryListHead
+	ntstatus_xt status = WaitApc<false>([Queue, &WaitBlock](PKTHREAD WaitThread) -> std::optional<ntstatus_xt> {
+		if (WaitThread->State == Ready) {
+			return std::make_optional<ntstatus_xt>(WaitThread->WaitStatus);
+		}
+		// Missed-wakeup check: an entry may have been enqueued but no direct delivery occurred
+		if (!IsListEmpty(&Queue->EntryListHead) && (Queue->CurrentCount < Queue->MaximumCount)) {
+			KiWaitListLock();
+			if (!IsListEmpty(&Queue->EntryListHead) && (Queue->CurrentCount < Queue->MaximumCount)) {
+				PLIST_ENTRY Entry = RemoveHeadList(&Queue->EntryListHead);
+				Queue->Header.SignalState--;
+				Queue->CurrentCount++;
+				// Remove our wait block
+				if (WaitBlock.WaitListEntry.Flink && WaitBlock.WaitListEntry.Flink->Blink == &WaitBlock.WaitListEntry) {
+					RemoveEntryList(&WaitBlock.WaitListEntry);
+				}
+				KiWaitListUnlock();
+				WaitThread->WaitStatus = (ulong_xt)(ULONG_PTR)Entry;
+				WaitThread->State = Ready;
+				return std::make_optional<ntstatus_xt>((ntstatus_xt)(ULONG_PTR)Entry);
+			}
+			KiWaitListUnlock();
+		}
+		return std::nullopt;
+	}, Timeout, FALSE, (char_xt)WaitMode, Thread);
+
+	Thread->State = Running;
+
+	RETURN((PLIST_ENTRY)(ULONG_PTR)status);
 }
 
 // ******************************************************************
@@ -1817,9 +1973,23 @@ XBSYSAPI EXPORTNUM(141) xbox::PLIST_ENTRY NTAPI xbox::KeRundownQueue
 {
 	LOG_FUNC_ONE_ARG(Queue);
 
-	LOG_UNIMPLEMENTED();
+	UCHAR orig_irql = KeRaiseIrqlToDpcLevel();
 
-	RETURN(NULL);
+	// Dissociate all threads from this queue
+	while (!IsListEmpty(&Queue->ThreadListHead)) {
+		PLIST_ENTRY Entry = RemoveHeadList(&Queue->ThreadListHead);
+		PKTHREAD Thread = CONTAINING_RECORD(Entry, KTHREAD, QueueListEntry);
+		Thread->Queue = zeroptr;
+	}
+
+	PLIST_ENTRY Result = zeroptr;
+	if (!IsListEmpty(&Queue->EntryListHead)) {
+		Result = &Queue->EntryListHead;
+	}
+
+	KiUnlockDispatcherDatabase(orig_irql);
+
+	RETURN(Result);
 }
 
 // ******************************************************************
@@ -2018,7 +2188,23 @@ XBSYSAPI EXPORTNUM(148) xbox::boolean_xt NTAPI xbox::KeSetPriorityThread
 		LOG_FUNC_ARG(Priority)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	KIRQL oldIRQL;
+	KiLockDispatcherDatabase(&oldIRQL);
+
+	Thread->Priority = (char_xt)Priority;
+	Thread->BasePriority = (char_xt)Priority;
+
+	KiUnlockDispatcherDatabase(oldIRQL);
+
+	// Mirror to host thread via SetThreadPriority
+	// Xbox priorities range 0..31 with 16 as "normal"; map to Windows range
+	int winPriority = Priority - 16;
+	if (winPriority < THREAD_PRIORITY_IDLE) winPriority = THREAD_PRIORITY_IDLE;
+	if (winPriority > THREAD_PRIORITY_TIME_CRITICAL) winPriority = THREAD_PRIORITY_TIME_CRITICAL;
+
+	if (const auto &nativeHandle = GetNativeHandle<true>(reinterpret_cast<PETHREAD>(Thread)->UniqueThread)) {
+		SetThreadPriority(*nativeHandle, winPriority);
+	}
 
 	RETURN(1);
 }
@@ -2178,9 +2364,13 @@ XBSYSAPI EXPORTNUM(153) xbox::boolean_xt NTAPI xbox::KeSynchronizeExecution
 		LOG_FUNC_ARG(SynchronizeContext)
 		LOG_FUNC_END;
 
-	BOOLEAN ret = TRUE;
+	// Coarse emulation of raising to SYNCH_LEVEL spinlock:
+	// acquire the dispatcher database lock, call the routine, then release.
+	UCHAR orig_irql = KeRaiseIrqlToDpcLevel();
 
-	LOG_UNIMPLEMENTED();
+	BOOLEAN ret = SynchronizeRoutine(SynchronizeContext);
+
+	KiUnlockDispatcherDatabase(orig_irql);
 
 	RETURN(ret);
 }

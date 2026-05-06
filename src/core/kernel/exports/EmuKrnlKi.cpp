@@ -1273,11 +1273,10 @@ xbox::void_xt xbox::KiUnlinkThread
 		KiTimerUnlock();
 	}
 
-#if 0
-	// Disabled, because we don't support queues
 	/* Increment the Queue's active threads */
-	if (Thread->Queue) Thread->Queue->CurrentCount++;
-#endif
+	if (Thread->Queue) {
+		((PRKQUEUE)Thread->Queue)->CurrentCount++;
+	}
 
 	// Sanity check: set WaitBlockList to nullptr so that we can catch the case where a waiter starts a new wait but forgets to setup a new wait block. This
 	// way, we will crash instead of silently using the pointer to the old block
