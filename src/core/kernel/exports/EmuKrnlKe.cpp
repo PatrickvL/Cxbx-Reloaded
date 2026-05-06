@@ -555,10 +555,43 @@ XBSYSAPI EXPORTNUM(92) xbox::ntstatus_xt NTAPI xbox::KeAlertResumeThread
 		LOG_FUNC_ARG_OUT(PreviousSuspendCount)
 		LOG_FUNC_END;
 
-	// TODO : Result = NtDll::NtAlertResumeThread(ThreadHandle, PreviousSuspendCount);
-	LOG_UNIMPLEMENTED();
+	PETHREAD Thread;
+	ntstatus_xt result = ObReferenceObjectByHandle(ThreadHandle, &PsThreadObjectType, reinterpret_cast<PVOID*>(&Thread));
+	if (!X_NT_SUCCESS(result)) {
+		RETURN(result);
+	}
 
-	RETURN(S_OK);
+	PKTHREAD kThread = &Thread->Tcb;
+
+	KIRQL oldIrql;
+	KiLockDispatcherDatabase(&oldIrql);
+
+	// Deliver kernel-mode alert
+	if (kThread->Alerted[KernelMode] == FALSE) {
+		kThread->Alerted[KernelMode] = TRUE;
+		if ((kThread->State == Waiting) && (kThread->Alertable)) {
+			KiUnwaitThreadAndLock(kThread, X_STATUS_ALERTED, 0);
+		}
+	}
+
+	// Resume the thread: decrement SuspendCount; if it reaches 0, release the suspend semaphore
+	ulong_xt PrevCount = static_cast<ulong_xt>(kThread->SuspendCount);
+	if (PreviousSuspendCount != nullptr) {
+		*PreviousSuspendCount = PrevCount;
+	}
+	if (kThread->SuspendCount != 0) {
+		--kThread->SuspendCount;
+		if (kThread->SuspendCount == 0) {
+			if (const auto &nativeHandle = GetNativeHandle<true>(Thread->UniqueThread)) {
+				ResumeThread(*nativeHandle);
+			}
+		}
+	}
+
+	KiUnlockDispatcherDatabase(oldIrql);
+	ObfDereferenceObject(Thread);
+
+	RETURN(X_STATUS_SUCCESS);
 }
 
 // ******************************************************************
@@ -572,10 +605,29 @@ XBSYSAPI EXPORTNUM(93) xbox::ntstatus_xt NTAPI xbox::KeAlertThread
 {
 	LOG_FUNC_ONE_ARG(ThreadHandle);
 
-// TODO : Result = NtDll::NtAlertThread(ThreadHandle);
-	LOG_UNIMPLEMENTED();
+	PETHREAD Thread;
+	ntstatus_xt result = ObReferenceObjectByHandle(ThreadHandle, &PsThreadObjectType, reinterpret_cast<PVOID*>(&Thread));
+	if (!X_NT_SUCCESS(result)) {
+		RETURN(result);
+	}
 
-	RETURN(S_OK);
+	PKTHREAD kThread = &Thread->Tcb;
+
+	KIRQL oldIrql;
+	KiLockDispatcherDatabase(&oldIrql);
+
+	// Set kernel-mode alert flag; if the thread is in an alertable wait, unwait it
+	if (kThread->Alerted[KernelMode] == FALSE) {
+		kThread->Alerted[KernelMode] = TRUE;
+		if ((kThread->State == Waiting) && (kThread->Alertable)) {
+			KiUnwaitThreadAndLock(kThread, X_STATUS_ALERTED, 0);
+		}
+	}
+
+	KiUnlockDispatcherDatabase(oldIrql);
+	ObfDereferenceObject(Thread);
+
+	RETURN(X_STATUS_SUCCESS);
 }
 
 // ******************************************************************
@@ -593,10 +645,20 @@ XBSYSAPI EXPORTNUM(94) xbox::ntstatus_xt NTAPI xbox::KeBoostPriorityThread
 		LOG_FUNC_ARG(Increment);
 		LOG_FUNC_END;
 
+	if (Thread->DisableBoost == FALSE) {
+		KIRQL oldIrql;
+		KiLockDispatcherDatabase(&oldIrql);
 
-	LOG_UNIMPLEMENTED();
+		KPRIORITY NewPriority = Thread->Priority + Increment;
+		if (NewPriority > 31) { // 31 = maximum Xbox thread priority (HIGH_PRIORITY)
+			NewPriority = 31;
+		}
+		Thread->Priority = static_cast<char_xt>(NewPriority);
 
-	RETURN(S_OK);
+		KiUnlockDispatcherDatabase(oldIrql);
+	}
+
+	RETURN(X_STATUS_SUCCESS);
 }
 
 // ******************************************************************
@@ -2390,11 +2452,25 @@ XBSYSAPI EXPORTNUM(155) xbox::boolean_xt NTAPI xbox::KeTestAlertThread
 {
 	LOG_FUNC_ONE_ARG(AlertMode);
 
-	BOOLEAN ret = TRUE;
+	PKTHREAD Thread = KeGetCurrentThread();
 
-	LOG_UNIMPLEMENTED();
+	KIRQL oldIrql;
+	KiLockDispatcherDatabase(&oldIrql);
 
-	RETURN(ret);
+	// Return and clear the existing alert for the requested mode
+	boolean_xt Alerted = Thread->Alerted[AlertMode];
+	if (Alerted != FALSE) {
+		Thread->Alerted[AlertMode] = FALSE;
+	}
+	// When checking user mode, also trigger if a user APC is pending
+	else if ((AlertMode != KernelMode) && (IsListEmpty(&Thread->ApcState.ApcListHead[UserMode]) == FALSE)) {
+		Thread->ApcState.UserApcPending = TRUE;
+		Alerted = TRUE;
+	}
+
+	KiUnlockDispatcherDatabase(oldIrql);
+
+	RETURN(Alerted);
 }
 
 // ******************************************************************

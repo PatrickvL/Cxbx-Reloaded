@@ -2602,9 +2602,47 @@ XBSYSAPI EXPORTNUM(230) xbox::ntstatus_xt NTAPI xbox::NtSignalAndWaitForSingleOb
 		LOG_FUNC_ARG(Timeout)
 	LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	// Resolve the signal object without type constraint so any waitable object type works
+	PVOID SignalObject;
+	ntstatus_xt result = ObReferenceObjectByHandle(SignalHandle, nullptr, &SignalObject);
+	if (!X_NT_SUCCESS(result)) {
+		RETURN(result);
+	}
 
-	RETURN(X_STATUS_SUCCESS);
+	// Resolve the wait object
+	PVOID WaitObject;
+	result = ObReferenceObjectByHandle(WaitHandle, nullptr, &WaitObject);
+	if (!X_NT_SUCCESS(result)) {
+		ObfDereferenceObject(SignalObject);
+		RETURN(result);
+	}
+
+	// Signal based on dispatcher object type
+	DISPATCHER_HEADER *SignalHeader = reinterpret_cast<DISPATCHER_HEADER*>(SignalObject);
+	switch (SignalHeader->Type) {
+	case EventNotificationObject:
+	case EventSynchronizationObject:
+		KeSetEvent(reinterpret_cast<PRKEVENT>(SignalObject), /*Increment=*/1, /*Wait=*/FALSE);
+		break;
+	case MutantObject:
+		KeReleaseMutant(reinterpret_cast<PRKMUTANT>(SignalObject), /*Increment=*/1, /*Abandoned=*/FALSE, /*Wait=*/FALSE);
+		break;
+	case SemaphoreObject:
+		KeReleaseSemaphore(reinterpret_cast<PRKSEMAPHORE>(SignalObject), /*Increment=*/1, /*Adjustment=*/1, /*Wait=*/FALSE);
+		break;
+	default:
+		ObfDereferenceObject(WaitObject);
+		ObfDereferenceObject(SignalObject);
+		RETURN(X_STATUS_INVALID_PARAMETER);
+	}
+
+	ObfDereferenceObject(SignalObject);
+
+	// Wait on the wait object
+	result = KeWaitForSingleObject(WaitObject, WrExecutive, WaitMode, Alertable, Timeout);
+	ObfDereferenceObject(WaitObject);
+
+	RETURN(result);
 }
 
 // ******************************************************************
