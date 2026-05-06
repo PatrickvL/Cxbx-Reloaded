@@ -40,18 +40,6 @@
 #include "core/kernel/support/NativeHandle.h" // For Xbox objects to native handle and back
 #include "CxbxDebugger.h"
 
-namespace {
-
-typedef struct _CXBX_IO_COMPLETION_PACKET
-{
-	xbox::LIST_ENTRY ListEntry;
-	xbox::PVOID KeyContext;
-	xbox::PVOID ApcContext;
-	xbox::IO_STATUS_BLOCK IoStatusBlock;
-} CXBX_IO_COMPLETION_PACKET, *PCXBX_IO_COMPLETION_PACKET;
-
-} // anonymous namespace
-
 static void IopClearStackLocation(IN xbox::PIO_STACK_LOCATION IoStackLocation)
 {
 	IoStackLocation->MinorFunction = 0;
@@ -1396,7 +1384,7 @@ XBSYSAPI EXPORTNUM(79) xbox::ntstatus_xt NTAPI xbox::IoSetIoCompletion
 		RETURN(X_STATUS_INVALID_PARAMETER);
 	}
 
-	PCXBX_IO_COMPLETION_PACKET Packet = reinterpret_cast<PCXBX_IO_COMPLETION_PACKET>(ExAllocatePool(sizeof(CXBX_IO_COMPLETION_PACKET)));
+	xbox::PCXBX_IO_COMPLETION_PACKET Packet = reinterpret_cast<xbox::PCXBX_IO_COMPLETION_PACKET>(ExAllocatePool(sizeof(xbox::CXBX_IO_COMPLETION_PACKET)));
 	if (Packet == nullptr) {
 		RETURN(X_STATUS_INSUFFICIENT_RESOURCES);
 	}

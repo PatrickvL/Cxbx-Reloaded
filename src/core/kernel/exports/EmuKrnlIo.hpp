@@ -26,6 +26,14 @@
 
 namespace xbox
 {
+	typedef struct _CXBX_IO_COMPLETION_PACKET
+	{
+		LIST_ENTRY ListEntry;
+		PVOID KeyContext;
+		PVOID ApcContext;
+		IO_STATUS_BLOCK IoStatusBlock;
+	} CXBX_IO_COMPLETION_PACKET, *PCXBX_IO_COMPLETION_PACKET;
+
 	ntstatus_xt NTAPI IopParseDevice(
 		IN PVOID ParseObject,
 		IN struct _OBJECT_TYPE* ObjectType,

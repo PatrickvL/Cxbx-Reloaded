@@ -31,6 +31,7 @@
 
 #include <core\kernel\exports\xboxkrnl.h> // For NtAllocateVirtualMemory, etc.
 #include "EmuKrnlNt.hpp"
+#include "EmuKrnlIo.hpp"
 #include "EmuKrnl.h"
 #include "Logging.h" // For LOG_FUNC()
 #include "EmuKrnlLogging.h"
@@ -59,18 +60,6 @@ namespace NtDll
 
 #include <unordered_map>
 #include <mutex>
-
-namespace {
-
-typedef struct _CXBX_IO_COMPLETION_PACKET
-{
-	xbox::LIST_ENTRY ListEntry;
-	xbox::PVOID KeyContext;
-	xbox::PVOID ApcContext;
-	xbox::IO_STATUS_BLOCK IoStatusBlock;
-} CXBX_IO_COMPLETION_PACKET, *PCXBX_IO_COMPLETION_PACKET;
-
-} // anonymous namespace
 
 // Prevent setting the system time from multiple threads at the same time
 xbox::RTL_CRITICAL_SECTION xbox::NtSystemTimeCritSec;
@@ -2158,12 +2147,12 @@ XBSYSAPI EXPORTNUM(223) xbox::ntstatus_xt NTAPI xbox::NtRemoveIoCompletion
 	PLIST_ENTRY Entry = KeRemoveQueue(IoCompletion, KernelMode, Timeout);
 	ObfDereferenceObject(IoCompletion);
 
-	ULONG_PTR EntryValue = reinterpret_cast<ULONG_PTR>(Entry);
+	xbox::ulong_ptr_xt EntryValue = reinterpret_cast<xbox::ulong_ptr_xt>(Entry);
 	if (EntryValue == X_STATUS_TIMEOUT || EntryValue == X_STATUS_USER_APC || EntryValue == X_STATUS_ALERTED) {
 		RETURN(static_cast<ntstatus_xt>(EntryValue));
 	}
 
-	PCXBX_IO_COMPLETION_PACKET Packet = CONTAINING_RECORD(Entry, CXBX_IO_COMPLETION_PACKET, ListEntry);
+	xbox::PCXBX_IO_COMPLETION_PACKET Packet = CONTAINING_RECORD(Entry, xbox::CXBX_IO_COMPLETION_PACKET, ListEntry);
 	*KeyContext = Packet->KeyContext;
 	*ApcContext = Packet->ApcContext;
 	*IoStatusBlock = Packet->IoStatusBlock;
