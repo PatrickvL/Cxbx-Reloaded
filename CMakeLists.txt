@@ -163,6 +163,7 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Patches/EmuPatches_Unused.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxNV2AMathHelpers.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxNV2APixelShaderConstants.hlsli"
+ "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxNV2AVshOps.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxPGRAPHRegs.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxRegisterCombinerInterpreter.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxRegisterCombinerInterpreterState.hlsli"
@@ -585,6 +586,7 @@ set(CXBXR_HLSLI_DEPS
     "${CXBXR_HLSL_DIR}/CxbxScreenspaceTransform.hlsli"
     "${CXBXR_HLSL_DIR}/CxbxNV2AMathHelpers.hlsli"
     "${CXBXR_HLSL_DIR}/CxbxNV2APixelShaderConstants.hlsli"
+    "${CXBXR_HLSL_DIR}/CxbxNV2AVshOps.hlsli"
     "${CXBXR_HLSL_DIR}/CxbxPGRAPHRegs.hlsli"
 )
 
