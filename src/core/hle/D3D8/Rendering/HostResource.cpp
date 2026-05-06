@@ -444,6 +444,22 @@ ID3D11Resource *GetHostBaseTextureWithFormat(xbox::X_D3DResource *pXboxResource,
 		it = ResourceCache.find(key);
 		if (it == ResourceCache.end() || !it->second.pHostResource)
 			return nullptr;
+	} else if (!(it->second.HostUsage & D3DUSAGE_RENDERTARGET)) {
+		// Cache hit — check if CPU has written to this texture since last upload.
+		// Render targets are GPU-managed and skip this check.
+		uintptr_t dataAddr = (uintptr_t)it->second.pXboxData;
+		if (dataAddr >= CONTIGUOUS_MEMORY_BASE &&
+			dataAddr < (CONTIGUOUS_MEMORY_BASE + XBOX_CONTIGUOUS_MEMORY_SIZE))
+		{
+			uint32_t offset = (uint32_t)(dataAddr - CONTIGUOUS_MEMORY_BASE);
+			if (CxbxPageTrackerIsTextureDirty(offset, (uint32_t)it->second.szXboxDataSize)) {
+				// Texture pages were modified — re-verify (may re-upload)
+				EmuVerifyResourceIsRegistered(pXboxResource, D3DUsage, iTextureStage, /*dwSize=*/0);
+				it = ResourceCache.find(key);
+				if (it == ResourceCache.end() || !it->second.pHostResource)
+					return nullptr;
+			}
+		}
 	}
 
 	it->second.lastAccessFrame = ++g_ResourceCacheAccessCounter;
