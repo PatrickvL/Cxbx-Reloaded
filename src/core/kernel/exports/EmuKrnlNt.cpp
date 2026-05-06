@@ -60,6 +60,18 @@ namespace NtDll
 #include <unordered_map>
 #include <mutex>
 
+namespace {
+
+typedef struct _CXBX_IO_COMPLETION_PACKET
+{
+	xbox::LIST_ENTRY ListEntry;
+	xbox::PVOID KeyContext;
+	xbox::PVOID ApcContext;
+	xbox::IO_STATUS_BLOCK IoStatusBlock;
+} CXBX_IO_COMPLETION_PACKET, *PCXBX_IO_COMPLETION_PACKET;
+
+} // anonymous namespace
+
 // Prevent setting the system time from multiple threads at the same time
 xbox::RTL_CRITICAL_SECTION xbox::NtSystemTimeCritSec;
 
@@ -379,9 +391,20 @@ XBSYSAPI EXPORTNUM(191) xbox::ntstatus_xt NTAPI xbox::NtCreateIoCompletion
 		LOG_FUNC_ARG(Count)
 	LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	(void)DesiredAccess;
 
-	RETURN(STATUS_NOT_IMPLEMENTED);
+	if (IoCompletionHandle == nullptr) {
+		RETURN(X_STATUS_INVALID_PARAMETER);
+	}
+
+	PKQUEUE IoCompletion;
+	ntstatus_xt result = ObCreateObject(&IoCompletionObjectType, ObjectAttributes, sizeof(KQUEUE), reinterpret_cast<PVOID*>(&IoCompletion));
+	if (X_NT_SUCCESS(result)) {
+		KeInitializeQueue(IoCompletion, Count);
+		result = ObInsertObject(IoCompletion, ObjectAttributes, 0, IoCompletionHandle);
+	}
+
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -1515,9 +1538,18 @@ XBSYSAPI EXPORTNUM(212) xbox::ntstatus_xt NTAPI xbox::NtQueryIoCompletion
 		LOG_FUNC_ARG_OUT(IoCompletionInformation)
 	LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	if (IoCompletionInformation == nullptr) {
+		RETURN(X_STATUS_INVALID_PARAMETER);
+	}
 
-	RETURN(X_STATUS_SUCCESS);
+	PKQUEUE IoCompletion;
+	ntstatus_xt result = ObReferenceObjectByHandle(IoCompletionHandle, &IoCompletionObjectType, reinterpret_cast<PVOID*>(&IoCompletion));
+	if (X_NT_SUCCESS(result)) {
+		IoCompletionInformation->Depth = IoCompletion->Header.SignalState;
+		ObfDereferenceObject(IoCompletion);
+	}
+
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -2063,7 +2095,7 @@ XBSYSAPI EXPORTNUM(221) xbox::ntstatus_xt NTAPI xbox::NtReleaseMutant
 	if (FAILED(ret))
 		EmuLog(LOG_LEVEL::WARNING, "NtReleaseMutant Failed!");
 
-	RETURN(X_STATUS_SUCCESS); // TODO : RETURN(result);
+	RETURN(ret);
 }
 
 // ******************************************************************
@@ -2113,7 +2145,29 @@ XBSYSAPI EXPORTNUM(223) xbox::ntstatus_xt NTAPI xbox::NtRemoveIoCompletion
 		LOG_FUNC_ARG(Timeout)
 	LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	if (KeyContext == nullptr || ApcContext == nullptr || IoStatusBlock == nullptr) {
+		RETURN(X_STATUS_INVALID_PARAMETER);
+	}
+
+	PKQUEUE IoCompletion;
+	ntstatus_xt result = ObReferenceObjectByHandle(IoCompletionHandle, &IoCompletionObjectType, reinterpret_cast<PVOID*>(&IoCompletion));
+	if (!X_NT_SUCCESS(result)) {
+		RETURN(result);
+	}
+
+	PLIST_ENTRY Entry = KeRemoveQueue(IoCompletion, KernelMode, Timeout);
+	ObfDereferenceObject(IoCompletion);
+
+	ULONG_PTR EntryValue = reinterpret_cast<ULONG_PTR>(Entry);
+	if (EntryValue == X_STATUS_TIMEOUT || EntryValue == X_STATUS_USER_APC || EntryValue == X_STATUS_ALERTED) {
+		RETURN(static_cast<ntstatus_xt>(EntryValue));
+	}
+
+	PCXBX_IO_COMPLETION_PACKET Packet = CONTAINING_RECORD(Entry, CXBX_IO_COMPLETION_PACKET, ListEntry);
+	*KeyContext = Packet->KeyContext;
+	*ApcContext = Packet->ApcContext;
+	*IoStatusBlock = Packet->IoStatusBlock;
+	ExFreePool(Packet);
 
 	RETURN(X_STATUS_SUCCESS);
 }
@@ -2430,9 +2484,21 @@ XBSYSAPI EXPORTNUM(227) xbox::ntstatus_xt NTAPI xbox::NtSetIoCompletion
 		LOG_FUNC_ARG(IoStatusInformation)
 	LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	PKQUEUE IoCompletion;
+	ntstatus_xt result = ObReferenceObjectByHandle(IoCompletionHandle, &IoCompletionObjectType, reinterpret_cast<PVOID*>(&IoCompletion));
+	if (!X_NT_SUCCESS(result)) {
+		RETURN(result);
+	}
 
-	RETURN(X_STATUS_SUCCESS);
+	result = IoSetIoCompletion(
+		IoCompletion,
+		KeyContext,
+		ApcContext,
+		IoStatus,
+		static_cast<ulong_xt>(IoStatusInformation));
+	ObfDereferenceObject(IoCompletion);
+
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -2880,4 +2946,3 @@ XBSYSAPI EXPORTNUM(238) xbox::void_xt NTAPI xbox::NtYieldExecution()
 
 	NtDll::NtYieldExecution();
 }
-
