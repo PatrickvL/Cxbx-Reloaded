@@ -79,8 +79,29 @@ xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr)
 	return (it != g_TexturesByDataAddr.end()) ? it->second : nullptr;
 }
 
-xbox::PVOID                   g_pXbox_Palette_Data[xbox::X_D3DTS_STAGECOUNT] = { xbox::zeroptr, xbox::zeroptr, xbox::zeroptr, xbox::zeroptr }; // cached palette pointer
-unsigned                     g_Xbox_Palette_Size[xbox::X_D3DTS_STAGECOUNT] = { 0 }; // cached palette size
+bool CxbxGetPaletteFromPGRAPH(int stage, void** ppData, unsigned* pSize)
+{
+	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+	uint32_t fmtColor = GET_MASK(pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)],
+		NV097_SET_TEXTURE_FORMAT_COLOR);
+	if (fmtColor != NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8) {
+		*ppData = nullptr;
+		*pSize = 0;
+		return false;
+	}
+	uint32_t texPalette = pg->regs[RI(NV_PGRAPH_TEXPALETTE0 + stage * 4)];
+	uint32_t palOffset = texPalette & NV_PGRAPH_TEXPALETTE0_OFFSET;
+	if (palOffset == 0) {
+		*ppData = nullptr;
+		*pSize = 0;
+		return false;
+	}
+	uint32_t lengthField = GET_MASK(texPalette, NV_PGRAPH_TEXPALETTE0_LENGTH);
+	static const unsigned palSizes[] = { 256*4, 128*4, 64*4, 32*4 };
+	*ppData = (void*)(CONTIGUOUS_MEMORY_BASE + palOffset);
+	*pSize = palSizes[lengthField & 3];
+	return true;
+}
 
 
 DXGI_FORMAT               g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT]; // Updated by CxbxUpdateHostTextures(), read by CxbxCalcColorSign

@@ -272,26 +272,6 @@ void CxbxUpdateHostTextures()
 			DWORD XboxResourceType = GetXboxCommonResourceType(pXboxBaseTexture);
 			switch (XboxResourceType) {
 			case X_D3DCOMMON_TYPE_TEXTURE: {
-				// PGRAPH palette fallback: if the HLE patch hasn't provided a
-				// palette pointer for this stage, resolve it from PGRAPH registers.
-				// The Xbox D3D runtime writes SET_TEXTURE_PALETTE which stores the
-				// palette physical address in NV_PGRAPH_TEXPALETTE0 + stage*4.
-				if (g_pXbox_Palette_Data[stage] == nullptr) {
-					uint32_t fmtColor = GET_MASK(pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)],
-						NV097_SET_TEXTURE_FORMAT_COLOR);
-					if (fmtColor == NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8) {
-						uint32_t texPalette = pg->regs[RI(NV_PGRAPH_TEXPALETTE0 + stage * 4)];
-						uint32_t palOffset = texPalette & NV_PGRAPH_TEXPALETTE0_OFFSET;
-						if (palOffset != 0) {
-							uint32_t lengthField = GET_MASK(texPalette, NV_PGRAPH_TEXPALETTE0_LENGTH);
-							// Length encoding: 0=256, 1=128, 2=64, 3=32 entries × 4 bytes each
-							static const unsigned palSizes[] = { 256*4, 128*4, 64*4, 32*4 };
-							g_pXbox_Palette_Data[stage] = (xbox::PVOID)(CONTIGUOUS_MEMORY_BASE + palOffset);
-							g_Xbox_Palette_Size[stage] = palSizes[lengthField & 3];
-						}
-					}
-				}
-
 				DXGI_FORMAT hostFormat = DXGI_FORMAT_UNKNOWN;
 				pHostBaseTexture = GetHostBaseTextureWithFormat(pXboxBaseTexture, /*D3DUsage=*/0, stage, &hostFormat);
 				if (hostFormat != DXGI_FORMAT_UNKNOWN)

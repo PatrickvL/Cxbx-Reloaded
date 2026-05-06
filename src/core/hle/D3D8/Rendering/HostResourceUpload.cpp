@@ -39,10 +39,15 @@ static void CopyMipDataToHost(
 	if (bConvertTextureFormat) {
 		EmuLog(LOG_LEVEL::DEBUG, "Unsupported texture format, expanding to EMUFMT_A8R8G8B8");
 
+		// Resolve palette from PGRAPH registers for P8 textures
+		void* pPaletteData = nullptr;
+		unsigned paletteSize = 0;
+		CxbxGetPaletteFromPGRAPH(iTextureStage, &pPaletteData, &paletteSize);
+
 		// In case where there is a palettized texture without a palette attached,
 		// fill it with zeroes for now. This might not be correct, but it prevents a crash.
 		// Test case: DRIV3R
-		bool missingPalette = X_Format == xbox::X_D3DFMT_P8 && g_pXbox_Palette_Data[iTextureStage] == nullptr;
+		bool missingPalette = X_Format == xbox::X_D3DFMT_P8 && pPaletteData == nullptr;
 		if (missingPalette) {
 			LOG_TEST_CASE("Palettized texture bound without a palette");
 			memset(pDst, 0, dwDstRowPitch * pxMipHeight);
@@ -53,7 +58,7 @@ static void CopyMipDataToHost(
 				pSrc, pxMipWidth, pxMipHeight, dwMipRowPitch, mip2dSize,
 				pDst, dwDstRowPitch, dwDstSlicePitch,
 				pxMipDepth,
-				g_pXbox_Palette_Data[iTextureStage])) {
+				pPaletteData)) {
 				CxbxrAbort("Unhandled conversion!");
 			}
 		}
@@ -170,7 +175,10 @@ void UploadPixelContainerMips(
 			// combines unswizzle + palette lookup in a single GPU dispatch
 			if (bSwizzled && X_Format == xbox::X_D3DFMT_P8 && dwMipMapLevels == 1 && pxMipDepth == 1
 				&& XboxResourceType == xbox::X_D3DRTYPE_TEXTURE) {
-				if (g_pXbox_Palette_Data[iTextureStage] == nullptr) {
+				void* pPaletteData = nullptr;
+				unsigned paletteSize = 0;
+				CxbxGetPaletteFromPGRAPH(iTextureStage, &pPaletteData, &paletteSize);
+				if (pPaletteData == nullptr) {
 					// Missing palette — zero-fill via UpdateSubresource (texture is DEFAULT, can't Map)
 					LOG_TEST_CASE("Palettized texture bound without a palette");
 					DWORD zeroRowPitch = pxMipWidth * 4;
@@ -182,7 +190,7 @@ void UploadPixelContainerMips(
 				}
 				uint8_t *pCsSrc = (uint8_t *)VirtualAddr + dwCubeFaceOffset + dwMipOffset;
 				ID3D11Texture2D* pTexture2D = static_cast<ID3D11Texture2D*>(pNewHostResource.Get());
-				if (CxbxD3D11ExpandPaletteTexture(pTexture2D, pCsSrc, pxMipWidth, pxMipHeight, g_pXbox_Palette_Data[iTextureStage])) {
+				if (CxbxD3D11ExpandPaletteTexture(pTexture2D, pCsSrc, pxMipWidth, pxMipHeight, pPaletteData)) {
 					continue; // CS handled it, skip to next mip/face
 				}
 				// CS failed — fall back to CPU conversion via staging buffer
@@ -194,7 +202,7 @@ void UploadPixelContainerMips(
 					X_Format, (uint8_t *)VirtualAddr + dwCubeFaceOffset + dwMipOffset,
 					pxMipWidth, pxMipHeight, dwMipRowPitch, mip2dSize,
 					pFallbackBuf, fallbackRowPitch, fallbackSize,
-					pxMipDepth, g_pXbox_Palette_Data[iTextureStage])) {
+					pxMipDepth, pPaletteData)) {
 					// ConvertD3DTextureToARGBBuffer writes BGRA byte order,
 					// but texture is R8G8B8A8_UNORM (expects RGBA bytes) — swap R↔B
 					for (DWORD i = 0; i < fallbackSize; i += 4) {

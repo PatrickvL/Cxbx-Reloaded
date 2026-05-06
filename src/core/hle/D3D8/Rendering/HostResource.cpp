@@ -169,12 +169,10 @@ resource_key_t GetHostResourceKey(xbox::X_D3DResource* pXboxResource, int iTextu
 					LOG_TEST_CASE("Unknown texture stage!");
 				} else {
 					assert(iTextureStage < xbox::X_D3DTS_STAGECOUNT);
-					// Protect for when this gets hit before an actual palette is set
-					if (g_Xbox_Palette_Size[iTextureStage] > 0) {
-						// This caters for palette changes (only the active one will be used,
-						// any intermediate changes have no effect). Obsolete palette texture
-						// conversions will be pruned from g_Cxbx_Cached_PaletizedTextures
-						key.PaletteHash = ComputeHash(g_pXbox_Palette_Data[iTextureStage], g_Xbox_Palette_Size[iTextureStage]);
+					void* pPaletteData = nullptr;
+					unsigned paletteSize = 0;
+					if (CxbxGetPaletteFromPGRAPH(iTextureStage, &pPaletteData, &paletteSize)) {
+						key.PaletteHash = ComputeHash(pPaletteData, paletteSize);
 					}
 				}
 			}

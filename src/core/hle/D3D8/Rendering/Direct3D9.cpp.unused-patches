@@ -6673,9 +6673,8 @@ static void CxbxImpl_SetPalette
 	if (Stage >= xbox::X_D3DTS_STAGECOUNT) {
 		LOG_TEST_CASE("Stage out of bounds");
 	} else {
-		// Note : Actual update of paletized textures (X_D3DFMT_P8) happens in CxbxUpdateHostTextures!
-		g_pXbox_Palette_Data[Stage] = GetDataFromXboxResource(pPalette);
-		g_Xbox_Palette_Size[Stage] = pPalette ? XboxD3DPaletteSizeToBytes(GetXboxPaletteSize(pPalette)) : 0;
+		// Note : Palette is now resolved directly from PGRAPH NV_PGRAPH_TEXPALETTE0
+		// at texture upload time via CxbxGetPaletteFromPGRAPH().
 	}
 }
 
