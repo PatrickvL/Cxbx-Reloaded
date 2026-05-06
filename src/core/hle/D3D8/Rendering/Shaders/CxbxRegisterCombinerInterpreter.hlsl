@@ -362,12 +362,12 @@ uint GetSourceStage(uint stage)
 void ApplyCompareMode(uint stage, float4 coords)
 {
     uint bits = (PG_UINT(NV_PGRAPH_SHADERCLIPMODE) >> (stage * 4u)) & 0xFu;
-    // Each bit: 0 = GE (clip if >= 0), 1 = LT (clip if < 0)
-    // Per NV2A: bit set means "discard if coord < 0"
-    bool killR = (bits & 1u) != 0u ? (coords.x < 0.0f) : (coords.x >= 0.0f);
-    bool killS = (bits & 2u) != 0u ? (coords.y < 0.0f) : (coords.y >= 0.0f);
-    bool killT = (bits & 4u) != 0u ? (coords.z < 0.0f) : (coords.z >= 0.0f);
-    bool killQ = (bits & 8u) != 0u ? (coords.w < 0.0f) : (coords.w >= 0.0f);
+    // NV2A clip plane per xemu: bit set means "discard if coord >= 0" (keeps negative);
+    // bit clear means "discard if coord < 0" (keeps positive).
+    bool killR = (bits & 1u) != 0u ? (coords.x >= 0.0f) : (coords.x < 0.0f);
+    bool killS = (bits & 2u) != 0u ? (coords.y >= 0.0f) : (coords.y < 0.0f);
+    bool killT = (bits & 4u) != 0u ? (coords.z >= 0.0f) : (coords.z < 0.0f);
+    bool killQ = (bits & 8u) != 0u ? (coords.w >= 0.0f) : (coords.w < 0.0f);
     if (killR || killS || killT || killQ)
         discard;
 }
@@ -502,7 +502,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
             // Essential for projective texturing (shadow maps, projected lights).
             float3 projected = coords.xyz / coords.w;
             float4 sampled = Sample2D(stage, projected.xy);
-            Regs[tBase] = ApplyShadowCompare(stage, PostProcessTexel(stage, sampled), projected);
+            // Shadow compare operates on raw depth before post-processing (matches JIT/hardware)
+            Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompare(stage, sampled, projected));
         }
 
         return; // NONE falls through here too
@@ -564,7 +565,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
         if (sc != 0.0f) {
             // Depth texture is always 2D — sample as 2D and apply shadow compare
             float4 sampled = Sample2D(stage, projected.xy);
-            Regs[tBase] = ApplyShadowCompare(stage, PostProcessTexel(stage, sampled), projected);
+            // Shadow compare operates on raw depth before post-processing (matches JIT/hardware)
+            Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompare(stage, sampled, projected));
             return;
         }
         val = Sample3D(stage, projected);
@@ -642,8 +644,16 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
 
     case PS_TEXTUREMODES_DOT_RFLCT_DIFF:
     {
+        // xemu reference: normal = (dot[stage-1], dot[stage], dot_next)
+        // where dot_next peeks at the next stage's dot mapping and source.
         float3 dm = ApplyDotMappingForStage(stage, src);
-        val = SampleCube(stage, float3(prevReg1.x, dot(coords.xyz, dm), 0.0f));
+        float currentDot = dot(coords.xyz, dm);
+        uint nextStage = stage + 1u;
+        float4 nextSrc = Regs[PS_REGISTER_T0 + (GetSourceStage(nextStage) & (NUM_TEXTURE_STAGES - 1u))];
+        float4 nextCoords = Regs[PS_REGISTER_T0 + nextStage];
+        float3 nextDm = ApplyDotMappingForStage(nextStage, nextSrc);
+        float nextDot = dot(nextCoords.xyz, nextDm);
+        val = SampleCube(stage, float3(prevReg1.x, currentDot, nextDot));
         break;
     }
 
@@ -689,9 +699,9 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
     // Removing it lets the compiler treat the switch as exhaustive.
     }
 
-    // Post-process: format fixup, color sign, color key (matches compiled PS pipeline)
-    // Shadow compare: if this stage has a depth texture, compare R texcoord against depth
-    Regs[tBase] = ApplyShadowCompare(stage, PostProcessTexel(stage, val), coords.xyz);
+    // Shadow compare operates on raw sampled depth before post-processing (matches JIT/hardware).
+    // Post-process: format fixup, color sign, color key applied after shadow compare.
+    Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompare(stage, val, coords.xyz));
 }
 
 // NV2A-accurate multiply helpers are in CxbxNV2AMathHelpers.hlsli

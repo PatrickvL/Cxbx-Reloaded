@@ -375,11 +375,21 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
 
     case 0x0B: // DOT_RFLCT_DIFF
     {
+        // xemu reference: normal = (dot[stage-1], dot[stage], dot_next)
+        // where dot_next peeks at the next stage's dot mapping and source.
         uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t dotMapping = (shaderCtl >> ((stage - 1) * 4)) & 7;
+        uint32_t nextStage = stage + 1;
+        uint32_t nextSrcStage = (nextStage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1);
+        uint32_t nextDotMapping = (shaderCtl >> ((nextStage - 1) * 4)) & 7;
         ss << "    { float4 src = T" << srcStage << ";\n";
-        ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
+        ss << "      float3 dm = ApplyDotMapping(" << dotMapping << ", src);\n";
+        ss << "      float curDot = dot(" << coords << ".xyz, dm);\n";
+        ss << "      float4 nextSrc = T" << nextSrcStage << ";\n";
+        ss << "      float3 nextDm = ApplyDotMapping(" << nextDotMapping << ", nextSrc);\n";
+        ss << "      float nextDot = dot(T" << nextStage << ".xyz, nextDm);\n";
         ss << "      " << tReg << " = TexCube_" << sIdx << ".Sample(Samp" << sIdx
-           << ", float3(T" << (stage - 2) << ".x, T" << (stage - 1) << ".x, dot(" << coords << ".xyz, dm)));\n";
+           << ", float3(T" << (stage - 1) << ".x, curDot, nextDot));\n";
         ss << "    }\n";
         break;
     }
@@ -628,10 +638,10 @@ static std::string GenerateHLSL(const PSJITKey& key)
     if (anyClip) {
         ss << "void ApplyCompareMode(uint stage, float4 coords) {\n";
         ss << "    uint bits = (PG_UINT(0x1994) >> (stage*4)) & 0xF;\n";
-        ss << "    bool k0 = (bits&1)!=0 ? (coords.x<0.0) : (coords.x>=0.0);\n";
-        ss << "    bool k1 = (bits&2)!=0 ? (coords.y<0.0) : (coords.y>=0.0);\n";
-        ss << "    bool k2 = (bits&4)!=0 ? (coords.z<0.0) : (coords.z>=0.0);\n";
-        ss << "    bool k3 = (bits&8)!=0 ? (coords.w<0.0) : (coords.w>=0.0);\n";
+        ss << "    bool k0 = (bits&1)!=0 ? (coords.x>=0.0) : (coords.x<0.0);\n";
+        ss << "    bool k1 = (bits&2)!=0 ? (coords.y>=0.0) : (coords.y<0.0);\n";
+        ss << "    bool k2 = (bits&4)!=0 ? (coords.z>=0.0) : (coords.z<0.0);\n";
+        ss << "    bool k3 = (bits&8)!=0 ? (coords.w>=0.0) : (coords.w<0.0);\n";
         ss << "    if (k0||k1||k2||k3) discard;\n";
         ss << "}\n\n";
     }
