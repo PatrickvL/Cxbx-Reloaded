@@ -543,7 +543,6 @@ ULONGLONG CxbxGetPerformanceCounter(bool acpi)
 // ******************************************************************
 // * 0x005C - KeAlertResumeThread()
 // ******************************************************************
-// Source:Dxbx
 XBSYSAPI EXPORTNUM(92) xbox::ntstatus_xt NTAPI xbox::KeAlertResumeThread
 (
 	IN HANDLE ThreadHandle,
@@ -597,7 +596,6 @@ XBSYSAPI EXPORTNUM(92) xbox::ntstatus_xt NTAPI xbox::KeAlertResumeThread
 // ******************************************************************
 // * 0x005D - KeAlertThread()
 // ******************************************************************
-// Source:Dxbx
 XBSYSAPI EXPORTNUM(93) xbox::ntstatus_xt NTAPI xbox::KeAlertThread
 (
 	IN HANDLE ThreadHandle
@@ -633,7 +631,6 @@ XBSYSAPI EXPORTNUM(93) xbox::ntstatus_xt NTAPI xbox::KeAlertThread
 // ******************************************************************
 // * 0x005E - KeBoostPriorityThread()
 // ******************************************************************
-// Source:Dxbx
 XBSYSAPI EXPORTNUM(94) xbox::ntstatus_xt NTAPI xbox::KeBoostPriorityThread
 (
 	IN PKTHREAD Thread,
