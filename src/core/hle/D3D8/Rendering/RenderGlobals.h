@@ -142,11 +142,6 @@ extern xbox::X_D3DMULTISAMPLE_TYPE   g_Xbox_MultiSampleType;
 void CxbxRegisterTextureByDataAddr(xbox::addr_xt dataAddr, xbox::X_D3DBaseTexture *pTexture);
 xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr);
 
-// Resolve palette data pointer and byte-size for a texture stage directly from
-// PGRAPH registers (NV_PGRAPH_TEXPALETTE0 + stage*4).  Returns true if a valid
-// palette is present (non-zero physical offset and P8 color format).
-bool CxbxGetPaletteFromPGRAPH(int stage, void** ppData, unsigned* pSize);
-
 extern EmuD3D8CreateDeviceProxyData  g_EmuCDPD;
 
 void LookupTrampolinesD3D();

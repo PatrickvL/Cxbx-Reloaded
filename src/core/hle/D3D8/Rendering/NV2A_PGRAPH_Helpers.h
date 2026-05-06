@@ -1,0 +1,114 @@
+// ******************************************************************
+// *  NV2A PGRAPH Helper Functions
+// *
+// *  Structured accessors for PGRAPH register state.
+// *  All functions read directly from NV2A hardware state (no caching).
+// *  Functions that resolve physical addresses incorporate DMA context.
+// *
+// *  Each function has two overloads:
+// *    - One accepting NV2AState* (for callers that already have the device state)
+// *    - One with no device arg (goes through the g_NV2A global)
+// ******************************************************************
+#pragma once
+
+#include <cstdint>
+
+struct NV2AState; // Forward declaration
+
+// ---- Texture Stage State ----
+
+struct NV2ATextureAddress {
+	uint32_t physicalAddress; // DMA-resolved physical address in VRAM (0 if disabled/invalid)
+	uint32_t rawOffset;       // Raw offset from PGRAPH register (before DMA resolution)
+	uint32_t dmaBase;         // DMA context base address that was added
+};
+
+// Resolve the physical VRAM address of a texture's data for the given stage.
+// Reads TEXOFFSET0 and resolves through DMA context A/B (selected by TEXFMT0 CONTEXT_DMA bit).
+NV2ATextureAddress NV2AGetTextureAddress(NV2AState* d, int stage);
+NV2ATextureAddress NV2AGetTextureAddress(int stage);
+
+struct NV2APaletteState {
+	void*    data;    // Pointer to palette data (CONTIGUOUS_MEMORY_BASE + physAddr), or nullptr
+	unsigned size;    // Size in bytes (entries × 4)
+	uint32_t physicalAddress; // DMA-resolved physical address
+};
+
+// Resolve palette data pointer and size for a texture stage.
+// Reads TEXPALETTE0, resolves through DMA context. Returns empty if offset is zero.
+// Caller is responsible for checking whether the texture format is palettized.
+NV2APaletteState NV2AGetPaletteState(NV2AState* d, int stage);
+NV2APaletteState NV2AGetPaletteState(int stage);
+
+struct NV2ATextureFormat {
+	uint32_t raw;             // Raw TEXFMT register value (= Xbox D3D Format field)
+	uint32_t colorFormat;     // NV097_SET_TEXTURE_FORMAT_COLOR_* value
+	uint32_t mipLevels;       // Number of mipmap levels
+	uint32_t logWidth;        // log2(base width)
+	uint32_t logHeight;       // log2(base height)
+	uint32_t logDepth;        // log2(base depth)
+	uint32_t dimensionality;  // 1, 2, or 3
+	bool     cubemap;         // Cubemap enabled
+	bool     borderFromColor; // Border source is color (vs texture data)
+	bool     dmaSelect;       // CONTEXT_DMA bit (false=A, true=B)
+};
+
+// Read decoded texture format for a stage.
+NV2ATextureFormat NV2AGetTextureFormat(NV2AState* d, int stage);
+NV2ATextureFormat NV2AGetTextureFormat(int stage);
+
+struct NV2ATextureImageRect {
+	uint32_t width;           // Linear texture width (from TEXIMAGERECT)
+	uint32_t height;          // Linear texture height
+};
+
+// Read linear texture dimensions (TEXIMAGERECT register).
+NV2ATextureImageRect NV2AGetTextureImageRect(NV2AState* d, int stage);
+NV2ATextureImageRect NV2AGetTextureImageRect(int stage);
+
+struct NV2ATextureControl {
+	bool     enabled;         // Texture stage enabled (TEXCTL0 bit 30)
+	uint32_t pitch;           // Image pitch from TEXCTL1 (bits 16-31)
+	uint32_t minLodClamp;     // Min LOD clamp (TEXCTL0 bits 18-29)
+	uint32_t maxLodClamp;     // Max LOD clamp (TEXCTL0 bits 6-17)
+};
+
+// Read texture control state for a stage.
+NV2ATextureControl NV2AGetTextureControl(NV2AState* d, int stage);
+NV2ATextureControl NV2AGetTextureControl(int stage);
+
+// ---- Surface State ----
+// Unlike textures (which have explicit NV_PGRAPH_TEX* MMIO registers),
+// NV2A surfaces have no register-file representation.  The NV097
+// SET_SURFACE_* methods write to internal PGRAPH side-structs (surface_color,
+// surface_zeta, surface_shape) which are the canonical storage.  This helper
+// reads those structs directly.
+
+struct NV2ASurfaceState {
+	uint32_t colorOffset;     // Raw color surface offset (relative to dma_color context)
+	uint32_t zetaOffset;      // Raw zeta surface offset (relative to dma_zeta context)
+	uint32_t colorPitch;      // Color surface pitch (bytes per row)
+	uint32_t zetaPitch;       // Zeta surface pitch
+	uint32_t clipX, clipY;    // Surface clip origin
+	uint32_t clipWidth;       // Surface clip width
+	uint32_t clipHeight;      // Surface clip height
+	uint32_t antiAliasing;    // NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_* value
+	uint32_t colorFormat;     // Surface color format
+	uint32_t zetaFormat;      // Surface zeta format
+};
+
+// Read current surface configuration from PGRAPH.
+NV2ASurfaceState NV2AGetSurfaceState(NV2AState* d);
+NV2ASurfaceState NV2AGetSurfaceState();
+
+// ---- DMA Resolution ----
+
+// Resolve a raw VRAM offset through the texture DMA context for a given stage.
+// This adds the DMA base (from dma_a or dma_b per TEXFMT CONTEXT_DMA bit) to the offset.
+uint32_t NV2AResolveTexturePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
+uint32_t NV2AResolveTexturePhysicalAddress(int stage, uint32_t rawOffset);
+
+// Resolve a raw VRAM offset through the palette DMA context for a given stage.
+// This adds the DMA base (from dma_a or dma_b per TEXPALETTE CONTEXT_DMA bit) to the offset.
+uint32_t NV2AResolvePalettePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
+uint32_t NV2AResolvePalettePhysicalAddress(int stage, uint32_t rawOffset);

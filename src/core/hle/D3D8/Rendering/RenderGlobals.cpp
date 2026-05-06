@@ -79,35 +79,6 @@ xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr)
 	return (it != g_TexturesByDataAddr.end()) ? it->second : nullptr;
 }
 
-bool CxbxGetPaletteFromPGRAPH(int stage, void** ppData, unsigned* pSize)
-{
-	auto d = g_NV2A->GetDeviceState();
-	auto pg = &d->pgraph;
-	uint32_t fmtColor = GET_MASK(pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)],
-		NV097_SET_TEXTURE_FORMAT_COLOR);
-	if (fmtColor != NV097_SET_TEXTURE_FORMAT_COLOR_SZ_I8_A8R8G8B8) {
-		*ppData = nullptr;
-		*pSize = 0;
-		return false;
-	}
-	uint32_t texPalette = pg->regs[RI(NV_PGRAPH_TEXPALETTE0 + stage * 4)];
-	uint32_t palOffset = texPalette & NV_PGRAPH_TEXPALETTE0_OFFSET;
-	if (palOffset == 0) {
-		*ppData = nullptr;
-		*pSize = 0;
-		return false;
-	}
-	// Resolve DMA base address: CONTEXT_DMA bit selects between dma_a (0) and dma_b (1)
-	bool dmaSelect = (texPalette & NV_PGRAPH_TEXPALETTE0_CONTEXT_DMA) != 0;
-	uint32_t dmaBase = NV2ADevice::ResolveDmaBaseAddress(d, dmaSelect ? pg->dma_b : pg->dma_a);
-	uint32_t lengthField = GET_MASK(texPalette, NV_PGRAPH_TEXPALETTE0_LENGTH);
-	static const unsigned palSizes[] = { 256*4, 128*4, 64*4, 32*4 };
-	*ppData = (void*)(CONTIGUOUS_MEMORY_BASE + dmaBase + palOffset);
-	*pSize = palSizes[lengthField & 3];
-	return true;
-}
-
-
 DXGI_FORMAT               g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT]; // Updated by CxbxUpdateHostTextures(), read by CxbxCalcColorSign
 xbox::X_D3DBaseTexture       *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by our D3DDevice_SetTexture and D3DDevice_SwitchTexture patches
 

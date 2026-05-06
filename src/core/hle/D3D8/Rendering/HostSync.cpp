@@ -130,7 +130,8 @@ void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
-	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+	auto d = g_NV2A->GetDeviceState();
+	auto pg = &d->pgraph;
 
 	// Fast path: skip entire function if texture-related registers unchanged.
 	// This avoids hash map lookups, format decoding, and SRV creation.
@@ -192,7 +193,7 @@ void CxbxUpdateHostTextures()
 		uint32_t texFmtReg = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
 		bool texDmaSelect = (texFmtReg & NV_PGRAPH_TEXFMT0_CONTEXT_DMA) != 0;
 		uint32_t texDmaBase = NV2ADevice::ResolveDmaBaseAddress(
-			g_NV2A->GetDeviceState(), texDmaSelect ? pg->dma_b : pg->dma_a);
+			d, texDmaSelect ? pg->dma_b : pg->dma_a);
 		uint32_t texOffset = texDmaBase + texOffsetRaw;
 
 		if (texOffset != 0) {
@@ -415,7 +416,8 @@ void CxbxUpdateHostTextures()
 
 void CxbxUpdateHostTextureScaling()
 {
-	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
+	auto d = g_NV2A->GetDeviceState();
+	auto pg = &d->pgraph;
 
 	// Fast path: skip if texture state hasn't changed since last call.
 	// CxbxUpdateHostTextures (called immediately before us) already checks

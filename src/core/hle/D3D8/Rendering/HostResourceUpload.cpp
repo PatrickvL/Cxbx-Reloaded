@@ -40,9 +40,9 @@ static void CopyMipDataToHost(
 		EmuLog(LOG_LEVEL::DEBUG, "Unsupported texture format, expanding to EMUFMT_A8R8G8B8");
 
 		// Resolve palette from PGRAPH registers for P8 textures
-		void* pPaletteData = nullptr;
-		unsigned paletteSize = 0;
-		CxbxGetPaletteFromPGRAPH(iTextureStage, &pPaletteData, &paletteSize);
+		auto paletteState = NV2AGetPaletteState(iTextureStage);
+		void* pPaletteData = paletteState.data;
+		unsigned paletteSize = paletteState.size;
 
 		// In case where there is a palettized texture without a palette attached,
 		// fill it with zeroes for now. This might not be correct, but it prevents a crash.
@@ -175,9 +175,9 @@ void UploadPixelContainerMips(
 			// combines unswizzle + palette lookup in a single GPU dispatch
 			if (bSwizzled && X_Format == xbox::X_D3DFMT_P8 && dwMipMapLevels == 1 && pxMipDepth == 1
 				&& XboxResourceType == xbox::X_D3DRTYPE_TEXTURE) {
-				void* pPaletteData = nullptr;
-				unsigned paletteSize = 0;
-				CxbxGetPaletteFromPGRAPH(iTextureStage, &pPaletteData, &paletteSize);
+				auto paletteState = NV2AGetPaletteState(iTextureStage);
+				void* pPaletteData = paletteState.data;
+				unsigned paletteSize = paletteState.size;
 				if (pPaletteData == nullptr) {
 					// Missing palette — zero-fill via UpdateSubresource (texture is DEFAULT, can't Map)
 					LOG_TEST_CASE("Palettized texture bound without a palette");

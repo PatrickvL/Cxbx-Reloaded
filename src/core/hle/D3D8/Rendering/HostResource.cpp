@@ -169,10 +169,9 @@ resource_key_t GetHostResourceKey(xbox::X_D3DResource* pXboxResource, int iTextu
 					LOG_TEST_CASE("Unknown texture stage!");
 				} else {
 					assert(iTextureStage < xbox::X_D3DTS_STAGECOUNT);
-					void* pPaletteData = nullptr;
-					unsigned paletteSize = 0;
-					if (CxbxGetPaletteFromPGRAPH(iTextureStage, &pPaletteData, &paletteSize)) {
-						key.PaletteHash = ComputeHash(pPaletteData, paletteSize);
+					auto paletteState = NV2AGetPaletteState(iTextureStage);
+					if (paletteState.data) {
+						key.PaletteHash = ComputeHash(paletteState.data, paletteState.size);
 					}
 				}
 			}

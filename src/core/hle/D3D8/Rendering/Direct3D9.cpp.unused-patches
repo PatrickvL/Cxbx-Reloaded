@@ -6674,7 +6674,7 @@ static void CxbxImpl_SetPalette
 		LOG_TEST_CASE("Stage out of bounds");
 	} else {
 		// Note : Palette is now resolved directly from PGRAPH NV_PGRAPH_TEXPALETTE0
-		// at texture upload time via CxbxGetPaletteFromPGRAPH().
+		// at texture upload time via NV2AGetPaletteState().
 	}
 }
 
