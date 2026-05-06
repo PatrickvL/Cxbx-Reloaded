@@ -388,6 +388,14 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	if (!s_pMirrorBuf)
 		return 0;
 
+	// Skip redundant flushes within the same frame. The Xbox CPU builds the
+	// entire pushbuffer before kicking it, so between individual draws within
+	// a single pushbuffer submission, no new CPU writes to VRAM are expected.
+	// Flushing once at the start of each frame (first draw after Present) is
+	// sufficient. This avoids 20k+ GetWriteWatch syscalls per frame.
+	if (!s_bFirstFlushOfFrame)
+		return 0;
+
 	// Sync any committed tiled pages back to contiguous memory.
 	// The memcpy writes to 0x80 are automatically tracked by write-watch.
 	SyncTiledPagesBack();
