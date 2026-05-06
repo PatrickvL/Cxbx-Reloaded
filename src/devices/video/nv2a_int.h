@@ -274,6 +274,8 @@ typedef struct PGRAPHState {
 
 	xbox::addr_xt dma_semaphore;
 
+	xbox::addr_xt dma_a, dma_b; // PRAMIN offsets for DMA context A/B (texture/palette address resolution)
+
 	xbox::addr_xt dma_report;
 	unsigned int zpass_pixel_count_enable;
 	bool zpass_pixel_count_active; // true when a D3D11 occlusion query is between Begin/End

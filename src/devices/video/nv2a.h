@@ -132,6 +132,10 @@ public:
 	uint64_t vblank_next(uint64_t now);
 	uint64_t ptimer_next(uint64_t now);
 
+	// Resolve a DMA object's physical base address from its PRAMIN offset.
+	// Returns the base address (masked to 128 MB), or 0 if dma_obj_address is 0.
+	static uint32_t ResolveDmaBaseAddress(NV2AState *d, xbox::addr_xt dma_obj_address);
+
 private:
 	NV2AState *m_nv2a_state;
 };

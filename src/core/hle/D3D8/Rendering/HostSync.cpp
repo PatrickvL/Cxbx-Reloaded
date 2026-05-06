@@ -182,10 +182,18 @@ void CxbxUpdateHostTextures()
 		// Read texture VRAM offset from PGRAPH — authoritative source.
 		// The Xbox D3D runtime always writes SET_TEXTURE_OFFSET to the
 		// pushbuffer, so PGRAPH has the physical address of the texture.
+		// The offset is relative to DMA context A or B (selected by TEXFMT0 bit 1).
 		ID3D11Resource* pHostBaseTexture = nullptr;
 		bool bNeedRelease = false;
 		bool bIsRenderTargetTexture = false;
-		uint32_t texOffset = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
+		uint32_t texOffsetRaw = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
+
+		// Resolve DMA base: CONTEXT_DMA bit in TEXFMT selects dma_a (0) or dma_b (1)
+		uint32_t texFmtReg = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
+		bool texDmaSelect = (texFmtReg & NV_PGRAPH_TEXFMT0_CONTEXT_DMA) != 0;
+		uint32_t texDmaBase = NV2ADevice::ResolveDmaBaseAddress(
+			g_NV2A->GetDeviceState(), texDmaSelect ? pg->dma_b : pg->dma_a);
+		uint32_t texOffset = texDmaBase + texOffsetRaw;
 
 		if (texOffset != 0) {
 			// Check if this texture offset corresponds to a render target:

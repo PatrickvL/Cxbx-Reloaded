@@ -2014,12 +2014,12 @@ void pgraph_handle_method(NV2AState *d,
 		// case NV097_SET_CONTEXT_DMA_NOTIFIES:
 		//     pg->dma_notifies = parameter;
 		//     break;
-		// case NV097_SET_CONTEXT_DMA_A:
-		//     pg->dma_a = parameter;
-		//     break;
-		// case NV097_SET_CONTEXT_DMA_B:
-		//     pg->dma_b = parameter;
-		//     break;
+		case NV097_SET_CONTEXT_DMA_A:
+		    pg->dma_a = parameter;
+		    break;
+		case NV097_SET_CONTEXT_DMA_B:
+		    pg->dma_b = parameter;
+		    break;
 		// case NV097_SET_CONTEXT_DMA_STATE:
 		//     pg->dma_state = parameter;
 		//     break;

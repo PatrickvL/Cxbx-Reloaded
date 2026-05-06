@@ -194,6 +194,18 @@ static void *nv_dma_map(NV2AState *d, xbox::addr_xt dma_obj_address, xbox::addr_
 //	return (void*)(PHYSICAL_MAP_BASE  + dma.address);
 }
 
+uint32_t NV2ADevice::ResolveDmaBaseAddress(NV2AState *d, xbox::addr_xt dma_obj_address)
+{
+	if (dma_obj_address == 0 || dma_obj_address >= d->pramin.ramin_size)
+		return 0;
+
+	uint32_t *dma_obj = (uint32_t*)(d->pramin.ramin_ptr + dma_obj_address);
+	uint32_t flags = ldl_le_p(dma_obj);
+	uint32_t frame = ldl_le_p(dma_obj + 2);
+	uint32_t address = (frame & NV_DMA_ADDRESS) | GET_MASK(flags, NV_DMA_ADJUST);
+	return address & 0x07FFFFFF; // Mask to 128 MB physical address space
+}
+
 #include "EmuNV2A_PBUS.cpp"
 #include "EmuNV2A_PCRTC.cpp"
 #include "EmuNV2A_PFB.cpp"
