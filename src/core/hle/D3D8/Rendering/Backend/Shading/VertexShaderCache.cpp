@@ -223,7 +223,7 @@ static void EmitOperation(std::ostringstream& ss, const Nv2aVshOperation& op, bo
             // Handle ARL specially
             if (op.opcode == NV2AOP_ARL) {
                 std::string src = EmitInputReg(op.inputs[0]);
-                ss << "    a0 = (int)floor(" << src << ".x + 0.001);\n";
+                ss << "    a0 = mac_arl(" << src << ");\n";
                 return;
             }
 
@@ -233,39 +233,25 @@ static void EmitOperation(std::ostringstream& ss, const Nv2aVshOperation& op, bo
             std::string c = (op.inputs[2].type != NV2ART_NONE) ? EmitInputReg(op.inputs[2]) : "float4(0,0,0,0)";
 
             std::string expr;
-            switch (op.opcode) {
-            case NV2AOP_MOV: expr = a; break;
-            case NV2AOP_MUL: expr = "nv2a_mul(" + a + ", " + b + ")"; break;
-            case NV2AOP_ADD: expr = "(" + a + " + " + b + ")"; break;
-            case NV2AOP_MAD: expr = "(nv2a_mul(" + a + ", " + b + ") + " + c + ")"; break;
-            case NV2AOP_DP3: expr = "nv2a_dot3(" + a + ".xyz, " + b + ".xyz).xxxx"; break;
-            case NV2AOP_DPH: expr = "(nv2a_dot3(" + a + ".xyz, " + b + ".xyz) + " + b + ".w).xxxx"; break;
-            case NV2AOP_DP4: expr = "nv2a_dot4(" + a + ", " + b + ").xxxx"; break;
-            case NV2AOP_DST: expr = "float4(1.0, nv2a_mul1(" + a + ".y, " + b + ".y), " + a + ".z, " + b + ".w)"; break;
-            case NV2AOP_MIN: expr = "min(" + a + ", " + b + ")"; break;
-            case NV2AOP_MAX: expr = "max(" + a + ", " + b + ")"; break;
-            case NV2AOP_SLT: expr = "float4(" + a + " < " + b + ")"; break;
-            case NV2AOP_SGE: expr = "float4(" + a + " >= " + b + ")"; break;
-            case NV2AOP_RCP: expr = "(1.0 / " + a + ".x).xxxx"; break;
-            case NV2AOP_RCC: {
-                // Sign-preserving clamp: clamp(|1/x|) then restore original sign bit
-                expr = "asfloat(asuint(clamp(abs(1.0 / " + a + ".x), 5.42101e-20, 1.84467e+19)) | (asuint(1.0 / " + a + ".x) & 0x80000000u)).xxxx";
-                break;
-            }
-            case NV2AOP_RSQ: expr = "rsqrt(abs(" + a + ".x)).xxxx"; break;
-            case NV2AOP_EXP: expr = "float4(exp2(floor(" + a + ".x)), " + a + ".x - floor(" + a + ".x), exp2(" + a + ".x), 1.0)"; break;
-            case NV2AOP_LOG: {
-                // LOG(0) = (-inf, 1, -inf, 1) per NV2A hardware
-                std::string t = "abs(" + a + ".x)";
-                expr = "(" + t + " == 0.0) ? float4(asfloat(0xFF800000u), 1.0, asfloat(0xFF800000u), 1.0) : float4(floor(log2(" + t + ")), " + t + " * exp2(-floor(log2(" + t + "))), log2(" + t + "), 1.0)";
-                break;
-            }
-            case NV2AOP_LIT: {
-                // LIT: result = {1.0, max(src.x, 0), (src.x>0 && src.y>0) ? pow(src.y, src.w) : 0, 1.0}
-                // Simplified for common case
-                expr = "float4(1.0, max(" + a + ".x, 0.0), (" + a + ".x > 0 && " + a + ".y > 0) ? exp2(clamp(" + a + ".w, -128, 128) * log2(max(" + a + ".y, 0.00001))) : 0.0, 1.0)";
-                break;
-            }
+            switch (op.opcode) {                
+            case NV2AOP_MOV: expr = isILU ? ("ilu_mov(" + a + ")") : ("mac_mov(" + a + ")"); break;
+            case NV2AOP_MUL: expr = "mac_mul(" + a + ", " + b + ")"; break;
+            case NV2AOP_ADD: expr = "mac_add(" + a + ", " + c + ")"; break;
+            case NV2AOP_MAD: expr = "mac_mad(" + a + ", " + b + ", " + c + ")"; break;
+            case NV2AOP_DP3: expr = "mac_dp3(" + a + ", " + b + ")"; break;
+            case NV2AOP_DPH: expr = "mac_dph(" + a + ", " + b + ")"; break;
+            case NV2AOP_DP4: expr = "mac_dp4(" + a + ", " + b + ")"; break;
+            case NV2AOP_DST: expr = "mac_dst(" + a + ", " + b + ")"; break;
+            case NV2AOP_MIN: expr = "mac_min(" + a + ", " + b + ")"; break;
+            case NV2AOP_MAX: expr = "mac_max(" + a + ", " + b + ")"; break;
+            case NV2AOP_SLT: expr = "mac_slt(" + a + ", " + b + ")"; break;
+            case NV2AOP_SGE: expr = "mac_sge(" + a + ", " + b + ")"; break;
+            case NV2AOP_RCP: expr = "ilu_rcp(" + a + ")"; break;
+            case NV2AOP_RCC: expr = "ilu_rcc(" + a + ")"; break;
+            case NV2AOP_RSQ: expr = "ilu_rsq(" + a + ")"; break;
+            case NV2AOP_EXP: expr = "ilu_exp(" + a + ")"; break;
+            case NV2AOP_LOG: expr = "ilu_log(" + a + ")"; break;
+            case NV2AOP_LIT: expr = "ilu_lit(" + a + ")"; break;
             default: expr = "float4(0,0,0,0)"; break;
             }
 
@@ -297,7 +283,8 @@ static std::string TranslateToHLSL(const uint32_t program_data[][4], uint32_t st
     ss << "#include \"CxbxVertexShaderCommon.hlsli\"\n";
     ss << "#include \"CxbxVertexFetch.hlsli\"\n";
     ss << "#include \"CxbxScreenspaceTransform.hlsli\"\n";
-    ss << "#include \"CxbxNV2AMathHelpers.hlsli\"\n\n";
+    ss << "#include \"CxbxNV2AMathHelpers.hlsli\"\n";
+    ss << "#include \"CxbxNV2AVshOps.hlsli\"\n\n";
     ss << "#define X_D3DVS_CONSTREG_COUNT 192\n";
     ss << "uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);\n\n";
     ss << "VS_OUTPUT main(const VS_INPUT xIn)\n{\n";

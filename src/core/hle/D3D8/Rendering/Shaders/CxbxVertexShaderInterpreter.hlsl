@@ -30,19 +30,7 @@ uniform float4 C[X_D3DVS_CONSTREG_COUNT] : register(c0);
 #include "CxbxPGRAPHRegs.hlsli"
 #include "CxbxVertexShaderInterpreterState.hlsli"
 #include "CxbxNV2AMathHelpers.hlsli"
-
-// IEEE 754 infinity constants as raw uint bit patterns.
-// Used by LOG(0) below.  The reference C emulator (nv2a_vsh_cpu) returns
-// -INFINITY for this case, and xemu does the same.  However the reference
-// code carries a "TODO: Validate this on HW" comment — real NV2A silicon
-// (Kelvin-class, 2001) may clamp to a large finite value instead of
-// producing a true IEEE infinity.  We match the existing emulator consensus
-// for now; if hardware tests reveal different behaviour, replacing this
-// with a large negative float (e.g. -FLT_MAX / -3.4e38) would be the fix.
-// Note: FXC rejects literal division by zero (-1.0f/0.0f), so we use
-// asfloat() on the raw IEEE 754 bit patterns instead.
-static const float CXBX_POS_INF = asfloat(0x7F800000u);
-static const float CXBX_NEG_INF = asfloat(0xFF800000u);
+#include "CxbxNV2AVshOps.hlsli"
 
 // ============================================================
 // Per-invocation interpreter state.
@@ -162,7 +150,10 @@ float4 fetch_input(uint mux, uint r_idx, uint v_idx, uint const_idx,
     }
 
     float4 sw = apply_swizzle(raw, swz);
-    return is_neg ? -sw : sw;
+    // Branchless negate: multiply by ±1.  Compiles to a single XOR on the
+    // sign bits when the compiler sees the pattern (no actual mul emitted).
+    float neg = is_neg ? -1.0f : 1.0f;
+    return sw * neg;
 }
 
 // ============================================================
@@ -229,18 +220,18 @@ void write_ctx(uint addr, float4 result, uint mask)
 float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
 {
     [branch] switch (opcode) {
-        case VSI_MAC_MOV: return a;
-        case VSI_MAC_MUL: return nv2a_mul(a, b);
-        case VSI_MAC_ADD: return a + c_in;
-        case VSI_MAC_MAD: return nv2a_mul(a, b) + c_in;
-        case VSI_MAC_DP3: return nv2a_dot3(a.xyz, b.xyz).xxxx;
-        case VSI_MAC_DPH: return (nv2a_dot3(a.xyz, b.xyz) + b.w).xxxx;
-        case VSI_MAC_DP4: return nv2a_dot4(a, b).xxxx;
-        case VSI_MAC_DST: return float4(1.0, nv2a_mul1(a.y, b.y), a.z, b.w);
-        case VSI_MAC_MIN: return min(a, b);
-        case VSI_MAC_MAX: return max(a, b);
-        case VSI_MAC_SLT: return 1.0 - step(b, a);  // 1 where a < b
-        case VSI_MAC_SGE: return step(b, a);           // 1 where a >= b
+        case VSI_MAC_MOV: return mac_mov(a);
+        case VSI_MAC_MUL: return mac_mul(a, b);
+        case VSI_MAC_ADD: return mac_add(a, c_in);
+        case VSI_MAC_MAD: return mac_mad(a, b, c_in);
+        case VSI_MAC_DP3: return mac_dp3(a, b);
+        case VSI_MAC_DPH: return mac_dph(a, b);
+        case VSI_MAC_DP4: return mac_dp4(a, b);
+        case VSI_MAC_DST: return mac_dst(a, b);
+        case VSI_MAC_MIN: return mac_min(a, b);
+        case VSI_MAC_MAX: return mac_max(a, b);
+        case VSI_MAC_SLT: return mac_slt(a, b);
+        case VSI_MAC_SGE: return mac_sge(a, b);
         default: return float4(0, 0, 0, 0);
     }
 }
@@ -249,77 +240,17 @@ float4 exec_mac(uint opcode, float4 a, float4 b, float4 c_in)
 // ILU unit operations
 // ============================================================
 
-// Floor with ARL bias — workaround for GPU float precision on byte-normalised
-// vertex attributes.  When the Xbox CPU uploads a byte vertex attribute like
-// 17, NV2A hardware normalises it to 17/255 using its fixed-function input
-// unit (well-defined rounding).  GPU shader floats may represent this as
-// slightly less than the true value (e.g. 16.9999… instead of 17.0) after
-// the shader multiplies back by 255, so a naïve floor() would yield 16.
-// Adding a small bias before floor() compensates for this.
-//
-// Origin: xqemu PR #79 "Add ARL-bias to work around OpenGL float behaviour"
-//   https://github.com/xqemu/xqemu/pull/79
-// Background: xqemu issue #78 "GLSL floats are not suitable for VS emulation"
-//   https://github.com/xqemu/xqemu/issues/78
-//
-// Per the NV_vertex_program spec (§2.14.1.11), the floor operations in ARL
-// and EXP "must operate identically".  xqemu issue #105 notes that applying
-// the bias to EXP's floor too would be the correct approach, but doing so
-// risks breaking EXP's result.y fractional guarantee (expected in [0,1)).
-// We therefore apply the bias only to ARL (matching xemu behaviour) and
-// leave EXP using exact floor() — see exec_ilu / VSI_ILU_EXP below.
-//
-// Known limitation: the bias can cause floor(N - epsilon) → N when the true
-// mathematical result should be N-1 (e.g. 16.999 → 17).  This is considered
-// less common than the byte-normalisation under-rounding it fixes.
-#define BIAS 0.001
-
-float vsi_floor(float src)
-{
-    return floor(src + BIAS);
-}
-
 // [branch]: Same rationale as exec_mac — opcode is wavefront-uniform.
 float4 exec_ilu(uint opcode, float4 c_in)
 {
-    float s = c_in.x; // Scalar input
-
     [branch] switch (opcode) {
-        case VSI_ILU_MOV: return c_in;
-        case VSI_ILU_RCP: return (1.0 / s).xxxx;
-        case VSI_ILU_RCC: {
-            // Branchless sign-preserving clamp: clamp(|rv|) then copy sign bit.
-            float rv = 1.0 / s;
-            float clamped = clamp(abs(rv), 5.42101e-020f, 1.84467e+019f);
-            return asfloat(asuint(clamped) | (asuint(rv) & 0x80000000u)).xxxx;
-        }
-        case VSI_ILU_RSQ: return rsqrt(abs(s)).xxxx;
-        case VSI_ILU_EXP: {
-            // EXP uses exact floor (no ARL bias).
-            float fl = floor(s);
-            return float4(exp2(fl), s - fl, exp2(s), 1.0);
-        }
-        case VSI_ILU_LOG: {
-            // Matches xemu: floor(log2(|src|)), |src|/2^floor(log2(|src|)), log2(|src|), 1
-            // Special case: LOG(0) = (-inf, 1, -inf, 1)
-            // See CXBX_NEG_INF definition for hardware uncertainty notes.
-            // Branchless: compute normal path (NaN when t==0 is harmless,
-            // selected away by the ternary → movc).  Caches log2(t) to
-            // avoid computing it twice; uses mul instead of div.
-            float t = abs(s);
-            float lg = log2(t);
-            float flLog = floor(lg);
-            float4 normal_result = float4(flLog, t * exp2(-flLog), lg, 1.0);
-            return (t == 0.0f) ? float4(CXBX_NEG_INF, 1.0f, CXBX_NEG_INF, 1.0f)
-                               : normal_result;
-        }
-        case VSI_ILU_LIT: {
-            float diffuse = c_in.x;
-            float blinn = c_in.y;
-            float specPower = clamp(c_in.w, -(128.0 - 1.0/256.0), 128.0 - 1.0/256.0);
-            float litZ = (diffuse > 0 && blinn > 0) ? pow(abs(blinn), specPower) : 0;
-            return float4(1.0, max(0.0, diffuse), litZ, 1.0);
-        }
+        case VSI_ILU_MOV: return ilu_mov(c_in);
+        case VSI_ILU_RCP: return ilu_rcp(c_in);
+        case VSI_ILU_RCC: return ilu_rcc(c_in);
+        case VSI_ILU_RSQ: return ilu_rsq(c_in);
+        case VSI_ILU_EXP: return ilu_exp(c_in);
+        case VSI_ILU_LOG: return ilu_log(c_in);
+        case VSI_ILU_LIT: return ilu_lit(c_in);
         default: return float4(0, 0, 0, 0);
     }
 }
@@ -501,8 +432,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
         // ========================================================
         [branch] if (has_mac) {
             [branch] if (mac_op == VSI_MAC_ARL) {
-                // ARL bypasses exec_mac; only needs floor(in_a.x) with bias.
-                s_a0 = (int)vsi_floor(in_a.x);
+                s_a0 = mac_arl(in_a);
             }
             else {
                 float4 mac_result = exec_mac(mac_op, in_a, in_b, in_c);
