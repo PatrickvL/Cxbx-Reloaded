@@ -246,7 +246,11 @@ void CxbxUpdateHostTextures()
 						uint32_t width = (texImageRect >> 16) & 0x1FFF;
 						uint32_t height = texImageRect & 0x1FFF;
 						uint32_t pitch = (texCtl1 >> 16) & 0xFFFF;
-						if (width > 0 && height > 0 && pitch >= 64)
+						// NV2A minimum pitch alignment is 64 bytes; clamp to
+						// avoid synth.Size=0 which would force swizzled decode.
+						if (pitch < 64)
+							pitch = 64;
+						if (width > 0 && height > 0)
 							synth.Size = ((width - 1) & 0xFFF)
 								| (((height - 1) & 0xFFF) << X_D3DSIZE_HEIGHT_SHIFT)
 								| ((((pitch / 64) - 1) & 0xFF) << X_D3DSIZE_PITCH_SHIFT);
