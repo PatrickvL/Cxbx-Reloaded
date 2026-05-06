@@ -151,4 +151,35 @@ float3 ApplyDotMapping(uint mode, float4 src)
     }
 }
 
+// Shadow depth comparison — pure function, no register reads.
+// shadowFunc: 3-bit NV2A SHADOW_ZFUNC (0=NEVER,1=LESS,...,7=ALWAYS)
+// sampled: value sampled from the shadow/depth texture
+// ref: reference depth (typically projected Z coordinate)
+float4 ApplyShadowCompare(uint shadowFunc, float4 sampled, float ref)
+{
+    if (shadowFunc == 0u) return sampled;       // NEVER — pass through
+    if (shadowFunc == 7u) return 1.0f.xxxx;     // ALWAYS
+
+    float depth = sampled.r;
+    // Bitmask: bit0=LESS, bit1=EQUAL, bit2=GREATER (matches HW encoding)
+    uint cmp = (depth <  ref ? 1u : 0u)
+             | (depth == ref ? 2u : 0u)
+             | (depth >  ref ? 4u : 0u);
+    return ((cmp & shadowFunc) != 0u ? 1.0f : 0.0f).xxxx;
+}
+
+// Clip plane / compare mode — pure function, no register reads.
+// clipBits: 4-bit per-stage mask from NV_PGRAPH_SHADERCLIPMODE
+//   Bit set = discard if coord >= 0 (keep negative half-space)
+//   Bit clear = discard if coord < 0 (keep positive half-space)
+void ApplyCompareMode(uint clipBits, float4 coords)
+{
+    bool k0 = (clipBits & 1u) != 0u ? (coords.x >= 0.0f) : (coords.x < 0.0f);
+    bool k1 = (clipBits & 2u) != 0u ? (coords.y >= 0.0f) : (coords.y < 0.0f);
+    bool k2 = (clipBits & 4u) != 0u ? (coords.z >= 0.0f) : (coords.z < 0.0f);
+    bool k3 = (clipBits & 8u) != 0u ? (coords.w >= 0.0f) : (coords.w < 0.0f);
+    if (k0 || k1 || k2 || k3)
+        discard;
+}
+
 #endif // CXBX_PIXEL_SHADER_FUNCTIONS_HLSLI

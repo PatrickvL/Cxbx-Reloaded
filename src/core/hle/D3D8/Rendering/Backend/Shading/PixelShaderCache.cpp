@@ -268,7 +268,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         ss << "    { float3 proj = " << coords << ".xyz / " << coords << ".w;\n";
         ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", proj.xy);\n";
         if (shadowCompare != 0.0f) {
-            ss << "      " << tReg << " = ApplyShadowCompare(" << stage << ", " << tReg << ", proj);\n";
+            ss << "      " << tReg << " = ApplyShadowCompare(PG_UINT(0x19A4) & 7u, " << tReg << ", proj.z);\n";
         }
         ss << "    }\n";
         break;
@@ -277,7 +277,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         ss << "    { float3 proj = " << coords << ".xyz / " << coords << ".w;\n";
         if (shadowCompare != 0.0f) {
             ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", proj.xy);\n";
-            ss << "      " << tReg << " = ApplyShadowCompare(" << stage << ", " << tReg << ", proj);\n";
+            ss << "      " << tReg << " = ApplyShadowCompare(PG_UINT(0x19A4) & 7u, " << tReg << ", proj.z);\n";
         } else {
             ss << "      " << tReg << " = Tex3D_" << sIdx << ".Sample(Samp" << sIdx << ", proj);\n";
         }
@@ -293,7 +293,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
 
     case 0x05: // CLIPPLANE
-        ss << "    ApplyCompareMode(" << stage << ", " << coords << ");\n";
+        ss << "    ApplyCompareMode((PG_UINT(0x1994) >> " << (stage * 4) << "u) & 0xFu, " << coords << ");\n";
         return; // no post-process
 
     case 0x06: // BUMPENVMAP
@@ -564,39 +564,12 @@ static std::string GenerateHLSL(const PSJITKey& key)
     // PS_INPUT — shared with VS output and RC interpreter
     ss << "#include \"CxbxPixelShaderInput.hlsli\"\n\n";
 
-    // Shared helper functions (nv2a_mul, PerformColorSign, etc.)
+    // Shared helper functions (nv2a_mul, PerformColorSign, ApplyShadowCompare, ApplyCompareMode, etc.)
     ss << "#include \"CxbxNV2AMathHelpers.hlsli\"\n";
     ss << "#include \"CxbxPixelShaderFunctions.hlsli\"\n\n";
 
-    // Shadow compare helper
-    bool anyShadow = (key.shadowCompare[0] != 0.0f || key.shadowCompare[1] != 0.0f ||
-                      key.shadowCompare[2] != 0.0f || key.shadowCompare[3] != 0.0f);
-    if (anyShadow) {
-        ss << "float4 ApplyShadowCompare(uint stage, float4 sampled, float3 coords) {\n";
-        ss << "    uint sf = PG_UINT(0x19A4) & 7;\n";
-        ss << "    if (sf==0) return sampled;\n";
-        ss << "    if (sf==7) return 1.0.xxxx;\n";
-        ss << "    float depth = sampled.r, ref = coords.z;\n";
-        ss << "    uint cmp = (depth<ref?1u:0u)|(depth==ref?2u:0u)|(depth>ref?4u:0u);\n";
-        ss << "    return ((cmp&sf)!=0u ? 1.0 : 0.0).xxxx;\n";
-        ss << "}\n\n";
-    }
-
-    // Clip plane helper
-    bool anyClip = false;
-    for (int i = 0; i < 4; i++) if (texModes[i] == 0x05) anyClip = true;
-    if (anyClip) {
-        ss << "void ApplyCompareMode(uint stage, float4 coords) {\n";
-        ss << "    uint bits = (PG_UINT(0x1994) >> (stage*4)) & 0xF;\n";
-        ss << "    bool k0 = (bits&1)!=0 ? (coords.x>=0.0) : (coords.x<0.0);\n";
-        ss << "    bool k1 = (bits&2)!=0 ? (coords.y>=0.0) : (coords.y<0.0);\n";
-        ss << "    bool k2 = (bits&4)!=0 ? (coords.z>=0.0) : (coords.z<0.0);\n";
-        ss << "    bool k3 = (bits&8)!=0 ? (coords.w>=0.0) : (coords.w<0.0);\n";
-        ss << "    if (k0||k1||k2||k3) discard;\n";
-        ss << "}\n\n";
-    }
-
-    // ApplyDotMapping is provided by CxbxPixelShaderFunctions.hlsli (included above)
+    // ApplyShadowCompare, ApplyCompareMode, and ApplyDotMapping are all
+    // provided by CxbxPixelShaderFunctions.hlsli (included above)
 
     // ---- main() ----
     ss << "float4 main(PS_INPUT input) : SV_Target\n{\n";

@@ -357,19 +357,14 @@ uint GetSourceStage(uint stage)
 // PSCompareMode decoder
 //
 // 4 bits per stage (RSTQ), each bit selects LT (1) or GE (0).
+// Delegates to the shared ApplyCompareMode(clipBits, coords) in
+// CxbxPixelShaderFunctions.hlsli after extracting the per-stage bits.
 // ============================================================
 
-void ApplyCompareMode(uint stage, float4 coords)
+void ApplyCompareModeForStage(uint stage, float4 coords)
 {
-    uint bits = (PG_UINT(NV_PGRAPH_SHADERCLIPMODE) >> (stage * 4u)) & 0xFu;
-    // NV2A clip plane per xemu: bit set means "discard if coord >= 0" (keeps negative);
-    // bit clear means "discard if coord < 0" (keeps positive).
-    bool killR = (bits & 1u) != 0u ? (coords.x >= 0.0f) : (coords.x < 0.0f);
-    bool killS = (bits & 2u) != 0u ? (coords.y >= 0.0f) : (coords.y < 0.0f);
-    bool killT = (bits & 4u) != 0u ? (coords.z >= 0.0f) : (coords.z < 0.0f);
-    bool killQ = (bits & 8u) != 0u ? (coords.w >= 0.0f) : (coords.w < 0.0f);
-    if (killR || killS || killT || killQ)
-        discard;
+    uint clipBits = (PG_UINT(NV_PGRAPH_SHADERCLIPMODE) >> (stage * 4u)) & 0xFu;
+    ApplyCompareMode(clipBits, coords);
 }
 
 // ============================================================
@@ -455,11 +450,13 @@ float4 SampleCube(uint s, float3 dir)
 // SHADOWCTL shadow_zfunc encoding (matches NV097_SET_SHADOW_DEPTH_FUNC):
 //   0 = NEVER   1 = LESS   2 = EQUAL  3 = LEQUAL
 //   4 = GREATER 5 = NOTEQUAL 6 = GEQUAL 7 = ALWAYS
+// Delegates to the shared ApplyShadowCompare(shadowFunc, sampled, ref)
+// in CxbxPixelShaderFunctions.hlsli after per-stage enable check.
 // ============================================================
 
-float4 ApplyShadowCompare(uint stage, float4 sampled, float3 coords)
+float4 ApplyShadowCompareForStage(uint stage, float4 sampled, float3 coords)
 {
-    // Static swizzle -- avoids dynamic vector index / movc chain in SM5.0
+    // Per-stage enable from cbuffer
     float sc = (stage == 0) ? ShadowCompare.x
              : (stage == 1) ? ShadowCompare.y
              : (stage == 2) ? ShadowCompare.z
@@ -467,20 +464,7 @@ float4 ApplyShadowCompare(uint stage, float4 sampled, float3 coords)
     if (sc == 0.0f) return sampled;
 
     uint shadowFunc = PG_UINT(NV_PGRAPH_SHADOWCTL) & NV_PGRAPH_SHADOWCTL_SHADOW_ZFUNC;
-    if (shadowFunc == 0u) return sampled;   // NEVER
-    if (shadowFunc == 7u) return 1.0f.xxxx; // ALWAYS
-
-    float depth = sampled.r;    // sampled depth from shadow map
-    float ref   = coords.z;     // projected fragment Z (R/Q)
-
-    // NV2A comparison: depth <op> ref
-    // Bitmask matches hardware encoding: bit0=LESS, bit1=EQUAL, bit2=GREATER
-    uint cmp = (depth <  ref ? 1u : 0u)
-             | (depth == ref ? 2u : 0u)
-             | (depth >  ref ? 4u : 0u);
-
-    float r = (cmp & shadowFunc) != 0u ? 1.0f : 0.0f;
-    return r.xxxx;
+    return ApplyShadowCompare(shadowFunc, sampled, coords.z);
 }
 
 // ============================================================
@@ -503,7 +487,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
             float3 projected = coords.xyz / coords.w;
             float4 sampled = Sample2D(stage, projected.xy);
             // Shadow compare operates on raw depth before post-processing (matches JIT/hardware)
-            Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompare(stage, sampled, projected));
+            Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompareForStage(stage, sampled, projected));
         }
 
         return; // NONE falls through here too
@@ -516,7 +500,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
 
     // CLIPPLANE: result is the compare, not a texel — skip PostProcessTexel
     if (mode == PS_TEXTUREMODES_CLIPPLANE) {
-        ApplyCompareMode(stage, coords);
+        ApplyCompareModeForStage(stage, coords);
         return;
     }
 
@@ -566,7 +550,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
             // Depth texture is always 2D — sample as 2D and apply shadow compare
             float4 sampled = Sample2D(stage, projected.xy);
             // Shadow compare operates on raw depth before post-processing (matches JIT/hardware)
-            Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompare(stage, sampled, projected));
+            Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompareForStage(stage, sampled, projected));
             return;
         }
         val = Sample3D(stage, projected);
@@ -701,7 +685,7 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
 
     // Shadow compare operates on raw sampled depth before post-processing (matches JIT/hardware).
     // Post-process: format fixup, color sign, color key applied after shadow compare.
-    Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompare(stage, val, coords.xyz));
+    Regs[tBase] = PostProcessTexel(stage, ApplyShadowCompareForStage(stage, val, coords.xyz));
 }
 
 // NV2A-accurate multiply helpers are in CxbxNV2AMathHelpers.hlsli
