@@ -13,6 +13,7 @@
 #define LOG_PREFIX CXBXR_MODULE::PXSH
 
 #include "PixelShaderCache.h"
+#include "CxbxJITIncludeHandler.h"
 #include "ShaderDiskCache.h"
 #include "core/kernel/init/CxbxKrnl.h"
 #include "common/Logging.h"
@@ -560,63 +561,12 @@ static std::string GenerateHLSL(const PSJITKey& key)
     ss << "    float4 ShadowCompare;\n";
     ss << "};\n\n";
 
-    // PS_INPUT
-    ss << "struct PS_INPUT {\n";
-    ss << "    float4 iPos : SV_Position;\n";
-    ss << "    float4 iD0  : COLOR0;\n";
-    ss << "    float4 iD1  : COLOR1;\n";
-    ss << "    float  iFog : FOG;\n";
-    ss << "    float  iPts : PSIZE;\n";
-    ss << "    float4 iB0  : TEXCOORD4;\n";
-    ss << "    float4 iB1  : TEXCOORD5;\n";
-    ss << "    float4 iT0  : TEXCOORD0;\n";
-    ss << "    float4 iT1  : TEXCOORD1;\n";
-    ss << "    float4 iT2  : TEXCOORD2;\n";
-    ss << "    float4 iT3  : TEXCOORD3;\n";
-    ss << "    bool   iFF  : SV_IsFrontFace;\n";
-    ss << "};\n\n";
+    // PS_INPUT — shared with VS output and RC interpreter
+    ss << "#include \"CxbxPixelShaderInput.hlsli\"\n\n";
 
-    // Helper functions
-    ss << "float4 nv2a_mul(float4 a, float4 b) { return ((a==0.0)|(b==0.0)) ? (float4)0.0 : a*b; }\n";
-    ss << "float3 nv2a_mul3(float3 a, float3 b) { return ((a==0.0)|(b==0.0)) ? (float3)0.0 : a*b; }\n";
-    ss << "float nv2a_mul1(float a, float b) { return (a==0.0||b==0.0) ? 0.0 : a*b; }\n\n";
-
-    // Color sign + color key + alpha kill helpers
-    ss << "float4 PerformColorSign(float4 cs, float4 t) {\n";
-    ss << "    float4 expand = t*2.0-1.0; float4 contract = t*0.5+0.5;\n";
-    ss << "    return (cs>0.0) ? expand : ((cs<0.0) ? contract : t);\n";
-    ss << "}\n";
-    ss << "float4 PerformColorKeyOp(int op, float4 ckc, float4 t) {\n";
-    ss << "    if (op==0) return t;\n";
-    ss << "    uint4 tI = (uint4)(saturate(t)*255.0+0.5);\n";
-    ss << "    uint4 kI = (uint4)(saturate(ckc)*255.0+0.5);\n";
-    ss << "    if (any(tI!=kI)) return t;\n";
-    ss << "    if (op==1) return float4(t.rgb, 0);\n";
-    ss << "    if (op==2) return (float4)0;\n";
-    ss << "    if (op==3) clip(-1);\n";
-    ss << "    return t;\n";
-    ss << "}\n";
-    ss << "void PerformAlphaKill(int ak, float4 t) { if (ak && t.a==0) clip(-1); }\n\n";
-
-    // Alpha test
-    ss << "void PerformAlphaTest(float3 at, float a) {\n";
-    ss << "    if (at.x==0.0) return;\n";
-    ss << "    uint av = (uint)(saturate(a)*255.0+0.5);\n";
-    ss << "    uint ar = (uint)(saturate(at.y)*255.0+0.5);\n";
-    ss << "    int af = (int)at.z;\n";
-    ss << "    bool alphaPass;\n";
-    ss << "    switch(af) {\n";
-    ss << "        case 0: alphaPass=false; break;\n";
-    ss << "        case 1: alphaPass=(av<ar); break;\n";
-    ss << "        case 2: alphaPass=(av==ar); break;\n";
-    ss << "        case 3: alphaPass=(av<=ar); break;\n";
-    ss << "        case 4: alphaPass=(av>ar); break;\n";
-    ss << "        case 5: alphaPass=(av!=ar); break;\n";
-    ss << "        case 6: alphaPass=(av>=ar); break;\n";
-    ss << "        default: alphaPass=true; break;\n";
-    ss << "    }\n";
-    ss << "    if (!alphaPass) clip(-1);\n";
-    ss << "}\n\n";
+    // Shared helper functions (nv2a_mul, PerformColorSign, etc.)
+    ss << "#include \"CxbxNV2AMathHelpers.hlsli\"\n";
+    ss << "#include \"CxbxPixelShaderFunctions.hlsli\"\n\n";
 
     // Shadow compare helper
     bool anyShadow = (key.shadowCompare[0] != 0.0f || key.shadowCompare[1] != 0.0f ||
@@ -646,31 +596,7 @@ static std::string GenerateHLSL(const PSJITKey& key)
         ss << "}\n\n";
     }
 
-    // Dot mapping helper (only if any DOT texture modes)
-    bool anyDot = false;
-    for (int i = 0; i < 4; i++) {
-        if (texModes[i] >= 0x09 && texModes[i] <= 0x0E) anyDot = true;
-        if (texModes[i] == 0x11 || texModes[i] == 0x12) anyDot = true;
-    }
-    if (anyDot) {
-        ss << "float3 ApplyDotMapping(uint mode, float4 src) {\n";
-        ss << "    if (mode==0) return src.rgb;\n";
-        ss << "    float3 b = round(saturate(src.rgb)*255.0);\n";
-        ss << "    if (mode==1) return (b-128.0)/127.0;\n";
-        ss << "    if (mode==2) { float3 s=(b>=128.0)?(b-255.5):(b+0.5); return s/127.5; }\n";
-        ss << "    if (mode==3) { float3 s=(b>=128.0)?(b-256.0):b; return s/127.0; }\n";
-        ss << "    float4 c = round(saturate(src)*255.0);\n";
-        ss << "    float H = c.a*256.0+c.r, L = c.g*256.0+c.b;\n";
-        ss << "    if (mode==4) return float3(H/65535.0, L/65535.0, 1.0);\n";
-        ss << "    float Hs, Ls;\n";
-        ss << "    if (mode==5) { Hs=(H-32768.0)/32767.0; Ls=(L-32768.0)/32767.0; }\n";
-        ss << "    else if (mode==6) { Hs=(H>=32768.0)?(H-65535.5)/32767.5:(H+0.5)/32767.5;\n";
-        ss << "                         Ls=(L>=32768.0)?(L-65535.5)/32767.5:(L+0.5)/32767.5; }\n";
-        ss << "    else { Hs=(H>=32768.0)?(H-65536.0)/32767.0:H/32767.0;\n";
-        ss << "           Ls=(L>=32768.0)?(L-65536.0)/32767.0:L/32767.0; }\n";
-        ss << "    return float3(Hs, Ls, sqrt(max(0.0, 1.0-Hs*Hs-Ls*Ls)));\n";
-        ss << "}\n\n";
-    }
+    // ApplyDotMapping is provided by CxbxPixelShaderFunctions.hlsli (included above)
 
     // ---- main() ----
     ss << "float4 main(PS_INPUT input) : SV_Target\n{\n";
@@ -1079,9 +1005,10 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     // Compile
     pCode = nullptr;
     ID3DBlob* pErrors = nullptr;
+    CxbxJITIncludeHandler includeHandler;
     HRESULT hr = D3DCompile(
         hlsl.c_str(), hlsl.size(),
-        "CxbxPixelShaderJIT", nullptr, nullptr,
+        "CxbxPixelShaderJIT", nullptr, &includeHandler,
         "main", "ps_5_0",
         D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
         &pCode, &pErrors);
