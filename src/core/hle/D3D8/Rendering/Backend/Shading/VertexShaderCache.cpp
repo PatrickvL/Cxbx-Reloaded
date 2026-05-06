@@ -247,10 +247,19 @@ static void EmitOperation(std::ostringstream& ss, const Nv2aVshOperation& op, bo
             case NV2AOP_SLT: expr = "float4(" + a + " < " + b + ")"; break;
             case NV2AOP_SGE: expr = "float4(" + a + " >= " + b + ")"; break;
             case NV2AOP_RCP: expr = "(1.0 / " + a + ".x).xxxx"; break;
-            case NV2AOP_RCC: expr = "clamp((1.0 / " + a + ".x), 5.42101e-20, 1.884467e+19).xxxx"; break;
+            case NV2AOP_RCC: {
+                // Sign-preserving clamp: clamp(|1/x|) then restore original sign bit
+                expr = "asfloat(asuint(clamp(abs(1.0 / " + a + ".x), 5.42101e-20, 1.84467e+19)) | (asuint(1.0 / " + a + ".x) & 0x80000000u)).xxxx";
+                break;
+            }
             case NV2AOP_RSQ: expr = "rsqrt(abs(" + a + ".x)).xxxx"; break;
             case NV2AOP_EXP: expr = "float4(exp2(floor(" + a + ".x)), " + a + ".x - floor(" + a + ".x), exp2(" + a + ".x), 1.0)"; break;
-            case NV2AOP_LOG: expr = "float4(floor(log2(abs(" + a + ".x))), abs(" + a + ".x) / exp2(floor(log2(abs(" + a + ".x)))), log2(abs(" + a + ".x)), 1.0)"; break;
+            case NV2AOP_LOG: {
+                // LOG(0) = (-inf, 1, -inf, 1) per NV2A hardware
+                std::string t = "abs(" + a + ".x)";
+                expr = "(" + t + " == 0.0) ? float4(asfloat(0xFF800000u), 1.0, asfloat(0xFF800000u), 1.0) : float4(floor(log2(" + t + ")), " + t + " * exp2(-floor(log2(" + t + "))), log2(" + t + "), 1.0)";
+                break;
+            }
             case NV2AOP_LIT: {
                 // LIT: result = {1.0, max(src.x, 0), (src.x>0 && src.y>0) ? pow(src.y, src.w) : 0, 1.0}
                 // Simplified for common case
