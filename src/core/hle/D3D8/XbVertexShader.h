@@ -42,5 +42,6 @@ extern VertexShaderMode g_Xbox_VertexShaderMode;
 extern ID3DBlob* CxbxGetActiveVertexShaderBytecode();
 extern ID3DBlob* CxbxGetFixedFunctionVertexShaderBytecode();
 
-extern void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT* pData);
+struct NV2AState;
+extern void D3D11_launch_transform_program(NV2AState *d, unsigned int program_start);
 #endif

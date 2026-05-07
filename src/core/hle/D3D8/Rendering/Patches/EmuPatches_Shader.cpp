@@ -79,61 +79,10 @@
 // Test-cases: PushBuffer XDK sample, Halo 2, Kung Fu Chaos, NBA LIVE 2005,
 // Prince of Persia WW, Spyro A Hero's Tail
 
-// ******************************************************************
-// * patch: D3DDevice_RunVertexStateShader
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_RunVertexStateShader)
-(
-   	dword_xt Address,
-   	CONST float_xt *pData
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Address)
-		LOG_FUNC_ARG(pData)
-		LOG_FUNC_END;
-
-	CxbxrImpl_RunVertexStateShader(Address, pData);
-}
-
-// ******************************************************************
-// * patch: D3DDevice_RunVertexStateShader_4__LTCG_esi2
-// ******************************************************************
-// Overload for logging
-static void D3DDevice_RunVertexStateShader_4__LTCG_esi2
-(
-	xbox::dword_xt Address,
-	CONST xbox::float_xt* pData
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(Address)
-		LOG_FUNC_ARG(pData)
-		LOG_FUNC_END;
-}
-
-// This uses a custom calling convention where parameter is passed in ESI
-__declspec(naked) xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_RunVertexStateShader_4__LTCG_esi2)
-(
-   	dword_xt Address
-)
-{
-	float_xt *pData;
-	__asm {
-		LTCG_PROLOGUE
-		mov  pData, esi
-	}
-
-	// Log
-	D3DDevice_RunVertexStateShader_4__LTCG_esi2(Address, pData);
-
-	CxbxrImpl_RunVertexStateShader(Address, pData);
-
-	__asm {
-		LTCG_EPILOGUE
-		ret  4
-	}
-}
+// D3DDevice_RunVertexStateShader — disabled.
+// Xbox native uses NV097_SET_TRANSFORM_DATA + NV097_LAUNCH_TRANSFORM_PROGRAM,
+// now handled by PGRAPH. Patch disabled in Patches.cpp.
+// Implementation moved to Direct3D9.cpp.unused-patches.
 
 // ******************************************************************
 // D3DDevice_SetDepthClipPlanes — disabled (all cases are TODO stubs).

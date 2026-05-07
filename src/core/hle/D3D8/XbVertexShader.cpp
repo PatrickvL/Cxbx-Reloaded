@@ -266,17 +266,9 @@ void CxbxUpdateHostVertexDeclaration()
 	}
 }
 
-void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT *pData)
+void D3D11_launch_transform_program(NV2AState *d, unsigned int program_start)
 {
-	// If pData is assigned, pData[0..3] is pushed towards nv2a transform data registers
-	// then sends the nv2a a command to launch the vertex shader function located at Address
-	if (Address >= NV2A_MAX_TRANSFORM_PROGRAM_LENGTH) {
-		LOG_TEST_CASE("Address out of bounds");
-		return;
-	}
-
-	NV2AState* dev = g_NV2A->GetDeviceState();
-	PGRAPHState* pg = &(dev->pgraph);
+	PGRAPHState* pg = &(d->pgraph);
 
 	// Cache the parsed program globally; only re-parse when program_data changes
 	static Nv2aVshProgram s_CachedProgram = {};
@@ -304,17 +296,16 @@ void CxbxrImpl_RunVertexStateShader(DWORD Address, CONST FLOAT *pData)
 		pg->program_data_dirty = false;
 	}
 
-	// Create a view into the cached program starting at Address
+	// Create a view into the cached program starting at program_start
 	// Execution stops naturally at the step with is_final==true
 	Nv2aVshProgram program;
-	program.steps = s_CachedProgram.steps + Address;
+	program.steps = s_CachedProgram.steps + program_start;
 
 	Nv2aVshCPUXVSSExecutionState state_linkage;
 	Nv2aVshExecutionState state = nv2a_vsh_emu_initialize_xss_execution_state(
-		&state_linkage, (float*)pg->vsh_constants); // Note : This wil memset(state_linkage, 0)
-	if (pData != nullptr)
-		//if pData != nullptr, then it contains v0.xyzw, we shall copy the binary content directly.
-		memcpy(state_linkage.input_regs, pData, sizeof(state_linkage.input_regs));
+		&state_linkage, (float*)pg->vsh_constants);
+	memcpy(state_linkage.input_regs, pg->vertex_state_shader_v0,
+		sizeof(pg->vertex_state_shader_v0));
 
 	nv2a_vsh_emu_execute_track_context_writes(&state, &program, pg->vsh_constants_dirty);
 	// Note: Above emulation's primary purpose is to update pg->vsh_constants and pg->vsh_constants_dirty

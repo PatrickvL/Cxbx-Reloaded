@@ -273,6 +273,8 @@ typedef struct PGRAPHState {
 	uint32_t program_data[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][VSH_TOKEN_SIZE]; // XFPR RAM mirror: NV2A Transform Program RAM (on-chip XF SRAM, 136 × 92-bit instructions in 128-bit containers)
 	bool program_data_dirty; // Set when any program_data slot is written; cleared after re-parse
 
+	uint32_t vertex_state_shader_v0[4]; // NV097_SET_TRANSFORM_DATA (0x1E80): input v0 for LAUNCH_TRANSFORM_PROGRAM
+
 	uint32_t vsh_constants[NV2A_VERTEXSHADER_CONSTANTS][4]; // XFCTX RAM mirror: NV2A Transform Context RAM (on-chip XF SRAM, 192 × float4)
 	bool vsh_constants_dirty[NV2A_VERTEXSHADER_CONSTANTS];
 	uint32_t vsh_constants_generation; // Bumped when any vsh_constant is written; consumer skips dirty scan if unchanged

@@ -198,8 +198,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// the real GPU FIFO.  D3D_BlockOnTime waits for ring space via semaphores.
 	//PATCH_ENTRY("D3DDevice_RunPushBuffer", xbox::EMUPATCH(D3DDevice_RunPushBuffer), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_RunPushBuffer_4__LTCG_eax2", xbox::EMUPATCH(D3DDevice_RunPushBuffer_4__LTCG_eax2), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_RunVertexStateShader", xbox::EMUPATCH(D3DDevice_RunVertexStateShader), PATCH_HLE_D3D),
-	PATCH_ENTRY("D3DDevice_RunVertexStateShader_4__LTCG_esi2", xbox::EMUPATCH(D3DDevice_RunVertexStateShader_4__LTCG_esi2), PATCH_HLE_D3D),
+	// Disabled: PGRAPH now handles NV097_SET_TRANSFORM_DATA + NV097_LAUNCH_TRANSFORM_PROGRAM natively
+	//PATCH_ENTRY("D3DDevice_RunVertexStateShader", xbox::EMUPATCH(D3DDevice_RunVertexStateShader), PATCH_HLE_D3D),
+	//PATCH_ENTRY("D3DDevice_RunVertexStateShader_4__LTCG_esi2", xbox::EMUPATCH(D3DDevice_RunVertexStateShader_4__LTCG_esi2), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SelectVertexShader", xbox::EMUPATCH(D3DDevice_SelectVertexShader), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SelectVertexShaderDirect", xbox::EMUPATCH(D3DDevice_SelectVertexShaderDirect), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SelectVertexShaderDirect_0__LTCG_eax1_ebx2", xbox::EMUPATCH(D3DDevice_SelectVertexShaderDirect_0__LTCG_eax1_ebx2), PATCH_HLE_D3D),

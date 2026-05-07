@@ -182,6 +182,7 @@ void (*pgraph_flip_stall)(NV2AState *d);  // Host present on FLIP_STALL
 void (*pgraph_zpass_begin)(NV2AState *d); // Begin occlusion query for zpass counting
 void (*pgraph_zpass_end)(NV2AState *d);   // End occlusion query, accumulate result
 void (*pgraph_zpass_collect)(NV2AState *d); // Collect pending query result (blocking)
+void (*pgraph_launch_transform_program)(NV2AState *d, unsigned int program_start); // Vertex state shader execution
 
 // Set true the first time the title issues an explicit NV097_FLIP_STALL.
 // Once observed, the puller's auto-present fallback (intended for raw push
@@ -1862,6 +1863,25 @@ void pgraph_handle_method(NV2AState *d,
 			assert(parameter < NV2A_VERTEXSHADER_CONSTANTS);
 			NV2A_DPRINTF("load to %d\n", parameter);
 			break;
+
+		CASE_4(NV097_SET_TRANSFORM_DATA, 4): {
+			// Stores input v0 components for the next LAUNCH_TRANSFORM_PROGRAM
+			slot = (method - NV097_SET_TRANSFORM_DATA) / 4;
+			pg->vertex_state_shader_v0[slot] = parameter;
+			break;
+		}
+
+		case NV097_LAUNCH_TRANSFORM_PROGRAM: {
+			// Execute a vertex state shader (XSS) at the given program address.
+			// Input v0 was set by prior SET_TRANSFORM_DATA writes; output updates
+			// vsh_constants (transform context RAM) in-place.
+			unsigned int program_start = parameter;
+			assert(program_start < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
+			if (pgraph_launch_transform_program != nullptr) {
+				pgraph_launch_transform_program(d, program_start);
+			}
+			break;
+		}
 
 		case NV097_SET_FLAT_SHADE_OP: 
 			assert(parameter <= 1);

@@ -39,6 +39,7 @@
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
 #include "core\hle\D3D8\Rendering\PatchDraw.h" // For D3D11_draw_patch
+#include "core\hle\D3D8\XbVertexShader.h" // For D3D11_launch_transform_program
 #include "common/AddressRanges.h" // For CONTIGUOUS_MEMORY_BASE
 #include "core/common/video/RenderBase.hpp" // For g_renderbase
 #include "devices/video/nv2a.h" // For g_NV2A, PGRAPHState
@@ -333,6 +334,7 @@ extern void(*pgraph_flip_stall)(NV2AState *d);
 extern void(*pgraph_zpass_begin)(NV2AState *d);
 extern void(*pgraph_zpass_end)(NV2AState *d);
 extern void(*pgraph_zpass_collect)(NV2AState *d);
+extern void(*pgraph_launch_transform_program)(NV2AState *d, unsigned int program_start);
 
 extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget);
 
@@ -526,6 +528,7 @@ void D3D11_init_pgraph_plugins()
 	pgraph_zpass_begin = D3D11_zpass_begin;
 	pgraph_zpass_end = D3D11_zpass_end;
 	pgraph_zpass_collect = D3D11_zpass_collect;
+	pgraph_launch_transform_program = D3D11_launch_transform_program;
 }
 
 extern void pgraph_handle_method(

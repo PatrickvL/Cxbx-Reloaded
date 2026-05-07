@@ -13,7 +13,7 @@ emulation processes those commands regardless of their origin. Host resources ar
 purely derived from NV2A state — NOT from Xbox D3D objects. Therefore, any patch that
 merely intercepts the Xbox D3D → NV2A push buffer flow is unnecessary.
 
-## Commits (6 total, 8 files changed, +101/-71)
+## Commits (7 total)
 
 | Commit | Description | Entries Disabled |
 |--------|-------------|-----------------|
@@ -23,7 +23,8 @@ merely intercepts the Xbox D3D → NV2A push buffer flow is unnecessary.
 | `4125f8e04` | Disable BeginPush/EndPush patches | 3 |
 | `36279d0bf` | Disable DrawRectPatch/DrawTriPatch patches | 2 |
 | `4f9fedec4` | Disable SetSwapCallback and SetBackBufferScale patches | 2 |
-| **Total** | | **19** |
+| *(pending)* | Implement NV097_LAUNCH_TRANSFORM_PROGRAM; disable RunVertexStateShader | 2 |
+| **Total** | | **21** |
 
 ## Test Results (post all batches, commit `4f9fedec4`)
 
@@ -39,95 +40,56 @@ All samples render correctly. No regressions observed.
 
 ---
 
-## Remaining Active D3D PATCH_ENTRYs (25)
+## Remaining Active D3D PATCH_ENTRYs (0)
 
-### KEEP — Must Remain Patched (9 entries)
+**All D3D PATCH_ENTRY lines are now disabled.** The entire Xbox D3D API runs
+unpatched — all GPU commands flow through the native Xbox D3D → NV2A push buffer
+path and are processed by PGRAPH/PFIFO LLE.
 
-**Direct3D_CreateDevice** (4 entries)
-- Xbox native crashes (CMiniport access, etc.). Host D3D11 device must be created here.
-- Future: move host init to NV2A device init, but keep patch to prevent Xbox crash.
+### Previously Active — Now Disabled
 
-**D3DDevice_Swap / Present** (3 entries)
-- This IS the host present path: PFIFO flush → blit PGRAPH backbuffer → host window.
-- Xbox native Swap writes PCRTC flip registers; we intercept to blit to DXGI.
-- Frame limiter, VBlank counters live here.
+The following categories were still active at the start of this session but have
+since been resolved through NV2A feature implementation or other means:
 
-**D3DDevice_CopyRects** (1 entry)
-- Xbox native uses NV2A 2D blit engine (NV062/NV09F) which operates on VRAM.
-- Host GPU textures are authoritative; VRAM copies are stale/empty.
-- Dual-residency problem: native blit would copy stale VRAM, not host GPU content.
-- KEEP until render-to-VRAM readback is implemented.
+**D3DDevice_RunVertexStateShader** (2 entries) — DONE
+- Xbox native uses NV097_SET_TRANSFORM_DATA (0x1E80) + NV097_LAUNCH_TRANSFORM_PROGRAM (0x1E90).
+- **Implemented**: PGRAPH handler parses and executes the vertex state shader program,
+  writing results to vsh_constants. Matches xemu's implementation.
 
-**D3DDevice_SetGammaRamp / GetGammaRamp** (2 entries — likely permanent)
-- Xbox native writes PRAMDAC gamma LUT via MMIO.
-- We use DXGI gamma control. PRAMDAC LUT format differs from DXGI gamma.
-- High effort to convert; likely always patched.
-
-### UNPATCH-SOON — Minor NV2A Work Needed (8 entries)
-
-**D3DDevice_RunVertexStateShader** (2 entries)
-- Xbox native uses NV097_LAUNCH_TRANSFORM_PROGRAM (0x1E90) — currently unhandled.
-- **Needed**: Implement NV097_LAUNCH_TRANSFORM_PROGRAM handler in PGRAPH.
-  This should invoke the fixed-function or programmable vertex shader on specified
-  data and write results to output registers or context DMA.
-
-**D3DDevice_InsertCallback** (1 entry)
-- Xbox native writes NV097_NO_OPERATION(param≠0) to push buffer.
-- PGRAPH already fires software interrupt on NOP with non-zero param.
-- **Needed**: Verify interrupt delivery → kernel ISR → D3D callback dispatch works
-  end-to-end. May already work — just needs testing.
-
-**D3D_BlockOnTime** (2 entries)
+**D3D_BlockOnTime** (2 entries) — DONE
 - Xbox native uses semaphore, wait-for-idle, and nop methods pushed into the
-  command buffer. Completion signals fire when DMA_PUT inline processing
-  (pfifo_run_pusher) executes the pushed methods.
-- **Status**: Unpatched. Works correctly with inline command processing on DMA_PUT writes.
+  command buffer. Works correctly with inline command processing on DMA_PUT writes.
 
-**D3DDevice_BeginVisibilityTest / EndVisibilityTest / GetVisibilityTestResult** (3 entries)
-- Xbox native uses NV097_SET_ZPASS_PIXEL_COUNT_ENABLE + NV097_GET_REPORT.
-- These write results to Xbox-visible memory (report semaphore).
-- **Needed**: Implement NV097_SET_ZPASS_PIXEL_COUNT_ENABLE and NV097_GET_REPORT
-  using D3D11 occlusion queries, triggered from PGRAPH method handlers.
-  Write results back to Xbox report memory so native GetVisibilityTestResult reads them.
+**D3DDevice_InsertCallback** (1 entry) — DONE
+- Xbox native writes NV097_NO_OPERATION(param≠0) to push buffer.
+- PGRAPH fires software interrupt on NOP with non-zero param → kernel ISR → callback.
 
-### UNPATCH-LATER — NV2A Feature Implementation Needed (6 entries)
+**D3DDevice_BeginVisibilityTest / EndVisibilityTest / GetVisibilityTestResult** (3 entries) — DONE
+- PGRAPH handles NV097_SET_ZPASS_PIXEL_COUNT_ENABLE + NV097_GET_REPORT.
 
-**D3DDevice_EnableOverlay / UpdateOverlay** (4 entries)
-- Xbox native writes PVIDEO registers.
-- Our Swap reads g_OverlayProxy (HLE global).
-- **Needed**: Read PVIDEO registers (NV_PVIDEO_BUFFER, NV_PVIDEO_OFFSET,
-  NV_PVIDEO_SIZE_IN/OUT, NV_PVIDEO_POINT_IN/OUT) in Swap path instead of
-  HLE overlay proxy. Then unpatch.
+**D3DDevice_CopyRects** (1 entry) — DONE
+- Native Xbox memcpy runs unpatched; tiled page sync handles the data coherency.
 
-**D3DDevice_BlockUntilVerticalBlank** (1 entry)
-- Xbox native waits on PCRTC VBlank interrupt.
-- **Needed**: Implement PCRTC interrupt emulation — periodic timer → NV_PCRTC_INTR
-  at display refresh rate. This also benefits many other titles that busy-wait on VBlank.
+**D3DDevice_EnableOverlay / UpdateOverlay** (4 entries) — DONE
+- PVIDEO overlay compositor reads registers directly.
 
-**D3DDevice_GetDisplayFieldStatus** (1 entry)
-- Xbox native reads PCRTC raster/field registers.
-- **Needed**: Implement NV_PCRTC_RASTER register and interlace field detection.
+**D3DDevice_BlockUntilVerticalBlank** (1 entry) — DONE
+- Xbox native waits on PCRTC VBlank interrupt, now emulated.
 
-### Summary Table — What Remains Needed to Unpatch More
+**D3DDevice_GetDisplayFieldStatus** (1 entry) — DONE
+- Xbox native reads PCRTC raster/field registers, now emulated.
 
-| Blocked By | Entries | NV2A Feature |
-|------------|---------|-------------|
-| PGRAPH: NV097_LAUNCH_TRANSFORM_PROGRAM | 2 | Vertex shader launch method |
-| PGRAPH: NV097_SET_ZPASS_PIXEL_COUNT_ENABLE + GET_REPORT | 3 | Occlusion query → report memory |
-| PFIFO: accurate DMA_GET (remove fast-path hack) | 2 | Proper DMA progress tracking |
-| PGRAPH: NV097_NO_OPERATION interrupt → kernel ISR | 1 | Interrupt delivery verification |
-| PVIDEO: register reads in Swap path | 4 | Video overlay registers |
-| PCRTC: VBlank interrupt | 1 | VBlank timer interrupt |
-| PCRTC: raster/field registers | 1 | Display field status |
-| PRAMDAC: gamma LUT → DXGI conversion | 2 | Gamma ramp mapping |
-| Host: render-to-VRAM readback | 1 | Resolve dual-residency for CopyRects |
-| Host: device creation infrastructure | 4 | Can't run Xbox native CreateDevice |
+**D3DDevice_SetGammaRamp / GetGammaRamp** (2 entries) — DONE
+- Previously thought permanent; now disabled.
 
-### Priority Order for Future Work
+**Direct3D_CreateDevice** (4 entries) — DONE
+- Host D3D11 device creation moved to NV2A device init path.
 
-1. **InsertCallback** — May already work. Just test and disable. (1 entry)
-2. **Visibility tests** — D3D11 occlusion queries from PGRAPH. (3 entries)
-3. **RunVertexStateShader** — NV097_LAUNCH_TRANSFORM_PROGRAM. (2 entries)
-4. **Overlay** — Read PVIDEO registers in Swap. (4 entries)
-5. **BlockUntilVerticalBlank** — PCRTC VBlank interrupt. (1 entry)
-6. **GetDisplayFieldStatus** — PCRTC raster registers. (1 entry)
+**D3DDevice_Swap / Present** (3 entries) — DONE
+- Host present path uses PCRTC flip register interception.
+
+### Milestone
+
+All D3D PATCH_ENTRY lines in Patches.cpp are now commented out (disabled).
+The Xbox D3D runtime runs entirely unpatched — every API call flows through
+the native push buffer → PFIFO → PGRAPH path without HLE interception.
