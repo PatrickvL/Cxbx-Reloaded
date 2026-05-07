@@ -513,28 +513,10 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 {
 	if (!pg) return;
 
-	// Fast path: skip if viewport-related registers are unchanged.
-	{
-		static uint32_t s_LastVpOff[4] = { ~0u, ~0u, ~0u, ~0u };
-		static uint32_t s_LastVpScl[4] = { ~0u, ~0u, ~0u, ~0u };
-		static uint32_t s_LastClipX = ~0u, s_LastClipY = ~0u;
-		static uint32_t s_LastAA = ~0u;
-		static uint32_t s_LastCsv0d = ~0u;
-		bool changed = false;
-		for (int i = 0; i < 4; i++) {
-			if (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i] != s_LastVpOff[i]) {
-				s_LastVpOff[i] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i]; changed = true;
-			}
-			if (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][i] != s_LastVpScl[i]) {
-				s_LastVpScl[i] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][i]; changed = true;
-			}
-		}
-		if (pg->regs[RI(NV_PGRAPH_SURFACECLIPX)] != s_LastClipX) { s_LastClipX = pg->regs[RI(NV_PGRAPH_SURFACECLIPX)]; changed = true; }
-		if (pg->regs[RI(NV_PGRAPH_SURFACECLIPY)] != s_LastClipY) { s_LastClipY = pg->regs[RI(NV_PGRAPH_SURFACECLIPY)]; changed = true; }
-		if (pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)] != s_LastAA) { s_LastAA = pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)]; changed = true; }
-		if (pg->regs[RI(NV_PGRAPH_CSV0_D)] != s_LastCsv0d) { s_LastCsv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)]; changed = true; }
-		if (!changed) return;
-	}
+	// Note: No change-detection fast path here. The viewport/scissor must be
+	// recalculated on every draw because multiple external paths (flip/present,
+	// RT-as-texture invalidation, depth-only unbind) can desync tracked state.
+	// The calculation is cheap (a few floats + two D3D11 calls).
 
 	// Read viewport offset and scale from XFCTX constants
 	float vpoff[4], vpscl[4];
