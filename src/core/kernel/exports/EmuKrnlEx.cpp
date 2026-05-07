@@ -580,7 +580,7 @@ XBSYSAPI EXPORTNUM(27) xbox::void_xt NTAPI xbox::ExRaiseStatus
 	record.ExceptionCode = Status;
 	record.ExceptionFlags = X_EXCEPTION_NONCONTINUABLE;
 	record.ExceptionRecord = nullptr;
-	record.ExceptionAddress = nullptr;
+	record.ExceptionAddress = _ReturnAddress();
 	record.NumberParameters = 0;
 
 	ExRaiseException(&record);
