@@ -2617,18 +2617,21 @@ XBSYSAPI EXPORTNUM(230) xbox::ntstatus_xt NTAPI xbox::NtSignalAndWaitForSingleOb
 		RETURN(result);
 	}
 
-	// Signal based on dispatcher object type
+	// Signal based on dispatcher object type.  Pass Wait=TRUE so the
+	// dispatcher lock is kept held (via Thread->WaitNext) across the
+	// signal and the subsequent KeWaitForSingleObject — this matches
+	// the real Xbox kernel's atomic signal-and-wait semantics.
 	DISPATCHER_HEADER *SignalHeader = reinterpret_cast<DISPATCHER_HEADER*>(SignalObject);
 	switch (SignalHeader->Type) {
 	case EventNotificationObject:
 	case EventSynchronizationObject:
-		KeSetEvent(reinterpret_cast<PRKEVENT>(SignalObject), /*Increment=*/1, /*Wait=*/FALSE);
+		KeSetEvent(reinterpret_cast<PRKEVENT>(SignalObject), /*Increment=*/1, /*Wait=*/TRUE);
 		break;
 	case MutantObject:
-		KeReleaseMutant(reinterpret_cast<PRKMUTANT>(SignalObject), /*Increment=*/1, /*Abandoned=*/FALSE, /*Wait=*/FALSE);
+		KeReleaseMutant(reinterpret_cast<PRKMUTANT>(SignalObject), /*Increment=*/1, /*Abandoned=*/FALSE, /*Wait=*/TRUE);
 		break;
 	case SemaphoreObject:
-		KeReleaseSemaphore(reinterpret_cast<PRKSEMAPHORE>(SignalObject), /*Increment=*/1, /*Adjustment=*/1, /*Wait=*/FALSE);
+		KeReleaseSemaphore(reinterpret_cast<PRKSEMAPHORE>(SignalObject), /*Increment=*/1, /*Adjustment=*/1, /*Wait=*/TRUE);
 		break;
 	default:
 		ObfDereferenceObject(WaitObject);

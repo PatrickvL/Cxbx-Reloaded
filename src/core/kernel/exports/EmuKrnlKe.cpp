@@ -90,8 +90,6 @@ namespace NtDll
 #include <chrono>
 #include <float.h>
 #include <thread>
-#include <utility>
-#include <vector>
 #include <windows.h>
 #include <map>
 
@@ -581,16 +579,23 @@ XBSYSAPI EXPORTNUM(92) xbox::ntstatus_xt NTAPI xbox::KeAlertResumeThread
 	if (PreviousSuspendCount != nullptr) {
 		*PreviousSuspendCount = PrevCount;
 	}
+	bool shouldResume = false;
 	if (kThread->SuspendCount != 0) {
 		--kThread->SuspendCount;
 		if (kThread->SuspendCount == 0) {
-			if (const auto &nativeHandle = GetNativeHandle<true>(Thread->UniqueThread)) {
-				ResumeThread(*nativeHandle);
-			}
+			shouldResume = true;
 		}
 	}
 
 	KiUnlockDispatcherDatabase(oldIrql);
+
+	// Resume the host thread outside the dispatcher lock to avoid potential deadlock
+	if (shouldResume) {
+		if (const auto &nativeHandle = GetNativeHandle<true>(Thread->UniqueThread)) {
+			ResumeThread(*nativeHandle);
+		}
+	}
+
 	ObfDereferenceObject(Thread);
 
 	RETURN(X_STATUS_SUCCESS);
@@ -2067,7 +2072,7 @@ XBSYSAPI EXPORTNUM(142) xbox::ntstatus_xt NTAPI xbox::KeSaveFloatingPointState
 	LOG_FUNC_ONE_ARG_OUT(PublicFloatSave);
 
 	// Save the current x87 FPU control word and then switch to a known default
-	// state (extended precision, round-to-nearest) for use during the kernel
+	// state (double precision, round-to-nearest) for use during the kernel
 	// operation that follows.  Only the control word is meaningful for emulation
 	// purposes; the other fields are zeroed so that callers see a clean structure.
 	//
@@ -2085,7 +2090,7 @@ XBSYSAPI EXPORTNUM(142) xbox::ntstatus_xt NTAPI xbox::KeSaveFloatingPointState
 	PublicFloatSave->Cr0NpxState  = 0;
 	PublicFloatSave->Spare1       = 0;
 
-	// Set default FPU state: extended precision, round-to-nearest
+	// Set default FPU state: double precision, round-to-nearest (_CW_DEFAULT)
 	unsigned int unused;
 	_controlfp_s(&unused, _CW_DEFAULT, _MCW_PC | _MCW_RC);
 
@@ -2273,7 +2278,11 @@ XBSYSAPI EXPORTNUM(147) xbox::KPRIORITY NTAPI xbox::KeSetPriorityProcess
 
 	// Collect the UniqueThread handles of threads that are not individually boosted
 	// so we can update the host thread priorities after releasing the dispatcher lock.
-	std::vector<std::pair<HANDLE, int>> threadUpdates;
+	// Use a fixed-size stack array to avoid heap allocation under the dispatcher lock.
+	static constexpr int kMaxThreads = 64; // Xbox thread count is bounded
+	struct ThreadUpdate { HANDLE handle; int priority; };
+	ThreadUpdate threadUpdates[kMaxThreads];
+	int updateCount = 0;
 	for (PLIST_ENTRY entry = Process->ThreadListHead.Flink;
 		entry != &Process->ThreadListHead;
 		entry = entry->Flink) {
@@ -2285,16 +2294,18 @@ XBSYSAPI EXPORTNUM(147) xbox::KPRIORITY NTAPI xbox::KeSetPriorityProcess
 			int winPri = (int)BasePriority - 16;
 			if (winPri < THREAD_PRIORITY_IDLE) winPri = THREAD_PRIORITY_IDLE;
 			if (winPri > THREAD_PRIORITY_TIME_CRITICAL) winPri = THREAD_PRIORITY_TIME_CRITICAL;
-			threadUpdates.emplace_back(reinterpret_cast<PETHREAD>(thread)->UniqueThread, winPri);
+			if (updateCount < kMaxThreads) {
+				threadUpdates[updateCount++] = { reinterpret_cast<PETHREAD>(thread)->UniqueThread, winPri };
+			}
 		}
 	}
 
 	KiUnlockDispatcherDatabase(oldIRQL);
 
 	// Apply host priority changes outside the dispatcher lock to avoid lock ordering issues
-	for (const auto& [uniqueThread, winPri] : threadUpdates) {
-		if (const auto& nativeHandle = GetNativeHandle<true>(uniqueThread)) {
-			SetThreadPriority(*nativeHandle, winPri);
+	for (int i = 0; i < updateCount; i++) {
+		if (const auto& nativeHandle = GetNativeHandle<true>(threadUpdates[i].handle)) {
+			SetThreadPriority(*nativeHandle, threadUpdates[i].priority);
 		}
 	}
 
