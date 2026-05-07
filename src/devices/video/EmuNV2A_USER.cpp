@@ -43,7 +43,7 @@ DEVICE_READ32(USER)
 	// (access flags not set in HLE mode), advance GET to PUT so polls
 	// like BlockUntilIdle() return immediately.  When the pusher CAN
 	// process, drain pending commands inline so the native polling loop
-	// (e.g. D3D_BlockOnTime) sees GET advance and exits naturally.
+	// sees GET advance and exits naturally.
 	if ((addr & 0xFFFF) == NV_USER_DMA_GET) {
 		uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
 		uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
@@ -57,8 +57,8 @@ DEVICE_READ32(USER)
 				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = put_v;
 				get_v = put_v;
 			} else {
-				// Drain pending commands inline — this is what enables
-				// native D3D_BlockOnTime to work without a patch.
+				// Drain pending commands inline — enables native
+				// BlockUntilIdle polling to work without a patch.
 				pfifo_flush_to_pgraph(d);
 				get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
 			}
@@ -67,11 +67,14 @@ DEVICE_READ32(USER)
 		DEVICE_READ32_END(USER);
 	}
 
-	// Fast path for NV_USER_REF reads (reference counter).  Native
-	// D3D_BlockOnTime polls this waiting for REF >= Time.  The value is
-	// updated by SET_REFERENCE (method 0x0050) during command processing,
-	// so we must flush pending commands first — otherwise the polling loop
-	// never sees REF advance.
+	// Fast path for NV_USER_REF reads (reference counter).
+	// NV_USER_REF (offset 0x48) is defined in xemu's nv2a_regs.h and
+	// handled in xemu's user.c — it maps to NV_PFIFO_CACHE1_REF.
+	// The value is updated by REF_CNT (method 0x0050, documented by
+	// envytools: hw/fifo/puller.html#syncing-with-host-reference-counter).
+	// Since we process commands inline on DMA_PUT writes, REF should
+	// already be current here (GET == PUT).  This flush is a safety net
+	// that rarely triggers in practice — xemu omits it entirely.
 	if ((addr & 0xFFFF) == NV_USER_REF) {
 		uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
 		uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];

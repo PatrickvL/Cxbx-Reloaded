@@ -54,7 +54,7 @@ DEVICE_READ32(PFIFO)
     // (access flags not set in HLE mode), advance GET to PUT so polls
     // like BlockUntilIdle() return immediately.  When the pusher CAN
     // process, drain pending commands inline so the native polling loop
-    // (e.g. D3D_BlockOnTime) sees GET advance and exits naturally.
+    // sees GET advance and exits naturally.
     if (addr == NV_PFIFO_CACHE1_DMA_GET) {
         uint32_t get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
         uint32_t put_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)];
@@ -69,7 +69,7 @@ DEVICE_READ32(PFIFO)
                 get_v = put_v;
             } else {
                 // Drain pending commands inline — enables native polling loops
-                // (D3D_BlockOnTime, BlockUntilIdle) to work without patches.
+                // (BlockUntilIdle) to work without patches.
                 pfifo_flush_to_pgraph(d);
                 get_v = d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)];
             }
@@ -519,8 +519,9 @@ static void pfifo_run_pusher(NV2AState *d)
             d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_DATA_SHADOW)] = word;
 
             // Handle PFIFO-level class methods that don't go to PGRAPH:
-            // NV06E_SET_REFERENCE (0x0050): updates the reference counter
-            // that D3D_BlockOnTime polls via NV_USER_REF.
+            // REF_CNT (method 0x0050, per envytools hw/fifo/puller.html):
+            // updates NV_PFIFO_CACHE1_REF, readable via NV_USER_REF (xemu
+            // user.c offset 0x48).
             if (method == 0x0050) {
                 d->pfifo.regs[RI(NV_PFIFO_CACHE1_REF)] = word;
             }

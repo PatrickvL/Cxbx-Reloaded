@@ -195,7 +195,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_Reset_0__LTCG_edi1", xbox::EMUPATCH(D3DDevice_Reset_0__LTCG_edi1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_Reset_0__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_Reset_0__LTCG_ebx1), PATCH_HLE_D3D),
 	// Disabled: native RunPushBuffer applies fixups and pushes commands through
-	// the real GPU FIFO.  D3D_BlockOnTime drains the FIFO when the ring fills.
+	// the real GPU FIFO.  D3D_BlockOnTime waits for ring space via semaphores.
 	//PATCH_ENTRY("D3DDevice_RunPushBuffer", xbox::EMUPATCH(D3DDevice_RunPushBuffer), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_RunPushBuffer_4__LTCG_eax2", xbox::EMUPATCH(D3DDevice_RunPushBuffer_4__LTCG_eax2), PATCH_HLE_D3D),
 	PATCH_ENTRY("D3DDevice_RunVertexStateShader", xbox::EMUPATCH(D3DDevice_RunVertexStateShader), PATCH_HLE_D3D),
@@ -302,10 +302,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_UpdateOverlay_16__LTCG_eax2", xbox::EMUPATCH(D3DDevice_UpdateOverlay_16__LTCG_eax2), PATCH_HLE_D3D),
 	// Disabled: empty LOG_UNIMPLEMENTED stub, Xbox native code polls resource state
 	//PATCH_ENTRY("D3DResource_BlockUntilNotBusy", xbox::EMUPATCH(D3DResource_BlockUntilNotBusy), PATCH_HLE_D3D),
-	// D3D_BlockOnTime: unpatched — native D3D_BlockOnTime polls NV_USER_DMA_GET
-	// in a loop.  The DMA_GET read handler now calls pfifo_flush_to_pgraph inline,
-	// which drains pending commands and advances GET.  The native polling loop
-	// sees GET catch up to PUT and returns naturally, no patch needed.
+	// D3D_BlockOnTime: unpatched — native D3D_BlockOnTime uses semaphore,
+	// wait-for-idle, and nop methods pushed into the command buffer.
+	// The DMA_PUT write handler processes commands inline (pfifo_run_pusher),
+	// so completion signals fire and the native wait returns naturally.
 	//PATCH_ENTRY("D3D_BlockOnTime", xbox::EMUPATCH(D3D_BlockOnTime), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3D_BlockOnTime_4__LTCG_eax1", xbox::EMUPATCH(D3D_BlockOnTime_4__LTCG_eax1), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3D_CommonSetRenderTarget", xbox::EMUPATCH(D3D_CommonSetRenderTarget), PATCH_HLE_D3D),

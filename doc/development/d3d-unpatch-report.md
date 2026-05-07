@@ -78,11 +78,10 @@ All samples render correctly. No regressions observed.
   end-to-end. May already work — just needs testing.
 
 **D3D_BlockOnTime** (2 entries)
-- Xbox native polls NV_USER_DMA_GET / NV_USER_REF via MMIO.
-- PFIFO DMA pusher advances DMA_GET, but there's a fast-path hack in NV_USER
-  that sets GET=PUT prematurely.
-- **Needed**: Remove fast-path hack. Ensure proper DMA_GET advancement so polling
-  sees accurate progress. Relevant registers: NV_PFIFO_CACHE1_DMA_GET, NV_PFIFO_CACHE1_REF.
+- Xbox native uses semaphore, wait-for-idle, and nop methods pushed into the
+  command buffer. Completion signals fire when DMA_PUT inline processing
+  (pfifo_run_pusher) executes the pushed methods.
+- **Status**: Unpatched. Works correctly with inline command processing on DMA_PUT writes.
 
 **D3DDevice_BeginVisibilityTest / EndVisibilityTest / GetVisibilityTestResult** (3 entries)
 - Xbox native uses NV097_SET_ZPASS_PIXEL_COUNT_ENABLE + NV097_GET_REPORT.
@@ -127,9 +126,8 @@ All samples render correctly. No regressions observed.
 ### Priority Order for Future Work
 
 1. **InsertCallback** — May already work. Just test and disable. (1 entry)
-2. **BlockOnTime** — Remove NV_USER fast-path hack. (2 entries)
-3. **Visibility tests** — D3D11 occlusion queries from PGRAPH. (3 entries)
-4. **RunVertexStateShader** — NV097_LAUNCH_TRANSFORM_PROGRAM. (2 entries)
-5. **Overlay** — Read PVIDEO registers in Swap. (4 entries)
-6. **BlockUntilVerticalBlank** — PCRTC VBlank interrupt. (1 entry)
-7. **GetDisplayFieldStatus** — PCRTC raster registers. (1 entry)
+2. **Visibility tests** — D3D11 occlusion queries from PGRAPH. (3 entries)
+3. **RunVertexStateShader** — NV097_LAUNCH_TRANSFORM_PROGRAM. (2 entries)
+4. **Overlay** — Read PVIDEO registers in Swap. (4 entries)
+5. **BlockUntilVerticalBlank** — PCRTC VBlank interrupt. (1 entry)
+6. **GetDisplayFieldStatus** — PCRTC raster registers. (1 entry)

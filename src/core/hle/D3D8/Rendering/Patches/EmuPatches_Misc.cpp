@@ -25,7 +25,6 @@
 #include "../EmuD3D8_common.h"
 
 // All patches formerly in this file (D3D_BlockOnTime) have been disabled.
-// Native D3D_BlockOnTime now works unpatched: the DMA_GET read handler
-// calls pfifo_flush_to_pgraph inline, so the native polling loop sees
-// GET advance and returns naturally.
+// Native D3D_BlockOnTime now works unpatched: it uses semaphore, wait-for-idle,
+// and nop methods that are processed by inline command execution on DMA_PUT writes.
 // Implementation preserved in Direct3D9.cpp.unused-patches.

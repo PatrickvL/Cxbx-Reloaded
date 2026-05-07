@@ -5103,8 +5103,8 @@ xbox::bool_xt WINAPI xbox::EMUPATCH(D3DDevice_IsBusy)()
 // ******************************************************************
 // * patch: D3D_BlockOnTime
 // ******************************************************************
-// Disabled: DMA_GET read handler now calls pfifo_flush_to_pgraph inline,
-// so the native polling loop sees GET advance and returns naturally.
+// Disabled: native D3D_BlockOnTime uses semaphore, wait-for-idle, and nop
+// methods that are processed by inline command execution on DMA_PUT writes.
 #include "devices/Xbox.h"              // For extern NV2ADevice* g_NV2A
 #include "devices/video/nv2a.h"        // For pfifo_flush_to_pgraph
 #include "core/hle/D3D8/Rendering/Backend/Backend_D3D11_Profiler.h"
