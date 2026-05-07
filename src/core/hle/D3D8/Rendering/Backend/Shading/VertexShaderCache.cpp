@@ -180,7 +180,7 @@ static void EmitOperation(std::ostringstream& ss, const Nv2aVshOperation& op, bo
             switch (op.opcode) {                
             case NV2AOP_MOV: expr = isILU ? ("ilu_mov(" + a + ")") : ("mac_mov(" + a + ")"); break;
             case NV2AOP_MUL: expr = "mac_mul(" + a + ", " + b + ")"; break;
-            case NV2AOP_ADD: expr = "mac_add(" + a + ", " + c + ")"; break;
+            case NV2AOP_ADD: expr = "mac_add(" + a + ", " + b + ")"; break;
             case NV2AOP_MAD: expr = "mac_mad(" + a + ", " + b + ", " + c + ")"; break;
             case NV2AOP_DP3: expr = "mac_dp3(" + a + ", " + b + ")"; break;
             case NV2AOP_DPH: expr = "mac_dph(" + a + ", " + b + ")"; break;
