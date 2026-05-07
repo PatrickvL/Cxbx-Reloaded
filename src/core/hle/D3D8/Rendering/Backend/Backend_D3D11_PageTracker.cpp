@@ -828,3 +828,29 @@ void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size)
 	}
 }
 
+// ******************************************************************
+// * Sync committed tiled pages in a range back to contiguous memory
+// * (without decommitting — pages stay committed for future writes)
+// ******************************************************************
+void CxbxSyncTiledRangeToContiguous(uint32_t startOffset, uint32_t size)
+{
+	if (!s_bHasTiledPages || size == 0 || startOffset >= CONTIG_SIZE)
+		return;
+
+	if (startOffset + size > CONTIG_SIZE)
+		size = CONTIG_SIZE - startOffset;
+
+	uint32_t firstPage = startOffset / PAGE_SIZE_;
+	uint32_t lastPage = (startOffset + size - 1) / PAGE_SIZE_;
+
+	for (uint32_t pageIdx = firstPage; pageIdx <= lastPage; pageIdx++) {
+		uint32_t dw = pageIdx >> 5;
+		uint32_t bit = pageIdx & 31;
+		if (s_TiledCommittedBitmap[dw] & (1u << bit)) {
+			uint32_t offset = pageIdx * PAGE_SIZE_;
+			memcpy((void*)(CONTIG_BASE + offset),
+			       (void*)(TILED_BASE + offset), PAGE_SIZE_);
+		}
+	}
+}
+

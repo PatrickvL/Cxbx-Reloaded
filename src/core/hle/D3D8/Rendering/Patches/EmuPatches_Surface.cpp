@@ -59,9 +59,7 @@ xbox::void_xt WINAPI xbox::EMUPATCH(D3DDevice_CopyRects)
    	   	LOG_FUNC_ARG(pDestPointsArray);
    	LOG_FUNC_END;
 
-   	// We skip the trampoline to prevent unnecessary work
-   	// As our surfaces remain on the GPU, calling the trampoline would just
-   	// result in a memcpy from an empty Xbox surface to another empty Xbox Surface
+   	// Copy on the host GPU side for surfaces that have host representations
    	auto pHostSourceSurface = GetHostSurface(pSourceSurface);
    	auto pHostDestSurface = GetHostSurface(pDestinationSurface);
 

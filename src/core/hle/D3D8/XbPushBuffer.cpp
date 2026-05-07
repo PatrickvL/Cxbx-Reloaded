@@ -37,6 +37,7 @@
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11VertexFetchDraw
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
 #include "core\hle\D3D8\Rendering\PatchDraw.h" // For D3D11_draw_patch
 #include "common/AddressRanges.h" // For CONTIGUOUS_MEMORY_BASE
 #include "core/common/video/RenderBase.hpp" // For g_renderbase
@@ -401,6 +402,15 @@ static void D3D11_flip_stall(NV2AState *d)
 		UINT overlayPitch = GET_MASK(pvideo_format, NV_PVIDEO_FORMAT_PITCH);
 
 		if (overlayWidth > 0 && overlayHeight > 0 && overlayPitch > 0) {
+			// Sync any tiled pages (0xF0000000 WC mapping) back to contiguous memory
+			// so the overlay data is visible at the contiguous address we read below.
+			// Games write decoded video frames via the tiled/WC mapping for performance,
+			// but the page tracker only syncs during FlushToGPU (which requires draw calls).
+			// During FMV-only playback (no 3D rendering), the sync never happens otherwise.
+			uint32_t overlayPhysAddr = pvideo_base + pvideo_offset;
+			uint32_t overlayBytes = overlayPitch * overlayHeight;
+			CxbxSyncTiledRangeToContiguous(overlayPhysAddr, overlayBytes);
+
 			uint8_t *pOverlayData = (uint8_t *)(CONTIGUOUS_MEMORY_BASE + pvideo_base + pvideo_offset);
 
 			// Calculate output rectangle (PVIDEO coordinates → host backbuffer)

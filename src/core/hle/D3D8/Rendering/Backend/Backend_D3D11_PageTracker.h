@@ -151,4 +151,15 @@ bool CxbxPageTrackerIsTextureDirty(uint32_t offset, uint32_t size);
 // re-created / re-uploaded from the current Xbox memory contents.
 void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size);
 
+// ******************************************************************
+// * Tiled memory sync (for overlay/direct read paths)
+// ******************************************************************
+
+// Sync committed tiled pages in the given range back to contiguous memory.
+// Does NOT decommit — pages remain committed for future writes.
+// Used by PVIDEO overlay compositor to ensure decoded video frames
+// written to the WC/tiled mapping (0xF0000000) are visible at the
+// contiguous address (0x80000000) where the overlay reader expects them.
+void CxbxSyncTiledRangeToContiguous(uint32_t startOffset, uint32_t size);
+
 #endif // BACKEND_D3D11_PAGE_TRACKER_H

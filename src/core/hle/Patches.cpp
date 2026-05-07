@@ -87,7 +87,9 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_BlockUntilVerticalBlank", xbox::EMUPATCH(D3DDevice_BlockUntilVerticalBlank), PATCH_HLE_D3D),
 	// Disabled: Clear now handled by D3D11_draw_clear via NV097_CLEAR_SURFACE → pgraph_handle_method
 	//PATCH_ENTRY("D3DDevice_Clear", xbox::EMUPATCH(D3DDevice_Clear), PATCH_HLE_D3D),
-    PATCH_ENTRY("D3DDevice_CopyRects", xbox::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
+	// Disabled: Native CopyRects does CPU memcpy between Xbox surfaces. PVIDEO overlay reads
+	// from contiguous memory which is synced from tiled pages by CxbxSyncTiledRangeToContiguous.
+	//PATCH_ENTRY("D3DDevice_CopyRects", xbox::EMUPATCH(D3DDevice_CopyRects), PATCH_HLE_D3D),
 	// PATCH_ENTRY("D3DDevice_CreateVertexShader", xbox::EMUPATCH(D3DDevice_CreateVertexShader), PATCH_HLE_D3D),
 	// ================================================================
 	// BATCH DISABLE: All state-caching D3D patches disabled.
