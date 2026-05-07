@@ -716,8 +716,13 @@ void UpdateFixedFunctionVertexShaderState()
 		}
 	}
 
-	// Lighting — sourced from PGRAPH CSV0_C/CSV0_D/CONTROL_3
-	bool PointSpriteEnable = (ctl3 & NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE) != 0;
+	// Point sprite enable comes from NV_PGRAPH_SETUPRASTER (D3DRS_POINTSPRITEENABLE →
+	// NV097_SET_POINT_SMOOTH_ENABLE → NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE).
+	// Point scale/params enable comes from NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE
+	// (D3DRS_POINTSCALEENABLE → NV097_SET_POINT_PARAMETERS_ENABLE).
+	// These are distinct Xbox render states and must be derived from separate PGRAPH bits.
+	uint32_t setupRaster = pg->regs[RI(NV_PGRAPH_SETUPRASTER)];
+	bool PointSpriteEnable = (setupRaster & NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE) != 0;
 	bool LightingEnable = (csv0c & NV_PGRAPH_CSV0_C_LIGHTING) != 0;
 	ffShaderState.Modes.Lighting = LightingEnable && !PointSpriteEnable;
 	ffShaderState.Modes.TwoSidedLighting = (csv0c & NV_PGRAPH_CSV0_C_TWO_SIDE_LIGHTING) ? 1 : 0;
@@ -740,13 +745,17 @@ void UpdateFixedFunctionVertexShaderState()
 	float pointSize = *(float*)&pg->regs[RI(NV_PGRAPH_POINTSIZE)];
 	float pointSize_Min = pg->point_params[6];
 	float pointSize_Max = pg->point_params[7];
-	bool PointScaleEnable = PointSpriteEnable; // PGRAPH POINTPARAMSENABLE covers both
+	// PointScaleEnable is independent of PointSpriteEnable: it comes from
+	// NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE (D3DRS_POINTSCALEENABLE), while
+	// PointSpriteEnable comes from NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE.
+	// However, point-scale attenuation is only meaningful when sprites are active.
+	bool PointScaleEnable = (ctl3 & NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE) != 0;
 	float pointScale_A = pg->point_params[0];
 	float pointScale_B = pg->point_params[1];
 	float pointScale_C = pg->point_params[2];
 	// Read render target height from PGRAPH surface clip (replaces HLE g_pXbox_RenderTarget lookup)
 	float renderTargetHeight = (float)NV2AGetSurfaceState(pg).clipHeight;
-	// Make sure to disable point scaling when point sprites are not enabled
+	// Disable point scaling when sprites are not enabled (matches Xbox/NV2A behaviour)
 	PointScaleEnable &= PointSpriteEnable;
 	// Set variables in shader state
 	ffShaderState.PointSprite.PointSize = PointSpriteEnable ? pointSize : 1.0f;

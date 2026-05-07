@@ -295,10 +295,13 @@ void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg)
 		}
 	}
 
-	// ---- Point sprite enable from NV_PGRAPH_CONTROL_3 ----
+	// ---- Point sprite enable from NV_PGRAPH_SETUPRASTER ----
+	// D3DRS_POINTSPRITEENABLE → NV097_SET_POINT_SMOOTH_ENABLE →
+	// NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE. This is distinct from
+	// NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE which tracks D3DRS_POINTSCALEENABLE.
 	{
-		uint32_t ctl3 = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
-		g_bPointSpriteEnabled = (ctl3 & NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE) != 0;
+		uint32_t setup = pg->regs[RI(NV_PGRAPH_SETUPRASTER)];
+		g_bPointSpriteEnabled = (setup & NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE) != 0;
 	}
 }
 
