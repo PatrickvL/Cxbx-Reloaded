@@ -2030,7 +2030,7 @@ XBSYSAPI EXPORTNUM(312) xbox::void_xt NTAPI xbox::RtlUnwind
 	// Delegate to the host to walk and unwind the SEH chain back to
 	// TargetFrame, invoking termination handlers along the way.
 	::RtlUnwind(TargetFrame, TargetIp,
-		reinterpret_cast<PEXCEPTION_RECORD>(ExceptionRecord),
+		reinterpret_cast<::PEXCEPTION_RECORD>(ExceptionRecord),
 		ReturnValue);
 }
 
