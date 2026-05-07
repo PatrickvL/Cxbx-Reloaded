@@ -82,10 +82,6 @@ xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr)
 DXGI_FORMAT               g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT]; // Updated by CxbxUpdateHostTextures(), read by CxbxCalcColorSign
 xbox::X_D3DBaseTexture       *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by our D3DDevice_SetTexture and D3DDevice_SwitchTexture patches
 
-
-static void							UpdateCurrentMSpFAndFPS(); // Used for benchmarking/fps count
-
-
 EmuD3D8CreateDeviceProxyData g_EmuCDPD;
 
 // Define trampolines (XB_TRAMPOLINES macro is defined in RenderGlobals.h)

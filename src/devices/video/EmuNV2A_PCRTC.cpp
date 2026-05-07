@@ -107,8 +107,9 @@ DEVICE_READ32(PCRTC)
 		break;
 	case NV_PCRTC_RASTER: {
 		// Test case: Alter Echo, FieldRender
-		// Return a time-based scanline position within the current frame.
-		// Read visible/total line counts from VGA CRT registers (set by Xbox kernel).
+		// Return scanline position relative to the last VBlank interrupt.
+		// This ensures games polling NV_PCRTC_RASTER see timing consistent
+		// with VBlank interrupt delivery (same time source).
 		unsigned int visibleLines = pcrtc_get_visible_lines(d);
 		unsigned int totalLines = pcrtc_get_total_lines(d);
 		// Guard against uninitialized registers (early boot before AvSetDisplayMode)
@@ -116,14 +117,23 @@ DEVICE_READ32(PCRTC)
 			visibleLines = 480;
 			totalLines = 525;
 		}
-		// Derive refresh rate from VPLL pixel clock and CRT timing registers
 		unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
 		LARGE_INTEGER freq, now;
 		QueryPerformanceFrequency(&freq);
 		QueryPerformanceCounter(&now);
 		// Frame period in QPC ticks
 		LONGLONG frameTicks = freq.QuadPart / refreshRate;
-		LONGLONG posInFrame = now.QuadPart % frameTicks;
+		// Compute position relative to last VBlank (instead of free-running QPC modulo)
+		int64_t lastVBlankQPC = d->vblank_last_qpc.load(std::memory_order_acquire);
+		LONGLONG posInFrame;
+		if (lastVBlankQPC > 0) {
+			posInFrame = now.QuadPart - lastVBlankQPC;
+			if (posInFrame < 0) posInFrame = 0;
+			if (posInFrame >= frameTicks) posInFrame = frameTicks - 1;
+		} else {
+			// Fallback before first VBlank fires (early boot)
+			posInFrame = now.QuadPart % frameTicks;
+		}
 		unsigned int scanline = (unsigned int)(posInFrame * totalLines / frameTicks);
 		result = scanline & NV_PCRTC_RASTER_POSITION;
 		// Bit 16: VERT_BLANK - active when scanline is in the blanking interval

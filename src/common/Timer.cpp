@@ -41,6 +41,7 @@
 #include "devices\Xbox.h"
 #include "devices\usb\OHCI.h"
 #include "core\hle\DSOUND\DirectSound\DirectSoundGlobal.hpp"
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 
 
 static std::atomic_uint64_t last_qpc; // last time when QPC was called
@@ -164,16 +165,33 @@ xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 	xbox::KeRaiseIrqlToDpcLevel();
 
 	while (true) {
+		LARGE_INTEGER loop_start;
+		if (g_bCxbxProfilerEnabled) QueryPerformanceCounter(&loop_start);
+
 		const uint64_t last_time = get_now();
 		const uint64_t nearest_next = get_next(last_time);
 
-		while (true) {
-			update_non_periodic_events();
-			uint64_t elapsed_us = get_now() - last_time;
-			if (elapsed_us >= nearest_next) {
-				break;
-			}
-			std::this_thread::yield();
+		// Process non-periodic events once at the start of each cycle
+		update_non_periodic_events();
+
+		// Wait precisely for the next periodic event deadline using
+		// SleepPrecise (Sleep for bulk, spin for final ~2ms accuracy).
+		// This replaces the old yield() loop that was descheduled for
+		// 1-15+ms per iteration, causing massive VBlank jitter.
+		if (nearest_next > 0) {
+			auto target = std::chrono::steady_clock::now()
+				+ std::chrono::microseconds(nearest_next);
+			SleepPrecise(target);
+		}
+
+		// Process non-periodic events again after waking (handles any
+		// that arrived during the sleep)
+		update_non_periodic_events();
+
+		if (g_bCxbxProfilerEnabled) {
+			LARGE_INTEGER loop_end;
+			QueryPerformanceCounter(&loop_end);
+			InterlockedAdd64(&g_ProfileAccum[PROF_SYSEVENTS_LOOP], loop_end.QuadPart - loop_start.QuadPart);
 		}
 	}
 }

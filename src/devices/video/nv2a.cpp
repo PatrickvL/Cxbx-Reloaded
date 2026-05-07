@@ -60,6 +60,7 @@
 #include "vga.h"
 #include "nv2a.h" // For NV2AState
 #include "nv2a_int.h" // from https://github.com/espes/xqemu/tree/xbox/hw/xbox
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 #include <cassert>
 
 // glib types
@@ -604,17 +605,45 @@ int NV2ADevice::GetFrameWidth(NV2AState* d)
 
 uint64_t NV2ADevice::vblank_next(uint64_t now)
 {
-	// TODO: this should use a vblank period of 20ms when we are in 50Hz PAL mode
-	constexpr uint64_t vblank_period = static_cast<uint64_t>(16.6666666667 * 1000);
-	uint64_t next = m_nv2a_state->vblank_last + vblank_period;
+	// Derive VBlank period from CRT timing registers (same formula as PCRTC_RASTER).
+	// This unifies VBlank interrupt cadence with the display mode the game configured,
+	// supporting both NTSC (~60Hz) and PAL (~50Hz) modes automatically.
+	NV2AState *d = m_nv2a_state;
+	unsigned int totalLines = pcrtc_get_total_lines(d);
+	unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
+	// Period in microseconds: 1000000 / refreshRate
+	uint64_t vblank_period = 1000000 / refreshRate;
+
+	uint64_t next = d->vblank_last + vblank_period;
 
 	if (now >= next) {
-		m_nv2a_state->vblank_cb(m_nv2a_state);
-		m_nv2a_state->vblank_last = get_now();
+		// Record QPC timestamp *before* firing the callback so PCRTC_RASTER
+		// can compute scanline position relative to this VBlank.
+		LARGE_INTEGER qpc;
+		QueryPerformanceCounter(&qpc);
+
+		// Measure VBlank jitter: how late (or early) did we fire vs ideal?
+		if (g_bCxbxProfilerEnabled) {
+			int64_t lastQPC = d->vblank_last_qpc.load(std::memory_order_acquire);
+			if (lastQPC > 0) {
+				LARGE_INTEGER freq;
+				QueryPerformanceFrequency(&freq);
+				LONGLONG idealTicks = freq.QuadPart / refreshRate;
+				LONGLONG actualTicks = qpc.QuadPart - lastQPC;
+				LONGLONG jitterTicks = actualTicks > idealTicks
+					? actualTicks - idealTicks : idealTicks - actualTicks;
+				InterlockedAdd64(&g_ProfileAccum[PROF_VBLANK_JITTER], jitterTicks);
+			}
+		}
+
+		d->vblank_last_qpc.store(qpc.QuadPart, std::memory_order_release);
+
+		d->vblank_cb(d);
+		d->vblank_last = get_now();
 		return vblank_period;
 	}
 
-	return m_nv2a_state->vblank_last + vblank_period - now; // time remaining until next vblank
+	return d->vblank_last + vblank_period - now; // time remaining until next vblank
 }
 
 uint64_t NV2ADevice::ptimer_next(uint64_t now)

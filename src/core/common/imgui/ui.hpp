@@ -49,8 +49,6 @@ protected:
 		callback(this, arg);
 	}
 
-	void UpdateCurrentMSpFAndFPS();
-
 	std::mutex m_imgui_mutex;
 	ImGuiContext* m_imgui_context;
 	char m_file_path[FILENAME_MAX+1];

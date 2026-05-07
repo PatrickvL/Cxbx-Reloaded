@@ -81,33 +81,33 @@ void ImGuiUI::ToggleImGui()
 	g_EmuShared->SetImGuiFocusFlag(m_is_focus);
 }
 
-static clock_t      g_DeltaTime = 0; // Used for benchmarking/fps count
-static unsigned int g_Frames = 0;
-
-// ******************************************************************
-// * update the current milliseconds per frame
-// ******************************************************************
-void ImGuiUI::UpdateCurrentMSpFAndFPS() {
-	if (g_EmuShared) {
-
-		fps_counter = (float)(g_Frames * 0.5 + fps_counter * 0.5);
-		g_EmuShared->SetCurrentFPS(&fps_counter);
-	}
-}
+static LARGE_INTEGER g_FpsQpcFreq;       // QPC frequency (ticks/sec)
+static LARGE_INTEGER g_FpsLastQpc = {};  // QPC at last FPS update
+static unsigned int  g_Frames = 0;
 
 void ImGuiUI::UpdateFPSCounter()
 {
-	static clock_t lastDrawFunctionCallTime = 0;
-	clock_t currentDrawFunctionCallTime = clock();
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
 
-	g_DeltaTime += currentDrawFunctionCallTime - lastDrawFunctionCallTime;
-	lastDrawFunctionCallTime = currentDrawFunctionCallTime;
+	// First call: initialize
+	if (g_FpsLastQpc.QuadPart == 0) {
+		QueryPerformanceFrequency(&g_FpsQpcFreq);
+		g_FpsLastQpc = now;
+	}
+
 	g_Frames++;
 
-	if (g_DeltaTime >= CLOCKS_PER_SEC) {
-		UpdateCurrentMSpFAndFPS();
+	LONGLONG elapsed = now.QuadPart - g_FpsLastQpc.QuadPart;
+	if (elapsed >= g_FpsQpcFreq.QuadPart) {
+		// Compute actual wall-clock FPS
+		float measuredFPS = (float)g_Frames * (float)g_FpsQpcFreq.QuadPart / (float)elapsed;
+		fps_counter = measuredFPS * 0.5f + fps_counter * 0.5f;
+		if (g_EmuShared) {
+			g_EmuShared->SetCurrentFPS(&fps_counter);
+		}
 		g_Frames = 0;
-		g_DeltaTime -= CLOCKS_PER_SEC;
+		g_FpsLastQpc = now;
 	}
 }
 

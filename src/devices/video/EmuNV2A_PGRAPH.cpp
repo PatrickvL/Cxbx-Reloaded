@@ -645,6 +645,32 @@ void pgraph_handle_method(NV2AState *d,
 				pgraph_flip_stall(d);
 			}
 
+			// VBlank-gated frame pacing: wait until the next VBlank fires.
+			// This caps the emulation to the display refresh rate (~60Hz NTSC,
+			// ~50Hz PAL) and produces even frame spacing, eliminating stutter.
+			// We release pgraph_lock during the sleep so other threads (pusher,
+			// system_events) can proceed.  The puller reacquires it when we return.
+			{
+				unsigned int totalLines = pcrtc_get_total_lines(d);
+				unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
+				// Compute microseconds until next VBlank from the last VBlank timestamp
+				LARGE_INTEGER freq, now;
+				QueryPerformanceFrequency(&freq);
+				QueryPerformanceCounter(&now);
+				int64_t lastVBlank = d->vblank_last_qpc.load(std::memory_order_acquire);
+				if (lastVBlank > 0) {
+					int64_t vblankPeriodTicks = freq.QuadPart / refreshRate;
+					int64_t nextVBlankQPC = lastVBlank + vblankPeriodTicks;
+					if (now.QuadPart < nextVBlankQPC) {
+						int64_t waitUS = (nextVBlankQPC - now.QuadPart) * 1000000 / freq.QuadPart;
+						auto target = std::chrono::steady_clock::now() + std::chrono::microseconds(waitUS);
+						qemu_mutex_unlock(&d->pgraph.pgraph_lock);
+						SleepPrecise(target);
+						qemu_mutex_lock(&d->pgraph.pgraph_lock);
+					}
+				}
+			}
+
 			NV2A_DPRINTF("flip stall done\n");
 			break;
 

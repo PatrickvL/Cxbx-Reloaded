@@ -347,6 +347,7 @@ typedef struct OverlayState {
 typedef struct NV2AState {
 	void(* vblank_cb)(void *);
 	uint64_t vblank_last;
+	std::atomic<int64_t> vblank_last_qpc{0}; // QPC timestamp of last VBlank (for PCRTC_RASTER sync)
 	std::atomic_flag vblank_pending = ATOMIC_FLAG_INIT; // Set by timer, consumed by main thread
     // PCIDevice dev;
     // qemu_irq irq;
