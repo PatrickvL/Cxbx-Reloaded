@@ -1989,8 +1989,8 @@ XBSYSAPI EXPORTNUM(139) xbox::ntstatus_xt NTAPI xbox::KeRestoreFloatingPointStat
 	// Restore the x87 FPU control word that was saved by KeSaveFloatingPointState.
 	// _controlfp_s takes a mask of bits to change; pass _MCW_PC | _MCW_RC to
 	// restore both precision and rounding fields that are saved in ControlWord.
-	unsigned int _;
-	_controlfp_s(&_, PublicFloatSave->ControlWord, _MCW_PC | _MCW_RC);
+	unsigned int unused;
+	_controlfp_s(&unused, PublicFloatSave->ControlWord, _MCW_PC | _MCW_RC);
 
 	RETURN(X_STATUS_SUCCESS);
 }
@@ -2070,6 +2070,9 @@ XBSYSAPI EXPORTNUM(142) xbox::ntstatus_xt NTAPI xbox::KeSaveFloatingPointState
 	// state (extended precision, round-to-nearest) for use during the kernel
 	// operation that follows.  Only the control word is meaningful for emulation
 	// purposes; the other fields are zeroed so that callers see a clean structure.
+	//
+	// Passing value=0 and mask=0 to _controlfp_s reads the current control word
+	// without modifying any bits; this is the standard MSVC query idiom.
 	unsigned int savedCW = 0;
 	_controlfp_s(&savedCW, 0, 0);
 
@@ -2083,8 +2086,8 @@ XBSYSAPI EXPORTNUM(142) xbox::ntstatus_xt NTAPI xbox::KeSaveFloatingPointState
 	PublicFloatSave->Spare1       = 0;
 
 	// Set default FPU state: extended precision, round-to-nearest
-	unsigned int _;
-	_controlfp_s(&_, _CW_DEFAULT, _MCW_PC | _MCW_RC);
+	unsigned int unused;
+	_controlfp_s(&unused, _CW_DEFAULT, _MCW_PC | _MCW_RC);
 
 	RETURN(X_STATUS_SUCCESS);
 }
