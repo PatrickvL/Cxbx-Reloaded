@@ -1595,7 +1595,14 @@ XBSYSAPI EXPORTNUM(302) xbox::void_xt NTAPI xbox::RtlRaiseException
 {
 	LOG_FUNC_ONE_ARG(ExceptionRecord);
 
-	LOG_UNIMPLEMENTED();
+	// The Xbox EXCEPTION_RECORD layout is identical to the Windows one.
+	// Dispatch through the host Win32 SEH mechanism so that the game's
+	// own __try/__except handlers can catch the exception as expected.
+	::RaiseException(
+		ExceptionRecord->ExceptionCode,
+		ExceptionRecord->ExceptionFlags,
+		ExceptionRecord->NumberParameters,
+		reinterpret_cast<const ULONG_PTR*>(ExceptionRecord->ExceptionInformation));
 }
 
 // ******************************************************************
@@ -1612,6 +1619,7 @@ XBSYSAPI EXPORTNUM(303) xbox::void_xt NTAPI xbox::RtlRaiseStatus
 	record.ExceptionCode = Status;
 	record.ExceptionFlags = X_EXCEPTION_NONCONTINUABLE;
 	record.ExceptionRecord = NULL;
+	record.ExceptionAddress = _ReturnAddress();
 	record.NumberParameters = 0;
 
 	RtlRaiseException(&record);
@@ -2018,7 +2026,12 @@ XBSYSAPI EXPORTNUM(312) xbox::void_xt NTAPI xbox::RtlUnwind
 		LOG_FUNC_ARG(ReturnValue)
 	LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	// The Xbox RtlUnwind signature is identical to the Windows one.
+	// Delegate to the host to walk and unwind the SEH chain back to
+	// TargetFrame, invoking termination handlers along the way.
+	::RtlUnwind(TargetFrame, TargetIp,
+		reinterpret_cast<PEXCEPTION_RECORD>(ExceptionRecord),
+		ReturnValue);
 }
 
 // ******************************************************************

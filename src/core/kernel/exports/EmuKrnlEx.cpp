@@ -555,8 +555,14 @@ XBSYSAPI EXPORTNUM(26) xbox::void_xt NTAPI xbox::ExRaiseException
 {
 	LOG_FUNC_ONE_ARG(ExceptionRecord);
 
-	// RtlRaiseException(ExceptionRecord);
-	LOG_UNIMPLEMENTED();
+	// The Xbox EXCEPTION_RECORD layout is identical to the Windows one, so we
+	// can dispatch through the host Win32 SEH mechanism directly.  This allows
+	// the game's own __try/__except handlers to catch the exception as expected.
+	::RaiseException(
+		ExceptionRecord->ExceptionCode,
+		ExceptionRecord->ExceptionFlags,
+		ExceptionRecord->NumberParameters,
+		reinterpret_cast<const ULONG_PTR*>(ExceptionRecord->ExceptionInformation));
 }
 
 // ******************************************************************
@@ -570,7 +576,14 @@ XBSYSAPI EXPORTNUM(27) xbox::void_xt NTAPI xbox::ExRaiseStatus
 {
 	LOG_FUNC_ONE_ARG(Status);
 
-	LOG_UNIMPLEMENTED();
+	EXCEPTION_RECORD record;
+	record.ExceptionCode = Status;
+	record.ExceptionFlags = X_EXCEPTION_NONCONTINUABLE;
+	record.ExceptionRecord = nullptr;
+	record.ExceptionAddress = nullptr;
+	record.NumberParameters = 0;
+
+	ExRaiseException(&record);
 }
 
 // ******************************************************************
@@ -729,17 +742,16 @@ XBSYSAPI EXPORTNUM(32) xbox::PLIST_ENTRY FASTCALL xbox::ExfInterlockedInsertHead
 		LOG_FUNC_ARG(ListEntry)
 		LOG_FUNC_END;
 
-	/* Disable interrupts and acquire the spinlock */
-	// BOOLEAN Enable = _ExiDisableInteruptsAndAcquireSpinlock(Lock);
-	LOG_INCOMPLETE(); // TODO : Lock
+	/* Disable interrupts (emulates acquiring the Xbox spinlock) */
+	bool interrupt_mode = DisableInterrupts();
 
 	/* Save the first entry */
 	PLIST_ENTRY FirstEntry = ListHead->Flink;
 	/* Insert the new entry */
 	InsertHeadList(ListHead, ListEntry);
 
-	/* Release the spinlock and restore interrupts */
-	// _ExiReleaseSpinLockAndRestoreInterupts(Lock, Enable);
+	/* Restore interrupt state */
+	RestoreInterruptMode(interrupt_mode);
 
 	/* Return the old first entry or NULL for empty list */
 	if (FirstEntry == ListHead)
@@ -763,9 +775,8 @@ XBSYSAPI EXPORTNUM(33) xbox::PLIST_ENTRY FASTCALL xbox::ExfInterlockedInsertTail
 		LOG_FUNC_ARG(ListEntry)
 		LOG_FUNC_END;
 
-	/* Disable interrupts and acquire the spinlock */
-	// BOOLEAN Enable = _ExiDisableInteruptsAndAcquireSpinlock(Lock);
-	LOG_INCOMPLETE(); // TODO : Lock
+	/* Disable interrupts (emulates acquiring the Xbox spinlock) */
+	bool interrupt_mode = DisableInterrupts();
 
 	/* Save the last entry */
 	PLIST_ENTRY LastEntry = ListHead->Blink;
@@ -773,8 +784,8 @@ XBSYSAPI EXPORTNUM(33) xbox::PLIST_ENTRY FASTCALL xbox::ExfInterlockedInsertTail
 	/* Insert the new entry */
 	InsertTailList(ListHead, ListEntry);
 
-	/* Release the spinlock and restore interrupts */
-	// _ExiReleaseSpinLockAndRestoreInterupts(Lock, Enable);
+	/* Restore interrupt state */
+	RestoreInterruptMode(interrupt_mode);
 
 	/* Return the old last entry or NULL for empty list */
 	if (LastEntry == ListHead) 
@@ -794,9 +805,8 @@ XBSYSAPI EXPORTNUM(34) xbox::PLIST_ENTRY FASTCALL xbox::ExfInterlockedRemoveHead
 {
 	LOG_FUNC_ONE_ARG(ListHead);
 
-	/* Disable interrupts and acquire the spinlock */
-	// BOOLEAN Enable = _ExiDisableInteruptsAndAcquireSpinlock(Lock);
-	LOG_INCOMPLETE(); // TODO : Lock
+	/* Disable interrupts (emulates acquiring the Xbox spinlock) */
+	bool interrupt_mode = DisableInterrupts();
 
 	PLIST_ENTRY ListEntry;
 
@@ -816,8 +826,8 @@ XBSYSAPI EXPORTNUM(34) xbox::PLIST_ENTRY FASTCALL xbox::ExfInterlockedRemoveHead
 #endif
 	}
 
-	/* Release the spinlock and restore interrupts */
-	// _ExiReleaseSpinLockAndRestoreInterupts(Lock, Enable);
+	/* Restore interrupt state */
+	RestoreInterruptMode(interrupt_mode);
 
 	/* Return the entry */
 	RETURN(ListEntry);
