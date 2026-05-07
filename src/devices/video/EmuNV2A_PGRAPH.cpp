@@ -171,10 +171,7 @@ void pgraph_trace_close()
 }
 // ---- End trace infrastructure ----
 
-void (*pgraph_draw_arrays)(NV2AState *d);
-void (*pgraph_draw_inline_buffer)(NV2AState *d);
-void (*pgraph_draw_inline_array)(NV2AState *d);
-void (*pgraph_draw_inline_elements)(NV2AState *d);
+void (*pgraph_draw)(NV2AState *d);
 void (*pgraph_draw_state_update)(NV2AState *d);
 void (*pgraph_draw_clear)(NV2AState *d);
 void (*pgraph_draw_patch)(NV2AState *d);  // Hardware tessellation callback
@@ -1565,52 +1562,32 @@ void pgraph_handle_method(NV2AState *d,
 			if (parameter == NV097_SET_BEGIN_END_OP_END) {
 
 				if (pg->draw_arrays_length) {
-
 					NV2A_GL_DPRINTF(false, "Draw Arrays");
-
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_array_length == 0);
 					assert(pg->inline_elements_length == 0);
-
-					if (pgraph_draw_arrays != nullptr) {
-						pgraph_draw_arrays(d);
-					}
 				} else if (pg->inline_buffer_length) {
-
 					NV2A_GL_DPRINTF(false, "Inline Buffer");
-
 					assert(pg->draw_arrays_length == 0);
 					assert(pg->inline_array_length == 0);
 					assert(pg->inline_elements_length == 0);
-
-					if (pgraph_draw_inline_buffer != nullptr) {
-						pgraph_draw_inline_buffer(d);
-					}
 				} else if (pg->inline_array_length) {
-
 					NV2A_GL_DPRINTF(false, "Inline Array");
-
 					assert(pg->draw_arrays_length == 0);
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_elements_length == 0);
-
-					if (pgraph_draw_inline_array != nullptr) {
-						pgraph_draw_inline_array(d);
-					}
 				} else if (pg->inline_elements_length) {
-
 					NV2A_GL_DPRINTF(false, "Inline Elements");
-
 					assert(pg->draw_arrays_length == 0);
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_array_length == 0);
-
-					if (pgraph_draw_inline_elements != nullptr) {
-						pgraph_draw_inline_elements(d);
-					}
 				} else {
 					NV2A_GL_DPRINTF(true, "EMPTY NV097_SET_BEGIN_END");
 					assert(false);
+				}
+
+				if (pgraph_draw != nullptr) {
+					pgraph_draw(d);
 				}
 
 				// End occlusion query and accumulate zpass pixel count

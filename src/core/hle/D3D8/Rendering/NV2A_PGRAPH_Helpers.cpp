@@ -135,6 +135,24 @@ NV2ASurfaceState NV2AGetSurfaceState(PGRAPHState* pg)
 	return result;
 }
 
+// ==== Vertex Shader Mode ====
+
+bool NV2AIsFixedFunctionMode(PGRAPHState* pg)
+{
+	uint32_t mode = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
+	return mode != NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM;
+}
+
+bool NV2AIsFixedFunctionMode(NV2AState* d)
+{
+	return NV2AIsFixedFunctionMode(&d->pgraph);
+}
+
+bool NV2AIsFixedFunctionMode()
+{
+	return NV2AIsFixedFunctionMode(&g_NV2A->GetDeviceState()->pgraph);
+}
+
 uint32_t NV2AResolveTexturePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset)
 {
 	auto pg = &d->pgraph;

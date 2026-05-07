@@ -486,14 +486,13 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	float xboxScreenspaceWidth = xboxRenderTargetWidth * screenScaleX;
 	float xboxScreenspaceHeight = xboxRenderTargetHeight * screenScaleY;
 
-	// Passthrough should range 0 to 1, instead of 0 to zbuffer depth
-	// Test case: DoA3 character select
-	// Use the already-determined vertex shader mode from CxbxUpdateNativeD3DResources
-	bool isPassthrough = (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough);
+	// Z output scale derived from PGRAPH depth surface format.
+	// NV2A VS programs encode Z in the depth buffer's native integer range
+	// (0..65535 for Z16, 0..16777215 for Z24S8).  The reverse screen-space
+	// transform divides by this to normalize Z into [0,1] for D3D11.
 	float zOutputScale = 1.0f;
-	if (!isPassthrough) {
+	{
 		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
-		// Derive Z output scale from PGRAPH depth surface format (replaces HLE g_ZScale)
 		auto surf = NV2AGetSurfaceState(pg_z);
 		switch (surf.zetaFormat) {
 			case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   zOutputScale = 65535.0f;    break;

@@ -34,6 +34,7 @@
 
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A
+#include "core\hle\D3D8\Rendering\NV2A_PGRAPH_Helpers.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Internal.h" // For g_pD3D11XFPRBuf, g_pD3D11PGRegsSRV
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
@@ -47,14 +48,10 @@
 #include "Rendering/Backend/Shading/VertexShaderCache.h"
 #include "Rendering/Backend/Backend_D3D11_Profiler.h"
 
-VertexShaderMode g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
-// Retained bytecode for FixedFunction and Passthrough vertex shaders (needed for input layout creation)
+// Retained bytecode for FixedFunction vertex shader (needed for input layout creation)
 static ID3DBlob* g_pD3D11FixedFunctionBytecode = nullptr;
-static ID3DBlob* g_pD3D11PassthroughBytecode = nullptr;
 static ID3DBlob* g_pD3D11JITVSBytecode = nullptr; // JIT-compiled VS bytecode for current draw
 static ID3D11VertexShader* g_pD3D11JITCurrentVS = nullptr; // Currently active JIT VS
-
-extern bool g_bUsePassthroughHLSL; // defined in HostDevice.cpp
 
 extern ID3D11VertexShader* CxbxCreateVertexShader(ID3DBlob* pCompiledShader, const char *shader_category)
 {
@@ -141,7 +138,6 @@ void CxbxUpdateHostVertexShader()
 	// They persist for the lifetime of the D3D11 device; teardown is handled
 	// by CxbxD3D11ReleaseBackendResources() on device release.
 	static ID3D11VertexShader* fixedFunctionShader = nullptr;
-	static ID3D11VertexShader* passthroughShader = nullptr;
 	static bool shadersLoaded = false;
 
 	if (!shadersLoaded) {
@@ -150,7 +146,6 @@ void CxbxUpdateHostVertexShader()
 
 		EmuLog(LOG_LEVEL::INFO, "Loading vertex shaders...");
 		fixedFunctionShader = InitShader("CxbxFixedFunctionVS", "Fixed Function Vertex Shader", &g_pD3D11FixedFunctionBytecode);
-		passthroughShader = InitShader("CxbxVSPassthroughVS", "Passthrough Vertex Shader", &g_pD3D11PassthroughBytecode);
 		// VS interpreter is initialized lazily on first ShaderProgram draw via CxbxD3D11InitVSInterpreter()
 	}
 
@@ -159,13 +154,11 @@ void CxbxUpdateHostVertexShader()
 
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
 
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
+	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
+
+	if (NV2AIsFixedFunctionMode(pg)) {
 		HRESULT hRet = CxbxSetVertexShader(fixedFunctionShader);
 		if (FAILED(hRet)) CxbxrAbort("Failed to set fixed-function shader");
-	}
-	else if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL) {
-		HRESULT hRet = CxbxSetVertexShader(passthroughShader);
-		if (FAILED(hRet)) CxbxrAbort("Failed to set passthrough shader");
 	}
 	else {
 		// Read program tokens from PGRAPH program_data (the authoritative
@@ -173,7 +166,6 @@ void CxbxUpdateHostVertexShader()
 		// The start address comes from CSV0_C CHEOPS_PROGRAM_START, which
 		// the puller sets from NV097_SET_TRANSFORM_PROGRAM_START.
 		xbox::dword_xt *pTokens = nullptr;
-		PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 		uint32_t startAddr = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
 			NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START);
 		if (startAddr < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH) {
@@ -215,23 +207,14 @@ void CxbxUpdateHostVertexShader()
 
 ID3DBlob* CxbxGetActiveVertexShaderBytecode()
 {
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction)
+	if (NV2AIsFixedFunctionMode())
 		return g_pD3D11FixedFunctionBytecode;
-	// Return passthrough bytecode when the passthrough HLSL shader is active
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough && g_bUsePassthroughHLSL)
-		return g_pD3D11PassthroughBytecode;
 	// JIT-compiled VS provides its own bytecode
-	if (g_pD3D11JITVSBytecode &&
-		(g_Xbox_VertexShaderMode == VertexShaderMode::ShaderProgram ||
-		 g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough))
+	if (g_pD3D11JITVSBytecode)
 		return g_pD3D11JITVSBytecode;
 	// VS interpreter provides its own bytecode for input layout creation
-	if (g_bUseVSInterpreter && g_pD3D11VSInterpreterBytecode &&
-		(g_Xbox_VertexShaderMode == VertexShaderMode::ShaderProgram ||
-		 g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough))
+	if (g_bUseVSInterpreter && g_pD3D11VSInterpreterBytecode)
 		return g_pD3D11VSInterpreterBytecode;
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough)
-		return g_pD3D11PassthroughBytecode;
 	return nullptr;
 }
 

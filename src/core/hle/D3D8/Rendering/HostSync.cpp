@@ -466,10 +466,9 @@ void CxbxUpdateHostTextureScaling()
 
 		uint32_t colorFmt = GET_MASK(texFmt, NV097_SET_TEXTURE_FORMAT_COLOR);
 
-		// Texcoord index. Just the texture stage unless fixed function or passthrough mode
+		// Texcoord index. Just the texture stage unless fixed function mode
 		int texCoordIndex = stage;
-		if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction
-			|| g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough) {
+		if (NV2AIsFixedFunctionMode(pg)) {
 			// Read texgen mode from PGRAPH CSV1_A/CSV1_B to determine if
 			// coordinates are generated (no HLE dependency).
 			unsigned int csvReg = (stage < 2) ? NV_PGRAPH_CSV1_A : NV_PGRAPH_CSV1_B;
@@ -567,9 +566,9 @@ void CxbxUpdateHostTextureScaling()
 	}
 	CxbxSetVertexShaderConstantF(CXBX_D3DVS_TEXTURES_SCALE_BASE, (float*)texcoordScaleRcp.data(), CXBX_D3DVS_TEXTURES_SCALE_SIZE);
 
-	// Upload TEXCOORDINDEX remapping for the passthrough vertex shader.
+	// Upload TEXCOORDINDEX remapping for the vertex shader output footer.
 	// On NV2A, the texture unit applies D3DTSS_TEXCOORDINDEX after VS output
-	// interpolation. In D3D11 passthrough mode, we must do this remapping in the VS.
+	// interpolation. In D3D11, we must do this remapping in the VS.
 	// On NV2A, texcoord routing is always identity (stage i uses TEXCOORD i),
 	// so we always upload the identity mapping.
 	{
@@ -611,13 +610,13 @@ void CxbxUpdateHostVertexShaderConstants()
 	// Track which constants are currently written
 	// So we can skip updates
 	static bool isXboxConstants = false;
+	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 
-	if (g_Xbox_VertexShaderMode == VertexShaderMode::FixedFunction) {
+	if (NV2AIsFixedFunctionMode(pg)) {
 		UpdateFixedFunctionVertexShaderState();
 		isXboxConstants = false;
 	}
 	else {
-		auto pg = &(g_NV2A->GetDeviceState()->pgraph);
 		auto constant_floats = (float*)pg->vsh_constants;
 
 		if (isXboxConstants) {
@@ -689,78 +688,6 @@ void CxbxUpdateNativeD3DResources()
 
 	// Single pg pointer for the entire per-draw state update sequence.
 	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
-
-	// Derive the vertex shader mode entirely from PGRAPH state.
-	// g_Xbox_VertexShaderMode is ONLY written here on the render thread;
-	// the game-thread patches no longer touch it, eliminating the race.
-	//
-	// Detection strategy:
-	// - FIXED mode + CMAT ≈ identity → Passthrough (XYZRHW in fixed pipeline)
-	// - FIXED mode + CMAT ≠ identity → FixedFunction (normal W*V*P transform)
-	// - PROGRAM mode + VPSCL ≈ (1, ±1, ...) → Passthrough (XYZRHW via VS program)
-	// - PROGRAM mode + VPSCL has large values → ShaderProgram (real VS program)
-	//
-	// Rationale: On Xbox, SetVertexShader(D3DFVF_XYZRHW|...) sets MODE=PROGRAM
-	// and loads a trivial passthrough VS.  CMAT is NOT updated (stale from
-	// previous draws), so we cannot use CMAT for PROGRAM mode.  Instead, the
-	// runtime sets VPSCL to identity (1,1,1,0) since the VS outputs screen-space
-	// positions directly.  Normal VS programs have VPSCL = (W/2, -H/2, zScale, 0).
-	{
-		uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
-		uint32_t pgraph_mode = GET_MASK(csv0d, NV_PGRAPH_CSV0_D_MODE);
-
-		// Fast path: skip mode detection if key inputs haven't changed
-		static uint32_t s_LastCsv0d_Mode = ~0u;
-		static uint32_t s_LastVpscl[2] = { ~0u, ~0u };
-		static uint32_t s_LastCmat0 = ~0u; // First element of CMAT as quick-reject
-
-		bool modeInputChanged = (csv0d != s_LastCsv0d_Mode);
-		if (!modeInputChanged) {
-			if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-				modeInputChanged = (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][0] != s_LastVpscl[0]
-				                 || pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][1] != s_LastVpscl[1]);
-			} else {
-				modeInputChanged = (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0][0] != s_LastCmat0);
-			}
-		}
-
-		if (modeInputChanged) {
-			s_LastCsv0d_Mode = csv0d;
-			s_LastVpscl[0] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][0];
-			s_LastVpscl[1] = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][1];
-			s_LastCmat0 = pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0][0];
-
-			if (pgraph_mode == NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-				float vpscl[4];
-				std::memcpy(vpscl, pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL], 16);
-
-				if (fabsf(vpscl[0]) <= 1.5f && fabsf(vpscl[1]) <= 1.5f) {
-					g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
-				} else {
-					g_Xbox_VertexShaderMode = VertexShaderMode::ShaderProgram;
-				}
-			} else {
-				float cmat[4][4];
-				for (int row = 0; row < 4; row++)
-					std::memcpy(&cmat[row][0], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_CMAT0 + row][0], 16);
-
-				bool isIdentity = true;
-				for (int r = 0; r < 4 && isIdentity; r++) {
-					for (int c = 0; c < 4 && isIdentity; c++) {
-						float expected = (r == c) ? 1.0f : 0.0f;
-						if (fabsf(cmat[r][c] - expected) > 0.01f)
-							isIdentity = false;
-					}
-				}
-
-				if (isIdentity) {
-					g_Xbox_VertexShaderMode = VertexShaderMode::Passthrough;
-				} else {
-					g_Xbox_VertexShaderMode = VertexShaderMode::FixedFunction;
-				}
-			}
-		}
-	}
 
 	// Before we start, make sure our resource cache stays limited in size
 	PrunePaletizedTexturesCache(); // TODO : Could we move this to Swap instead?

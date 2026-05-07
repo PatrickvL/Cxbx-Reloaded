@@ -121,3 +121,11 @@ uint32_t NV2AResolveTexturePhysicalAddress(int stage, uint32_t rawOffset);
 // This adds the DMA base (from dma_a or dma_b per TEXPALETTE CONTEXT_DMA bit) to the offset.
 uint32_t NV2AResolvePalettePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
 uint32_t NV2AResolvePalettePhysicalAddress(int stage, uint32_t rawOffset);
+
+// ---- Vertex Shader Mode ----
+
+// Returns true when CSV0_D_MODE == FIXED (hardware T&L pipeline).
+// Returns false when CSV0_D_MODE == PROGRAM (user VS program in program_data).
+bool NV2AIsFixedFunctionMode(PGRAPHState* pg);
+bool NV2AIsFixedFunctionMode(NV2AState* d);
+bool NV2AIsFixedFunctionMode(); // Uses g_NV2A global

@@ -63,7 +63,7 @@ void CxbxReleaseOverlayResources()
 
 const char *NV2AMethodToString(DWORD dwMethod); // forward
 
-void D3D11_draw_arrays(NV2AState *d)
+static void D3D11_draw_arrays(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -78,7 +78,7 @@ void D3D11_draw_arrays(NV2AState *d)
 	}
 }
 
-void D3D11_draw_inline_buffer(NV2AState *d)
+static void D3D11_draw_inline_buffer(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -88,7 +88,7 @@ void D3D11_draw_inline_buffer(NV2AState *d)
 	CxbxD3D11DrawInlineBuffer(pg);
 }
 
-void D3D11_draw_inline_array(NV2AState *d)
+static void D3D11_draw_inline_array(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -123,7 +123,7 @@ void D3D11_draw_inline_array(NV2AState *d)
 	CxbxD3D11VertexFetchDraw(DrawContext);
 }
 
-void D3D11_draw_inline_elements(NV2AState *d)
+static void D3D11_draw_inline_elements(NV2AState *d)
 {
 	PGRAPHState *pg = &d->pgraph;
 
@@ -135,6 +135,23 @@ void D3D11_draw_inline_elements(NV2AState *d)
 	DrawContext.pXboxIndexData = d->pgraph.inline_elements;
 
 	CxbxD3D11VertexFetchDraw(DrawContext);
+}
+
+// Unified draw callback — dispatches to the appropriate draw method based on
+// which vertex data buffer was filled between BEGIN and END.
+void D3D11_draw(NV2AState *d)
+{
+	PGRAPHState *pg = &d->pgraph;
+
+	if (pg->draw_arrays_length) {
+		D3D11_draw_arrays(d);
+	} else if (pg->inline_buffer_length) {
+		D3D11_draw_inline_buffer(d);
+	} else if (pg->inline_array_length) {
+		D3D11_draw_inline_array(d);
+	} else if (pg->inline_elements_length) {
+		D3D11_draw_inline_elements(d);
+	}
 }
 
 void D3D11_draw_state_update(NV2AState *d)
@@ -323,10 +340,7 @@ void D3D11_draw_clear(NV2AState *d)
 }
 
 // Import pgraph_draw_* variables, declared in EmuNV2A_PGRAPH.cpp :
-extern void(*pgraph_draw_arrays)(NV2AState *d);
-extern void(*pgraph_draw_inline_buffer)(NV2AState *d);
-extern void(*pgraph_draw_inline_array)(NV2AState *d);
-extern void(*pgraph_draw_inline_elements)(NV2AState *d);
+extern void(*pgraph_draw)(NV2AState *d);
 extern void(*pgraph_draw_state_update)(NV2AState *d);
 extern void(*pgraph_draw_clear)(NV2AState *d);
 extern void(*pgraph_draw_patch)(NV2AState *d);
@@ -517,10 +531,7 @@ static void D3D11_flip_stall(NV2AState *d)
 void D3D11_init_pgraph_plugins()
 {
 	/* attach HLE Direct3D render plugins */
-	pgraph_draw_arrays = D3D11_draw_arrays;
-	pgraph_draw_inline_buffer = D3D11_draw_inline_buffer;
-	pgraph_draw_inline_array = D3D11_draw_inline_array;
-	pgraph_draw_inline_elements = D3D11_draw_inline_elements;
+	pgraph_draw = D3D11_draw;
 	pgraph_draw_state_update = D3D11_draw_state_update;
 	pgraph_draw_clear = D3D11_draw_clear;
 	pgraph_draw_patch = D3D11_draw_patch;

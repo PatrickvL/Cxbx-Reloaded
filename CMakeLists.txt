@@ -151,7 +151,6 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderCommon.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexFetch.hlsli"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexOutputFooter.hlsli"
- "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Shaders/CxbxVertexShaderPassthrough.hlsl"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/RenderGlobals.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/NV2A_PGRAPH_Helpers.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/EmuD3D8_common.h"
@@ -596,7 +595,6 @@ set(CXBXR_HLSLI_DEPS
 set(SHADER_SOURCES
     CxbxRegisterCombinerInterpreter.hlsl
     CxbxVertexShaderInterpreter.hlsl
-    CxbxVertexShaderPassthrough.hlsl
     CxbxFixedFunctionVertexShader.hlsl
     CxbxBlitVS.hlsl
     CxbxBlitPS.hlsl
@@ -614,7 +612,6 @@ set(SHADER_PROFILES
     vs_5_0
     vs_5_0
     vs_5_0
-    vs_5_0
     ps_5_0
     gs_5_0
     gs_5_0
@@ -628,7 +625,6 @@ set(SHADER_PROFILES
 set(SHADER_ARRAY_NAMES
     cso_CxbxRCInterpreterPS
     cso_CxbxVSInterpreterVS
-    cso_CxbxVSPassthroughVS
     cso_CxbxFixedFunctionVS
     cso_CxbxBlitVS
     cso_CxbxBlitPS

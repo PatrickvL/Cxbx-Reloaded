@@ -28,7 +28,6 @@
 static HBRUSH g_hBgBrush = NULL; // Background Brush
 static bool g_bIsFauxFullscreen = false;
 static int g_iWireframe = 0; // wireframe toggle
-bool g_bUsePassthroughHLSL = true;
 
 void CxbxSaveWindowStateForReboot()
 {
@@ -396,7 +395,7 @@ LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
    	   	   	}
 			else if (wParam == VK_F7)
 			{
-				g_bUsePassthroughHLSL = !g_bUsePassthroughHLSL;
+				// F7 key - previously toggled passthrough HLSL (removed)
 			}
    	   	   	else if(wParam == VK_F8)
    	   	   	{
@@ -751,17 +750,13 @@ void GetScreenScaleFactors(float& scaleX, float& scaleY) {
 	// With fixed-function mode, titles don't have to account for these scale factors,
 	// so we don't have reverse them.
 	// Test cases:
-	// Fixed-func passthrough, title does not apply SSAA scale:
+	// Fixed-func XYZRHW, title does not apply SSAA scale:
 	// - Shenmue II (Menu)
-	// Fixed-func passthrough, title does not apply backbuffer scale:
+	// Fixed-func XYZRHW, title does not apply backbuffer scale:
 	// - Antialias sample(background gradient)
-	// Use PGRAPH CSV0_D MODE to avoid racing g_Xbox_VertexShaderMode.
-	{
-		auto pg_ss = &(g_NV2A->GetDeviceState()->pgraph);
-		uint32_t pgraphMode = GET_MASK(pg_ss->regs[RI(NV_PGRAPH_CSV0_D)], NV_PGRAPH_CSV0_D_MODE);
-		if (pgraphMode != NV097_SET_TRANSFORM_EXECUTION_MODE_MODE_PROGRAM) {
-			return;
-		}
+	// Only apply scale factors for PROGRAM mode (shader programs account for them).
+	if (NV2AIsFixedFunctionMode()) {
+		return;
 	}
 
 	// Example:

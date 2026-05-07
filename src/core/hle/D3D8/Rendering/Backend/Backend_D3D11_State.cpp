@@ -490,7 +490,7 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		static uint32_t s_LastVpScl[4] = { ~0u, ~0u, ~0u, ~0u };
 		static uint32_t s_LastClipX = ~0u, s_LastClipY = ~0u;
 		static uint32_t s_LastAA = ~0u;
-		static VertexShaderMode s_LastMode = (VertexShaderMode)~0u;
+		static uint32_t s_LastCsv0d = ~0u;
 		bool changed = false;
 		for (int i = 0; i < 4; i++) {
 			if (pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i] != s_LastVpOff[i]) {
@@ -503,7 +503,7 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 		if (pg->regs[RI(NV_PGRAPH_SURFACECLIPX)] != s_LastClipX) { s_LastClipX = pg->regs[RI(NV_PGRAPH_SURFACECLIPX)]; changed = true; }
 		if (pg->regs[RI(NV_PGRAPH_SURFACECLIPY)] != s_LastClipY) { s_LastClipY = pg->regs[RI(NV_PGRAPH_SURFACECLIPY)]; changed = true; }
 		if (pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)] != s_LastAA) { s_LastAA = pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)]; changed = true; }
-		if (g_Xbox_VertexShaderMode != s_LastMode) { s_LastMode = g_Xbox_VertexShaderMode; changed = true; }
+		if (pg->regs[RI(NV_PGRAPH_CSV0_D)] != s_LastCsv0d) { s_LastCsv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)]; changed = true; }
 		if (!changed) return;
 	}
 
@@ -531,26 +531,6 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 	DWORD HostRenderTarget_Width, HostRenderTarget_Height;
 	if (!GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height)) {
 		return; // can't set viewport without RT dimensions
-	}
-
-	// For passthrough mode (XYZRHW/pre-transformed vertices), use the mode
-	// already determined by the orchestrator (CxbxUpdateNativeD3DResources).
-	// This avoids redundantly re-reading CMAT/VPSCL and doing identity checks.
-	{
-		if (g_Xbox_VertexShaderMode == VertexShaderMode::Passthrough) {
-			D3D11_VIEWPORT hostViewport;
-			hostViewport.TopLeftX = 0;
-			hostViewport.TopLeftY = 0;
-			hostViewport.Width    = static_cast<float>(HostRenderTarget_Width);
-			hostViewport.Height   = static_cast<float>(HostRenderTarget_Height);
-			hostViewport.MinDepth = 0.0f;
-			hostViewport.MaxDepth = 1.0f;
-			CxbxSetViewport(&hostViewport);
-
-			RECT viewportRect = { 0, 0, (LONG)HostRenderTarget_Width, (LONG)HostRenderTarget_Height };
-			CxbxSetScissorRect(&viewportRect);
-			return;
-		}
 	}
 
 	// Scissor from NV2A surface clip registers — matches xemu pgraph_gl/vk_draw_begin.

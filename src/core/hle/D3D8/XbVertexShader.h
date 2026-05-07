@@ -29,16 +29,6 @@
 
 #include "core\hle\D3D8\XbD3D8Types.h" // for X_VSH_MAX_ATTRIBUTES
 
-enum class VertexShaderMode {
-	FixedFunction,
-	// When titles use Xbox fixed function with pre-transformed vertices
-	// it actually uses a special "passthrough" shader program
-	Passthrough,
-	ShaderProgram
-};
-
-extern VertexShaderMode g_Xbox_VertexShaderMode;
-
 extern ID3DBlob* CxbxGetActiveVertexShaderBytecode();
 extern ID3DBlob* CxbxGetFixedFunctionVertexShaderBytecode();
 

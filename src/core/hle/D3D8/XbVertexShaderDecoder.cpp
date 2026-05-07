@@ -536,7 +536,7 @@ private:
 		// FIXME Don't assume vertex elements are contiguous!
 		pCurrentHostVertexElement->AlignedByteOffset = pCurrentVertexShaderStreamInfo->HostVertexStride;
 		pCurrentHostVertexElement->Format = pCurrentVertexShaderStreamElementInfo->HostDataType;
-		// All VS types (FixedFunction, Passthrough, Programmable) use a flat
+		// All VS types (FixedFunction, ShaderProgram) use a flat
 		// float4 v[16] : TEXCOORD array as VS_INPUT, matching the NV2A's 16
 		// generic vertex attribute registers (identity mapping).
 		pCurrentHostVertexElement->SemanticName = "TEXCOORD";

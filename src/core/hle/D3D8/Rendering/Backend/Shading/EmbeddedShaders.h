@@ -13,7 +13,6 @@
 // Generated headers — one per precompiled shader (build/generated/shaders/)
 #include "cso_CxbxRCInterpreterPS.h"
 #include "cso_CxbxVSInterpreterVS.h"
-#include "cso_CxbxVSPassthroughVS.h"
 #include "cso_CxbxFixedFunctionVS.h"
 #include "cso_CxbxBlitVS.h"
 #include "cso_CxbxBlitPS.h"
@@ -37,7 +36,6 @@ inline bool GetEmbeddedShaderData(const char* name, const void** ppData, size_t*
     static const EmbeddedShaderEntry kShaders[] = {
         { "CxbxRCInterpreterPS",  cso_CxbxRCInterpreterPS,  cso_CxbxRCInterpreterPS_size },
         { "CxbxVSInterpreterVS",  cso_CxbxVSInterpreterVS,  cso_CxbxVSInterpreterVS_size },
-        { "CxbxVSPassthroughVS",  cso_CxbxVSPassthroughVS,  cso_CxbxVSPassthroughVS_size },
         { "CxbxFixedFunctionVS",  cso_CxbxFixedFunctionVS,  cso_CxbxFixedFunctionVS_size },
         { "CxbxBlitVS",           cso_CxbxBlitVS,           cso_CxbxBlitVS_size },
         { "CxbxBlitPS",           cso_CxbxBlitPS,           cso_CxbxBlitPS_size },
