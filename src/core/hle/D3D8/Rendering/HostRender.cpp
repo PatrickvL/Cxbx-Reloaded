@@ -610,6 +610,10 @@ void UpdateFixedFunctionVertexShaderState()
 			validProjVP = (cmat.m[3][2] != 0.0f); // sanity: perspective w-row should have non-zero z
 		} else {
 			// No skinning: CMAT = VP * Proj * ModelView → strip MV via inv(MMAT)
+			// NV2A register data is stored transposed vs D3DX row-major convention.
+			// D3DXMatrixMultiply/Inverse operate in row-major, so their results
+			// come out transposed relative to the NV2A/HLSL convention.
+			// The final transpose in the upload step corrects for this.
 			D3DXMATRIX mmatInv;
 			if (D3DXMatrixInverse(&mmatInv, nullptr, &mmat) != nullptr) {
 				D3DXMatrixMultiply(&projVP, &cmat, &mmatInv);
@@ -663,7 +667,9 @@ void UpdateFixedFunctionVertexShaderState()
 			D3DXMatrixIdentity(&pureProj);
 		}
 
-		// Upload Projection (direct copy, no C++ transpose)
+		// Upload Projection (direct copy, no C++ transpose).
+		// NV2A register layout with column-major HLSL cbuffer means
+		// mul(v, M) computes CppRow_j . v for each j — matching NV2A's M * v.
 		std::memcpy(&ffShaderState.Transforms.Projection, &pureProj, sizeof(pureProj));
 
 		// Set D3D11 viewport for FF mode (since VPSCL/VPOFF are zero, the
@@ -741,30 +747,50 @@ void UpdateFixedFunctionVertexShaderState()
 	ffShaderState.Modes.BackSpecularMaterialSource = ffShaderState.Modes.SpecularMaterialSource;
 	ffShaderState.Modes.BackEmissiveMaterialSource = ffShaderState.Modes.EmissiveMaterialSource;
 
-	// Point sprites — read from PGRAPH registers
-	float pointSize = *(float*)&pg->regs[RI(NV_PGRAPH_POINTSIZE)];
-	float pointSize_Min = pg->point_params[6];
-	float pointSize_Max = pg->point_params[7];
-	// PointScaleEnable is independent of PointSpriteEnable: it comes from
-	// NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE (D3DRS_POINTSCALEENABLE), while
-	// PointSpriteEnable comes from NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE.
-	// However, point-scale attenuation is only meaningful when sprites are active.
+	// Point sprites — read from PGRAPH registers using NV2A's native formula.
+	// NV_PGRAPH_POINTSIZE is a fixed-point integer (value / 8.0 = size in pixels).
+	// NV2A point_params[0..7] are used directly (the Xbox D3D runtime pre-bakes
+	// PointSize * RTHeight into params[3], attenuation into [0,1,2], etc.).
+	// Formula (from NV2A hardware / xemu):
+	//   Scaled:    oPts = clamp(rsqrt(A + B*d + C*d²) * p3 + p7, min, max)
+	//   Non-scaled: oPts = max(1, POINTSIZE_REG / 8)
+	// We unify by choosing constants so the same formula works for both paths.
 	bool PointScaleEnable = (ctl3 & NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE) != 0;
-	float pointScale_A = pg->point_params[0];
-	float pointScale_B = pg->point_params[1];
-	float pointScale_C = pg->point_params[2];
-	// Read render target height from PGRAPH surface clip (replaces HLE g_pXbox_RenderTarget lookup)
-	float renderTargetHeight = (float)NV2AGetSurfaceState(pg).clipHeight;
-	// Disable point scaling when sprites are not enabled (matches Xbox/NV2A behaviour)
 	PointScaleEnable &= PointSpriteEnable;
-	// Set variables in shader state
-	ffShaderState.PointSprite.PointSize = PointSpriteEnable ? pointSize : 1.0f;
-	ffShaderState.PointSprite.PointSize_Min = PointSpriteEnable ? pointSize_Min : 1.0f;
-	ffShaderState.PointSprite.PointSize_Max = PointSpriteEnable ? pointSize_Max : 1.0f;
-	ffShaderState.PointSprite.PointScaleABC.x = PointScaleEnable ? pointScale_A : 1.0f;
-	ffShaderState.PointSprite.PointScaleABC.y = PointScaleEnable ? pointScale_B : 0.0f;
-	ffShaderState.PointSprite.PointScaleABC.z = PointScaleEnable ? pointScale_C : 0.0f;
-	ffShaderState.PointSprite.XboxRenderTargetHeight = PointScaleEnable ? renderTargetHeight : 1.0f;
+
+	if (PointScaleEnable) {
+		// Scaled path: use NV2A params directly
+		ffShaderState.PointSprite.PointScaleABC.x = pg->point_params[0]; // A
+		ffShaderState.PointSprite.PointScaleABC.y = pg->point_params[1]; // B
+		ffShaderState.PointSprite.PointScaleABC.z = pg->point_params[2]; // C
+		float p3 = pg->point_params[3]; // scale (PointSize * RTHeight, set by Xbox D3D runtime)
+		float p7 = pg->point_params[7]; // bias / min size
+		float ptMin = std::min(p7, 63.875f);
+		float ptMax = std::min(p3 + ptMin, 63.875f);
+		ffShaderState.PointSprite.PointSize = p7;               // bias added after multiply
+		ffShaderState.PointSprite.PointSize_Min = ptMin;        // clamp min
+		ffShaderState.PointSprite.PointSize_Max = ptMax;        // clamp max
+		ffShaderState.PointSprite.XboxRenderTargetHeight = p3;  // scale multiplier
+	} else if (PointSpriteEnable) {
+		// Non-scaled path: fixed size from POINTSIZE register (fixed-point / 8)
+		float ptSize = (float)pg->regs[RI(NV_PGRAPH_POINTSIZE)] / 8.0f;
+		ffShaderState.PointSprite.PointScaleABC.x = 1.0f; // rsqrt(1) = 1
+		ffShaderState.PointSprite.PointScaleABC.y = 0.0f;
+		ffShaderState.PointSprite.PointScaleABC.z = 0.0f;
+		ffShaderState.PointSprite.PointSize = 0.0f;             // bias = 0
+		ffShaderState.PointSprite.PointSize_Min = 1.0f;         // min 1 pixel
+		ffShaderState.PointSprite.PointSize_Max = 63.875f;      // hardware max
+		ffShaderState.PointSprite.XboxRenderTargetHeight = ptSize; // scale = the size
+	} else {
+		// Point sprites disabled: output 1.0 (doesn't matter, GS not bound)
+		ffShaderState.PointSprite.PointScaleABC.x = 1.0f;
+		ffShaderState.PointSprite.PointScaleABC.y = 0.0f;
+		ffShaderState.PointSprite.PointScaleABC.z = 0.0f;
+		ffShaderState.PointSprite.PointSize = 0.0f;
+		ffShaderState.PointSprite.PointSize_Min = 1.0f;
+		ffShaderState.PointSprite.PointSize_Max = 1.0f;
+		ffShaderState.PointSprite.XboxRenderTargetHeight = 1.0f;
+	}
 	ffShaderState.PointSprite.RenderUpscaleFactor = (float)g_RenderUpscaleFactor;
 
 	// Fog — sourced from PGRAPH registers (NV2A ground truth)

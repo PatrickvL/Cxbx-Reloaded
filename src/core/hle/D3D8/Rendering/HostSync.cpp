@@ -163,8 +163,19 @@ void CxbxUpdateHostTextures()
 		// We must respect this: disabled stages should not have textures bound,
 		// otherwise we may create D3D11 resource hazards (e.g., the same texture
 		// bound as both RTV and SRV) or sample stale data from a previous draw.
+		//
+		// Exception: NV2A SHADERPROG mode overrides TEXCTL0.  When SHADERPROG
+		// specifies a non-NONE mode (e.g. PROJECT2D) for a stage, the texture
+		// unit IS active regardless of TEXCTL0.  This matters for point sprites
+		// where the game may not explicitly enable TEXCTL0 for stage 3.
 		uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
 		bool bTextureEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
+		if (!bTextureEnabled) {
+			uint32_t shaderProg = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
+			uint32_t stageMode = (shaderProg >> (stage * 5)) & 0x1Fu;
+			if (stageMode != 0) // PS_TEXTUREMODES_NONE = 0
+				bTextureEnabled = true;
+		}
 
 		if (!bTextureEnabled) {
 			// Texture stage is disabled in PGRAPH — unbind and skip

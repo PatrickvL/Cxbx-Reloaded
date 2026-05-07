@@ -84,7 +84,16 @@ float CxbxGetTexFmtFixup(int stage_nr)
 	{
 		auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
 		uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage_nr * 4)];
-		if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
+		bool bEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
+		// SHADERPROG mode overrides TEXCTL0 (e.g. point sprites use stage 3
+		// via SHADERPROG without necessarily enabling TEXCTL0_3)
+		if (!bEnabled) {
+			uint32_t shaderProg = pg_ff->regs[RI(NV_PGRAPH_SHADERPROG)];
+			uint32_t stageMode = (shaderProg >> (stage_nr * 5)) & 0x1Fu;
+			if (stageMode != 0)
+				bEnabled = true;
+		}
+		if (bEnabled) {
 			uint32_t texOffset = pg_ff->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage_nr * 4)];
 			if (texOffset != 0)
 				pXboxTex = CxbxLookupTextureByDataAddr(texOffset);

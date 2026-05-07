@@ -342,26 +342,24 @@ float4 DoTexCoord(const uint stage)
 }
 
 // Point size for Point Sprites
-// https://docs.microsoft.com/en-us/windows/win32/direct3d9/point-sprites
-// Test case: Point sprite sample
+// NV2A hardware formula (matches xemu vsh-ff.c):
+//   Scaled:    raw = rsqrt(A + B*d + C*d²); oPts = clamp(raw * Scale + Bias, Min, Max) * UpscaleFactor
+//   Non-scaled: oPts = clamp(rsqrt(1) * PointSize + 0, 1, 63.875) * UpscaleFactor
+// The CPU sets constants so both paths use the same formula.
+// Test case: PointSprites XDK sample
 float DoPointSpriteSize()
 {
     const PointSprite ps = state.PointSprite;
 
-    float pointSize = ps.PointSize;
     const float A = ps.PointScaleABC.x;
     const float B = ps.PointScaleABC.y;
     const float C = ps.PointScaleABC.z;
 
-    // Note : if (ps.PointScaleEnable) not required because when disabled, CPU sets RenderTargetHeight and PointScale _A to 1, and _B and _C to 0
-    {
-        const float eyeDistance = length(View.Position);
-        const float factor = A + (B * eyeDistance) + (C * (eyeDistance * eyeDistance));
+    const float eyeDistance = length(View.Position.xyz);
+    const float raw = rsqrt(A + B * eyeDistance + C * eyeDistance * eyeDistance);
+    float size = raw * ps.XboxRenderTargetHeight + ps.PointSize;
 
-        pointSize *= ps.XboxRenderTargetHeight * sqrt(1 / factor);
-    }
-
-    return clamp(pointSize, ps.PointSize_Min, ps.PointSize_Max) * ps.RenderUpscaleFactor;
+    return clamp(size, ps.PointSize_Min, ps.PointSize_Max) * ps.RenderUpscaleFactor;
 }
 
 VS_OUTPUT main(const VS_INPUT xInput)
