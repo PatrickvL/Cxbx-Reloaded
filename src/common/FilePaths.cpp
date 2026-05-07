@@ -29,7 +29,7 @@
 #include "common/cxbxr.hpp"
 #include "Settings.hpp"
 #include "EmuShared.h"
-#include "xxhash.h" // for XXH3_64bits
+#include "common/util/hasher.h"
 #include "core/kernel/common/xbox.h"
 #include "Logging.h"
 
@@ -158,7 +158,7 @@ static HANDLE hMapDataHash = nullptr;
 bool CxbxrLockFilePath()
 {
 	std::stringstream filePathHash("Local\\");
-	uint64_t hashValue = XXH3_64bits(g_DataFilePath.c_str(), g_DataFilePath.length() + 1);
+	uint64_t hashValue = ComputeHash(g_DataFilePath.c_str(), g_DataFilePath.length() + 1);
 	if (!hashValue) {
 		CxbxrAbort("%s : Couldn't generate Cxbx-Reloaded's data folder hash!", __func__);
 	}

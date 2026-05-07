@@ -163,9 +163,8 @@ HRESULT CxbxD3D11UpdateDynamicBuffer(ID3D11Buffer* pBuffer, const void* pData, s
 using RTVCacheKey = std::tuple<ID3D11Texture2D*, UINT, UINT>;
 struct RTVCacheKeyHash {
 	size_t operator()(const RTVCacheKey& k) const {
-		return std::hash<ID3D11Texture2D*>()(std::get<0>(k))
-		     ^ (static_cast<size_t>(std::get<1>(k)) << 16)
-		     ^ (static_cast<size_t>(std::get<2>(k)) << 24);
+		struct { const void* p; UINT a; UINT b; } packed = { std::get<0>(k), std::get<1>(k), std::get<2>(k) };
+		return static_cast<size_t>(ComputeHash(&packed, sizeof(packed)));
 	}
 };
 void ClearRTVCache();

@@ -21,6 +21,7 @@
 #include <mutex>
 #include <cstring>
 #include <d3dcompiler.h>
+#include "common/util/hasher.h"
 
 // nv2a_vsh_cpu disassembler for instruction decoding
 extern "C" {
@@ -32,15 +33,9 @@ extern "C" {
 // ============================================================
 static uint64_t HashProgram(const uint32_t program_data[][4], uint32_t startAddr, uint32_t count)
 {
-    // FNV-1a 64-bit
-    uint64_t hash = 0xcbf29ce484222325ULL;
-    const uint8_t* data = reinterpret_cast<const uint8_t*>(&program_data[startAddr][0]);
+    const void* data = &program_data[startAddr][0];
     size_t len = count * 4 * sizeof(uint32_t);
-    for (size_t i = 0; i < len; i++) {
-        hash ^= data[i];
-        hash *= 0x100000001b3ULL;
-    }
-    return hash;
+    return ComputeHash(data, len);
 }
 
 // ============================================================

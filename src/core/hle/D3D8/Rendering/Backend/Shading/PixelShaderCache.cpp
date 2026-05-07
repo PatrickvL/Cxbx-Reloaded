@@ -29,6 +29,7 @@
 #include <mutex>
 #include <cstring>
 #include <d3dcompiler.h>
+#include "common/util/hasher.h"
 
 // Externally stored last aux CB (built by CxbxD3D11UploadRCInterpreterState)
 extern PSAuxCBLayout g_LastPSAuxCB;
@@ -59,13 +60,7 @@ struct PSJITKey {
 
 static uint64_t HashKey(const PSJITKey& key)
 {
-    uint64_t hash = 0xcbf29ce484222325ULL;
-    const uint8_t* data = reinterpret_cast<const uint8_t*>(&key);
-    for (size_t i = 0; i < sizeof(key); i++) {
-        hash ^= data[i];
-        hash *= 0x100000001b3ULL;
-    }
-    return hash;
+    return ComputeHash(&key, sizeof(key));
 }
 
 // ============================================================

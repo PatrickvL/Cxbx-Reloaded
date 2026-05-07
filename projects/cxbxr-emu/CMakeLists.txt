@@ -20,7 +20,7 @@ include_directories(
  "${CXBXR_ROOT_DIR}/import/libusb/libusb"
  "${CXBXR_ROOT_DIR}/import/simpleini"
  "${CXBXR_ROOT_DIR}/import/winpcap/Include"
- "${CXBXR_ROOT_DIR}/import/xxHash"
+ "${CXBXR_ROOT_DIR}/import/rapidhash"
  "${CXBXR_SHADER_GEN_INCLUDE_DIR}"
 )
 
@@ -45,8 +45,6 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   LTC_NO_MISC
   LTC_NO_PROTOTYPES
 
-  # Use inline XXHash version
-  XXH_INLINE_ALL
  )
  add_compile_options(
   /EHs

@@ -27,7 +27,7 @@
 #ifndef _HASHER_H
 #define _HASHER_H
 
-#include "xxhash.h"
-#define  ComputeHash XXH3_64bits
+#include "rapidhash.h"
+#define  ComputeHash rapidhash
 
 #endif

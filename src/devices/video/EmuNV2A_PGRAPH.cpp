@@ -204,8 +204,6 @@ static uint8_t* convert_texture_data(const unsigned int color_format, const uint
 static unsigned int kelvin_map_stencil_op(uint32_t parameter);
 static unsigned int kelvin_map_polygon_mode(uint32_t parameter);
 static unsigned int kelvin_map_texgen(uint32_t parameter, unsigned int channel);
-static uint64_t fnv_hash(const uint8_t *data, size_t len);
-static uint64_t fast_hash(const uint8_t *data, size_t len, unsigned int samples);
 
 /* PGRAPH - accelerated 2d/3d drawing engine */
 
@@ -2504,55 +2502,4 @@ static unsigned int kelvin_map_texgen(uint32_t parameter, unsigned int channel)
 		break;
 	}
 	return texgen;
-}
-
-static uint64_t fnv_hash(const uint8_t *data, size_t len)
-{
-    /* 64 bit Fowler/Noll/Vo FNV-1a hash code */
-    uint64_t hval = 0xcbf29ce484222325ULL;
-    const uint8_t *dp = data;
-    const uint8_t *de = data + len;
-    while (dp < de) {
-        hval ^= (uint64_t) *dp++;
-        hval += (hval << 1) + (hval << 4) + (hval << 5) +
-            (hval << 7) + (hval << 8) + (hval << 40);
-    }
-
-    return hval;
-}
-
-static uint64_t fast_hash(const uint8_t *data, size_t len, unsigned int samples)
-{
-#ifdef __SSE4_2__
-    uint64_t h[4] = {len, 0, 0, 0};
-    assert(samples > 0);
-
-    if (len < 8 || len % 8) {
-        return fnv_hash(data, len);
-    }
-
-    assert(len >= 8 && len % 8 == 0);
-    const uint64_t *dp = (const uint64_t*)data;
-    const uint64_t *de = dp + (len / 8);
-    size_t step = len / 8 / samples;
-    if (step == 0) step = 1;
-
-    while (dp < de - step * 3) {
-        h[0] = __builtin_ia32_crc32di(h[0], dp[step * 0]);
-        h[1] = __builtin_ia32_crc32di(h[1], dp[step * 1]);
-        h[2] = __builtin_ia32_crc32di(h[2], dp[step * 2]);
-        h[3] = __builtin_ia32_crc32di(h[3], dp[step * 3]);
-        dp += step * 4;
-    }
-    if (dp < de - step * 0)
-        h[0] = __builtin_ia32_crc32di(h[0], dp[step * 0]);
-    if (dp < de - step * 1)
-        h[1] = __builtin_ia32_crc32di(h[1], dp[step * 1]);
-    if (dp < de - step * 2)
-        h[2] = __builtin_ia32_crc32di(h[2], dp[step * 2]);
-
-    return h[0] + (h[1] << 10) + (h[2] << 21) + (h[3] << 32);
-#else
-    return fnv_hash(data, len);
-#endif
 }

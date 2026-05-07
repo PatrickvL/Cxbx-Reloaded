@@ -17,7 +17,7 @@ include_directories(
  "${CXBXR_ROOT_DIR}/import/libusb/libusb"
  "${CXBXR_ROOT_DIR}/import/simpleini"
  "${CXBXR_ROOT_DIR}/import/winpcap/Include"
- "${CXBXR_ROOT_DIR}/import/xxHash"
+ "${CXBXR_ROOT_DIR}/import/rapidhash"
 )
 
 link_directories(
@@ -60,9 +60,6 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
 endif()
 
 add_compile_definitions(NOMINMAX
-
-# Use inline XXHash version
-XXH_INLINE_ALL
 )
 
 file (GLOB RESOURCES

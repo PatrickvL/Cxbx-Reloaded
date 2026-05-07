@@ -48,7 +48,6 @@
 #include "core\kernel\memory-manager\VMManager.h"
 #include "CxbxDebugger.h"
 #include "common/util/cliConfig.hpp"
-#include "xxhash.h"
 #include "common/ReserveAddressRanges.h"
 #include "common/xbox/Types.hpp"
 #include "common/win32/WineEnv.h"

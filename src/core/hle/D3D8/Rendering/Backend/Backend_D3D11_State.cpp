@@ -25,6 +25,7 @@
 #include "Backend_D3D11_PageTracker.h"
 #include "devices\video\nv2a.h"        // PGRAPHState, nv2a_regs.h, GET_MASK, RI
 #include "core\hle\D3D8\Rendering\NV2A_PGRAPH_Helpers.h"
+#include "common/util/hasher.h"
 #include <algorithm>                    // std::min
 #include <unordered_map>
 
@@ -42,14 +43,7 @@ namespace {
 	struct DescHash {
 		template <typename T>
 		size_t operator()(const T& desc) const {
-			// FNV-1a over raw bytes of the descriptor
-			const uint8_t* p = reinterpret_cast<const uint8_t*>(&desc);
-			size_t h = static_cast<size_t>(14695981039346656037ull);
-			for (size_t i = 0; i < sizeof(T); i++) {
-				h ^= p[i];
-				h *= static_cast<size_t>(1099511628211ull);
-			}
-			return h;
+			return static_cast<size_t>(ComputeHash(&desc, sizeof(T)));
 		}
 	};
 	struct DescEqual {
@@ -778,11 +772,7 @@ struct PgraphRTKey {
 };
 struct PgraphRTKeyHash {
 	size_t operator()(const PgraphRTKey& k) const {
-		size_t h = std::hash<uint32_t>()(k.offset);
-		h ^= std::hash<uint32_t>()(k.format) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		h ^= std::hash<uint32_t>()(k.width)  + 0x9e3779b9 + (h << 6) + (h >> 2);
-		h ^= std::hash<uint32_t>()(k.height) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		return h;
+		return static_cast<size_t>(ComputeHash(&k, sizeof(k)));
 	}
 };
 static std::unordered_map<PgraphRTKey, Microsoft::WRL::ComPtr<ID3D11Texture2D>, PgraphRTKeyHash> g_PgraphRTCache;

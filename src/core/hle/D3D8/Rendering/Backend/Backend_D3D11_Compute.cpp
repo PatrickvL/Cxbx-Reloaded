@@ -22,6 +22,7 @@
 // ******************************************************************
 
 #include "Backend_D3D11_Internal.h"
+#include "common/util/hasher.h"
 #include <unordered_map>
 
 // ******************************************************************
@@ -48,9 +49,7 @@ struct UAVCacheKey {
 
 struct UAVCacheKeyHash {
 	size_t operator()(const UAVCacheKey& k) const {
-		size_t h = std::hash<void*>()(k.pResource);
-		h ^= std::hash<int>()(static_cast<int>(k.format)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		return h;
+		return static_cast<size_t>(ComputeHash(&k, sizeof(k)));
 	}
 };
 
