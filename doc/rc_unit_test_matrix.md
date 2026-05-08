@@ -67,34 +67,11 @@
 | ShadowBuffer | `ShadowBuffer\ShadowBuffer.xbe` | Shadow compare, depth texture | ✅ 8s OK |
 | FocusBlur | `FocusBlur\FocusBlur.xbe` | DPNDNT_AR/GB (via texREG2AR/texREG2GB) | 🔲 |
 
-### Known Issues (Pre-existing)
-| Issue | Sample | Description | Commit Introduced |
-|-------|--------|-------------|------------------|
-| Flickering triangles | AlphaFog | Whole triangles disappear per-frame showing background | Pre-existing (before dx11 branch) |
-| Missing geometry (flicker) | MatrixPaletteSkinning | Snake body triangles disappear leaving skeleton outline | Pre-existing; same root cause as AlphaFog |
-| Missing geometry | VertexBlend | "Microsoft" text mesh has invisible triangles | Pre-existing; same triangle-disappearing pattern |
-| Viewport flash | Dolphin | ~~Scene randomly renders into small top-left box then restores~~ Fixed by 2673cf262 (removed stale change-detection fast path) | Pre-existing; **FIXED** |
-| White textures | Water (pirate) | Some geometry missing texture data | Pre-existing texture freshness bug |
-| Missing teapot | UserClipPlane | VS clip plane computation not implemented | Pre-existing (needs FF texgen) |
-| Bright edges | PerPixelLightingVS | Globe edges overbright/blown out | Likely LIT specular or normal issue |
-| Black screen | PaintEffect | Point sprite paint not visible | PointSprites fixed (cad5d46f8, a44400fd2) but PaintEffect not yet confirmed |
-| Missing floor | VolumeSprites | White sprite fountain visible but no floor texture | Unknown — possibly missing texture or triangle draw |
+### Known Issues & Commits
 
-## Commits Applied
-| Hash | Description | Date |
-|------|-------------|------|
-| 70b30da8e | PS: Fix DOT_RFLCT_DIFF, CLIPPLANE direction, shadow compare ordering | 2026-05-06 |
-| 938ab3e3d | D3D11: Fix RT-as-texture SRV rebinding after render target switch | 2026-05-06 |
-| cad5d46f8 | D3D11: Fix point sprite rendering (blend, GS, textures, sizing) | 2026-05-07 |
+See [rendering_test_status.md](rendering_test_status.md) for the consolidated known issues, fixed issues, and commit tracking.
 
 ## JIT ↔ Interpreter Remaining Differences
 | Area | Difference | Impact |
 |------|-----------|--------|
 | nv2a_mul zero×inf | Both return 0 (xemu returns NaN) | Correct for NV2A hardware |
-
-## Testing Procedure
-1. Clear shader cache: `Remove-Item "$env:APPDATA\Cxbx-Reloaded\ShaderCache" -Recurse -Force`
-2. Build: `cmake --build . --config Release --target cxbxr-emu`
-3. Launch: `cxbxr-ldr.exe /load "<path>.xbe"`
-4. Compare against reference screenshots or expected behavior
-5. Toggle PS JIT: No toggle variable exists; comment out the `g_PixelShaderCache.GetShader()` call in XbPixelShaderCompiler.cpp to force interpreter fallback

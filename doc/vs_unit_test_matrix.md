@@ -96,24 +96,9 @@ Both JIT and interpreter now share identical implementations via CxbxNV2AVshOps.
 | Instruction set | Complete (shared header) | Complete | Both cover all 20 opcodes |
 | Fixed-function | Partial (no clip planes) | Full implementation | Cxbx needs FF texgen/clip |
 
-## Known Issues
-| Issue | Sample | Description | Root Cause |
-|-------|--------|-------------|-----------|
-| Missing teapot | UserClipPlane | FF texgen for clip planes not computed | NV2A_TX*_CLIP_PLANE registers not fed to VS |
-| Missing mirror clip | MirrorClip | Same as above | Same root cause |
-| Missing geometry (flicker) | MatrixPaletteSkinning | Snake body triangles disappear per-frame leaving skeleton-like outline | Pre-existing; NOT caused by RCC/LOG fix |
-| Missing geometry | VertexBlend | "Microsoft" text mesh has missing/invisible triangles (see "soft" portion) | Pre-existing; same triangle-disappearing pattern |
-| Viewport flash | Dolphin | Scene randomly renders into small top-left box for 1-2 frames then restores | Pre-existing render target/viewport state race |
-| Flickering triangles | AlphaFog | Whole triangles disappear per-frame showing background through terrain | Pre-existing; same root cause as MatrixPaletteSkinning |
-| Bright edges | PerPixelLightingVS | Globe edges overbright/blown out | Likely LIT specular clamping or normal normalization issue |
-| Black screen | PaintEffect | Fully black except HUD labels; point sprites not visible | Unknown — may need render-to-texture or different PS setup |
-| Missing floor | VolumeSprites | White sprite fountain visible on blue background but no floor texture | Unknown — possibly missing texture or triangle draw |
+## Known Issues & Commits
 
-## Commits Applied
-| Hash | Description | Date |
-|------|-------------|------|
-| 39fd1b808 | VS JIT: Fix RCC sign preservation, LOG(0) handling | 2026-05-06 |
-| cad5d46f8 | D3D11: Fix point sprite rendering (blend, GS, textures, sizing) | 2026-05-07 |
+See [rendering_test_status.md](rendering_test_status.md) for the consolidated known issues, fixed issues, and commit tracking.
 
 ## Testing Procedure
 1. Clear shader cache: `Remove-Item "$env:APPDATA\Cxbx-Reloaded\ShaderCache" -Recurse -Force`

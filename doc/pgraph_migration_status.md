@@ -86,72 +86,10 @@ auxiliary cbuffer (PSAuxCBLayout) uploaded alongside the PGRAPH register SRV.
 
 ---
 
-## Sample Rendering Status (May 2026)
+## Rendering Status
 
-| Sample | Status | Notes |
-|--------|--------|-------|
-| Vertices | ✅ | RGB triangle, 60fps |
-| Textures | ✅ | Textured cylinder, 35fps |
-| Lights | ✅ | Yellow lit cylinder, 31fps |
-| Matrices | ✅ | Rotating colored triangle |
-| Meshes | ✅ | Textured tiger, 60fps |
-| VertexShaders | ✅ | Color-interpolated cone, 45fps |
-| BumpEarth | ✅ | Earth globe with bump+cloud textures |
-| Dolphin | ✅ | Dolphin+ocean+sky |
-| Ripple | ✅ | Animated rippling mesh (VS program) |
-| Billboard | ✅ | Forest scene with billboarded trees |
-| PixelShader | ✅ | RC interpreter, text+cylinder |
-| PointSprites | ✅ | Fixed: blend factor + GS + sizing (commits cad5d46f8, a44400fd2) |
-| CubeMap | ❌ | Black teapot (pre-existing) |
-| TwoSidedLighting | ❌ | Text only, no geometry (pre-existing) |
-| Fog | ❌ | No geometry (pre-existing) |
-| MotionBlur | ❌ | Pre-existing |
-
----
-
-## Known Issues
-
-See [rc_unit_test_matrix.md](rc_unit_test_matrix.md) and [vs_unit_test_matrix.md](vs_unit_test_matrix.md) for the complete per-sample known issues list.
-
-### Key Root Causes Fixed
-1. **Gray Dolphin**: g_pXbox_PixelShader was NULL during puller draws → wrong PS path. Fix: COMBINECTL != 0 selects RC interpreter.
-2. **Black screen**: SetHostResource missing D3DUsage → back buffer recreated blank every frame.
-3. **CubeMap** (7 bugs): Stale PSTextureModes, missing RT bind flags, DS dimension mismatch, cubemap face routing.
-4. **Shadow mapping**: D3D11 requires RTV/DSV dimension match → unbind RTV for depth-only rendering.
-
----
-
-## Key Commits (dx11 branch)
-
-| Commit | Description |
-|--------|-------------|
-| f3c63999 | Remove OpenGL LLE backend |
-| 181c53ed | PFIFO flush primitive |
-| 55c680c3 | VS interpreter program data from PGRAPH |
-| 203ba1e3 | Vertex fetch from PGRAPH |
-| 0a2566a2 | Blend/depth-stencil/rasterizer from PGRAPH |
-| fa49e373 | Viewport/scissor from PGRAPH |
-| c09c2bd7 | Texture lookup from PGRAPH TEXOFFSET |
-| d9311588 | Fog from PGRAPH CONTROL_3 |
-| a51fa2879 | Dead code removal (826 lines) |
-| 5f39c0c3 | SetRenderState_Simple removed |
-| c6d5221df | 31 state-caching patches disabled |
-| 8fadaa438 | PGRAPH-driven clear |
-| 70b30da8e | DOT_RFLCT_DIFF, CLIPPLANE, shadow compare fixes |
-| 938ab3e3d | RT-as-texture SRV rebinding fix |
-| cad5d46f8 | Fix point sprite rendering (blend, GS, textures, sizing) |
-| a44400fd2 | Fix PointSpriteEnable register (SETUPRASTER not CONTROL_3) |
-| 44bb61759 | Remove VertexShaderMode enum; use NV2AIsFixedFunctionMode() |
-| 09e121dbc | Replace all hashing with rapidhash |
-| d795c73fc | Implement NV097_LAUNCH_TRANSFORM_PROGRAM |
-| 02a7982ae | Remove g_pXbox_Palette_Data globals, read PGRAPH directly |
-| 49cd110f5 | DMA context A/B for texture and palette address resolution |
-| 6010ff660 | Replace SurfaceShape with register-backed NV2ASurfaceState |
-| fef2f05a5 | Add structured PGRAPH helper accessors (NV2A_PGRAPH_Helpers) |
-| 17eb2426b | Remove ~3600 lines of dead HLE vertex/patch infrastructure |
-| 09c536aa2 | Reorganize shader JIT into Backend/Shading with disk cache |
-| 13d460e35 | Unpatch D3D_BlockOnTime: native PFIFO flush |
-| 5bd6999d4 | GPU→CPU render target readback via VEH fault handler |
+See [rendering_test_status.md](rendering_test_status.md) for the consolidated XDK sample status,
+known issues, fixed issues, key commits, and game compatibility tracking.
 
 ---
 
