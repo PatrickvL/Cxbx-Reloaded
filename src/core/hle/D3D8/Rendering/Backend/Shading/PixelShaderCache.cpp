@@ -442,7 +442,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     }
 
     // Post-process the sampled texel (for modes that produce a texel)
-    if (mode == 0x04) return; // PASSTHRU already saturated, no post-process
+    // PASSTHRU (0x04) runs post-process for hardware parity — per-stage
+    // fixup/colorSign/alphaKill values should be identity when no texture
+    // is bound, but we honor whatever the game sets.
     if (mode == 0x05) return; // CLIPPLANE has no texel
 
     // Texture format fixup
