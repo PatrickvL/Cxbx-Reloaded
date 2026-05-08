@@ -1894,7 +1894,7 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 
-		case NV097_SET_FLAT_SHADE_OP: 
+		case NV097_SET_PROVOKING_VERTEX: 
 			assert(parameter <= 1);
 			// Handled by method table: NV_PGRAPH_CONTROL_3_PROVOKING_VERTEX
 			break;

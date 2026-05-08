@@ -787,6 +787,7 @@
 #   define NV_PVIDEO_POINT_IN_S                               0x00007FFF
 #   define NV_PVIDEO_POINT_IN_T                               0xFFFE0000
 #define NV_PVIDEO_DS_DX(i)                               0x00000938 + (i * 4)
+#   define NV_PVIDEO_DS_DX_UNITY                              0x00100000
 #define NV_PVIDEO_DT_DY(i)                               0x00000940 + (i * 4)
 #define NV_PVIDEO_POINT_OUT(i)                           0x00000948 + (i * 4)
 #   define NV_PVIDEO_POINT_OUT_X                              0x00000FFF
@@ -799,7 +800,11 @@
 #   define NV_PVIDEO_FORMAT_COLOR                             0x00030000
 #       define NV_PVIDEO_FORMAT_COLOR_LE_CR8YB8CB8YA8             1
 #   define NV_PVIDEO_FORMAT_DISPLAY                            (1 << 20)
+#       define NV_PVIDEO_FORMAT_DISPLAY_COLOR_KEY                 1
 #define NV_PVIDEO_COLOR_KEY(i)                           0x00000b00 + (i * 4)
+#   define NV_PVIDEO_COLOR_KEY_RED                            0x00FF0000
+#   define NV_PVIDEO_COLOR_KEY_GREEN                          0x0000FF00
+#   define NV_PVIDEO_COLOR_KEY_BLUE                           0x000000FF
 
 
 #define NV_PTIMER_INTR_0                                 0x00000100
@@ -846,6 +851,9 @@
 #define NV_PFB_TIMING1                                   0x00000224
 #define NV_PFB_TIMING2                                   0x00000228
 #define NV_PFB_TILE(i)                                   0x00000240 + (i * 0x10)
+#   define NV_PFB_TILE_FLAGS                                  0x00003FFF
+#       define NV_PFB_TILE_FLAGS_VALID                              1
+#   define NV_PFB_TILE_BASE_ADDRESS                           0x03FFC000
 #define NV_PFB_TLIMIT(i)                                 0x00000244 + (i * 0x10)
 #define NV_PFB_TSIZE(i)                                  0x00000248 + (i * 0x10)
 #define NV_PFB_TSTATUS(i)                                0x0000024C + (i * 0x10)
@@ -1017,6 +1025,8 @@
 #	define NV_CIO_CRE_DDC0_STATUS__INDEX	0x36
 #	define NV_CIO_CRE_DDC0_WR__INDEX	0x37
 #	define NV_CIO_CRE_ILACE__INDEX		0x39	/* interlace */
+#   define NV_PRMCIO_INTERLACE_MODE     NV_CIO_CRE_ILACE__INDEX
+#       define NV_PRMCIO_INTERLACE_MODE_DISABLED                  0xFF
 #	define NV_CIO_CRE_SCRATCH3__INDEX	0x3b
 #	define NV_CIO_CRE_SCRATCH4__INDEX	0x3c
 #	define NV_CIO_CRE_DDC_STATUS__INDEX	0x3e
@@ -1445,7 +1455,10 @@
 #   define NV097_SET_FOG_PLANE                                0x000009D0 // [4]
 #   define NV097_SET_SPECULAR_PARAMS                          0x000009E0 // [6]
 #   define NV097_SET_SWATH_WIDTH                              0x000009F8
-#   define NV097_SET_FLAT_SHADE_OP                            0x000009FC
+#   define NV097_SET_PROVOKING_VERTEX                         0x000009FC
+#       define NV097_SET_PROVOKING_VERTEX_LAST                     0
+#       define NV097_SET_PROVOKING_VERTEX_FIRST                    1
+#   define NV097_SET_FLAT_SHADE_OP                            NV097_SET_PROVOKING_VERTEX
 #   define NV097_SET_SCENE_AMBIENT_COLOR                      0x00000A10 // [3]
 #   define NV097_SET_VIEWPORT_OFFSET                          0x00000A20 // [4]
 #   define NV097_SET_POINT_PARAMS                             0x00000A30 // [8]
@@ -1524,6 +1537,7 @@
 #   define NV097_SET_TEXCOORD3_4F                             0x00001620 // [4]
 #   define NV097_SET_TEXCOORD3_4S                             0x00001630 // [2]
 #   define NV097_SET_FOG1F                                    0x00001698
+#   define NV097_SET_FOG_COORD                                NV097_SET_FOG1F
 #   define NV097_SET_WEIGHT1F                                 0x0000169C
 #   define NV097_SET_WEIGHT2F                                 0x000016A0 // [2]
 #   define NV097_SET_WEIGHT3F                                 0x000016B0 // [3]
@@ -1735,6 +1749,7 @@
 #   define NV097_SET_END_TRANSITION                           0x00001E1C
 #   define NV097_SET_SPECULAR_FOG_FACTOR                      0x00001E20 // [2]
 #   define NV097_SET_BACK_SPECULAR_PARAMS                     0x00001E28 // [6]
+#   define NV097_SET_SPECULAR_PARAMS_BACK                     NV097_SET_BACK_SPECULAR_PARAMS
 #   define NV097_SET_COMBINER_COLOR_OCW                       0x00001E40 // [8]
 #       define NV097_SET_COMBINER_COLOR_OCW_BLUETOALPHA_AB        0xFFF80000
 #       define NV097_SET_COMBINER_COLOR_OCW_BLUETOALPHA_AB_DISABLE  0
@@ -1776,6 +1791,14 @@
 #           define NV097_SET_COMBINER_CONTROL_FACTOR1_EACH_STAGE    1
 #   define NV097_SET_SHADOW_ZSLOPE_THRESHOLD                  0x00001E68
 #   define NV097_SET_SHADOW_DEPTH_FUNC                        0x00001E6C
+#       define NV097_SET_SHADOW_DEPTH_FUNC_NEVER                0x00000000
+#       define NV097_SET_SHADOW_DEPTH_FUNC_LESS                 0x00000001
+#       define NV097_SET_SHADOW_DEPTH_FUNC_EQUAL                0x00000002
+#       define NV097_SET_SHADOW_DEPTH_FUNC_LEQUAL               0x00000003
+#       define NV097_SET_SHADOW_DEPTH_FUNC_GREATER              0x00000004
+#       define NV097_SET_SHADOW_DEPTH_FUNC_NOTEQUAL             0x00000005
+#       define NV097_SET_SHADOW_DEPTH_FUNC_GEQUAL               0x00000006
+#       define NV097_SET_SHADOW_DEPTH_FUNC_ALWAYS               0x00000007
 #   define NV097_SET_SHADER_STAGE_PROGRAM                     0x00001E70
 #       define NV097_SET_SHADER_STAGE_PROGRAM_STAGE0              0x0000001F
 #           define NV097_SET_SHADER_STAGE_PROGRAM_STAGE0_PROGRAM_NONE   0
@@ -2032,7 +2055,7 @@
 #define NV2A_NUM_SUBCHANNELS 8
 #define NV2A_CACHE1_SIZE 128
 
-#define NV2A_MAX_BATCH_LENGTH 0x1FFFF // Note: xemu bumped this to 0x07FFFF
+#define NV2A_MAX_BATCH_LENGTH 0x07FFFF
 #define NV2A_VERTEXSHADER_ATTRIBUTES 16
 #define NV2A_MAX_TEXTURES 4
 
@@ -2050,6 +2073,7 @@
 #define NV2A_SURFACE_ALIGNMENT                   NV2A_RENDER_MEMORY_ALIGNMENT
 #define NV2A_TEXTURE_ALIGNMENT              (2 * NV2A_RENDER_MEMORY_ALIGNMENT)
 #define NV2A_TEXTURE_CUBEMAP_FACE_ALIGNMENT (2 * NV2A_RENDER_MEMORY_ALIGNMENT)
+#define NV2A_CUBEMAP_FACE_ALIGNMENT              NV2A_TEXTURE_CUBEMAP_FACE_ALIGNMENT
 #define NV2A_TEXTURE_PITCH_ALIGNMENT             NV2A_RENDER_MEMORY_ALIGNMENT
 #define NV2A_TEXTURE_PITCH_MIN                   NV2A_TEXTURE_PITCH_ALIGNMENT
 
