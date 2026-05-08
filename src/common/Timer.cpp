@@ -72,46 +72,71 @@ void timer_init()
 void SleepPrecise(int64_t targetQPC)
 {
 	// Adaptive sleep strategy — every phase self-calibrates to never overshoot:
-	// 1. Sleep() for the bulk, with margin based on measured Sleep() overshoot EMA
+	// 1. Sleep() for the bulk, with margin based on worst-case Sleep() overshoot
 	// 2. SwitchToThread() yielding, exits when remaining < 2x average yield duration
 	// 3. Final tight spin for sub-yield precision
 
-	static LARGE_INTEGER s_freq = []{ LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
-	static int64_t s_avgSleepOvershoot = s_freq.QuadPart * 2 / 1000; // init ~2ms
-	static int64_t s_avgYieldTicks = s_freq.QuadPart / 1000;          // init ~1ms
+	// Max-tracked Sleep overshoot with slow decay (not EMA — avoids overshooting
+	// on outlier spikes). Yield duration uses EMA since overshooting a single
+	// yield just means one extra spin iteration, not a missed deadline.
+	// Atomic for thread safety (called from system_events + PGRAPH puller).
+	// Cache-line aligned to prevent false sharing between the two atomics
+	// and with any adjacent static data.
+	alignas(64) static std::atomic<int64_t> s_maxSleepOvershoot{HostQPCFrequency * 2 / 1000}; // init ~2ms
+	alignas(64) static std::atomic<int64_t> s_avgYieldTicks{HostQPCFrequency / 1000};          // init ~1ms
+	const int64_t kMaxYieldThreshold = HostQPCFrequency * 5 / 1000; // cap yield exit at ~5ms
 
 	LARGE_INTEGER now;
 	QueryPerformanceCounter(&now);
 
-	// Phase 1: Sleep() for the bulk, with adaptive margin based on measured overshoot
+	// Early-out: target already passed
+	if (now.QuadPart >= targetQPC)
+		return;
+
+	// Phase 1: Sleep() for the bulk, with margin based on worst-case overshoot
+	int64_t avgYield = s_avgYieldTicks.load(std::memory_order_relaxed);
+	int64_t yieldExit = avgYield * 2;
+	if (yieldExit > kMaxYieldThreshold)
+		yieldExit = kMaxYieldThreshold;
 	int64_t remaining = targetQPC - now.QuadPart;
-	int64_t sleepMargin = s_avgSleepOvershoot + s_avgYieldTicks * 2;
+	int64_t sleepMargin = s_maxSleepOvershoot.load(std::memory_order_relaxed) + yieldExit;
 	if (remaining > sleepMargin) {
-		DWORD sleepMs = (DWORD)((remaining - sleepMargin) * 1000 / s_freq.QuadPart);
+		DWORD sleepMs = (DWORD)((remaining - sleepMargin) * 1000 / HostQPCFrequency);
 		if (sleepMs > 0) {
 			LARGE_INTEGER before = now;
 			Sleep(sleepMs);
 			QueryPerformanceCounter(&now);
-			// Track overshoot: how much longer Sleep() took than requested
-			int64_t requestedTicks = (int64_t)sleepMs * s_freq.QuadPart / 1000;
+			// Track worst-case overshoot with slow decay
+			int64_t requestedTicks = (int64_t)sleepMs * HostQPCFrequency / 1000;
 			int64_t overshoot = (now.QuadPart - before.QuadPart) - requestedTicks;
 			if (overshoot < 0) overshoot = 0;
-			s_avgSleepOvershoot += (overshoot - s_avgSleepOvershoot) >> 3; // EMA 1/8
+			int64_t prev = s_maxSleepOvershoot.load(std::memory_order_relaxed);
+			if (overshoot > prev) {
+				s_maxSleepOvershoot.store(overshoot, std::memory_order_relaxed);
+			} else {
+				// Slow decay: shrink by 1/64 per sample so it adapts down over time
+				// Floor at 0.5ms to prevent near-zero margin after long stable periods
+				int64_t decayed = prev - (prev >> 6);
+				int64_t floor = HostQPCFrequency / 2000; // 0.5ms
+				if (decayed < floor) decayed = floor;
+				s_maxSleepOvershoot.store(decayed, std::memory_order_relaxed);
+			}
 		}
 	}
 
 	// Phase 2: Adaptive yield via SwitchToThread(), exit when remaining < 2x avg yield
+	// Reuses post-yield QPC as next iteration's timestamp (no redundant QPC call).
 	while (true) {
-		QueryPerformanceCounter(&now);
 		remaining = targetQPC - now.QuadPart;
-		if (remaining <= s_avgYieldTicks * 2)
+		if (remaining <= yieldExit)
 			break;
-		LARGE_INTEGER before = now;
 		SwitchToThread();
+		LARGE_INTEGER prev = now;
 		QueryPerformanceCounter(&now);
-		int64_t yieldTicks = now.QuadPart - before.QuadPart;
-		s_avgYieldTicks += (yieldTicks - s_avgYieldTicks) >> 3; // EMA 1/8
+		int64_t yieldTicks = now.QuadPart - prev.QuadPart;
+		avgYield += (yieldTicks - avgYield) >> 3; // EMA 1/8
 	}
+	s_avgYieldTicks.store(avgYield, std::memory_order_relaxed);
 
 	// Phase 3: Final tight spin — compare QPC directly, no clock domain crossing
 	while (now.QuadPart < targetQPC) {
