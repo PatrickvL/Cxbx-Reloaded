@@ -10,9 +10,9 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$XbePath,
 
-    [string]$OutDir = "c:\Workspaces\Mine\Cxbx-Reloaded\build-x86\bin\Release\screenshots",
+    [string]$OutDir,
 
-    [string]$EmulatorPath = "c:\Workspaces\Mine\Cxbx-Reloaded\build-x86\bin\Release\cxbx.exe",
+    [string]$EmulatorPath,
 
     # Milliseconds to wait after window appears before first capture
     [int]$DelayMs = 8000,
@@ -29,6 +29,10 @@ param(
     # If true, stop the emulator after capturing
     [switch]$StopAfter
 )
+
+$RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
+if (-not $OutDir) { $OutDir = "$RepoRoot\build-x86\bin\Release\screenshots" }
+if (-not $EmulatorPath) { $EmulatorPath = "$RepoRoot\build-x86\bin\Release\cxbx.exe" }
 
 Add-Type @"
 using System;
@@ -165,14 +169,14 @@ if ($KillExisting) {
 
 # Clear shader cache if requested
 if ($ClearCache) {
-    $cachePath = "c:\Workspaces\Mine\Cxbx-Reloaded\build-x86\bin\Release\ShaderCache"
+    $cachePath = "$RepoRoot\build-x86\bin\Release\ShaderCache"
     Remove-Item "$cachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "Shader cache cleared"
 }
 
 # Deploy latest HLSL
-$hlslSrc = "c:\Workspaces\Mine\Cxbx-Reloaded\src\core\hle\D3D8\Rendering\Shaders"
-$hlslDst = "c:\Workspaces\Mine\Cxbx-Reloaded\build-x86\bin\Release\hlsl"
+$hlslSrc = "$RepoRoot\src\core\hle\D3D8\Rendering\Shaders"
+$hlslDst = "$RepoRoot\build-x86\bin\Release\hlsl"
 Get-ChildItem "$hlslSrc\*" -Include "*.hlsl","*.hlsli" | Copy-Item -Destination "$hlslDst\" -Force
 Write-Host "HLSL deployed"
 

@@ -1,13 +1,19 @@
 # capture_batch.ps1 - Capture screenshots for multiple XDK samples
 param(
     [string[]]$Samples = @("Vertices", "Textures", "BumpEarth", "Dolphin"),
-    [string]$SamplesDir = "C:\Users\patrick.vanlogchem\Downloads\Xbox\XDK_Samples\Compiled",
+    [string]$SamplesDir = $env:CXBX_XBE_SAMPLES,
     [int]$DelayMs = 12000,
     [int]$Frame2DelayMs = 2000,
     [switch]$ClearCache
 )
 
-$scriptPath = "c:\Workspaces\Mine\Cxbx-Reloaded\tools\capture_emulator.ps1"
+$RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
+$scriptPath = "$PSScriptRoot\capture_emulator.ps1"
+
+if (-not $SamplesDir) {
+    Write-Error "Set CXBX_XBE_SAMPLES env var or pass -SamplesDir"
+    exit 1
+}
 
 foreach ($sample in $Samples) {
     $xbePath = Join-Path $SamplesDir "$sample\$sample.xbe"
@@ -35,6 +41,6 @@ foreach ($sample in $Samples) {
 }
 
 Write-Host "`n=== All captures complete ===" -ForegroundColor Green
-Get-ChildItem "c:\Workspaces\Mine\Cxbx-Reloaded\build-x86\bin\Release\screenshots\*.png" | 
+Get-ChildItem "$RepoRoot\build-x86\bin\Release\screenshots\*.png" | 
     Sort-Object LastWriteTime | 
     Format-Table Name, LastWriteTime -AutoSize
