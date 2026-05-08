@@ -52,6 +52,4 @@ Note: RCC sign preservation and LOG(0) bugs were fixed in commit 39fd1b808. Both
 ### PS
 | Area | Difference | Impact |
 |------|-----------|--------|
-| PASSTHRU PostProcess | JIT skips; Interpreter applies | Needs test with Water caustics |
-| BRDF PostProcess | JIT skips; Interpreter applies | No test case yet |
 | nv2a_mul zero×inf | Both return 0 (xemu returns NaN) | Correct for NV2A hardware |

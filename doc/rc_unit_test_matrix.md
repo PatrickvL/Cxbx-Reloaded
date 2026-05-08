@@ -73,7 +73,7 @@
 | Flickering triangles | AlphaFog | Whole triangles disappear per-frame showing background | Pre-existing (before dx11 branch) |
 | Missing geometry (flicker) | MatrixPaletteSkinning | Snake body triangles disappear leaving skeleton outline | Pre-existing; same root cause as AlphaFog |
 | Missing geometry | VertexBlend | "Microsoft" text mesh has invisible triangles | Pre-existing; same triangle-disappearing pattern |
-| Viewport flash | Dolphin | Scene randomly renders into small top-left box then restores | Pre-existing render target/viewport state race |
+| Viewport flash | Dolphin | ~~Scene randomly renders into small top-left box then restores~~ Fixed by 2673cf262 (removed stale change-detection fast path) | Pre-existing; **FIXED** |
 | White textures | Water (pirate) | Some geometry missing texture data | Pre-existing texture freshness bug |
 | Missing teapot | UserClipPlane | VS clip plane computation not implemented | Pre-existing (needs FF texgen) |
 | Bright edges | PerPixelLightingVS | Globe edges overbright/blown out | Likely LIT specular or normal issue |
@@ -90,8 +90,6 @@
 ## JIT ↔ Interpreter Remaining Differences
 | Area | Difference | Impact |
 |------|-----------|--------|
-| PASSTHRU PostProcess | JIT skips; Interpreter applies | Unknown — needs test with Water caustics |
-| BRDF PostProcess | JIT skips; Interpreter applies | Unknown — no test case yet |
 | nv2a_mul zero×inf | Both return 0 (xemu returns NaN) | Correct for NV2A hardware |
 
 ## Testing Procedure
