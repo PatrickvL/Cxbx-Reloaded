@@ -645,15 +645,13 @@ void pgraph_handle_method(NV2AState *d,
 				pgraph_flip_stall(d);
 			}
 
-			// VBlank-gated frame pacing: wait until the next VBlank fires.
-			// This caps the emulation to the display refresh rate (~60Hz NTSC,
-			// ~50Hz PAL) and produces even frame spacing, eliminating stutter.
-			// We release pgraph_lock during the sleep so other threads (pusher,
-			// system_events) can proceed.  The puller reacquires it when we return.
+			// VBlank-gated frame pacing: wait until the next VBlank deadline.
+			// SleepPrecise uses adaptive yielding (SwitchToThread with EMA tracking)
+			// which donates CPU time to other threads while waiting, then does a
+			// final spin for sub-yield precision.
 			{
 				unsigned int totalLines = pcrtc_get_total_lines(d);
 				unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
-				// Compute microseconds until next VBlank from the last VBlank timestamp
 				LARGE_INTEGER freq, now;
 				QueryPerformanceFrequency(&freq);
 				QueryPerformanceCounter(&now);

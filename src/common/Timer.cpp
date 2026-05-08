@@ -71,27 +71,51 @@ void timer_init()
 void SleepPrecise(std::chrono::steady_clock::time_point targetTime)
 {
 	using namespace std::chrono;
-	// If we don't need to wait, return right away
 
-	// TODO use waitable timers?
-	// TODO fetch the timer resolution to determine the sleep threshold?
-	// TODO adaptive wait? https://blat-blatnik.github.io/computerBear/making-accurate-sleep-function/
+	// Adaptive sleep strategy:
+	// 1. Sleep() for the bulk of the wait (low CPU usage)
+	// 2. SwitchToThread() yielding for the remainder, tracking yield duration via EMA
+	// 3. Exit when remaining time < 2x average yield duration (safety margin)
+	//
+	// The yield phase donates CPU time to other threads (system_events, etc.)
+	// while self-calibrating: on systems where yields take 1-2ms it stops earlier,
+	// on systems where yields return in <0.1ms it stays tighter.
 
-	// Try to sleep for as much of the wait as we can
-	// to save CPU usage / power
-	// We expect sleep to overshoot, so give ourselves some extra time
-	// Note currently we ask Windows to give us 1ms timer resolution
-	constexpr auto sleepThreshold = 2ms; // Minimum remaining time before we attempt to use sleep
+	// EMA of SwitchToThread duration in QPC ticks (persists across calls)
+	static LARGE_INTEGER s_freq = []{ LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
+	static int64_t s_avgYieldTicks = s_freq.QuadPart / 1000; // init ~1ms
+
+	constexpr auto sleepThreshold = 2ms; // Minimum remaining time before we attempt Sleep
 
 	auto sleepFor = (targetTime - sleepThreshold) - steady_clock::now();
 	auto sleepMs = duration_cast<milliseconds>(sleepFor).count();
 
-	// Sleep if required
-	if (sleepMs >= 0) {
+	// Sleep for the bulk
+	if (sleepMs > 0) {
 		Sleep((DWORD)sleepMs);
 	}
 
-	// Spin wait
+	// Adaptive yield: donate time slices while we can afford to
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	// Convert targetTime to QPC ticks for comparison
+	auto remainingChrono = targetTime - steady_clock::now();
+	int64_t targetQPC = now.QuadPart + (int64_t)(duration_cast<microseconds>(remainingChrono).count()) * s_freq.QuadPart / 1000000;
+
+	while (true) {
+		QueryPerformanceCounter(&now);
+		int64_t remaining = targetQPC - now.QuadPart;
+		if (remaining <= s_avgYieldTicks * 2)
+			break;
+		LARGE_INTEGER before = now;
+		SwitchToThread();
+		LARGE_INTEGER after;
+		QueryPerformanceCounter(&after);
+		int64_t yieldTicks = after.QuadPart - before.QuadPart;
+		s_avgYieldTicks += (yieldTicks - s_avgYieldTicks) >> 3; // EMA weight 1/8
+	}
+
+	// Final spin for sub-yield-granularity precision
 	while (steady_clock::now() < targetTime) {
 		;
 	}
