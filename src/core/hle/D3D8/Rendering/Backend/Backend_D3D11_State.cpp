@@ -444,7 +444,7 @@ void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg)
 		unsigned int minFilter = GET_MASK(texFilter, NV_PGRAPH_TEXFILTER0_MIN);
 		unsigned int magFilter = GET_MASK(texFilter, NV_PGRAPH_TEXFILTER0_MAG);
 
-		// LOD bias: 13-bit signed fixed-point (8.5 format)
+		// LOD bias: 13-bit signed fixed-point (5.8 format: 1 sign + 4 integer, 8 fraction)
 		int lodBiasRaw = texFilter & 0x1FFF;
 		if (lodBiasRaw & 0x1000) lodBiasRaw |= ~0x1FFF; // sign-extend
 		float lodBias = lodBiasRaw / 256.0f;
