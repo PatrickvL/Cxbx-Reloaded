@@ -225,16 +225,18 @@ float DoFog()
     // http://developer.download.nvidia.com/assets/gamedev/docs/Fog2.pdf
 
     // Obtain the fog depth value 'd'
-    float fogDepth;
+    float fogDepth = 0;
 
     if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_NONE)
         fogDepth = Get(specular).a; // In fixed-function mode, fog is passed in the specular alpha
-    if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_RANGE)
+    else if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_RANGE)
         fogDepth = length(View.Position.xyz);
-    if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_Z)
+    else if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_Z)
         fogDepth = abs(Projection.Position.z);
-    if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_W)
+    else if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_W)
         fogDepth = Projection.Position.w;
+    else if (state.Fog.DepthMode == FixedFunctionVertexShader::FOG_DEPTH_W_ABS)
+        fogDepth = abs(Projection.Position.w);
 
     // Use NV2A-native FOGPARAM0/1 computation (matches xemu).
     return CalculateFogFactor(state.Fog.FogMode, state.Fog.FogParam0,
@@ -297,9 +299,9 @@ float4 DoTexCoord(const uint stage)
     else if (tState.TexCoordIndexGen == TCI_CAMERASPACENORMAL)
         texCoord = float4(View.Normal, 1);
     else if (tState.TexCoordIndexGen == TCI_CAMERASPACEPOSITION)
-        texCoord = View.Position;
+        texCoord = mul(View.Position, state.Transforms.TexgenMatrix[stage]);
     else if (tState.TexCoordIndexGen == TCI_OBJECT)
-        texCoord = Get(position); // Object-space position (before WorldView transform)
+        texCoord = mul(Get(position), state.Transforms.TexgenMatrix[stage]);
     else
     {
         const float3 reflected = reflect(normalize(View.Position.xyz), View.Normal);

@@ -44,6 +44,8 @@ namespace FixedFunctionVertexShader {
     const CXBX_STEERING_INT FOG_DEPTH_W = 2;
 	// Fog depth is based distance of the vertex from the eye position
     const CXBX_STEERING_INT FOG_DEPTH_RANGE = 3;
+	// Fog depth is abs(W) — ABS_PLANAR variant
+    const CXBX_STEERING_INT FOG_DEPTH_W_ABS = 4;
 }
 
 // Shared HLSL structures
@@ -61,6 +63,8 @@ struct Transforms {
 	// But we use combined WorldView matrices in the shader
     arr(WorldView, float4x4, 4); 
 	arr(WorldViewInverseTranspose, float4x4, 4);
+	// Texgen plane matrices (TG0MAT..TG3MAT) for EYE_LINEAR/OBJECT_LINEAR texgen
+	arr(TexgenMatrix, float4x4, 4);
 };
 
 // See D3DLIGHT

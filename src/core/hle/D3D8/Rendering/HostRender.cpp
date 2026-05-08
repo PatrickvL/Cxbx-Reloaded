@@ -536,6 +536,88 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 }
 
 // ******************************************************************
+// * Reconstruct specular power from NV2A specular params (6 floats).
+// * Ported from xemu (pgraph.c: reconstruct_specular_power).
+// * The Xbox D3D runtime converts a single material power (shininess)
+// * into a piecewise polynomial stored in LTC1 specular params.
+// * This function reverses that conversion to recover the original power.
+// ******************************************************************
+static float ReconstructSpecularPower(const float* params)
+{
+	// Values < 1.0 produce a positive c1 and can be recovered directly
+	if (params[1] > 0.0f && params[2] < 1.0f) {
+		return params[2] - (params[0] * 2.0f);
+	}
+
+	float c0 = params[0];
+	float c3 = params[3];
+
+	// Positive first coefficients shouldn't occur from DirectX-generated values
+	if (c0 > 0.0f || c3 > 0.0f) {
+		return 0.0001f;
+	}
+
+	// Lookup table: breakpoints in c0 space, each corresponding to a power range
+	struct CurveCoeffs { float a, b, c; };
+	static const float kStepPoints[] = {
+		-0.022553957999f,  // power =    1.25
+		-0.421539008617f,  // power =    4.00
+		-0.678715527058f,  // power =    9.00
+		-0.838916420937f,  // power =   20.00
+		-0.961754500866f,  // power =   90.00
+		-0.990773200989f,  // power =  375.00
+		-0.994858562946f,  // power =  650.00
+		-0.996561050415f,  // power = 1000.00
+		-0.999547004700f,  // power = 1250.00
+	};
+	static const CurveCoeffs kCoeffs[] = {
+		{ 1.000108475163f,     -9.838607076280f,      54.829089549713f  },
+		{ 1.199164441703f,     -3.292603784852f,       7.799987995214f  },
+		{ 8.653441252033f,     29.189473787191f,      43.586027561823f  },
+		{-531.307758450301f,  117.398468683934f,     113.155490738338f  },
+		{ -4.662713151292f,    1.221108944572f,        1.217360986939f  },
+		{-124.435242105211f,  35.401219563514f,       35.408114377045f  },
+		{ 10672560.259502f,   21565843.555824f,      10894794.336297f   },
+		{-51973801.463934f, -104199997.554353f,     -52225454.356278f   },
+		{ 972270.324080f,     2025882.096547f,        1054898.052467f   },
+	};
+	// Reconstruction methods: quadratic for most ranges, saturation growth rate for mid-ranges
+	// Quadratic: a + b*x + c*x^2
+	// Saturation: (a*x) / (b + c*x)
+	enum { QUAD, SGR }; // reconstruction method
+	static const int kMethod[] = { QUAD, QUAD, QUAD, SGR, SGR, SGR, QUAD, QUAD, QUAD };
+	constexpr int kCount = sizeof(kStepPoints) / sizeof(kStepPoints[0]);
+
+	auto Reconstruct = [](int method, float x, const CurveCoeffs& c) -> float {
+		if (method == QUAD) return c.a + c.b * x + c.c * x * x;
+		else                return (c.a * x) / (c.b + c.c * x);
+	};
+
+	float power = 0.f;
+	for (int i = 0; i < kCount; ++i) {
+		if (c0 > kStepPoints[i]) {
+			power = Reconstruct(kMethod[i], c0, kCoeffs[i]);
+			break;
+		}
+	}
+
+	float halfPower = 0.f;
+	for (int i = 0; i < kCount; ++i) {
+		if (c3 > kStepPoints[i]) {
+			halfPower = Reconstruct(kMethod[i], c3, kCoeffs[i]);
+			break;
+		}
+	}
+
+	// Extend range beyond 1250 using the half-power params
+	if (power == 0.f || (halfPower > power && c0 < -0.1f)) {
+		return halfPower * 2.f;
+	}
+
+	return power;
+}
+
+// ******************************************************************
 // * patch: D3DDevice_SetViewport
 // ******************************************************************
 void UpdateFixedFunctionVertexShaderState()
@@ -698,6 +780,15 @@ void UpdateFixedFunctionVertexShaderState()
 			ReadXFCTXMatrix((D3DXMATRIX*)&ffShaderState.Transforms.Texture[i], TnMAT[i]);
 		}
 
+		// Texgen plane matrices (TG0MAT..TG3MAT) — used for EYE_LINEAR/OBJECT_LINEAR texgen
+		static const int TGnMAT[] = {
+			NV_IGRAPH_XF_XFCTX_TG0MAT, NV_IGRAPH_XF_XFCTX_TG1MAT,
+			NV_IGRAPH_XF_XFCTX_TG2MAT, NV_IGRAPH_XF_XFCTX_TG3MAT
+		};
+		for (unsigned i = 0; i < 4; i++) {
+			ReadXFCTXMatrix((D3DXMATRIX*)&ffShaderState.Transforms.TexgenMatrix[i], TGnMAT[i]);
+		}
+
 		// WorldView matrices (MMAT0..MMAT3) — already pre-combined World*View, direct copy
 		static const int MMATn[] = {
 			NV_IGRAPH_XF_XFCTX_MMAT0, NV_IGRAPH_XF_XFCTX_MMAT1,
@@ -815,7 +906,7 @@ void UpdateFixedFunctionVertexShaderState()
 			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_W;
 			break;
 		case NV_PGRAPH_CSV0_D_FOGGENMODE_ABS_PLANAR:
-			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_W; // abs applied in shader
+			ffShaderState.Fog.DepthMode = FixedFunctionVertexShader::FOG_DEPTH_W_ABS;
 			break;
 		case NV_PGRAPH_CSV0_D_FOGGENMODE_FOG_X:
 		default:
@@ -993,12 +1084,31 @@ void UpdateFixedFunctionVertexShaderState()
 
 		// Material: set to white since NV2A ltctxb values are pre-multiplied by material.
 		// The shader computes (material * light), so white material preserves the pre-multiplied values.
-		ffShaderState.Materials[0].Diffuse  = D3DXVECTOR4(1, 1, 1, 1);
+		// Emission is already baked into the scene ambient register (FR_AMB/BR_AMB) by the Xbox D3D runtime.
+		// Material alpha comes from NV097_SET_MATERIAL_ALPHA → ltctxa[CM_COL][3].
+		float materialAlpha     = AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_CM_COL][3]);
+		float backMaterialAlpha = AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BCM_COL][3]);
+
+		ffShaderState.Materials[0].Diffuse  = D3DXVECTOR4(1, 1, 1, materialAlpha);
 		ffShaderState.Materials[0].Ambient  = D3DXVECTOR4(1, 1, 1, 1);
 		ffShaderState.Materials[0].Specular = D3DXVECTOR4(1, 1, 1, 1);
 		ffShaderState.Materials[0].Emissive = D3DXVECTOR4(0, 0, 0, 0);
-		ffShaderState.Materials[0].Power    = 0.0f;
-		ffShaderState.Materials[1] = ffShaderState.Materials[0]; // back material
+
+		// Reconstruct specular power from NV2A's 6 polynomial coefficients (LTC1).
+		// Front specular params: ltc1[l0][0..3] + ltc1[l0+1][0..1]
+		float frontParams[6];
+		for (int j = 0; j < 4; j++) frontParams[j]     = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_l0][j]);
+		for (int j = 0; j < 2; j++) frontParams[4 + j]  = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_l0 + 1][j]);
+		ffShaderState.Materials[0].Power = ReconstructSpecularPower(frontParams);
+
+		ffShaderState.Materials[1] = ffShaderState.Materials[0]; // back material (start from front)
+		ffShaderState.Materials[1].Diffuse.w = backMaterialAlpha;
+
+		// Back specular params: ltc1[Bl0][0..3] + ltc1[Bl0+1][0..1]
+		float backParams[6];
+		for (int j = 0; j < 4; j++) backParams[j]     = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_Bl0][j]);
+		for (int j = 0; j < 2; j++) backParams[4 + j]  = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_Bl0 + 1][j]);
+		ffShaderState.Materials[1].Power = ReconstructSpecularPower(backParams);
 	}
 
 	// Misc flags
