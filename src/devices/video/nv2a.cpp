@@ -605,14 +605,12 @@ int NV2ADevice::GetFrameWidth(NV2AState* d)
 
 uint64_t NV2ADevice::vblank_next(uint64_t now)
 {
-	// Derive VBlank period from CRT timing registers (same formula as PCRTC_RASTER).
-	// This unifies VBlank interrupt cadence with the display mode the game configured,
-	// supporting both NTSC (~60Hz) and PAL (~50Hz) modes automatically.
+	// PCRTC always fires VBlank at the NTSC rate (~59.94Hz / ~16.67ms).
+	// Some PAL games (e.g. Dead or Alive Ultimate) disable PCRTC VBlank and
+	// instead use PTIMER to generate VBlank interrupts at 50Hz, suggesting
+	// that PCRTC can only trigger VBlanks at the NTSC frequency.
 	NV2AState *d = m_nv2a_state;
-	unsigned int totalLines = pcrtc_get_total_lines(d);
-	unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
-	// Period in microseconds: 1000000 / refreshRate
-	uint64_t vblank_period = 1000000 / refreshRate;
+	constexpr uint64_t vblank_period = 16667; // ~59.94Hz in microseconds
 
 	uint64_t next = d->vblank_last + vblank_period;
 
@@ -628,7 +626,7 @@ uint64_t NV2ADevice::vblank_next(uint64_t now)
 			if (lastQPC > 0) {
 				LARGE_INTEGER freq;
 				QueryPerformanceFrequency(&freq);
-				LONGLONG idealTicks = freq.QuadPart / refreshRate;
+				LONGLONG idealTicks = freq.QuadPart * vblank_period / 1000000;
 				LONGLONG actualTicks = qpc.QuadPart - lastQPC;
 				LONGLONG jitterTicks = actualTicks > idealTicks
 					? actualTicks - idealTicks : idealTicks - actualTicks;
