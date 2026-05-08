@@ -298,13 +298,14 @@ float4 DoTexCoord(const uint stage)
         texCoord = float4(View.Normal, 1);
     else if (tState.TexCoordIndexGen == TCI_CAMERASPACEPOSITION)
         texCoord = View.Position;
+    else if (tState.TexCoordIndexGen == TCI_OBJECT)
+        texCoord = Get(position); // Object-space position (before WorldView transform)
     else
     {
         const float3 reflected = reflect(normalize(View.Position.xyz), View.Normal);
 
         if (tState.TexCoordIndexGen == TCI_CAMERASPACEREFLECTIONVECTOR)
             texCoord.xyz = reflected;
-        // else if TCI_OBJECT TODO is this just model position?
         else if (tState.TexCoordIndexGen == TCI_SPHERE)
         {
             // TODO verify
