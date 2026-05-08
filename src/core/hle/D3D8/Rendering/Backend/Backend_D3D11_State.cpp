@@ -389,8 +389,11 @@ static D3D11_FILTER BuildD3D11Filter(unsigned int minFilter, unsigned int magFil
 
 	if (anisotropic) return D3D11_FILTER_ANISOTROPIC;
 
-	// D3D11 filter encoding: bit 4=minLinear, bit 2=magLinear, bit 0=mipLinear
-	return (D3D11_FILTER)((minLinear ? 0x10 : 0) | (magLinear ? 0x04 : 0) | (mipLinear ? 0x01 : 0));
+	return D3D11_ENCODE_BASIC_FILTER(
+		minLinear ? D3D11_FILTER_TYPE_LINEAR : D3D11_FILTER_TYPE_POINT,
+		magLinear ? D3D11_FILTER_TYPE_LINEAR : D3D11_FILTER_TYPE_POINT,
+		mipLinear ? D3D11_FILTER_TYPE_LINEAR : D3D11_FILTER_TYPE_POINT,
+		D3D11_FILTER_REDUCTION_TYPE_STANDARD);
 }
 
 // ******************************************************************
