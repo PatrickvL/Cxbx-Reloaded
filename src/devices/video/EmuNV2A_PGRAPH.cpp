@@ -649,23 +649,33 @@ void pgraph_handle_method(NV2AState *d,
 			// SleepPrecise uses adaptive yielding (SwitchToThread with EMA tracking)
 			// which donates CPU time to other threads while waiting, then does a
 			// final spin for sub-yield precision.
+			// Local anchor prevents drift without conflicting with the VBlank
+			// interrupt's writes to vblank_last_qpc.
 			{
+				static int64_t s_flipStallAnchor = 0;
 				unsigned int totalLines = pcrtc_get_total_lines(d);
 				unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
 				LARGE_INTEGER freq, now;
 				QueryPerformanceFrequency(&freq);
 				QueryPerformanceCounter(&now);
+				int64_t vblankPeriodTicks = freq.QuadPart / refreshRate;
+
+				// Seed anchor from the real VBlank timestamp on first call,
+				// or reseed if it's fallen too far behind (e.g. after a stall).
 				int64_t lastVBlank = d->vblank_last_qpc.load(std::memory_order_acquire);
-				if (lastVBlank > 0) {
-					int64_t vblankPeriodTicks = freq.QuadPart / refreshRate;
-					int64_t nextVBlankQPC = lastVBlank + vblankPeriodTicks;
+				if (s_flipStallAnchor == 0
+					|| now.QuadPart - s_flipStallAnchor > vblankPeriodTicks * 2) {
+					s_flipStallAnchor = lastVBlank;
+				}
+
+				if (s_flipStallAnchor > 0) {
+					int64_t nextVBlankQPC = s_flipStallAnchor + vblankPeriodTicks;
 					if (now.QuadPart < nextVBlankQPC) {
-						int64_t waitUS = (nextVBlankQPC - now.QuadPart) * 1000000 / freq.QuadPart;
-						auto target = std::chrono::steady_clock::now() + std::chrono::microseconds(waitUS);
 						qemu_mutex_unlock(&d->pgraph.pgraph_lock);
-						SleepPrecise(target);
+						SleepPrecise(nextVBlankQPC);
 						qemu_mutex_lock(&d->pgraph.pgraph_lock);
 					}
+					s_flipStallAnchor = nextVBlankQPC;
 				}
 			}
 

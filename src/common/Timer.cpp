@@ -67,57 +67,55 @@ void timer_init()
 	xbox::KeSystemTime.High1Time = HostSystemTime.u.HighPart;
 }
 
-// More precise sleep, but with increased CPU usage
-void SleepPrecise(std::chrono::steady_clock::time_point targetTime)
+// More precise sleep, but with increased CPU usage.
+// Takes an absolute QPC target — no conversion, no drift.
+void SleepPrecise(int64_t targetQPC)
 {
-	using namespace std::chrono;
+	// Adaptive sleep strategy — every phase self-calibrates to never overshoot:
+	// 1. Sleep() for the bulk, with margin based on measured Sleep() overshoot EMA
+	// 2. SwitchToThread() yielding, exits when remaining < 2x average yield duration
+	// 3. Final tight spin for sub-yield precision
 
-	// Adaptive sleep strategy:
-	// 1. Sleep() for the bulk of the wait (low CPU usage)
-	// 2. SwitchToThread() yielding for the remainder, tracking yield duration via EMA
-	// 3. Exit when remaining time < 2x average yield duration (safety margin)
-	//
-	// The yield phase donates CPU time to other threads (system_events, etc.)
-	// while self-calibrating: on systems where yields take 1-2ms it stops earlier,
-	// on systems where yields return in <0.1ms it stays tighter.
-
-	// EMA of SwitchToThread duration in QPC ticks (persists across calls)
 	static LARGE_INTEGER s_freq = []{ LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
-	static int64_t s_avgYieldTicks = s_freq.QuadPart / 1000; // init ~1ms
+	static int64_t s_avgSleepOvershoot = s_freq.QuadPart * 2 / 1000; // init ~2ms
+	static int64_t s_avgYieldTicks = s_freq.QuadPart / 1000;          // init ~1ms
 
-	constexpr auto sleepThreshold = 2ms; // Minimum remaining time before we attempt Sleep
-
-	auto sleepFor = (targetTime - sleepThreshold) - steady_clock::now();
-	auto sleepMs = duration_cast<milliseconds>(sleepFor).count();
-
-	// Sleep for the bulk
-	if (sleepMs > 0) {
-		Sleep((DWORD)sleepMs);
-	}
-
-	// Adaptive yield: donate time slices while we can afford to
 	LARGE_INTEGER now;
 	QueryPerformanceCounter(&now);
-	// Convert targetTime to QPC ticks for comparison
-	auto remainingChrono = targetTime - steady_clock::now();
-	int64_t targetQPC = now.QuadPart + (int64_t)(duration_cast<microseconds>(remainingChrono).count()) * s_freq.QuadPart / 1000000;
 
+	// Phase 1: Sleep() for the bulk, with adaptive margin based on measured overshoot
+	int64_t remaining = targetQPC - now.QuadPart;
+	int64_t sleepMargin = s_avgSleepOvershoot + s_avgYieldTicks * 2;
+	if (remaining > sleepMargin) {
+		DWORD sleepMs = (DWORD)((remaining - sleepMargin) * 1000 / s_freq.QuadPart);
+		if (sleepMs > 0) {
+			LARGE_INTEGER before = now;
+			Sleep(sleepMs);
+			QueryPerformanceCounter(&now);
+			// Track overshoot: how much longer Sleep() took than requested
+			int64_t requestedTicks = (int64_t)sleepMs * s_freq.QuadPart / 1000;
+			int64_t overshoot = (now.QuadPart - before.QuadPart) - requestedTicks;
+			if (overshoot < 0) overshoot = 0;
+			s_avgSleepOvershoot += (overshoot - s_avgSleepOvershoot) >> 3; // EMA 1/8
+		}
+	}
+
+	// Phase 2: Adaptive yield via SwitchToThread(), exit when remaining < 2x avg yield
 	while (true) {
 		QueryPerformanceCounter(&now);
-		int64_t remaining = targetQPC - now.QuadPart;
+		remaining = targetQPC - now.QuadPart;
 		if (remaining <= s_avgYieldTicks * 2)
 			break;
 		LARGE_INTEGER before = now;
 		SwitchToThread();
-		LARGE_INTEGER after;
-		QueryPerformanceCounter(&after);
-		int64_t yieldTicks = after.QuadPart - before.QuadPart;
-		s_avgYieldTicks += (yieldTicks - s_avgYieldTicks) >> 3; // EMA weight 1/8
+		QueryPerformanceCounter(&now);
+		int64_t yieldTicks = now.QuadPart - before.QuadPart;
+		s_avgYieldTicks += (yieldTicks - s_avgYieldTicks) >> 3; // EMA 1/8
 	}
 
-	// Final spin for sub-yield-granularity precision
-	while (steady_clock::now() < targetTime) {
-		;
+	// Phase 3: Final tight spin — compare QPC directly, no clock domain crossing
+	while (now.QuadPart < targetQPC) {
+		QueryPerformanceCounter(&now);
 	}
 }
 
@@ -188,6 +186,13 @@ xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 	// Always run this thread at dpc level to prevent it from ever executing APCs/DPCs
 	xbox::KeRaiseIrqlToDpcLevel();
 
+	// Persistent anchor: after SleepPrecise spins to targetQPC, we use
+	// that exact value as the base for the next iteration — no fresh QPC
+	// read in between, so no accumulating drift.
+	LARGE_INTEGER qpc;
+	QueryPerformanceCounter(&qpc);
+	int64_t wall_anchor = qpc.QuadPart;
+
 	while (true) {
 		LARGE_INTEGER loop_start;
 		if (g_bCxbxProfilerEnabled) QueryPerformanceCounter(&loop_start);
@@ -198,14 +203,13 @@ xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 		// Process non-periodic events once at the start of each cycle
 		update_non_periodic_events();
 
-		// Wait precisely for the next periodic event deadline using
-		// SleepPrecise (Sleep for bulk, spin for final ~2ms accuracy).
-		// This replaces the old yield() loop that was descheduled for
-		// 1-15+ms per iteration, causing massive VBlank jitter.
+		// Wait precisely for the next periodic event deadline.
+		// Target is anchored to the previous SleepPrecise wake-up, not "now".
 		if (nearest_next > 0) {
-			auto target = std::chrono::steady_clock::now()
-				+ std::chrono::microseconds(nearest_next);
-			SleepPrecise(target);
+			int64_t targetQPC = wall_anchor
+				+ (int64_t)nearest_next * HostQPCFrequency / 1000000;
+			SleepPrecise(targetQPC);
+			wall_anchor = targetQPC; // exact wake-up becomes next anchor
 		}
 
 		// Process non-periodic events again after waking (handles any
