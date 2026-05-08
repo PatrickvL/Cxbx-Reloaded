@@ -137,6 +137,28 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   /Qpar \
   "
  )
+
+ # Auto-detect files that use __try/__except and disable /GL on them.
+ # Works around an MSVC bug where /GL silently switches SEH3 to SEH4
+ # (adding an unexpected security cookie), even when /GS- is specified.
+ # SEH4 frames break exception unwinding when mixed with Xbox SEH3 frames.
+ # See: https://developercommunity.visualstudio.com/t/10693061
+ set(ALL_EMU_SOURCES
+  ${CXBXR_SOURCE_COMMON}
+  ${CXBXR_SOURCE_EMU_IMPORT}
+  ${CXBXR_SOURCE_EMU}
+  "${CXBXR_ROOT_DIR}/src/emulator/cxbxr-emu.cpp"
+  "${CXBXR_ROOT_DIR}/src/emulator/dllmain.cpp"
+ )
+ foreach(src IN LISTS ALL_EMU_SOURCES)
+  if(EXISTS "${src}")
+   file(STRINGS "${src}" seh_hits REGEX "^[ \t]*__try[ \t{]")
+   if(seh_hits)
+    set_source_files_properties("${src}" PROPERTIES COMPILE_FLAGS "/GL-")
+    message(STATUS "Applied /GL- to ${src} (contains __try/__except)")
+   endif()
+  endif()
+ endforeach()
 endif()
 
 # Windows libraries
