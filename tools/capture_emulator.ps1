@@ -31,8 +31,8 @@ param(
 )
 
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
-if (-not $OutDir) { $OutDir = "$RepoRoot\build-x86\bin\Release\screenshots" }
-if (-not $EmulatorPath) { $EmulatorPath = "$RepoRoot\build-x86\bin\Release\cxbx.exe" }
+if (-not $OutDir) { $OutDir = "$RepoRoot\test_screenshots" }
+if (-not $EmulatorPath) { $EmulatorPath = "$RepoRoot\build\bin\Release\cxbx.exe" }
 
 Add-Type @"
 using System;
@@ -134,20 +134,14 @@ public class WindowCapture {
 
         if (width <= 0 || height <= 0) return false;
 
+        // Always use BitBlt from screen — PrintWindow doesn't capture D3D11 swapchain content
         using (Bitmap bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb)) {
             using (Graphics g = Graphics.FromImage(bmp)) {
+                IntPtr hdcScreen = GetDC(IntPtr.Zero);
                 IntPtr hdcBmp = g.GetHdc();
-                bool ok = PrintWindow(hWnd, hdcBmp, PW_RENDERFULLCONTENT);
+                BitBlt(hdcBmp, 0, 0, width, height, hdcScreen, windowRect.Left, windowRect.Top, SRCCOPY);
                 g.ReleaseHdc(hdcBmp);
-
-                if (!ok) {
-                    // Fallback: BitBlt from screen
-                    IntPtr hdcScreen = GetDC(IntPtr.Zero);
-                    hdcBmp = g.GetHdc();
-                    BitBlt(hdcBmp, 0, 0, width, height, hdcScreen, windowRect.Left, windowRect.Top, SRCCOPY);
-                    g.ReleaseHdc(hdcBmp);
-                    ReleaseDC(IntPtr.Zero, hdcScreen);
-                }
+                ReleaseDC(IntPtr.Zero, hdcScreen);
             }
             bmp.Save(outputPath, ImageFormat.Png);
         }
@@ -169,16 +163,20 @@ if ($KillExisting) {
 
 # Clear shader cache if requested
 if ($ClearCache) {
-    $cachePath = "$RepoRoot\build-x86\bin\Release\ShaderCache"
+    $cachePath = Join-Path (Split-Path $EmulatorPath) "ShaderCache"
     Remove-Item "$cachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "Shader cache cleared"
 }
 
 # Deploy latest HLSL
 $hlslSrc = "$RepoRoot\src\core\hle\D3D8\Rendering\Shaders"
-$hlslDst = "$RepoRoot\build-x86\bin\Release\hlsl"
-Get-ChildItem "$hlslSrc\*" -Include "*.hlsl","*.hlsli" | Copy-Item -Destination "$hlslDst\" -Force
-Write-Host "HLSL deployed"
+$hlslDst = Split-Path $EmulatorPath
+$hlslDstDir = Join-Path $hlslDst "hlsl"
+if (Test-Path $hlslSrc) {
+    if (!(Test-Path $hlslDstDir)) { New-Item -ItemType Directory -Path $hlslDstDir -Force | Out-Null }
+    Get-ChildItem "$hlslSrc\*" -Include "*.hlsl","*.hlsli" | Copy-Item -Destination "$hlslDstDir\" -Force
+    Write-Host "HLSL deployed"
+}
 
 # Extract sample name for filenames
 $sampleName = [System.IO.Path]::GetFileNameWithoutExtension($XbePath)
