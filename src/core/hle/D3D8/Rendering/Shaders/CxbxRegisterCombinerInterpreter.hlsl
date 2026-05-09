@@ -813,53 +813,55 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
 
 float4 DoFinalCombiner(inout float4 Regs[16])
 {
-    float4 R0 = Regs[PS_REGISTER_R0];
+    // If both ABCD and EFG are zero the final combiner is unused.
+    uint abcd = PSFinalCombinerInputsABCD;
+    uint efg  = PSFinalCombinerInputsEFG;
+    [branch] if (abcd == 0u && efg == 0u)
+        return Regs[PS_REGISTER_R0];
 
-    // If both ABCD and EFG are zero the final combiner is unused
-    [branch] if (PSFinalCombinerInputsABCD == 0u && PSFinalCombinerInputsEFG == 0u)
-        return R0;
-
-    // PSFinalCombinerInputsEFG = PS_COMBINERINPUTS(E, F, G, settings)
-    //   = (E<<24) | (F<<16) | (G<<8) | settings
-    uint efg      = PSFinalCombinerInputsEFG;
-    // PS_COMBINERINPUTS(E, F, G, settings) for the final combiner
+    // Unpack EFG inputs: PS_COMBINERINPUTS(E, F, G, settings)
     uint settings = (efg >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu;
     uint eReg     = (efg >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu;
     uint fReg     = (efg >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu;
     uint gReg     = (efg >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu;
 
+    // Unpack ABCD inputs (hoisted; compiler can schedule these alongside EFG unpacking).
+    uint aReg = (abcd >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu;
+    uint bReg = (abcd >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu;
+    uint cReg = (abcd >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu;
+    uint dReg = (abcd >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu;
+
     // Initialise C0/C1 for the final combiner from PGRAPH specular/fog factor regs.
-    // Placed here (after early exit) so unused final combiners skip the writes.
+    // Placed after early exit so unused final combiners skip the writes.
     Regs[PS_REGISTER_C0] = PG_COLOR(NV_PGRAPH_SPECFOGFACTOR0);
     Regs[PS_REGISTER_C1] = PG_COLOR(NV_PGRAPH_SPECFOGFACTOR1);
 
-    // --- Resolve E, F (RGB) and G (alpha) — EFG phase (not ABCD) ---
+    // --- EFG phase: resolve E, F (RGB) and G (alpha) ---
     float3 E = ResolveFinalInput(Regs, eReg, false).rgb;
     float3 F = ResolveFinalInput(Regs, fReg, false).rgb;
     float  G = ResolveFinalInput(Regs, gReg, false).a;
 
-    // Compute E*F and store in EF_PROD for potential use by ABCD inputs
+    // Compute E*F; alpha slot is a don't-care but set to 1 for clean register state.
     Regs[PS_REGISTER_EF_PROD] = float4(E * F, 1.0f);
 
     // --- Optional complement and clamp on V1 and R0 ---
     // These modify the sum inputs, not the stored register values
     float3 v1 = Regs[PS_REGISTER_V1].rgb;
-    float3 r0 = R0.rgb;
-    if (settings & PS_FINALCOMBINERSETTING_COMPLEMENT_V1) v1 = 1.0f - v1;
-    if (settings & PS_FINALCOMBINERSETTING_COMPLEMENT_R0) r0 = 1.0f - r0;
+    float3 r0 = Regs[PS_REGISTER_R0].rgb;
+    if ((settings & PS_FINALCOMBINERSETTING_COMPLEMENT_V1) != 0u) v1 = 1.0f - v1;
+    if ((settings & PS_FINALCOMBINERSETTING_COMPLEMENT_R0) != 0u) r0 = 1.0f - r0;
 
     float3 v1r0sum = v1 + r0;
-    if (settings & PS_FINALCOMBINERSETTING_CLAMP_SUM) v1r0sum = saturate(v1r0sum);
+    if ((settings & PS_FINALCOMBINERSETTING_CLAMP_SUM) != 0u) v1r0sum = saturate(v1r0sum);
 
     // Store V1+R0 sum for potential use by ABCD inputs
     Regs[PS_REGISTER_V1R0_SUM] = float4(v1r0sum, 1.0f);
 
-    // --- Resolve A, B, C, D — ABCD phase (V1R0_SUM / EF_PROD now valid) ---
-    uint abcd = PSFinalCombinerInputsABCD;
-    float4 A = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_A_SHIFT) & 0xFFu, true);
-    float4 B = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_B_SHIFT) & 0xFFu, true);
-    float4 C = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_C_SHIFT) & 0xFFu, true);
-    float4 D = ResolveFinalInput(Regs, (abcd >> PS_COMBINERINPUTS_D_SHIFT) & 0xFFu, true);
+    // --- ABCD phase: resolve inputs (V1R0_SUM / EF_PROD now valid) ---
+    float4 A = ResolveFinalInput(Regs, aReg, true);
+    float4 B = ResolveFinalInput(Regs, bReg, true);
+    float4 C = ResolveFinalInput(Regs, cReg, true);
+    float4 D = ResolveFinalInput(Regs, dReg, true);
 
     // Final RGB = A*B + (1-A)*C + D, clamped to [0,1]
     // Final alpha = G
