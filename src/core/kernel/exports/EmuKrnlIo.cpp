@@ -1127,6 +1127,21 @@ XBSYSAPI EXPORTNUM(70) xbox::OBJECT_TYPE xbox::IoDeviceObjectType =
 	'iveD' // = first four characters of "Device" in reverse
 };
 // ******************************************************************
+// * IopDeleteFile - FILE_OBJECT delete procedure
+// ******************************************************************
+static xbox::void_xt NTAPI IopDeleteFile(IN xbox::PVOID Object)
+{
+	xbox::PFILE_OBJECT FileObject = reinterpret_cast<xbox::PFILE_OBJECT>(Object);
+
+	// Free the IO completion context if one was associated with this file
+	if (FileObject->CompletionContext != xbox::zeroptr) {
+		xbox::ObfDereferenceObject(FileObject->CompletionContext->Port);
+		xbox::ExFreePool(FileObject->CompletionContext);
+		FileObject->CompletionContext = xbox::zeroptr;
+	}
+}
+
+// ******************************************************************
 // * 0x0047 - IoFileObjectType
 // ******************************************************************
 XBSYSAPI EXPORTNUM(71) xbox::OBJECT_TYPE xbox::IoFileObjectType =
@@ -1134,7 +1149,7 @@ XBSYSAPI EXPORTNUM(71) xbox::OBJECT_TYPE xbox::IoFileObjectType =
 	xbox::ExAllocatePoolWithTag,
 	xbox::ExFreePool,
 	NULL, // TODO : xbox::IopCloseFile,
-	NULL, // TODO : xbox::IopDeleteFile,
+	IopDeleteFile,
 	xbox::IopParseFile,
 	(PVOID)offsetof(xbox::FILE_OBJECT, Event.Header),
 	'eliF' // = "File" in reverse
