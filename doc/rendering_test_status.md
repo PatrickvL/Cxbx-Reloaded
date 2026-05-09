@@ -67,8 +67,8 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 ### Texgen & Environment Mapping
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
-| CubeMap | ⚠️ | 4.18 | `TCI_CAMERASPACEREFLECTIONVECTOR` | Background renders; teapot is black (reflection not applied) |
-| SphereMap | ⚠️ | 8.62 | `TCI_CAMERASPACENORMAL` | Teapot only visible when rotated |
+| CubeMap | ✅ | 95 | `TCI_CAMERASPACEREFLECTIONVECTOR` | Teapot with full cubemap environment reflections |
+| SphereMap | ⚠️ | 17 | `TCI_CAMERASPACENORMAL` | Teapot only visible when rotated; missing skybox background |
 | FresnelReflect | ✅ | 44 | Reflection texgen | Reflective teapot renders correctly |
 | ProjectedTexture | ⚠️ | 12.35 | `TCI_CAMERASPACEPOSITION` (eye-linear texgen) | Blue screen with spotlight thumbnail only, no projected texture on geometry |
 | UserClipPlane | ✅ | 30 | Clip planes via texgen | Yellow teapot with clip planes applied correctly |
@@ -117,8 +117,8 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
 | Fire | ✅ | 15.88 | `Fire.xpu` pixel shader | Fire effect with ground plane, purple sky |
-| Water | ⚠️ | 26 | Bumpenvmap, reflection, aniso=4, fog, `water.xpu` | Completely whitewashed (regression, was better before) |
-| Glass | ✅ | 9.59 | Alpha test, `Glass.xpu` | Reflective teapot on black bg, refraction off, reflection on |
+| Water | ⚠️ | 35 | Bumpenvmap, reflection, aniso=4, fog, `water.xpu` | First frame has correct textures (no water); once water renders, all whitewashed |
+| Glass | ⚠️ | 23 | Alpha test, `Glass.xpu` | Teapot with refraction + reflection, but missing skybox background |
 | FocusBlur | ⚠️ | 63 | DPNDNT_AR/GB, 5 pixel shaders | Visible geometry but garbled/blocky, checker patterns |
 | MotionBlur | ✅ | 2.94 | Motion blur with alpha test | Moon over purple horizon with motion blur |
 | VolumeLight | ⚠️ | 19 | PROJECT2D, PROJECT3D | Stonehenge scene rendered, light beam present but could be brighter |
@@ -168,9 +168,10 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 ### Active Issues
 | Issue | Sample(s) | Description | Root Cause | Priority |
 |-------|-----------|-------------|-----------|----------|
-| Black teapot | CubeMap | Teapot lacks environment reflection | Reflection texgen (TCI_CAMERASPACEREFLECTIONVECTOR) not producing correct UVs for cubemap lookup | Medium |
-| No sphere | SphereMap | Teapot only visible when rotated | TCI_CAMERASPACENORMAL texgen partially broken | Medium |
-| Whitewashed scene | Water | Completely whitewashed (regression) | Unknown — bumpenvmap or render-to-texture issue | Medium |
+| ~~Black teapot~~ | ~~CubeMap~~ | ~~Teapot lacks environment reflection~~ | ~~Fixed: PGRAPH RT cache stored faces as ArraySize=1; composed into cubemap~~ | ~~Fixed~~ |
+| No sphere | SphereMap | Teapot only visible when rotated; missing skybox | TCI_CAMERASPACENORMAL texgen partially broken | Medium |
+| Missing skybox | Glass, SphereMap | Cubemap environment background not rendered | Skybox draw may not go through RT-as-cubemap composition path | Medium |
+| Whitewashed scene | Water | First frame correct, then whitewashed once water renders | Unknown — bumpenvmap or render-to-texture issue | Medium |
 | Garbled output | FocusBlur | Visible geometry but garbled/blocky checker | DPNDNT_AR/GB dependent texture lookup broken | Medium |
 | Blue band | PerPixelLightingVS | Globe renders but has incorrect bright blue band | Unknown VS lighting issue | Medium |
 | ZSprite depth | ZSprite | Teapots render but depth is disregarded | Z-sprite depth handling broken | Medium |
@@ -205,6 +206,7 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | LOG(0) handling | — | 39fd1b808 | VS JIT LOG fix |
 | PS PASSTHRU PostProcess | PixelShader | 10bc68206 | PostProcess not applied to PASSTHRU mode |
 | TCI_OBJECT texgen | — | 3455abb61 | Object-space texgen not implemented |
+| RT cubemap composition | CubeMap, Glass | — | PGRAPH RT cache stored cubemap faces as separate ArraySize=1 textures; composed 6 faces into proper TEXTURECUBE |
 | Filter construction | — | c37cc4fa3 | Use D3D11_ENCODE_BASIC_FILTER for correctness |
 
 ---

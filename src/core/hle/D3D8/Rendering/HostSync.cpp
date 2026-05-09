@@ -202,6 +202,7 @@ void CxbxUpdateHostTextures()
 
 		// Resolve DMA base: CONTEXT_DMA bit in TEXFMT selects dma_a (0) or dma_b (1)
 		uint32_t texFmtReg = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
+		bool isCubemap = (texFmtReg & NV_PGRAPH_TEXFMT0_CUBEMAPENABLE) != 0;
 		bool texDmaSelect = (texFmtReg & NV_PGRAPH_TEXFMT0_CONTEXT_DMA) != 0;
 		uint32_t texDmaBase = NV2ADevice::ResolveDmaBaseAddress(
 			d, texDmaSelect ? pg->dma_b : pg->dma_a);
@@ -218,8 +219,126 @@ void CxbxUpdateHostTextures()
 				&& texOffset != pg->regs[RI(NV_PGRAPH_BOFFSET3)]) {
 				auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
 				if (pPgraphRT) {
-					pHostBaseTexture = pPgraphRT;
-					bIsRenderTargetTexture = true;
+					if (isCubemap) {
+						// The PGRAPH RT cache stores individual cubemap faces
+						// as separate 2D textures (ArraySize=1).  When the game
+						// samples the cubemap, TEXOFFSET points at face 0 and
+						// TEXFMT has CUBEMAPENABLE set.  We must compose all 6
+						// face RTs into a proper D3D11 cubemap texture so the
+						// pixel shader can sample via TextureCube at t8-t11.
+						D3D11_TEXTURE2D_DESC rtDesc;
+						((ID3D11Texture2D*)pPgraphRT)->GetDesc(&rtDesc);
+
+						if (rtDesc.ArraySize == 1) {
+							// Calculate bytes-per-pixel from the RT format
+							uint32_t bpp;
+							switch (rtDesc.Format) {
+							case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8X8_UNORM:
+							case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R10G10B10A2_UNORM:
+								bpp = 4; break;
+							case DXGI_FORMAT_B5G6R5_UNORM: case DXGI_FORMAT_B5G5R5A1_UNORM:
+							case DXGI_FORMAT_R8G8_UNORM:
+								bpp = 2; break;
+							default: bpp = 4; break;
+							}
+
+							// NV2A cubemap face stride: sum of all mip levels,
+							// rounded up to 128-byte alignment (NV2A_CUBEMAP_FACE_ALIGNMENT).
+							// For RT cubemaps the game typically uses 1 mip, so
+							// this simplifies to ROUND_UP(w*h*bpp, 128).
+							uint32_t faceStride = 0;
+							{
+								uint32_t mipW = rtDesc.Width, mipH = rtDesc.Height;
+								uint32_t mips = GET_MASK(texFmtReg, NV_PGRAPH_TEXFMT0_MIPMAP_LEVELS);
+								if (mips == 0) mips = 1;
+								for (uint32_t m = 0; m < mips; m++) {
+									faceStride += (mipW > 0 ? mipW : 1) * (mipH > 0 ? mipH : 1) * bpp;
+									mipW >>= 1; mipH >>= 1;
+								}
+								faceStride = (faceStride + 127) & ~127u; // 128-byte align
+							}
+
+							ID3D11Texture2D* faceRTs[6] = {};
+							faceRTs[0] = (ID3D11Texture2D*)pPgraphRT;
+							bool allFound = true;
+							for (int face = 1; face < 6; face++) {
+								faceRTs[face] = (ID3D11Texture2D*)CxbxLookupPgraphRTByOffset(
+									texOffset + face * faceStride);
+								if (!faceRTs[face]) { allFound = false; break; }
+							}
+
+							if (allFound) {
+								// Reuse a cached cubemap texture per stage to avoid
+								// creating a new D3D11 resource every frame.
+								static ID3D11Texture2D* s_CubemapCache[NV2A_MAX_TEXTURES] = {};
+								static uint32_t s_CubemapOffset[NV2A_MAX_TEXTURES] = {};
+								static UINT s_CubemapSize[NV2A_MAX_TEXTURES] = {};
+
+								// Determine mip count from TEXFMT register.
+								// RT faces are single-mip; we generate lower mips
+								// via GenerateMips so trilinear filtering works.
+								uint32_t texMipLevels = GET_MASK(texFmtReg, NV_PGRAPH_TEXFMT0_MIPMAP_LEVELS);
+								if (texMipLevels == 0) texMipLevels = 1;
+
+								if (!s_CubemapCache[stage]
+									|| s_CubemapOffset[stage] != texOffset
+									|| s_CubemapSize[stage] != rtDesc.Width) {
+									if (s_CubemapCache[stage])
+										s_CubemapCache[stage]->Release();
+									s_CubemapCache[stage] = nullptr;
+
+									D3D11_TEXTURE2D_DESC cubeDesc = rtDesc;
+									cubeDesc.ArraySize = 6;
+									cubeDesc.MipLevels = texMipLevels;
+									cubeDesc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE
+										| (texMipLevels > 1 ? D3D11_RESOURCE_MISC_GENERATE_MIPS : 0);
+									cubeDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE
+										| (texMipLevels > 1 ? D3D11_BIND_RENDER_TARGET : 0);
+									g_pD3DDevice->CreateTexture2D(&cubeDesc, nullptr,
+										&s_CubemapCache[stage]);
+									s_CubemapOffset[stage] = texOffset;
+									s_CubemapSize[stage] = rtDesc.Width;
+								}
+
+								if (s_CubemapCache[stage]) {
+									// Copy each face RT (mip 0) into the composed cubemap
+									for (int face = 0; face < 6; face++) {
+										g_pD3DDeviceContext->CopySubresourceRegion(
+											s_CubemapCache[stage],
+											D3D11CalcSubresource(0, face, texMipLevels),
+											0, 0, 0,
+											faceRTs[face], 0,
+											nullptr);
+									}
+									// Generate lower mip levels if the game expects them
+									if (texMipLevels > 1) {
+										ID3D11ShaderResourceView* pMipSRV = nullptr;
+										D3D11_SHADER_RESOURCE_VIEW_DESC mipSrvDesc = {};
+										mipSrvDesc.Format = rtDesc.Format;
+										mipSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+										mipSrvDesc.TextureCube.MipLevels = texMipLevels;
+										mipSrvDesc.TextureCube.MostDetailedMip = 0;
+										if (SUCCEEDED(g_pD3DDevice->CreateShaderResourceView(
+												s_CubemapCache[stage], &mipSrvDesc, &pMipSRV))) {
+											g_pD3DDeviceContext->GenerateMips(pMipSRV);
+											pMipSRV->Release();
+										}
+									}
+									pHostBaseTexture = s_CubemapCache[stage];
+									bIsRenderTargetTexture = true;
+								}
+							} else {
+								LOG_TEST_CASE("Cubemap RT composition: not all 6 faces found in RT cache");
+							}
+						}
+					}
+
+					if (!bIsRenderTargetTexture) {
+						// Non-cubemap RT, or cubemap composition failed — use
+						// the single RT directly (existing behaviour).
+						pHostBaseTexture = pPgraphRT;
+						bIsRenderTargetTexture = true;
+					}
 					// D3D11 will unbind the RTV when this resource is bound as SRV.
 					// Invalidate RT tracking so the next draw rebinds the RTV.
 					CxbxInvalidatePgraphRTBinding();
