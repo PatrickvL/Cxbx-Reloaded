@@ -1253,14 +1253,6 @@ XBSYSAPI EXPORTNUM(250) xbox::void_xt FASTCALL xbox::ObfDereferenceObject
 {
 	LOG_FUNC_ONE_ARG_OUT(Object);
 
-	// HACK: Since we forward to NtDll::NtCreateEvent, this *might* be a Windows handle instead of our own
-	// In this case, we must do nothing, otherwise we'll crash...
-	// Test Case: Xbox Live Dashboard, Network Test (or any other Xbox Live connection)
-	DWORD flags = 0;
-	if (GetHandleInformation((HANDLE)Object, &flags)) {
-		return;
-	}
-
 	POBJECT_HEADER ObjectHeader = OBJECT_TO_OBJECT_HEADER(Object);
 	
 	if (InterlockedDecrement((::PLONG)(&ObjectHeader->PointerCount)) == 0) {

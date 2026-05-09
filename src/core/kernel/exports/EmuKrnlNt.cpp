@@ -31,6 +31,7 @@
 
 #include <core\kernel\exports\xboxkrnl.h> // For NtAllocateVirtualMemory, etc.
 #include "EmuKrnlNt.hpp"
+#include "EmuKrnlEx.hpp" // For ETIMER, ExpTimerDpcRoutine, ExpTimerApcKernelRoutine
 #include "EmuKrnlIo.hpp"
 #include "EmuKrnl.h"
 #include "Logging.h" // For LOG_FUNC()
@@ -63,6 +64,35 @@ namespace NtDll
 
 // Prevent setting the system time from multiple threads at the same time
 xbox::RTL_CRITICAL_SECTION xbox::NtSystemTimeCritSec;
+
+// ******************************************************************
+// * KeRemoveQueueApc - Remove an APC from its thread's APC queue
+// ******************************************************************
+// Source: ReactOS, adapted for Cxbx's KiApcListMtx locking model
+static xbox::boolean_xt KeRemoveQueueApc(IN xbox::PRKAPC Apc)
+{
+	xbox::KiApcListMtx.lock();
+
+	xbox::boolean_xt Inserted = Apc->Inserted;
+	if (Inserted) {
+		Apc->Inserted = FALSE;
+		RemoveEntryList(&Apc->ApcListEntry);
+
+		// Update pending flags if the list is now empty
+		xbox::PKTHREAD Thread = Apc->Thread;
+		if (IsListEmpty(&Thread->ApcState.ApcListHead[Apc->ApcMode])) {
+			if (Apc->ApcMode == xbox::KernelMode) {
+				Thread->ApcState.KernelApcPending = FALSE;
+			}
+			else {
+				Thread->ApcState.UserApcPending = FALSE;
+			}
+		}
+	}
+
+	xbox::KiApcListMtx.unlock();
+	return Inserted;
+}
 
 // Source: ReactOS, modified for xbox compatibility layer
 xbox::ntstatus_xt xbox::NtMakeTemporaryObject(
@@ -146,6 +176,7 @@ XBSYSAPI EXPORTNUM(184) xbox::ntstatus_xt NTAPI xbox::NtAllocateVirtualMemory
 // ******************************************************************
 // * 0x00B9 - NtCancelTimer()
 // ******************************************************************
+// Source: ReactOS, modified for Xbox compatibility layer
 XBSYSAPI EXPORTNUM(185) xbox::ntstatus_xt NTAPI xbox::NtCancelTimer
 (
 	IN HANDLE TimerHandle,
@@ -157,14 +188,35 @@ XBSYSAPI EXPORTNUM(185) xbox::ntstatus_xt NTAPI xbox::NtCancelTimer
 		LOG_FUNC_ARG(CurrentState)
 		LOG_FUNC_END;
 
-	// redirect to Windows NT
-	// TODO : Untested
-	NTSTATUS ret = NtDll::NtCancelTimer(
-		TimerHandle,
-		/*OUT*/CurrentState);
+	PVOID Object;
+	NTSTATUS ret = ObReferenceObjectByHandle(TimerHandle, &ExTimerObjectType, &Object);
+	if (X_NT_SUCCESS(ret)) {
+		PETIMER Timer = (PETIMER)Object;
 
-	if (FAILED(ret))
-		EmuLog(LOG_LEVEL::WARNING, "NtCancelTimer failed!");
+		Timer->Lock.lock();
+
+		// Cancel any pending APC association
+		if (Timer->ApcAssociated) {
+			Timer->ApcAssociated = FALSE;
+			KeCancelTimer(&Timer->KeTimer);
+			KeRemoveQueueDpc(&Timer->TimerDpc);
+			KeRemoveQueueApc(&Timer->TimerApc);
+		}
+		else {
+			KeCancelTimer(&Timer->KeTimer);
+		}
+
+		Timer->Lock.unlock();
+
+		// Read the signal state
+		BOOLEAN State = (BOOLEAN)Timer->KeTimer.Header.SignalState;
+
+		ObfDereferenceObject(Timer);
+
+		if (CurrentState) {
+			*CurrentState = State;
+		}
+	}
 
 	RETURN(ret);
 }
@@ -179,12 +231,14 @@ XBSYSAPI EXPORTNUM(186) xbox::ntstatus_xt NTAPI xbox::NtClearEvent
 {
 	LOG_FUNC_ONE_ARG(EventHandle);
 
-	NTSTATUS ret = NtDll::NtClearEvent(EventHandle);
+	PKEVENT Event;
+	ntstatus_xt result = ObReferenceObjectByHandle(EventHandle, &ExEventObjectType, reinterpret_cast<PVOID *>(&Event));
+	if (X_NT_SUCCESS(result)) {
+		KeResetEvent(Event);
+		ObfDereferenceObject(Event);
+	}
 
-	if (FAILED(ret))
-		EmuLog(LOG_LEVEL::WARNING, "NtClearEvent Failed!");
-
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -210,18 +264,6 @@ XBSYSAPI EXPORTNUM(187) xbox::ntstatus_xt NTAPI xbox::NtClose
 		// This was a handle created by Ob
 		ObfDereferenceObject(Object);
 		result = ObpClose(Handle);
-	}
-	// Otherwise, it could be native handle
-	// What has not been managed by Ob:
-	// * Mutant
-	// * Semaphore
-	// * Fiber(?)
-	// * Event
-	// * Timer
-	// * What else?
-	// TODO: Remove "else if" statement once all items from list above is done.
-	else if (DWORD flags = 0; GetHandleInformation(Handle, &flags)) {
-		result = NtDll::NtClose(Handle);
 	}
 	else {
 		result = X_STATUS_INVALID_HANDLE;
@@ -274,7 +316,7 @@ XBSYSAPI EXPORTNUM(189) xbox::ntstatus_xt NTAPI xbox::NtCreateEvent
 		LOG_FUNC_END;
 
 	ntstatus_xt result;
-#ifdef CXBX_KERNEL_REWORK_ENABLED
+
 	if ((EventType != NotificationEvent) && (EventType != SynchronizationEvent)) {
 		result = STATUS_INVALID_PARAMETER;
 	}
@@ -287,49 +329,6 @@ XBSYSAPI EXPORTNUM(189) xbox::ntstatus_xt NTAPI xbox::NtCreateEvent
 			result = ObInsertObject(Event, ObjectAttributes, 0, EventHandle);
 		}
 	}
-#else
-
-	LOG_INCOMPLETE(); // TODO : Verify arguments, use ObCreateObject, KeInitializeEvent and ObInsertObject instead of this:
-
-	// initialize object attributes
-	NativeObjectAttributes nativeObjectAttributes;
-	CxbxObjectAttributesToNT(ObjectAttributes, /*var*/nativeObjectAttributes);
-
-	// TODO : Is this the correct ACCESS_MASK? :
-	const ACCESS_MASK DesiredAccess = EVENT_ALL_ACCESS;
-
-	// redirect to Win2k/XP
-	result = NtDll::NtCreateEvent(
-		/*OUT*/EventHandle,
-		DesiredAccess,
-		nativeObjectAttributes.NtObjAttrPtr,
-		(NtDll::EVENT_TYPE)EventType,
-		InitialState);
-
-	// TODO : Instead of the above, we should consider using the Ke*Event APIs, but
-	// that would require us to create the event's kernel object with the Ob* api's too!
-
-	if (FAILED(result))
-	{
-		EmuLog(LOG_LEVEL::WARNING, "Trying fallback (without object attributes)...\nError code 0x%X", result);
-
-		// If it fails, try again but without the object attributes stucture
-		// This fixes Panzer Dragoon games on non-Vista OSes.
-		result = NtDll::NtCreateEvent(
-			/*OUT*/EventHandle,
-			DesiredAccess,
-			/*nativeObjectAttributes.NtObjAttrPtr*/ NULL,
-			(NtDll::EVENT_TYPE)EventType,
-			InitialState);
-
-		if(FAILED(result))
-			EmuLog(LOG_LEVEL::WARNING, "NtCreateEvent Failed!");
-		else
-			EmuLog(LOG_LEVEL::DEBUG, "NtCreateEvent EventHandle = 0x%.8X", *EventHandle);
-	}
-	else
-		EmuLog(LOG_LEVEL::DEBUG, "NtCreateEvent EventHandle = 0x%.8X", *EventHandle);
-#endif
 
 	RETURN(result);
 }
@@ -415,60 +414,14 @@ XBSYSAPI EXPORTNUM(192) xbox::ntstatus_xt NTAPI xbox::NtCreateMutant
 		LOG_FUNC_ARG(InitialOwner)
 		LOG_FUNC_END;
 
-/*
-	NTSTATUS Status;
-
-	if (!verify arguments) {
-		Status = STATUS_INVALID_PARAMETER;
-	}
-	else {
-		PKMUTANT Mutant;
-
-		Status = ObCreateObject(&ExMutantObjectType, ObjectAttributes, sizeof(KMUTANT), (PVOID *)&Mutant);
-		if (X_NT_SUCCESS(Status)) {
-			KeInitializeMutant(Mutant, InitialOwner);
-			Status = ObInsertObject(Mutant, ObjectAttributes, 0, /*OUT* /MutantHandle);
-		}
+	PKMUTANT Mutant;
+	ntstatus_xt result = ObCreateObject(&ExMutantObjectType, ObjectAttributes, sizeof(KMUTANT), (PVOID *)&Mutant);
+	if (X_NT_SUCCESS(result)) {
+		KeInitializeMutant(Mutant, InitialOwner);
+		result = ObInsertObject(Mutant, ObjectAttributes, 0, MutantHandle);
 	}
 
-	RETURN(Status);
-*/
-	LOG_INCOMPLETE(); // TODO : Verify arguments, use ObCreateObject, KeInitializeMutant and ObInsertObject instead of this:
-
-	// initialize object attributes
-	NativeObjectAttributes nativeObjectAttributes;
-	CxbxObjectAttributesToNT(ObjectAttributes, /*var*/nativeObjectAttributes);
-
-	// TODO : Is this the correct ACCESS_MASK? :
-	const ACCESS_MASK DesiredAccess = MUTANT_ALL_ACCESS;
-
-	// redirect to Windows Nt
-	NTSTATUS ret = NtDll::NtCreateMutant(
-		/*OUT*/MutantHandle, 
-		DesiredAccess,
-		nativeObjectAttributes.NtObjAttrPtr,
-		InitialOwner);
-
-	if (FAILED(ret))
-	{
-		EmuLog(LOG_LEVEL::WARNING, "Trying fallback (without object attributes)...\nError code 0x%X", ret);
-
-		// If it fails, try again but without the object attributes stucture
-		ret = NtDll::NtCreateMutant(
-			/*OUT*/MutantHandle, 
-			DesiredAccess,
-			/*nativeObjectAttributes.NtObjAttrPtr*/ NULL,
-			InitialOwner);
-
-		if(FAILED(ret))
-			EmuLog(LOG_LEVEL::WARNING, "NtCreateMutant Failed!");
-		else
-			EmuLog(LOG_LEVEL::DEBUG, "NtCreateMutant MutantHandle = 0x%.8X", *MutantHandle);
-	}
-	else
-		EmuLog(LOG_LEVEL::DEBUG, "NtCreateMutant MutantHandle = 0x%.8X", *MutantHandle);
-
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -489,66 +442,24 @@ XBSYSAPI EXPORTNUM(193) xbox::ntstatus_xt NTAPI xbox::NtCreateSemaphore
 		LOG_FUNC_ARG(MaximumCount)
 		LOG_FUNC_END;
 
-/*
-	NTSTATUS Status;
-
-	if (!verify arguments) {
-		Status = STATUS_INVALID_PARAMETER;
-	}
-	else {
-		PKSEMAPHORE Semaphore;
-
-		Status = ObCreateObject(&ExSemaphoreObjectType, ObjectAttributes, sizeof(KSEMAPHORE), (PVOID *)&Semaphore);
-		if (X_NT_SUCCESS(Status)) {
-			KeInitializeSemaphore(Semaphore, InitialCount, /*Limit=* /MaximumCount);
-			Status = ObInsertObject(Semaphore, ObjectAttributes, 0, /*OUT* /SemaphoreHandle);
-		}
+	if (MaximumCount <= 0 || InitialCount > (ulong_xt)MaximumCount) {
+		RETURN(STATUS_INVALID_PARAMETER);
 	}
 
-	RETURN(Status);
-*/
-	LOG_INCOMPLETE(); // TODO : Verify arguments, use ObCreateObject, KeInitializeSemaphore and ObInsertObject instead of this:
-
-	// TODO : Is this the correct ACCESS_MASK? :
-	const ACCESS_MASK DesiredAccess = SEMAPHORE_ALL_ACCESS;
-
-	NativeObjectAttributes nativeObjectAttributes;
-	CxbxObjectAttributesToNT(ObjectAttributes, nativeObjectAttributes);
-
-	// redirect to Win2k/XP
-	NTSTATUS ret = NtDll::NtCreateSemaphore(
-		/*OUT*/SemaphoreHandle,
-		DesiredAccess,
-		(NtDll::POBJECT_ATTRIBUTES)nativeObjectAttributes.NtObjAttrPtr,
-		InitialCount,
-		MaximumCount);
-
-	if (FAILED(ret))
-	{
-		EmuLog(LOG_LEVEL::WARNING, "Trying fallback (without object attributes)...\nError code 0x%X", ret);
-
-		// If it fails, try again but without the object attributes stucture
-		ret = NtDll::NtCreateSemaphore(
-			/*OUT*/SemaphoreHandle,
-			DesiredAccess,
-			/*(NtDll::POBJECT_ATTRIBUTES)nativeObjectAttributes.NtObjAttrPtr*/ NULL,
-			InitialCount,
-			MaximumCount);
-
-		if(FAILED(ret))
-			EmuLog(LOG_LEVEL::WARNING, "NtCreateSemaphore failed!");
-		else
-			EmuLog(LOG_LEVEL::DEBUG, "NtCreateSemaphore SemaphoreHandle = 0x%.8X", *SemaphoreHandle);
+	PKSEMAPHORE Semaphore;
+	ntstatus_xt result = ObCreateObject(&ExSemaphoreObjectType, ObjectAttributes, sizeof(KSEMAPHORE), (PVOID *)&Semaphore);
+	if (X_NT_SUCCESS(result)) {
+		KeInitializeSemaphore(Semaphore, InitialCount, MaximumCount);
+		result = ObInsertObject(Semaphore, ObjectAttributes, 0, SemaphoreHandle);
 	}
-	else
-		EmuLog(LOG_LEVEL::DEBUG, "NtCreateSemaphore SemaphoreHandle = 0x%.8X", *SemaphoreHandle);
 
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
 // * 0x00C2 - NtCreateTimer()
 // ******************************************************************
+// Source: ReactOS, modified for Xbox compatibility layer
 XBSYSAPI EXPORTNUM(194) xbox::ntstatus_xt NTAPI xbox::NtCreateTimer
 (
 	OUT PHANDLE TimerHandle,
@@ -562,46 +473,29 @@ XBSYSAPI EXPORTNUM(194) xbox::ntstatus_xt NTAPI xbox::NtCreateTimer
 		LOG_FUNC_ARG(TimerType)
 		LOG_FUNC_END;
 
-/*
-	NTSTATUS Status;
-
-	if (!verify arguments) {
-		Status = STATUS_INVALID_PARAMETER;
-	}
-	else {
-		PKTIMER Timer;
-
-		Status = ObCreateObject(&ExTimerType, ObjectAttributes, sizeof(KTIMER), (PVOID *)&Timer);
-		if (X_NT_SUCCESS(Status)) {
-			KeInitializeTimerEx(Timer, TimerType);
-			Status = ObInsertObject(Timer, ObjectAttributes, 0, /*OUT* /TimerHandle);
-		}
+	// Validate TimerType
+	if ((TimerType != NotificationTimer) && (TimerType != SynchronizationTimer)) {
+		RETURN(X_STATUS_INVALID_PARAMETER_4);
 	}
 
-	RETURN(Status);
-*/
-	LOG_INCOMPLETE(); // TODO : Verify arguments, use ObCreateObject, KeInitializeTimerEx and ObInsertObject instead of this:
+	PETIMER Timer;
+	NTSTATUS ret = ObCreateObject(&ExTimerObjectType, ObjectAttributes, sizeof(ETIMER), (PVOID *)&Timer);
+	if (X_NT_SUCCESS(ret)) {
+		// Initialize the DPC (queues the APC when timer fires)
+		KeInitializeDpc(&Timer->TimerDpc, ExpTimerDpcRoutine, Timer);
 
-	// TODO : Is this the correct ACCESS_MASK? :
-	const ACCESS_MASK DesiredAccess = TIMER_ALL_ACCESS;
+		// Initialize the kernel timer
+		KeInitializeTimerEx(&Timer->KeTimer, TimerType);
 
-	NativeObjectAttributes nativeObjectAttributes;
-	CxbxObjectAttributesToNT(ObjectAttributes, nativeObjectAttributes);
+		// Initialize timer fields
+		Timer->ApcAssociated = FALSE;
+		Timer->Period = 0;
+		// ObCreateObject uses raw allocation, so construct the std::mutex in-place
+		new (&Timer->Lock) std::mutex();
 
-	// redirect to Windows NT
-	// TODO : Untested
-	NTSTATUS ret = NtDll::NtCreateTimer
-	(
-		/*OUT*/TimerHandle,
-		DesiredAccess,
-		(NtDll::POBJECT_ATTRIBUTES)nativeObjectAttributes.NtObjAttrPtr,
-		(NtDll::TIMER_TYPE)TimerType
-	);
-
-	if (FAILED(ret))
-		EmuLog(LOG_LEVEL::WARNING, "NtCreateTimer failed!");
-	else
-		EmuLog(LOG_LEVEL::DEBUG, "NtCreateTimer TimerHandle = 0x%.8X", *TimerHandle);
+		// Insert into the object table and return the handle
+		ret = ObInsertObject(Timer, ObjectAttributes, 0, /*OUT*/TimerHandle);
+	}
 
 	RETURN(ret);
 }
@@ -679,21 +573,8 @@ namespace xbox {
 
 		/* Check for an event */
 		if (Event) {
-#if ENABLE_OB_EVENT // TODO: Enable this block once event handle is handled by xbox's end.
-			/* Reference it */
-			PKEVENT EventObject;
-			result = ObReferenceObjectByHandle(Event, &ExEventObjectType, reinterpret_cast<PVOID*>(&EventObject));
-			if (!X_NT_SUCCESS(result)) {
-				/* Dereference the file object and fail */
-				ObfDereferenceObject(FileObject);
-				return result;
-			}
-
 			/* Clear it */
-			NtClearEvent(EventObject);
-#else // Forward native handle
 			NtClearEvent(Event);
-#endif
 		}
 
 		// ...
@@ -943,30 +824,6 @@ XBSYSAPI EXPORTNUM(197) xbox::ntstatus_xt NTAPI xbox::NtDuplicateObject
 
 		ObfDereferenceObject(Object);
 	}
-	// TODO: Remove "else if" statement once all items from list from NtClose is done.
-	// Check if Handle is from Host's end.
-	else if (DWORD flags = 0; GetHandleInformation(SourceHandle, &flags)) {
-		// On the xbox, the duplicated handle always has the same access rights of the source handle
-		const ACCESS_MASK DesiredAccess = 0;
-		const ULONG Attributes = 0;
-		const ULONG nativeOptions = (Options | DUPLICATE_SAME_ATTRIBUTES | DUPLICATE_SAME_ACCESS);
-
-		::HANDLE dupHandle;
-		result = NtDll::NtDuplicateObject(
-			/*SourceProcessHandle=*/g_CurrentProcessHandle,
-			SourceHandle,
-			/*TargetProcessHandle=*/g_CurrentProcessHandle,
-			&dupHandle,
-			DesiredAccess,
-			Attributes,
-			nativeOptions);
-
-		if (!X_NT_SUCCESS(result)) {
-			CxbxrAbort("NtDll::NtDuplicateObject failed to duplicate the handle 0x%.8X!", SourceHandle);
-		}
-
-		*TargetHandle = dupHandle;
-	}
 
 	RETURN(result);
 }
@@ -1173,16 +1030,17 @@ XBSYSAPI EXPORTNUM(205) xbox::ntstatus_xt NTAPI xbox::NtPulseEvent
 		LOG_FUNC_ARG_OUT(PreviousState)
 		LOG_FUNC_END;
 
-	// redirect to Windows NT
-	// TODO : Untested
-	NTSTATUS ret = NtDll::NtPulseEvent(
-		EventHandle, 
-		/*OUT*/(::PLONG)(PreviousState));
+	PKEVENT Event;
+	ntstatus_xt result = ObReferenceObjectByHandle(EventHandle, &ExEventObjectType, reinterpret_cast<PVOID *>(&Event));
+	if (X_NT_SUCCESS(result)) {
+		LONG prev = KePulseEvent(Event, /*Increment=*/1, /*Wait=*/FALSE);
+		if (PreviousState != zeroptr) {
+			*PreviousState = prev;
+		}
+		ObfDereferenceObject(Event);
+	}
 
-	if (FAILED(ret))
-		EmuLog(LOG_LEVEL::WARNING, "NtPulseEvent failed!");
-
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -1401,17 +1259,15 @@ XBSYSAPI EXPORTNUM(209) xbox::ntstatus_xt NTAPI xbox::NtQueryEvent
 		LOG_FUNC_ARG_OUT(EventInformation)
 		LOG_FUNC_END;
 
-	NTSTATUS ret = NtDll::NtQueryEvent(
-		(NtDll::HANDLE)EventHandle,
-		/*EventInformationClass*/NtDll::EVENT_INFORMATION_CLASS::EventBasicInformation,
-		EventInformation,
-		sizeof(EVENT_BASIC_INFORMATION),
-		/*ReturnLength=*/nullptr);
+	PKEVENT Event;
+	ntstatus_xt result = ObReferenceObjectByHandle(EventHandle, &ExEventObjectType, reinterpret_cast<PVOID *>(&Event));
+	if (X_NT_SUCCESS(result)) {
+		EventInformation->EventType = (EVENT_TYPE)Event->Header.Type;
+		EventInformation->EventState = Event->Header.SignalState;
+		ObfDereferenceObject(Event);
+	}
 
-	if (ret != X_STATUS_SUCCESS)
-		EmuLog(LOG_LEVEL::WARNING, "NtQueryEvent failed! (%s)", NtStatusToString(ret));
-
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -1616,17 +1472,16 @@ XBSYSAPI EXPORTNUM(213) xbox::ntstatus_xt NTAPI xbox::NtQueryMutant
 		LOG_FUNC_ARG_OUT(MutantInformation)
 		LOG_FUNC_END;
 
-	NTSTATUS ret = NtDll::NtQueryMutant(
-		(NtDll::HANDLE)MutantHandle,
-		/*MutantInformationClass*/NtDll::MUTANT_INFORMATION_CLASS::MutantBasicInformation,
-		MutantInformation,
-		sizeof(MUTANT_BASIC_INFORMATION),
-		/*ReturnLength=*/nullptr);
+	PKMUTANT Mutant;
+	ntstatus_xt result = ObReferenceObjectByHandle(MutantHandle, &ExMutantObjectType, reinterpret_cast<PVOID *>(&Mutant));
+	if (X_NT_SUCCESS(result)) {
+		MutantInformation->CurrentCount = Mutant->Header.SignalState;
+		MutantInformation->OwnedByCaller = (Mutant->OwnerThread == KeGetCurrentThread());
+		MutantInformation->AbandonedState = Mutant->Abandoned;
+		ObfDereferenceObject(Mutant);
+	}
 
-	if (ret != X_STATUS_SUCCESS)
-		EmuLog(LOG_LEVEL::WARNING, "NtQueryMutant failed! (%s)", NtStatusToString(ret));
-
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -1643,17 +1498,15 @@ XBSYSAPI EXPORTNUM(214) xbox::ntstatus_xt NTAPI xbox::NtQuerySemaphore
 		LOG_FUNC_ARG_OUT(SemaphoreInformation)
 		LOG_FUNC_END;
 
-	NTSTATUS ret = NtDll::NtQuerySemaphore(
-		(NtDll::HANDLE)SemaphoreHandle,
-		/*SemaphoreInformationClass*/NtDll::SEMAPHORE_INFORMATION_CLASS::SemaphoreBasicInformation,
-		SemaphoreInformation,
-		sizeof(SEMAPHORE_BASIC_INFORMATION),
-		/*ReturnLength=*/nullptr);
+	PKSEMAPHORE Semaphore;
+	ntstatus_xt result = ObReferenceObjectByHandle(SemaphoreHandle, &ExSemaphoreObjectType, reinterpret_cast<PVOID *>(&Semaphore));
+	if (X_NT_SUCCESS(result)) {
+		SemaphoreInformation->CurrentCount = Semaphore->Header.SignalState;
+		SemaphoreInformation->MaximumCount = Semaphore->Limit;
+		ObfDereferenceObject(Semaphore);
+	}
 
-	if (ret != X_STATUS_SUCCESS)
-		EmuLog(LOG_LEVEL::WARNING, "NtQuerySemaphore failed! (%s)", NtStatusToString(ret));
-
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -1721,6 +1574,7 @@ XBSYSAPI EXPORTNUM(215) xbox::ntstatus_xt NTAPI xbox::NtQuerySymbolicLinkObject
 // ******************************************************************
 // * 0x00D8 - NtQueryTimer()
 // ******************************************************************
+// Source: ReactOS, modified for Xbox compatibility layer
 XBSYSAPI EXPORTNUM(216) xbox::ntstatus_xt NTAPI xbox::NtQueryTimer
 (
 	IN HANDLE TimerHandle,
@@ -1732,15 +1586,20 @@ XBSYSAPI EXPORTNUM(216) xbox::ntstatus_xt NTAPI xbox::NtQueryTimer
 		LOG_FUNC_ARG_OUT(TimerInformation)
 		LOG_FUNC_END;
 
-	// redirect to Windows NT
-	// TODO : Untested
-	NTSTATUS ret = NtDll::NtQueryTimer(
-		TimerHandle,
-		/*TIMER_INFORMATION_CLASS*/NtDll::TimerBasicInformation,
-		/*OUT*/TimerInformation,
-		/*TimerInformationLength=*/sizeof(TIMER_BASIC_INFORMATION),
-		/*OUT ReturnLength*/nullptr
-	);
+	PVOID Object;
+	NTSTATUS ret = ObReferenceObjectByHandle(TimerHandle, &ExTimerObjectType, &Object);
+	if (X_NT_SUCCESS(ret)) {
+		PETIMER Timer = (PETIMER)Object;
+
+		// Return the remaining time (absolute due time minus current interrupt time)
+		TimerInformation->TimeRemaining.QuadPart = Timer->KeTimer.DueTime.QuadPart -
+			(LONGLONG)KeQueryInterruptTime();
+
+		// Return the current signal state
+		TimerInformation->SignalState = (boolean_xt)Timer->KeTimer.Header.SignalState;
+
+		ObfDereferenceObject(Timer);
+	}
 
 	RETURN(ret);
 }
@@ -2170,13 +2029,22 @@ XBSYSAPI EXPORTNUM(221) xbox::ntstatus_xt NTAPI xbox::NtReleaseMutant
 		LOG_FUNC_ARG_OUT(PreviousCount)
 		LOG_FUNC_END;
 
-	// redirect to NtCreateMutant
-	NTSTATUS ret = NtDll::NtReleaseMutant(MutantHandle, (::PLONG)(PreviousCount));
+	PKMUTANT Mutant;
+	ntstatus_xt result = ObReferenceObjectByHandle(MutantHandle, &ExMutantObjectType, reinterpret_cast<PVOID *>(&Mutant));
+	if (X_NT_SUCCESS(result)) {
+		if (Mutant->OwnerThread != KeGetCurrentThread()) {
+			ObfDereferenceObject(Mutant);
+			RETURN(X_STATUS_MUTANT_NOT_OWNED);
+		}
 
-	if (FAILED(ret))
-		EmuLog(LOG_LEVEL::WARNING, "NtReleaseMutant Failed!");
+		LONG prev = KeReleaseMutant(Mutant, /*Increment=*/1, /*Abandoned=*/FALSE, /*Wait=*/FALSE);
+		if (PreviousCount != zeroptr) {
+			*PreviousCount = prev;
+		}
+		ObfDereferenceObject(Mutant);
+	}
 
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -2195,15 +2063,24 @@ XBSYSAPI EXPORTNUM(222) xbox::ntstatus_xt NTAPI xbox::NtReleaseSemaphore
 		LOG_FUNC_ARG_OUT(PreviousCount)
 		LOG_FUNC_END;
 
-	NTSTATUS ret = NtDll::NtReleaseSemaphore(
-		SemaphoreHandle, 
-		ReleaseCount, 
-		(::PULONG)PreviousCount);
+	PKSEMAPHORE Semaphore;
+	ntstatus_xt result = ObReferenceObjectByHandle(SemaphoreHandle, &ExSemaphoreObjectType, reinterpret_cast<PVOID *>(&Semaphore));
+	if (X_NT_SUCCESS(result)) {
+		LONG current = Semaphore->Header.SignalState;
+		LONG adjusted = current + (LONG)ReleaseCount;
+		if (adjusted > Semaphore->Limit || adjusted < current) {
+			ObfDereferenceObject(Semaphore);
+			RETURN(X_STATUS_SEMAPHORE_LIMIT_EXCEEDED);
+		}
 
-	if (FAILED(ret))
-		EmuLog(LOG_LEVEL::WARNING, "NtReleaseSemaphore failed!");
+		LONG prev = KeReleaseSemaphore(Semaphore, /*Increment=*/1, ReleaseCount, /*Wait=*/FALSE);
+		if (PreviousCount != zeroptr) {
+			*PreviousCount = prev;
+		}
+		ObfDereferenceObject(Semaphore);
+	}
 
-	RETURN(ret);
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -2297,14 +2174,17 @@ XBSYSAPI EXPORTNUM(225) xbox::ntstatus_xt NTAPI xbox::NtSetEvent
 		LOG_FUNC_ARG_OUT(PreviousState)
 		LOG_FUNC_END;
 
-	NTSTATUS ret = NtDll::NtSetEvent(
-		EventHandle, 
-		(::PLONG)(PreviousState));
+	PKEVENT Event;
+	ntstatus_xt result = ObReferenceObjectByHandle(EventHandle, &ExEventObjectType, reinterpret_cast<PVOID *>(&Event));
+	if (X_NT_SUCCESS(result)) {
+		LONG prev = KeSetEvent(Event, /*Increment=*/1, /*Wait=*/FALSE);
+		if (PreviousState != zeroptr) {
+			*PreviousState = prev;
+		}
+		ObfDereferenceObject(Event);
+	}
 
-	if (FAILED(ret))
-		EmuLog(LOG_LEVEL::WARNING, "NtSetEvent Failed!");
-
-	RETURN(ret);
+	RETURN(result);
 }
 
 xbox::ntstatus_xt IopOpenLinkOrRenameTarget(
@@ -2669,6 +2549,7 @@ XBSYSAPI EXPORTNUM(228) xbox::ntstatus_xt NTAPI xbox::NtSetSystemTime
 // ******************************************************************
 // * 0x00E5 - NtSetTimerEx()
 // ******************************************************************
+// Source: ReactOS, modified for Xbox compatibility layer
 XBSYSAPI EXPORTNUM(229) xbox::ntstatus_xt NTAPI xbox::NtSetTimerEx
 (
 	IN HANDLE TimerHandle,
@@ -2692,19 +2573,64 @@ XBSYSAPI EXPORTNUM(229) xbox::ntstatus_xt NTAPI xbox::NtSetTimerEx
 		LOG_FUNC_ARG_OUT(PreviousState)
 		LOG_FUNC_END;
 
-	// redirect to Windows NT
-	// TODO : Untested
-	NTSTATUS ret = NtDll::NtSetTimer(
-		TimerHandle,
-		(NtDll::PLARGE_INTEGER)DueTime,
-		(NtDll::PTIMER_APC_ROUTINE)TimerApcRoutine,
-		(NtDll::PVOID)TimerContext,
-		WakeTimer,
-		Period,
-		/*OUT*/PreviousState);
+	// Validate Period
+	if (Period < 0) {
+		RETURN(X_STATUS_INVALID_PARAMETER_7);
+	}
 
-	if (FAILED(ret))
-		EmuLog(LOG_LEVEL::WARNING, "NtSetTimerEx failed!");
+	PVOID Object;
+	NTSTATUS ret = ObReferenceObjectByHandle(TimerHandle, &ExTimerObjectType, &Object);
+	if (X_NT_SUCCESS(ret)) {
+		PETIMER Timer = (PETIMER)Object;
+
+		Timer->Lock.lock();
+
+		// Cancel any previous APC association
+		if (Timer->ApcAssociated) {
+			Timer->ApcAssociated = FALSE;
+			KeCancelTimer(&Timer->KeTimer);
+			KeRemoveQueueDpc(&Timer->TimerDpc);
+			KeRemoveQueueApc(&Timer->TimerApc);
+		}
+		else {
+			KeCancelTimer(&Timer->KeTimer);
+		}
+
+		// Read the previous signal state
+		BOOLEAN State = (BOOLEAN)Timer->KeTimer.Header.SignalState;
+
+		// Set up APC if a routine was provided
+		Timer->Period = Period;
+		if (TimerApcRoutine) {
+			// Initialize the APC to deliver the timer callback
+			KeInitializeApc(
+				&Timer->TimerApc,
+				KeGetCurrentThread(),
+				ExpTimerApcKernelRoutine,
+				(PKRUNDOWN_ROUTINE)NULL,
+				(PKNORMAL_ROUTINE)TimerApcRoutine,
+				ApcMode,
+				TimerContext);
+
+			Timer->ApcAssociated = TRUE;
+		}
+
+		// Set the timer, with DPC only if APC routine is active
+		KeSetTimerEx(
+			&Timer->KeTimer,
+			*DueTime,
+			Period,
+			TimerApcRoutine ? &Timer->TimerDpc : NULL);
+
+		Timer->Lock.unlock();
+
+		ObfDereferenceObject(Timer);
+
+		// Return previous state
+		if (PreviousState) {
+			*PreviousState = State;
+		}
+	}
 
 	RETURN(ret);
 }
@@ -2769,7 +2695,7 @@ XBSYSAPI EXPORTNUM(230) xbox::ntstatus_xt NTAPI xbox::NtSignalAndWaitForSingleOb
 	ObfDereferenceObject(SignalObject);
 
 	// Wait on the wait object
-	result = KeWaitForSingleObject(WaitObject, WrExecutive, WaitMode, Alertable, Timeout);
+	result = KeWaitForSingleObject(WaitObject, UserRequest, WaitMode, Alertable, Timeout);
 	ObfDereferenceObject(WaitObject);
 
 	RETURN(result);
@@ -2919,46 +2845,31 @@ XBSYSAPI EXPORTNUM(235) xbox::ntstatus_xt NTAPI xbox::NtWaitForMultipleObjectsEx
 		RETURN(X_STATUS_INVALID_PARAMETER);
 	}
 
-	// This function can wait on thread handles, which are currently created by ob,
-	// so we need to check their presence in the handle array
-	::HANDLE nativeHandles[X_MAXIMUM_WAIT_OBJECTS];
+	// Resolve all handles to dispatcher objects via Ob
+	PVOID Objects[X_MAXIMUM_WAIT_OBJECTS];
 	for (ulong_xt i = 0; i < Count; ++i) {
-		if (const auto &nativeHandle = GetNativeHandle(Handles[i])) {
-			// This is a ob handle, so replace it with its native counterpart
-			nativeHandles[i] = *nativeHandle;
-			EmuLog(LOG_LEVEL::DEBUG, "xbox handle: %p", nativeHandles[i]);
-		}
-		else {
-			nativeHandles[i] = Handles[i];
-			EmuLog(LOG_LEVEL::DEBUG, "native handle: %p", nativeHandles[i]);
+		ntstatus_xt refResult = ObReferenceObjectByHandle(Handles[i], nullptr, &Objects[i]);
+		if (!X_NT_SUCCESS(refResult)) {
+			// Dereference any already-resolved objects
+			for (ulong_xt j = 0; j < i; ++j) {
+				ObfDereferenceObject(Objects[j]);
+			}
+			RETURN(refResult);
 		}
 	}
 
-	// Because user APCs from NtQueueApcThread are now handled by the kernel, we need to wait for them ourselves
-
-	PKTHREAD kThread = KeGetCurrentThread();
-	kThread->WaitStatus = X_STATUS_SUCCESS;
-	if (!AddWaitObject(kThread, Timeout)) {
-		RETURN(X_STATUS_TIMEOUT);
+	KWAIT_BLOCK WaitBlockArray[X_MAXIMUM_WAIT_OBJECTS];
+	ntstatus_xt ret;
+	if (Count == 1) {
+		ret = KeWaitForSingleObject(Objects[0], UserRequest, WaitMode, Alertable, Timeout);
+	}
+	else {
+		ret = KeWaitForMultipleObjects(Count, Objects, WaitType, UserRequest, WaitMode, Alertable, Timeout, WaitBlockArray);
 	}
 
-	xbox::ntstatus_xt ret = WaitApc<true>([Count, &nativeHandles, WaitType, Alertable](xbox::PKTHREAD kThread) -> std::optional<ntstatus_xt> {
-		NtDll::LARGE_INTEGER ExpireTime;
-		ExpireTime.QuadPart = 0;
-		NTSTATUS Status = NtDll::NtWaitForMultipleObjects(
-			Count,
-			nativeHandles,
-			(NtDll::OBJECT_WAIT_TYPE)WaitType,
-			Alertable,
-			&ExpireTime);
-		if (Status == STATUS_TIMEOUT) {
-			return std::nullopt;
-		}
-		// If the wait was satisfied with the host, then also unwait the thread on the guest side, to be sure to remove WaitBlocks that might have been added
-		// to the thread. Test case: Steel Battalion
-		xbox::KiUnwaitThreadAndLock(kThread, Status, 0);
-		return std::make_optional<ntstatus_xt>(kThread->WaitStatus);
-		}, Timeout, Alertable, WaitMode, kThread);
+	for (ulong_xt i = 0; i < Count; ++i) {
+		ObfDereferenceObject(Objects[i]);
+	}
 
 	RETURN(ret);
 }

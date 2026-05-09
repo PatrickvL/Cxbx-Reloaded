@@ -414,6 +414,7 @@ file (GLOB CXBXR_SOURCE_EMU
  "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnlAv.cpp"
  "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnlDbg.cpp"
  "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnlEx.cpp"
+ "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnlEx.hpp"
  "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnlFs.cpp"
  "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnlHal.cpp"
  "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnlIo.cpp"

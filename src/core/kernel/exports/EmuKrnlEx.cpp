@@ -44,6 +44,7 @@ namespace NtDll
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxrAbort
 #include "core\kernel\support\Emu.h" // For EmuLog(LOG_LEVEL::WARNING, )
 #include "EmuKrnl.h" // For InsertHeadList, InsertTailList, RemoveHeadList
+#include "EmuKrnlEx.hpp" // For ETIMER, ExpDeleteTimer, etc.
 
 #include <atomic> // for std::atomic
 #pragma warning(disable:4005) // Ignore redefined status values
@@ -718,11 +719,79 @@ XBSYSAPI EXPORTNUM(31) xbox::OBJECT_TYPE xbox::ExTimerObjectType =
 	xbox::ExAllocatePoolWithTag,
 	xbox::ExFreePool,
 	NULL,
-	NULL, // TODO : xbox::ExpDeleteTimer,
+	xbox::ExpDeleteTimer,
 	NULL,
 	(PVOID)offsetof(xbox::KTIMER, Header),
 	'emiT' // = first four characters of "Timer" in reverse
 };
+
+// ******************************************************************
+// * ExpDeleteTimer - Timer object delete procedure
+// ******************************************************************
+// Called by ObfDereferenceObject when the timer's reference count drops to 0
+// Source: ReactOS
+xbox::void_xt NTAPI xbox::ExpDeleteTimer(IN xbox::PVOID ObjectBody)
+{
+	PETIMER Timer = (PETIMER)ObjectBody;
+	KeCancelTimer(&Timer->KeTimer);
+	KeRemoveQueueDpc(&Timer->TimerDpc);
+	Timer->Lock.~mutex();
+}
+
+// ******************************************************************
+// * ExpTimerDpcRoutine - DPC that queues the timer APC
+// ******************************************************************
+// Source: ReactOS, simplified for Xbox
+xbox::void_xt NTAPI xbox::ExpTimerDpcRoutine
+(
+	IN xbox::PKDPC Dpc,
+	IN xbox::PVOID DeferredContext,
+	IN xbox::PVOID SystemArgument1,
+	IN xbox::PVOID SystemArgument2
+)
+{
+	PETIMER Timer = (PETIMER)DeferredContext;
+
+	// Lock the timer to check APC association
+	Timer->Lock.lock();
+
+	if (Timer->ApcAssociated) {
+		KeInsertQueueApc(&Timer->TimerApc, SystemArgument1, SystemArgument2, 0);
+	}
+
+	Timer->Lock.unlock();
+}
+
+// ******************************************************************
+// * ExpTimerApcKernelRoutine - Kernel-mode APC routine for timer APCs
+// ******************************************************************
+// Source: ReactOS, simplified for Xbox
+xbox::void_xt NTAPI xbox::ExpTimerApcKernelRoutine
+(
+	IN xbox::PKAPC Apc,
+	IN xbox::PKNORMAL_ROUTINE *NormalRoutine,
+	IN xbox::PVOID *NormalContext,
+	IN xbox::PVOID *SystemArgument1,
+	IN xbox::PVOID *SystemArgument2
+)
+{
+	PETIMER Timer = CONTAINING_RECORD(Apc, ETIMER, TimerApc);
+
+	Timer->Lock.lock();
+
+	if (Timer->ApcAssociated) {
+		// If non-periodic, disassociate the APC
+		if (!Timer->Period) {
+			Timer->ApcAssociated = FALSE;
+		}
+	}
+	else {
+		// Timer was cancelled - suppress the normal routine
+		*NormalRoutine = NULL;
+	}
+
+	Timer->Lock.unlock();
+}
 
 // ******************************************************************
 // * 0x0020 - ExfInterlockedInsertHeadList()
