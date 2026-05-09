@@ -501,6 +501,12 @@ XBSYSAPI EXPORTNUM(258) xbox::void_xt NTAPI xbox::PsTerminateSystemThread
 
 	KeEmptyQueueApc();
 
+	// Release all mutants owned by this thread (mark as abandoned)
+	while (!IsListEmpty(&eThread->Tcb.MutantListHead)) {
+		PKMUTANT Mutant = CONTAINING_RECORD(eThread->Tcb.MutantListHead.Flink, KMUTANT, MutantListEntry);
+		KeReleaseMutant(Mutant, /*Increment=*/1, /*Abandoned=*/TRUE, /*Wait=*/FALSE);
+	}
+
 	// Emulate our exit strategy for GetExitCodeThread
 	KeQuerySystemTime(&eThread->ExitTime);
 	eThread->ExitStatus = ExitStatus;
