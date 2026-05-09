@@ -1348,6 +1348,12 @@ static void CxbxrKrnlInitHacks()
 	// Launch the xbe
 	xbox::PsCreateSystemThread(&hThread, xbox::zeroptr, CxbxLaunchXbe, Entry, FALSE);
 
+	// NOTE: The DPC/ISR dispatch loop conceptually runs on the Xbox's single
+	// CPU alongside game threads. Pinning it to the Xbox core matches real HW
+	// but may cause contention with system_events (also Xbox core, ABOVE_NORMAL
+	// priority). Left on "Other" cores for now pending further investigation.
+	// g_AffinityPolicy->SetAffinityXbox();
+
 	xbox::KeRaiseIrqlToDpcLevel();
 	extern NV2ADevice* g_NV2A;
 
