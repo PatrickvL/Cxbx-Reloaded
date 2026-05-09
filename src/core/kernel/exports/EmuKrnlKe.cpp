@@ -1278,7 +1278,7 @@ XBSYSAPI EXPORTNUM(116) xbox::long_xt NTAPI xbox::KeInsertHeadQueue
 		PKTHREAD WaitThread = WaitBlock->Thread;
 		// Deliver entry directly to the waiting thread
 		WaitThread->WaitStatus = (ulong_xt)(ULONG_PTR)Entry;
-		Queue->CurrentCount++;
+		// Note: KiUnwaitThread -> KiUnlinkThread increments CurrentCount
 		KiUnwaitThread(WaitThread, (long_ptr_xt)(ULONG_PTR)Entry, 0);
 		KiWaitListUnlock();
 	} else {
@@ -1315,7 +1315,7 @@ XBSYSAPI EXPORTNUM(117) xbox::long_xt NTAPI xbox::KeInsertQueue
 		PKTHREAD WaitThread = WaitBlock->Thread;
 		// Deliver entry directly to the waiting thread
 		WaitThread->WaitStatus = (ulong_xt)(ULONG_PTR)Entry;
-		Queue->CurrentCount++;
+		// Note: KiUnwaitThread -> KiUnlinkThread increments CurrentCount
 		KiUnwaitThread(WaitThread, (long_ptr_xt)(ULONG_PTR)Entry, 0);
 		KiWaitListUnlock();
 	} else {
