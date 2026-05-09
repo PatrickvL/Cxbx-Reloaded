@@ -2498,6 +2498,15 @@ XBSYSAPI EXPORTNUM(226) xbox::ntstatus_xt NTAPI xbox::NtSetInformationFile
 			// Associate an IO completion port with this file object.
 			// This must be handled on the Xbox side (not forwarded to the host)
 			// because the Xbox and host handle namespaces are separate.
+			// Real NT rejects setting a completion port if one is already set.
+			if (FileObjectSource->CompletionContext != zeroptr) {
+				result = X_STATUS_INVALID_PARAMETER;
+				IoStatusBlock->Status = result;
+				IoStatusBlock->Information = 0;
+				ObfDereferenceObject(FileObjectSource);
+				RETURN(result);
+			}
+
 			PFILE_COMPLETION_INFORMATION CompletionInfo = reinterpret_cast<PFILE_COMPLETION_INFORMATION>(FileInformation);
 
 			PKQUEUE IoCompletion;
@@ -2511,12 +2520,6 @@ XBSYSAPI EXPORTNUM(226) xbox::ntstatus_xt NTAPI xbox::NtSetInformationFile
 				else {
 					ctx->Port = IoCompletion; // Store the referenced KQUEUE pointer (keeps the ref)
 					ctx->Key = CompletionInfo->Key;
-
-					// Free any previous completion context
-					if (FileObjectSource->CompletionContext != zeroptr) {
-						ObfDereferenceObject(FileObjectSource->CompletionContext->Port);
-						ExFreePool(FileObjectSource->CompletionContext);
-					}
 					FileObjectSource->CompletionContext = ctx;
 				}
 			}
