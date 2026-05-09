@@ -841,8 +841,10 @@ namespace xbox {
 
 		// TODO: Remove ObfDereferenceObject as it may already had been done elsewhere.
 
-		// Post IO completion packet if the file has an associated completion port
-		if (CompletionContext && X_NT_SUCCESS(result)) {
+		// Post IO completion packet if the file has an associated completion port.
+		// Post for all completed statuses (including errors like STATUS_END_OF_FILE),
+		// only skip if the operation is still pending.
+		if (CompletionContext && result != X_STATUS_PENDING) {
 			IoSetIoCompletion(
 				reinterpret_cast<PKQUEUE>(CompletionContext->Port),
 				CompletionContext->Key,
@@ -1330,8 +1332,9 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 	// TODO: Cache the last search result for quicker access with CreateFile (xbox does this internally!)
 	free(NtFileDirInfo);
 
-	// Post IO completion packet if the file has an associated completion port
-	if (CompletionContext && X_NT_SUCCESS(ret)) {
+	// Post IO completion packet if the file has an associated completion port.
+	// Post for all completed statuses (including errors), only skip STATUS_PENDING.
+	if (CompletionContext && ret != X_STATUS_PENDING) {
 		IoSetIoCompletion(
 			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
 			CompletionContext->Key,
@@ -2061,8 +2064,9 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// Post IO completion packet if the file has an associated completion port
-	if (CompletionContext && X_NT_SUCCESS(result)) {
+	// Post IO completion packet if the file has an associated completion port.
+	// Post for all completed statuses (including errors), only skip STATUS_PENDING.
+	if (CompletionContext && result != X_STATUS_PENDING) {
 		IoSetIoCompletion(
 			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
 			CompletionContext->Key,
@@ -3012,8 +3016,9 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// Post IO completion packet if the file has an associated completion port
-	if (CompletionContext && X_NT_SUCCESS(result)) {
+	// Post IO completion packet if the file has an associated completion port.
+	// Post for all completed statuses (including errors), only skip STATUS_PENDING.
+	if (CompletionContext && result != X_STATUS_PENDING) {
 		IoSetIoCompletion(
 			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
 			CompletionContext->Key,
