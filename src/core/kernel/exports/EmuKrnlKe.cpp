@@ -1870,6 +1870,12 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 		RETURN(Entry);
 	}
 
+	// Zero-timeout: return immediately if no entry is available
+	if (Timeout != zeroptr && !(Timeout->u.LowPart | Timeout->u.HighPart)) {
+		KiUnlockDispatcherDatabase(orig_irql);
+		RETURN((PLIST_ENTRY)X_STATUS_TIMEOUT);
+	}
+
 	// Blocking path — wait for an entry
 	KWAIT_BLOCK WaitBlock;
 	memset(&WaitBlock, 0, sizeof(WaitBlock));
@@ -1879,11 +1885,34 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 	WaitBlock.WaitType = WaitAny;
 
 	Thread->WaitBlockList = &WaitBlock;
+	Thread->WaitStatus = X_STATUS_SUCCESS;
 	Thread->Alertable = FALSE;
 	Thread->WaitMode = (char_xt)WaitMode;
 	Thread->WaitReason = 0;
 	Thread->WaitTime = KeTickCount;
 	Thread->State = Waiting;
+
+	// Set up a timer for non-infinite timeouts so KiTimerExpiration can wake us
+	if (Timeout != zeroptr) {
+		KiTimerLock();
+		PKTIMER Timer = &Thread->Timer;
+		PKWAIT_BLOCK WaitTimer = &Thread->TimerWaitBlock;
+		WaitBlock.NextWaitBlock = WaitTimer;
+		WaitTimer->NextWaitBlock = &WaitBlock;
+		Timer->Header.WaitListHead.Flink = &WaitTimer->WaitListEntry;
+		Timer->Header.WaitListHead.Blink = &WaitTimer->WaitListEntry;
+		if (KiInsertTreeTimer(Timer, *Timeout) == FALSE) {
+			// Timer already expired
+			KiTimerUnlock();
+			Thread->WaitBlockList = zeroptr;
+			Thread->State = Running;
+			KiUnlockDispatcherDatabase(orig_irql);
+			RETURN((PLIST_ENTRY)X_STATUS_TIMEOUT);
+		}
+		KiTimerUnlock();
+	} else {
+		WaitBlock.NextWaitBlock = &WaitBlock; // circular, no timer
+	}
 
 	// Insert wait block into Queue's WaitListHead for direct-wake by KeInsertQueue
 	KiWaitListLock();
@@ -1893,27 +1922,44 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 	KiUnlockDispatcherDatabase(orig_irql);
 
 	// Use WaitApc with a missed-wakeup poll of EntryListHead
-	ntstatus_xt status = WaitApc<false>([Queue, &WaitBlock](PKTHREAD WaitThread) -> std::optional<ntstatus_xt> {
+	ntstatus_xt status = WaitApc<false>([Queue, &WaitBlock, Timeout](PKTHREAD WaitThread) -> std::optional<ntstatus_xt> {
 		if (WaitThread->State == Ready) {
 			return std::make_optional<ntstatus_xt>(WaitThread->WaitStatus);
 		}
 		// Missed-wakeup check: an entry may have been enqueued but no direct delivery occurred
 		if (!IsListEmpty(&Queue->EntryListHead) && (Queue->CurrentCount < Queue->MaximumCount)) {
+			// Lock ordering must match KiTimerExpiration: KiTimerLock → KiWaitListLock
+			if (Timeout != zeroptr) {
+				KiTimerLock();
+			}
 			KiWaitListLock();
 			if (!IsListEmpty(&Queue->EntryListHead) && (Queue->CurrentCount < Queue->MaximumCount)) {
 				PLIST_ENTRY Entry = RemoveHeadList(&Queue->EntryListHead);
 				Queue->Header.SignalState--;
 				Queue->CurrentCount++;
-				// Remove our wait block
+				// Remove our wait block from the Queue's wait list
 				if (WaitBlock.WaitListEntry.Flink && WaitBlock.WaitListEntry.Flink->Blink == &WaitBlock.WaitListEntry) {
 					RemoveEntryList(&WaitBlock.WaitListEntry);
 				}
+				// Cancel the timer if one was set up (non-infinite timeout)
+				if (Timeout != zeroptr) {
+					PKTIMER Timer = &WaitThread->Timer;
+					if (Timer->Header.Inserted) {
+						KxRemoveTreeTimer(Timer);
+					}
+				}
 				KiWaitListUnlock();
+				if (Timeout != zeroptr) {
+					KiTimerUnlock();
+				}
 				WaitThread->WaitStatus = (ulong_xt)(ULONG_PTR)Entry;
 				WaitThread->State = Ready;
 				return std::make_optional<ntstatus_xt>((ntstatus_xt)(ULONG_PTR)Entry);
 			}
 			KiWaitListUnlock();
+			if (Timeout != zeroptr) {
+				KiTimerUnlock();
+			}
 		}
 		return std::nullopt;
 	}, Timeout, FALSE, (char_xt)WaitMode, Thread);
