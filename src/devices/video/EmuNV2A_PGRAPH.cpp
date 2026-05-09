@@ -381,7 +381,6 @@ void pgraph_handle_method(NV2AState *d,
 							unsigned int method,
 							uint32_t parameter)
 {
-	unsigned int i;
 	unsigned int slot;
 
     PGRAPHState *pg = &d->pgraph;

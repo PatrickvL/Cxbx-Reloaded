@@ -26,6 +26,7 @@
 #ifndef BACKEND_D3D11_INTERNAL_H
 #define BACKEND_D3D11_INTERNAL_H
 
+#undef LOG_PREFIX
 #define LOG_PREFIX CXBXR_MODULE::D3D8
 
 #include "Backend_D3D11.h"

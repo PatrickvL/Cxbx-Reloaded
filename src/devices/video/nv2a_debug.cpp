@@ -18,4 +18,4 @@
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "nv2a_debug.h"\n\n// GL debug functions removed – stubs are in nv2a_debug.h
+#include "nv2a_debug.h" // GL debug functions removed – stubs are in nv2a_debug.h
