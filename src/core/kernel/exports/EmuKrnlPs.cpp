@@ -365,7 +365,8 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		// The ob handle of the ethread obj is the thread id we return to the title
 		result = ObInsertObject(eThread, zeroptr, 0, &eThread->UniqueThread);
 		if (!X_NT_SUCCESS(result)) {
-			ObfDereferenceObject(eThread);
+			// ObInsertObject always calls ObfDereferenceObject on the object
+			// (even on failure), so do NOT dereference again here.
 			RETURN(result);
 		}
 
@@ -376,7 +377,7 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		// Create another handle to pass back to the title in the ThreadHandle argument
 		result = ObOpenObjectByPointer(eThread, &PsThreadObjectType, ThreadHandle);
 		if (!X_NT_SUCCESS(result)) {
-			ObfDereferenceObject(eThread);
+			ObpClose(eThread->UniqueThread);
 			RETURN(result);
 		}
 
@@ -393,8 +394,8 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		HANDLE handle = reinterpret_cast<HANDLE>(_beginthreadex(NULL, hKernelStackSize, PCSTProxy, iPCSTProxyParam, CREATE_SUSPENDED, &ThreadId));
 		if (handle == zeroptr) {
 			delete iPCSTProxyParam;
+			ObpClose(*ThreadHandle);
 			ObpClose(eThread->UniqueThread);
-			ObfDereferenceObject(eThread);
 			RETURN(X_STATUS_INSUFFICIENT_RESOURCES);
 		}
 
