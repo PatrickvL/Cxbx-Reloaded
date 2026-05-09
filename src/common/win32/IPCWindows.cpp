@@ -71,6 +71,14 @@ void ipc_send_gui_update(IPC_UPDATE_GUI command, const unsigned int value)
 			cmdParam = ID_GUI_STATUS_OVERLAY;
 			break;
 
+		case IPC_UPDATE_GUI::WINDOW_HANDLE:
+			cmdParam = ID_GUI_STATUS_EMU_HWND;
+			break;
+
+		case IPC_UPDATE_GUI::WINDOW_DESTROYED:
+			cmdParam = ID_GUI_STATUS_EMU_HWND_DESTROY;
+			break;
+
 		default:
 			cmdParam = 0;
 			break;

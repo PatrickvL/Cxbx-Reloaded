@@ -39,6 +39,8 @@ typedef enum class _IPC_UPDATE_GUI {
 	, LOG_ENABLED
 	, KRNL_IS_READY
 	, OVERLAY
+	, WINDOW_HANDLE
+	, WINDOW_DESTROYED
 } IPC_UPDATE_GUI;
 
 void ipc_send_gui_update(IPC_UPDATE_GUI command, const unsigned int value);

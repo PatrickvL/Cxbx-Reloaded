@@ -400,6 +400,20 @@ LRESULT CALLBACK WndMain::WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 						case ID_GUI_STATUS_OVERLAY:
 							g_EmuShared->GetOverlaySettings(&g_Settings->m_overlay);
 							break;
+
+						case ID_GUI_STATUS_EMU_HWND:
+							// The emu process sends its render window HWND (WS_POPUP owned window).
+							m_hwndChild = (HWND)(uintptr_t)lParam;
+							UpdateCaption();
+							RefreshMenus();
+							break;
+
+						case ID_GUI_STATUS_EMU_HWND_DESTROY:
+							if (!m_iIsEmulating) {
+								m_hwndChild = NULL;
+								StopEmulation();
+							}
+							break;
 					}
 				}
 				break;

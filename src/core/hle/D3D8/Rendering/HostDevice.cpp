@@ -28,6 +28,7 @@
 static HBRUSH g_hBgBrush = NULL; // Background Brush
 static bool g_bIsFauxFullscreen = false;
 static int g_iWireframe = 0; // wireframe toggle
+static HWINEVENTHOOK g_parentEventHook = NULL; // WinEvent hook for tracking parent window moves
 
 void CxbxSaveWindowStateForReboot()
 {
@@ -43,6 +44,34 @@ void CxbxSaveWindowStateForReboot()
 // Forward declarations (defined later in this file)
 LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void ToggleFauxFullscreen(HWND hWnd);
+
+// Reposition the owned popup to cover the GUI parent's client area exactly.
+static void RepositionToParentClientArea()
+{
+	if (!CxbxKrnl_hEmuParent || !g_hEmuWindow || g_bIsFauxFullscreen)
+		return;
+
+	RECT clientRect;
+	if (GetClientRect(CxbxKrnl_hEmuParent, &clientRect)) {
+		MapWindowPoints(CxbxKrnl_hEmuParent, NULL, (LPPOINT)&clientRect, 2);
+		SetWindowPos(g_hEmuWindow, NULL,
+			clientRect.left, clientRect.top,
+			clientRect.right - clientRect.left,
+			clientRect.bottom - clientRect.top,
+			SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+}
+
+// WinEvent hook callback: fires when the GUI parent window moves or resizes.
+// WINEVENT_OUTOFCONTEXT means the callback runs on the emu's message pump thread.
+static void CALLBACK ParentLocationChanged(
+	HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
+	LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime)
+{
+	if (hwnd == CxbxKrnl_hEmuParent && idObject == OBJID_WINDOW) {
+		RepositionToParentClientArea();
+	}
+}
 
 // Forward declarations (defined in XbPushBuffer.cpp)
 extern void D3D11_init_pgraph_plugins();
@@ -125,7 +154,18 @@ DWORD WINAPI EmuRenderWindow(LPVOID lpParam)
 				dwStyle = WS_OVERLAPPEDWINDOW;
 			}
 			else {
-				dwStyle = WS_CHILD;
+				// Use WS_POPUP (owned by parent) instead of WS_CHILD.
+				// This gives the emu process its own top-level window so it can be
+				// the foreground process (getting OS scheduling priority, proper timer
+				// resolution, and unthrottled DXGI Present without cross-process
+				// DWM composition synchronization).
+				dwStyle = WS_POPUP;
+				// Position the popup over the GUI's client area (screen coordinates).
+				RECT clientRect;
+				if (GetClientRect(hwndParent, &clientRect)) {
+					MapWindowPoints(hwndParent, NULL, (LPPOINT)&clientRect, 2);
+					windowRect = clientRect;
+				}
 			}
 		}
 
@@ -142,7 +182,7 @@ DWORD WINAPI EmuRenderWindow(LPVOID lpParam)
    	   	);
    	}
 
-   	ShowWindow(g_hEmuWindow, ((CxbxKrnl_hEmuParent == 0) || g_XBVideo.bFullScreen) ? SW_SHOWDEFAULT : SW_SHOWMAXIMIZED);
+   	ShowWindow(g_hEmuWindow, ((CxbxKrnl_hEmuParent == 0) || g_XBVideo.bFullScreen) ? SW_SHOWDEFAULT : SW_SHOW);
    	UpdateWindow(g_hEmuWindow);
 
 	// Restore window state from a previous reboot (secondary XBE load)
@@ -168,7 +208,23 @@ DWORD WINAPI EmuRenderWindow(LPVOID lpParam)
 
    	if(!g_XBVideo.bFullScreen && (CxbxKrnl_hEmuParent != NULL))
    	{
-   	   	SetFocus(CxbxKrnl_hEmuParent);
+   	   	// Notify the GUI of our window handle (owned popup doesn't trigger
+   	   	// automatic WM_PARENTNOTIFY/WM_CREATE like WS_CHILD did).
+   	   	ipc_send_gui_update(IPC_UPDATE_GUI::WINDOW_HANDLE,
+   	   	   	static_cast<unsigned int>(reinterpret_cast<uintptr_t>(g_hEmuWindow)));
+
+   	   	// Install a WinEvent hook to track when the GUI parent window moves or
+   	   	// resizes, so we can reposition the popup to stay aligned.
+   	   	DWORD parentThreadId = GetWindowThreadProcessId(CxbxKrnl_hEmuParent, nullptr);
+   	   	g_parentEventHook = SetWinEventHook(
+   	   	   	EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE,
+   	   	   	NULL, ParentLocationChanged,
+   	   	   	0, parentThreadId,
+   	   	   	WINEVENT_OUTOFCONTEXT);
+
+   	   	// Claim foreground status for the emulation process.
+   	   	// The GUI must have called AllowSetForegroundWindow for this to succeed.
+   	   	SetForegroundWindow(g_hEmuWindow);
    	}
 
    	EmuLog(LOG_LEVEL::DEBUG, "Message-Pump thread is running.");
@@ -215,12 +271,9 @@ void ToggleFauxFullscreen(HWND hWnd)
    	   	GetWindowRect(hWnd, &lRect);
    	   	gwl_style = GetWindowLong(hWnd, GWL_STYLE);
    	   	SetWindowLong(hWnd, GWL_STYLE, WS_POPUP);
-   	   	// NOTE: Window style must be set before call SetParent.
    	   	if (CxbxKrnl_hEmuParent) {
-   	   	   	LONG parent_style = gwl_style & ~WS_CHILD;
-   	   	   	parent_style |= WS_POPUP;
-   	   	   	SetWindowLong(hWnd, GWL_STYLE, gwl_style);
-   	   	   	SetParent(hWnd, NULL);
+   	   	   	// Window is already WS_POPUP (owned), just go topmost and maximize.
+   	   	   	// No SetParent(NULL) needed since we're not a child window.
    	   	}
    	   	SetWindowPos(hWnd, HWND_TOPMOST, lRect.left, lRect.top, 0, 0, SWP_NOSIZE);
    	   	ShowWindow(hWnd, SW_MAXIMIZE);
@@ -228,13 +281,10 @@ void ToggleFauxFullscreen(HWND hWnd)
    	else {
    	   	SetWindowLong(hWnd, GWL_STYLE, gwl_style);
    	   	if(CxbxKrnl_hEmuParent) {
-   	   	   	// NOTE: This call makes sure that emulation rendering will reappear back into the main window after leaving "faux fullscreen" on non-primary displays.
-   	   	   	SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_HIDEWINDOW);
-
-   	   	   	// NOTE: Window style must be set before call SetParent.
-   	   	   	SetParent(hWnd, CxbxKrnl_hEmuParent);
-   	   	   	ShowWindow(hWnd, SW_MAXIMIZE);
-   	   	   	SetFocus(CxbxKrnl_hEmuParent);
+   	   	   	// Restore popup position over the GUI's client area.
+   	   	   	SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+   	   	   	RepositionToParentClientArea();
+   	   	   	ShowWindow(hWnd, SW_SHOW);
    	   	}
    	   	else {
    	   	   	ShowWindow(hWnd, SW_RESTORE);
@@ -256,6 +306,18 @@ LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
    	{
    	   	case WM_DESTROY:
    	   	{
+   	   	   	// Notify GUI that our window is gone (owned popup doesn't trigger
+   	   	   	// automatic WM_PARENTNOTIFY/WM_DESTROY like WS_CHILD did).
+   	   	   	if (CxbxKrnl_hEmuParent) {
+   	   	   	   	ipc_send_gui_update(IPC_UPDATE_GUI::WINDOW_DESTROYED, 0);
+   	   	   	}
+
+   	   	   	// Unhook parent position tracking
+   	   	   	if (g_parentEventHook) {
+   	   	   	   	UnhookWinEvent(g_parentEventHook);
+   	   	   	   	g_parentEventHook = NULL;
+   	   	   	}
+
    	   	   	CxbxReleaseCursor();
    	   	   	DeleteObject(g_hBgBrush);
    	   	   	PostQuitMessage(0);
@@ -501,10 +563,8 @@ LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
    	   	case WM_SETFOCUS:
    	   	{
-   	   	   	if(CxbxKrnl_hEmuParent && !g_XBVideo.bFullScreen && !g_bIsFauxFullscreen)
-   	   	   	{
-   	   	   	   	SetFocus(CxbxKrnl_hEmuParent);
-   	   	   	}
+   	   	   	// With WS_POPUP, let the emu window keep focus so the emulation
+   	   	   	// process stays foreground (better scheduling + timer resolution).
    	   	}
    	   	break;
 

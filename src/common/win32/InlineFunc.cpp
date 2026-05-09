@@ -76,6 +76,11 @@ std::optional<std::string> CxbxrExec(bool useDebugger, void** hProcess, bool req
 	if (CreateProcess(nullptr, const_cast<LPSTR>(szProcArgsBuffer.c_str()), nullptr, nullptr, false, DETACHED_PROCESS, nullptr, nullptr, &startupInfo, &processInfo) == 0) {
 		return std::make_optional<std::string>("Failed to create the new emulation process. CreateProcess failed because: " + WinError2Str());
 	}
+
+	// Allow the child process to call SetForegroundWindow so it can claim
+	// foreground status after creating its render window (WS_POPUP owned by us).
+	AllowSetForegroundWindow(processInfo.dwProcessId);
+
 	CloseHandle(processInfo.hThread);
 
 	if (requestHandleProcess) {

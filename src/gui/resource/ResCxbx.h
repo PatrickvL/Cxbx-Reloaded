@@ -206,6 +206,8 @@
 #define IDC_AC_MUTE_WHEN_UNFOCUS        1100
 #define IDC_IGNORE_KBMO_UNFOCUS         1101
 #define ID_GUI_STATUS_OVERLAY           1102
+#define ID_GUI_STATUS_EMU_HWND          1103
+#define ID_GUI_STATUS_EMU_HWND_DESTROY  1104
 #define IDC_XBOX_PORT_0                 1158
 #define IDC_XBOX_PORT_1                 1166
 #define IDC_XBOX_PORT_2                 1174
