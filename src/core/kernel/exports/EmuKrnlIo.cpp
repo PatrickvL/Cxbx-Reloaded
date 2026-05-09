@@ -68,6 +68,9 @@ static xbox::void_xt IopDeleteDevice
 			ObfDereferenceObject(DeviceObject);
 		}
 	}
+	else {
+		KfLowerIrql(OldIrql);
+	}
 }
 
 // ******************************************************************
@@ -258,6 +261,21 @@ XBSYSAPI EXPORTNUM(63) xbox::ntstatus_xt NTAPI xbox::IoCheckShareAccess
 	RETURN(X_STATUS_SUCCESS);
 }
 
+// Drain any remaining completion packets from the KQUEUE when the IoCompletion object is destroyed
+static xbox::void_xt NTAPI IopDeleteIoCompletion(IN xbox::PVOID ObjectBody)
+{
+	xbox::PKQUEUE Queue = reinterpret_cast<xbox::PKQUEUE>(ObjectBody);
+
+	// Remove and free all queued completion packets
+	while (Queue->EntryListHead.Flink != &Queue->EntryListHead) {
+		xbox::LIST_ENTRY *Entry = Queue->EntryListHead.Flink;
+		Entry->Blink->Flink = Entry->Flink;
+		Entry->Flink->Blink = Entry->Blink;
+		xbox::PCXBX_IO_COMPLETION_PACKET Packet = CONTAINING_RECORD(Entry, xbox::CXBX_IO_COMPLETION_PACKET, ListEntry);
+		xbox::ExFreePool(Packet);
+	}
+}
+
 // ******************************************************************
 // * 0x0040 - IoCompletionObjectType
 // ******************************************************************
@@ -266,7 +284,7 @@ XBSYSAPI EXPORTNUM(64) xbox::OBJECT_TYPE xbox::IoCompletionObjectType =
 	xbox::ExAllocatePoolWithTag,
 	xbox::ExFreePool,
 	NULL,
-	NULL, // TODO : xbox::IopDeleteIoCompletion,
+	IopDeleteIoCompletion,
 	NULL,
 	&xbox::ObpDefaultObject,
 	'pmoC' // = first four characters of "Completion" in reverse
@@ -973,7 +991,10 @@ xbox::ntstatus_xt NTAPI xbox::IopParseDevice(
 	}
 	if (!RootDirectory) {
 		// Then it must be from xbox's end which we don't have any support.
-		// TODO: How to free object resource?
+		if (!UseDummyFile) {
+			ObfDereferenceObject(FileObject);
+		}
+		reinterpret_cast<PDEVICE_OBJECT>(ParseObject)->ReferenceCount--;
 		EmuLog(LOG_LEVEL::ERROR2, "IopParseDevice attempt call GetObjectNativeHandle could not find any.");
 		return X_STATUS_OBJECT_NAME_NOT_FOUND;
 	}
@@ -1276,6 +1297,8 @@ xbox::ntstatus_xt IopQueryDeviceInformation
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
+	ObfDereferenceObject(FileObject);
+
 	return result;
 
 }
@@ -1328,7 +1351,7 @@ XBSYSAPI EXPORTNUM(76) xbox::ntstatus_xt NTAPI xbox::IoQueryVolumeInformation
 	// DxbxPC2XB_FS_INFORMATION
 	LOG_UNIMPLEMENTED();
 
-	RETURN(S_OK);
+	RETURN(X_STATUS_NOT_IMPLEMENTED);
 }
 
 // ******************************************************************

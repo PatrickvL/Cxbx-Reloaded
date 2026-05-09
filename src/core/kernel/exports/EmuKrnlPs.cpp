@@ -525,14 +525,18 @@ XBSYSAPI EXPORTNUM(258) xbox::void_xt NTAPI xbox::PsTerminateSystemThread
 		eThread->UniqueThread = xbox::zeroptr;
 	}
 
-	// Remove thread from the process
-	RemoveEntryList(&eThread->Tcb.ThreadListEntry);
-	eThread->Tcb.State = Terminated;
-	KiUniqueProcess.StackCount--;
+	// Remove thread from the process (synchronized with KeInitializeThread's insertion)
+	{
+		KIRQL OldIrql = KeRaiseIrqlToDpcLevel();
+		RemoveEntryList(&eThread->Tcb.ThreadListEntry);
+		eThread->Tcb.State = Terminated;
+		KiUniqueProcess.StackCount--;
+		InsertTailList(&PspReaperListHead, &((PETHREAD)eThread)->ReaperLink);
+		KfLowerIrql(OldIrql);
+	}
 
 	// PspReaperRoutine technically free'd the memory allocation from MmCreateKernelStack function.
 	// Therefore is run from another thread.
-	InsertTailList(&PspReaperListHead, &((PETHREAD)eThread)->ReaperLink);
 	KeInsertQueueDpc(&PsReaperDpc, NULL, NULL);
 
 	EmuKeFreePcr();
