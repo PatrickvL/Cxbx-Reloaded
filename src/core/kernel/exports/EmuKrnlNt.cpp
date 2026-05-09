@@ -2067,9 +2067,10 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		RETURN(X_STATUS_INVALID_PARAMETER);
 	}
 
+	CxbxIoDispatcherContext* cxbxContext = nullptr;
 	if (ApcRoutine != nullptr) {
 		// Pack the original parameters to a wrapped context for a custom APC routine
-		CxbxIoDispatcherContext* cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
+		cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
 		ApcRoutine = CxbxIoApcDispatcher;
 		ApcContext = cxbxContext;
 	}
@@ -2094,6 +2095,12 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	}
 	else {
 		result = X_STATUS_INVALID_PARAMETER;
+	}
+
+	// If the I/O failed synchronously, the APC will never fire — free the context
+	if (cxbxContext && !X_NT_SUCCESS(result)) {
+		delete cxbxContext;
+		ApcContext = nullptr;
 	}
 
 	// Post IO completion packet if the file has an associated completion port.
@@ -3023,9 +3030,10 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		RETURN(X_STATUS_INVALID_PARAMETER);
 	}
 
+	CxbxIoDispatcherContext* cxbxContext = nullptr;
 	if (ApcRoutine != nullptr) {
 		// Pack the original parameters to a wrapped context for a custom APC routine
-		CxbxIoDispatcherContext* cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
+		cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
 		ApcRoutine = CxbxIoApcDispatcher;
 		ApcContext = cxbxContext;
 	}
@@ -3049,6 +3057,12 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	}
 	else {
 		result = X_STATUS_INVALID_PARAMETER;
+	}
+
+	// If the I/O failed synchronously, the APC will never fire — free the context
+	if (cxbxContext && !X_NT_SUCCESS(result)) {
+		delete cxbxContext;
+		ApcContext = nullptr;
 	}
 
 	// Post IO completion packet if the file has an associated completion port.
