@@ -1487,6 +1487,26 @@ XBSYSAPI EXPORTNUM(211) xbox::ntstatus_xt NTAPI xbox::NtQueryInformationFile
 		RETURN(result);
 	}
 
+	// FileCompletionInformation must be handled on the Xbox side since the
+	// completion context is stored on our FILE_OBJECT, not the host's.
+	if (FileInformationClass == FileCompletionInformation) {
+		if (FileObject->CompletionContext != zeroptr) {
+			PFILE_COMPLETION_INFORMATION Info = reinterpret_cast<PFILE_COMPLETION_INFORMATION>(FileInformation);
+			// Return the handle-equivalent (the KQUEUE pointer) and the key.
+			// Games that query this typically just check whether a port is set.
+			Info->Port = FileObject->CompletionContext->Port;
+			Info->Key = FileObject->CompletionContext->Key;
+			IoStatusBlock->Status = X_STATUS_SUCCESS;
+			IoStatusBlock->Information = sizeof(FILE_COMPLETION_INFORMATION);
+			result = X_STATUS_SUCCESS;
+		}
+		else {
+			result = X_STATUS_INVALID_PARAMETER;
+		}
+		ObfDereferenceObject(FileObject);
+		RETURN(result);
+	}
+
 	// TODO: Need to implement IRP here for query callback.
 
 	// Start with sizeof(corresponding struct)
