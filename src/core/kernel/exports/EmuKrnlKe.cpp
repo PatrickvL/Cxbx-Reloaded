@@ -2794,14 +2794,21 @@ XBSYSAPI EXPORTNUM(158) xbox::ntstatus_xt NTAPI xbox::KeWaitForMultipleObjects
 				KiWaitListLock();
 				for (ulong_xt i = 0; i < Count; i++) {
 					PKMUTANT ObjectMutant = (PKMUTANT)Object[i];
-					if (ObjectMutant->Header.SignalState > 0) {
+					bool satisfiable;
+					if (ObjectMutant->Header.Type == MutantObject) {
+						satisfiable = (ObjectMutant->Header.SignalState > 0) || (Thread == ObjectMutant->OwnerThread);
+					} else {
+						satisfiable = (ObjectMutant->Header.SignalState > 0);
+					}
+					if (satisfiable) {
 						if (WaitType == WaitAny) {
-							KiWaitSatisfyOther(ObjectMutant);
+							Thread->WaitStatus = X_STATUS_SUCCESS;
+							KiWaitSatisfyAny(ObjectMutant, Thread);
 							KiCleanupWaitBlocks(Thread);
 							KiWaitListUnlock();
-							Thread->WaitStatus = (ntstatus_xt)i;
+							Thread->WaitStatus = (ntstatus_xt)(i | Thread->WaitStatus);
 							Thread->State = Ready;
-							return std::make_optional<ntstatus_xt>((ntstatus_xt)i);
+							return std::make_optional<ntstatus_xt>(Thread->WaitStatus);
 						}
 					} else if (WaitType == WaitAll) {
 						KiWaitListUnlock();
@@ -2810,14 +2817,14 @@ XBSYSAPI EXPORTNUM(158) xbox::ntstatus_xt NTAPI xbox::KeWaitForMultipleObjects
 				}
 				if (WaitType == WaitAll) {
 					// All signaled — satisfy all
+					Thread->WaitStatus = X_STATUS_SUCCESS;
 					for (ulong_xt i = 0; i < Count; i++) {
-						KiWaitSatisfyOther((PKMUTANT)Object[i]);
+						KiWaitSatisfyAny((PKMUTANT)Object[i], Thread);
 					}
 					KiCleanupWaitBlocks(Thread);
 					KiWaitListUnlock();
-					Thread->WaitStatus = X_STATUS_SUCCESS;
 					Thread->State = Ready;
-					return std::make_optional<ntstatus_xt>(X_STATUS_SUCCESS);
+					return std::make_optional<ntstatus_xt>(Thread->WaitStatus);
 				}
 				KiWaitListUnlock();
 				return std::nullopt;
@@ -3014,15 +3021,27 @@ XBSYSAPI EXPORTNUM(159) xbox::ntstatus_xt NTAPI xbox::KeWaitForSingleObject
 				// and returns without waking anyone.  Without this re-check the
 				// thread would spin in WaitApc forever (missed-wakeup bug).
 				PKMUTANT ObjectMutant = (PKMUTANT)Object;
-				if (ObjectMutant->Header.SignalState > 0) {
+				bool satisfiable;
+				if (ObjectMutant->Header.Type == MutantObject) {
+					satisfiable = (ObjectMutant->Header.SignalState > 0) || (Thread == ObjectMutant->OwnerThread);
+				} else {
+					satisfiable = (ObjectMutant->Header.SignalState > 0);
+				}
+				if (satisfiable) {
 					KiWaitListLock();
-					if (ObjectMutant->Header.SignalState > 0) {
-						KiWaitSatisfyOther(ObjectMutant);
+					// Double-check under lock
+					if (ObjectMutant->Header.Type == MutantObject) {
+						satisfiable = (ObjectMutant->Header.SignalState > 0) || (Thread == ObjectMutant->OwnerThread);
+					} else {
+						satisfiable = (ObjectMutant->Header.SignalState > 0);
+					}
+					if (satisfiable) {
+						Thread->WaitStatus = X_STATUS_SUCCESS;
+						KiWaitSatisfyAny(ObjectMutant, Thread);
 						KiCleanupWaitBlocks(Thread);
 						KiWaitListUnlock();
-						Thread->WaitStatus = X_STATUS_SUCCESS;
 						Thread->State = Ready;
-						return std::make_optional<ntstatus_xt>(X_STATUS_SUCCESS);
+						return std::make_optional<ntstatus_xt>(Thread->WaitStatus);
 					}
 					KiWaitListUnlock();
 				}
