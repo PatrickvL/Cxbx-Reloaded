@@ -2000,6 +2000,13 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	}
 #endif
 
+	// Can't use an I/O completion port and an APC at the same time
+	PIO_COMPLETION_CONTEXT CompletionContext = FileObject->CompletionContext;
+	if (CompletionContext && ApcRoutine) {
+		ObfDereferenceObject(FileObject);
+		RETURN(X_STATUS_INVALID_PARAMETER);
+	}
+
 	if (ApcRoutine != nullptr) {
 		// Pack the original parameters to a wrapped context for a custom APC routine
 		CxbxIoDispatcherContext* cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
@@ -2027,6 +2034,16 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	}
 	else {
 		result = X_STATUS_INVALID_PARAMETER;
+	}
+
+	// Post IO completion packet if the file has an associated completion port
+	if (CompletionContext && X_NT_SUCCESS(result)) {
+		IoSetIoCompletion(
+			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
+			CompletionContext->Key,
+			ApcContext,
+			IoStatusBlock->Status,
+			static_cast<ulong_xt>(IoStatusBlock->Information));
 	}
 
 	ObfDereferenceObject(FileObject);
@@ -2427,6 +2444,38 @@ XBSYSAPI EXPORTNUM(226) xbox::ntstatus_xt NTAPI xbox::NtSetInformationFile
 			//   FilePositionInformation
 			ntFileInfo = FileInformation;
 			break;
+		}
+		case FileCompletionInformation: {
+			// Associate an IO completion port with this file object.
+			// This must be handled on the Xbox side (not forwarded to the host)
+			// because the Xbox and host handle namespaces are separate.
+			PFILE_COMPLETION_INFORMATION CompletionInfo = reinterpret_cast<PFILE_COMPLETION_INFORMATION>(FileInformation);
+
+			PKQUEUE IoCompletion;
+			result = ObReferenceObjectByHandle(CompletionInfo->Port, &IoCompletionObjectType, reinterpret_cast<PVOID*>(&IoCompletion));
+			if (X_NT_SUCCESS(result)) {
+				PIO_COMPLETION_CONTEXT ctx = reinterpret_cast<PIO_COMPLETION_CONTEXT>(ExAllocatePool(sizeof(IO_COMPLETION_CONTEXT)));
+				if (ctx == nullptr) {
+					ObfDereferenceObject(IoCompletion);
+					result = X_STATUS_INSUFFICIENT_RESOURCES;
+				}
+				else {
+					ctx->Port = IoCompletion; // Store the referenced KQUEUE pointer (keeps the ref)
+					ctx->Key = CompletionInfo->Key;
+
+					// Free any previous completion context
+					if (FileObjectSource->CompletionContext != zeroptr) {
+						ObfDereferenceObject(FileObjectSource->CompletionContext->Port);
+						ExFreePool(FileObjectSource->CompletionContext);
+					}
+					FileObjectSource->CompletionContext = ctx;
+				}
+			}
+
+			IoStatusBlock->Status = result;
+			IoStatusBlock->Information = 0;
+			ObfDereferenceObject(FileObjectSource);
+			RETURN(result);
 		}
 	}
 
@@ -2903,6 +2952,13 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	}
 #endif
 
+	// Can't use an I/O completion port and an APC at the same time
+	PIO_COMPLETION_CONTEXT CompletionContext = FileObject->CompletionContext;
+	if (CompletionContext && ApcRoutine) {
+		ObfDereferenceObject(FileObject);
+		RETURN(X_STATUS_INVALID_PARAMETER);
+	}
+
 	if (ApcRoutine != nullptr) {
 		// Pack the original parameters to a wrapped context for a custom APC routine
 		CxbxIoDispatcherContext* cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
@@ -2929,6 +2985,16 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	}
 	else {
 		result = X_STATUS_INVALID_PARAMETER;
+	}
+
+	// Post IO completion packet if the file has an associated completion port
+	if (CompletionContext && X_NT_SUCCESS(result)) {
+		IoSetIoCompletion(
+			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
+			CompletionContext->Key,
+			ApcContext,
+			IoStatusBlock->Status,
+			static_cast<ulong_xt>(IoStatusBlock->Information));
 	}
 
 	ObfDereferenceObject(FileObject);
