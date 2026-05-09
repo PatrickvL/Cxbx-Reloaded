@@ -330,8 +330,7 @@ XBSYSAPI EXPORTNUM(20) xbox::void_xt FASTCALL xbox::ExInterlockedAddLargeStatist
 		LOG_FUNC_ARG(Increment)
 		LOG_FUNC_END;
 
-	std::atomic<LONGLONG> Target(Addend->QuadPart);
-	Target.fetch_add(Increment);
+	reinterpret_cast<std::atomic<LONGLONG>*>(&Addend->QuadPart)->fetch_add(Increment, std::memory_order_relaxed);
 }
 
 // ******************************************************************
@@ -351,10 +350,8 @@ XBSYSAPI EXPORTNUM(21) xbox::longlong_xt FASTCALL xbox::ExInterlockedCompareExch
 		LOG_FUNC_ARG(Comparand)
 		LOG_FUNC_END;
 
-	std::atomic<LONGLONG> Target(*Destination);
-
 	LONGLONG Result = *Comparand;
-	Target.compare_exchange_strong(Result, *Exchange);
+	reinterpret_cast<std::atomic<LONGLONG>*>(Destination)->compare_exchange_strong(Result, *Exchange);
 
 	RETURN(Result);
 }
