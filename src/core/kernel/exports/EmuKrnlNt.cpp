@@ -928,6 +928,7 @@ XBSYSAPI EXPORTNUM(197) xbox::ntstatus_xt NTAPI xbox::NtDuplicateObject
 		result = ObOpenObjectByPointer(Object, OBJECT_TO_OBJECT_HEADER(Object)->Type, TargetHandle);
 		if (!X_NT_SUCCESS(result)) {
 			*TargetHandle = NULL;
+			ObfDereferenceObject(Object);
 			RETURN(result);
 		}
 
@@ -954,6 +955,8 @@ XBSYSAPI EXPORTNUM(197) xbox::ntstatus_xt NTAPI xbox::NtDuplicateObject
 		if (!X_NT_SUCCESS(result)) {
 			CxbxrAbort("NtDll::NtDuplicateObject failed to duplicate the handle 0x%.8X!", SourceHandle);
 		}
+
+		*TargetHandle = dupHandle;
 	}
 
 	RETURN(result);
@@ -1514,6 +1517,7 @@ XBSYSAPI EXPORTNUM(211) xbox::ntstatus_xt NTAPI xbox::NtQueryInformationFile
 
 	const auto& nHandle = GetObjectNativeHandle(FileObject);
 	if (!nHandle) {
+		ObfDereferenceObject(FileObject);
 		RETURN(X_STATUS_INVALID_PARAMETER);
 	}
 
@@ -1976,6 +1980,8 @@ XBSYSAPI EXPORTNUM(218) xbox::ntstatus_xt NTAPI xbox::NtQueryVolumeInformationFi
 	}
 
 	_aligned_free(NativeFileInformation);
+
+	ObfDereferenceObject(FileObject);
 
 	if (FAILED(ret)) {
 		EmuLog(LOG_LEVEL::WARNING, "NtQueryVolumeInformationFile failed! (%s)\n", NtStatusToString(ret));
