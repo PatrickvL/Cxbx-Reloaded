@@ -193,7 +193,11 @@ xbox::void_xt NTAPI PspReaperRoutine(
 		/* Get the first Thread Entry */
 		Thread = CONTAINING_RECORD(NextEntry, ETHREAD, ReaperLink);
 
-		RemoveEntryList(NextEntry);
+		/* Save next before removal invalidates the link */
+		auto CurrentEntry = NextEntry;
+		NextEntry = NextEntry->Flink;
+
+		RemoveEntryList(CurrentEntry);
 
 		// Currently, only kernel's stack portion reside on the host's stack.
 		// Once we have our own kernel thread switching implement or in virtual environment.
@@ -209,9 +213,6 @@ xbox::void_xt NTAPI PspReaperRoutine(
 		}
 #endif
 		Thread->Tcb.StackBase = zeroptr;
-
-		/* Move to the next entry */
-		NextEntry = NextEntry->Flink;
 
 		/* Dereference this thread */
 		ObfDereferenceObject(Thread);
