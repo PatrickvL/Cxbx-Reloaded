@@ -1114,10 +1114,9 @@ void UpdateFixedFunctionVertexShaderState()
 	// Misc flags
 	ffShaderState.Modes.NormalizeNormals = (csv0c & NV_PGRAPH_CSV0_C_NORMALIZATION_ENABLE) ? 1 : 0;
 
-	// Write fixed function state to shader constants — skip upload when unchanged
-	static FixedFunctionVertexShaderState s_CachedFFState = {};
-	if (std::memcmp(&ffShaderState, &s_CachedFFState, sizeof(ffShaderState)) != 0) {
-		s_CachedFFState = ffShaderState;
+	// Write fixed function state to shader constants.
+	// Must always upload because VP draws between FF draws overwrite the shared constant buffer.
+	{
 		const int slotSize = 16;
 		const int fixedFunctionStateSize = (sizeof(FixedFunctionVertexShaderState) + slotSize - 1) / slotSize;
 		CxbxSetVertexShaderConstantF(0, (float*)&ffShaderState, fixedFunctionStateSize);

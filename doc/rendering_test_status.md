@@ -68,7 +68,7 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
 | CubeMap | ✅ | 95 | `TCI_CAMERASPACEREFLECTIONVECTOR` | Teapot with full cubemap environment reflections |
-| SphereMap | ⚠️ | 17 | `TCI_CAMERASPACENORMAL` | Teapot only visible when rotated; missing skybox background |
+| SphereMap | ✅ | 17 | `TCI_CAMERASPACENORMAL` | Sphere-mapped teapot on gradient background |
 | FresnelReflect | ✅ | 44 | Reflection texgen | Reflective teapot renders correctly |
 | ProjectedTexture | ⚠️ | 12.35 | `TCI_CAMERASPACEPOSITION` (eye-linear texgen) | Blue screen with spotlight thumbnail only, no projected texture on geometry |
 | UserClipPlane | ✅ | 30 | Clip planes via texgen | Yellow teapot with clip planes applied correctly |
@@ -169,8 +169,8 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | Issue | Sample(s) | Description | Root Cause | Priority |
 |-------|-----------|-------------|-----------|----------|
 | ~~Black teapot~~ | ~~CubeMap~~ | ~~Teapot lacks environment reflection~~ | ~~Fixed: PGRAPH RT cache stored faces as ArraySize=1; composed into cubemap~~ | ~~Fixed~~ |
-| No sphere | SphereMap | Teapot only visible when rotated; missing skybox | TCI_CAMERASPACENORMAL texgen partially broken | Medium |
-| Missing skybox | Glass, SphereMap | Cubemap environment background not rendered | Skybox draw may not go through RT-as-cubemap composition path | Medium |
+| ~~No sphere~~ | ~~SphereMap~~ | ~~Teapot only visible when rotated~~ | ~~Fixed: FF VS constant upload cache skipped re-upload when shared CB was overwritten by VP draws~~ | ~~Fixed~~ |
+| Missing skybox | Glass | Cubemap environment background not rendered | Skybox draw may not go through RT-as-cubemap composition path | Medium |
 | Whitewashed scene | Water | First frame correct, then whitewashed once water renders | Unknown — bumpenvmap or render-to-texture issue | Medium |
 | Garbled output | FocusBlur | Visible geometry but garbled/blocky checker | DPNDNT_AR/GB dependent texture lookup broken | Medium |
 | Blue band | PerPixelLightingVS | Globe renders but has incorrect bright blue band | Unknown VS lighting issue | Medium |
@@ -207,6 +207,7 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | PS PASSTHRU PostProcess | PixelShader | 10bc68206 | PostProcess not applied to PASSTHRU mode |
 | TCI_OBJECT texgen | — | 3455abb61 | Object-space texgen not implemented |
 | RT cubemap composition | CubeMap, Glass | — | PGRAPH RT cache stored cubemap faces as separate ArraySize=1 textures; composed 6 faces into proper TEXTURECUBE |
+| FF constant cache stale | SphereMap, Swizzle | — | FF VS constant upload cache (`memcmp`) skipped re-upload when unchanged, but VP draws between frames overwrote the shared D3D11 constant buffer |
 | Filter construction | — | c37cc4fa3 | Use D3D11_ENCODE_BASIC_FILTER for correctness |
 
 ---
