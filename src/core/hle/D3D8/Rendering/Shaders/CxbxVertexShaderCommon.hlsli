@@ -48,35 +48,36 @@ uniform float4 CxbxFogInfo : register(c218); // = CXBX_D3DVS_CONSTREG_FOGINFO
 // fogDistance: The fog coordinate (oFog.x from VS, or computed from position for FF)
 float CalculateFogFactor(int fogMode, float fogParam0, float fogParam1, float fogDistance)
 {
-    // Mode 0 with fogParam1 == 0 means no table fog — pass through VS fog output
-    // (This happens when fog is disabled or using vertex fog only)
     int baseMode = fogMode & 3;
 
-    float fogFactor;
+    // Infinite fog distance: LINEAR = fully fogged, EXP/EXP2 = fully visible.
+    if (isinf(fogDistance)) return (baseMode == 0) ? 0.0 : 1.0;
+
+    // Shared bias: LINEAR uses -1.0 (= -1.5 + 0.5), EXP/EXP2 use -1.5.
+    float fogFactor    = fogParam0 - 1.5;
+    float fogDistParam = fogDistance * fogParam1;
+
     if (baseMode == 0) {
         // LINEAR / LINEAR_ABS
-        fogFactor = fogParam0 + fogDistance * fogParam1;
-        fogFactor -= 1.0;
-        if (isinf(fogDistance)) fogFactor = 0.0; // fully fogged
+        fogFactor += 0.5 + fogDistParam;
     } else if (baseMode == 1) {
         // EXP / EXP_ABS
-        if (isinf(fogDistance)) return 1.0; // signed EXP: infinite = fully visible
-        fogFactor = fogParam0 + exp2(fogDistance * fogParam1 * 16.0);
-        fogFactor -= 1.5;
+        fogFactor += exp2(fogDistParam * 16.0);
     } else {
         // EXP2 / EXP2_ABS (baseMode == 3)
-        if (isinf(fogDistance)) return 1.0;
-        fogFactor = fogParam0 + exp2(-fogDistance * fogDistance * fogParam1 * fogParam1 * 32.0);
-        fogFactor -= 1.5;
+        fogFactor += exp2(fogDistParam * fogDistParam * -32.0);
     }
 
-    // _ABS variants: bit 2 of fogMode
-    if (fogMode & 4)
+    // _ABS variants: bit 2 of fogMode.
+    if ((fogMode & 4) != 0)
         fogFactor = abs(fogFactor);
 
-    // Clamp to representable range to prevent NaN/Inf from corrupting
-    // rasterizer interpolation (NV2A hardware clamps here too).
-    return isnan(fogFactor) ? 1.0 : clamp(fogFactor, -3.4e+38, 3.4e+38);
+    // exp2 can overflow to Inf then NaN downstream; LINEAR cannot (no transcendentals,
+    // and infinite inputs are already handled above). Hardware clamps here too.
+    // Bit-pattern check bypasses compiler folding away isinf/isnan on some D3D drivers.
+    uint bits = asuint(fogFactor);
+    bool nan = ((bits & 0x7F800000u) == 0x7F800000u) && ((bits & 0x007FFFFFu) != 0u);
+    return nan ? 1.0 : clamp(fogFactor, -3.4e+38, 3.4e+38);
 }
 
 // TEXCOORDINDEX remapping: xyzw = texcoord source index for stages 0-3.
