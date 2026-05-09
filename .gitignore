@@ -24,3 +24,4 @@ LAST_GIT_VERSION
 *.orig
 pgraph_trace.txt
 progress.md
+test_screenshots/*
