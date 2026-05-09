@@ -30,15 +30,15 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 ### Vertex Shader Samples
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
-| VertexShaders | ⚠️ | 8.33 | VS program execution | Blue bg with thin vertical gradient line, should show more geometry |
+| VertexShaders | ✅ | 35 | VS program execution | Spinning triangle renders correctly |
 | Ripple | ✅ | 0.34 | VS program, animated mesh | Yellow ripple pattern on blue bg, circular ripples visible (very slow) |
-| CompressedVertices | ❌ | 0 | NORMPACKED3 decode | Black screen, no rendering |
+| CompressedVertices | ✅ | 37 | NORMPACKED3 decode | Yellow teapot renders correctly |
 | MatrixPaletteSkinning | ✅ | 58.70 | ARL, blend weights, multi-stream | Green snake/worm with 20 bones, high FPS |
-| VertexBlend | ⚠️ | 0.05 | Blend weights | Microsoft logo visible but extremely slow |
+| VertexBlend | ✅ | 31 | Blend weights | "Microsoft" wobble text with vertex blending |
 | DisplacementMap | ⚠️ | 63 | D3DCOLOR streams, SGE, ARL | Purple bg + text only, no displaced mesh visible |
-| FastVSConstants | ❌ | 0 | Constant upload perf | Black screen, no rendering |
+| FastVSConstants | ✅ | 7 | Constant upload perf | Triangles + perf counter render correctly |
 | MultiShader | ✅ | 0.06 | Multiple VS programs | Color gradient quad rotating, very low FPS |
-| ShaderSplicer | ❌ | 0 | VS program switching | Black screen, no rendering |
+| ShaderSplicer | ✅ | 29 | VS program switching | Torus with reflections, lighting correct |
 | StateShader | ✅ | 7.24 | VS state shaders | RGB gradient colored triangle on gray bg |
 | VSLights | ✅ | 12.28 | VS-based lighting | Multi-colored lit teapot (4 lights, Global optimization) |
 
@@ -50,11 +50,11 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | DolphinHDTV | ✅ | 0.32 | FF lighting, specular, caustics | Same scene, very low FPS (HDTV mode overhead?) |
 | TwoSidedLighting | ✅ | 8.50 | Two-sided lighting, back material alpha | Cylinder with front/back colors |
 | Strip | ✅ | ~1 | `Power=16`, specular, reflection texgen, aniso | Robot mesh with perf stats |
-| Fur | ⚠️ | 15.87 | `Power=40`, specular, alpha test | Bears visible but "Shells Drawn 0" — no fur rendering |
-| Lensflare | ⚠️ | 4.08 | `SPECULARMATERIALSOURCE`, point light | Trees/grass visible but no lens flare effect |
-| Minnaert | ⚠️ | 0.06 | Custom lighting model via PS | Female model visible but lighting looks flat, very low FPS |
+| Fur | ✅ | 15.87 | `Power=40`, specular, alpha test | Bears with fur shells now rendering |
+| Lensflare | ⚠️ | 4.08 | `SPECULARMATERIALSOURCE`, point light | Trees/grass visible, no sun/corona rendered but occlusion detection works |
+| Minnaert | ✅ | 47 | Custom lighting model via PS | Female model with Minnaert lighting |
 | PerPixelLighting | ✅ | 9.35 | Per-pixel lighting | Earth globe with per-pixel lighting, crosshair cursor |
-| PerPixelLightingVS | ❌ | 0 | Per-pixel lighting via VS | Black screen, no rendering |
+| PerPixelLightingVS | ⚠️ | 24 | Per-pixel lighting via VS | Globe renders but incorrect bright blue band around it |
 
 ### Fog Samples
 | Sample | Status | FPS | Key Features | Notes |
@@ -62,29 +62,29 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | Fog | ✅ | 63 | D3DFOG_LINEAR, EXP, EXP2, table/vertex fog | Columns with visible fog fade |
 | AlphaFog | ✅ | 6.54 | Fog + alpha blending | Columns on textured ground with fog effect visible |
 | VolumeFog | ✅ | 13.01 | Volume fog via PS | Swamp scene with dead trees, dark fog pool, purple sky |
-| HeatShimmer | ⚠️ | 0.06 | D3DFOG_LINEAR + distortion PS | Heat distortion line visible but scene mostly flat beige, very low FPS |
+| HeatShimmer | ⚠️ | 0.06 | D3DFOG_LINEAR + distortion PS | Effect incompletely drawn, lacks backdrop, very low FPS |
 
 ### Texgen & Environment Mapping
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
 | CubeMap | ⚠️ | 4.18 | `TCI_CAMERASPACEREFLECTIONVECTOR` | Background renders; teapot is black (reflection not applied) |
-| SphereMap | ❌ | 8.62 | `TCI_CAMERASPACENORMAL` | Just blue gradient screen, no sphere visible |
-| FresnelReflect | ❌ | 0 | Reflection texgen | Black screen, no rendering |
+| SphereMap | ⚠️ | 8.62 | `TCI_CAMERASPACENORMAL` | Teapot only visible when rotated |
+| FresnelReflect | ✅ | 44 | Reflection texgen | Reflective teapot renders correctly |
 | ProjectedTexture | ⚠️ | 12.35 | `TCI_CAMERASPACEPOSITION` (eye-linear texgen) | Blue screen with spotlight thumbnail only, no projected texture on geometry |
-| UserClipPlane | ❌ | 0 | Clip planes via texgen | Black screen, no rendering |
+| UserClipPlane | ✅ | 30 | Clip planes via texgen | Yellow teapot with clip planes applied correctly |
 | MirrorClip | ✅ | 7.21 | Clip planes via texgen | Room with mirror, torus, sphere, ellipsoid visible |
 
 ### Pixel Shader & Register Combiners
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
-| PixelShader | ⚠️ | 63 | RC interpreter, direct + file-based PS | Dark cylinder visible with formula text, but textures are black (should show robot/girl/checker) |
+| PixelShader | ⚠️ | 28 | RC interpreter, direct + file-based PS | Robot model visible but textures partially black |
 | ModifyPixelShader | ⚠️ | — | Runtime PS modification, fog | Blue cylinder on blue bg, no menu bar visible |
 | DotProduct3 | ✅ | 0.29 | DOT product in combiners, `D3DFVF_SPECULAR` | 3D face with bump normal map, very low FPS |
-| Cartoon | ⚠️ | 0.06 | Toon shading via PS | Yellow toon-shaded robot visible but extremely low FPS |
+| Cartoon | ✅ | 12 | Toon shading via PS | Cel-shading and edge rendering correct |
 | QuadLerp | ⚠️ | 5.47 | 4-way lerp blending PS | Blue gradient screen with text only, no visible quad lerp geometry |
-| Explosion | ❌ | 0 | PROJECT2D, DOT_ZW | Black screen, no rendering |
+| Explosion | ⚠️ | 12 | PROJECT2D, DOT_ZW | Landscape blinks, billboard explosions don't render |
 | NoSortAlphaBlend | ✅ | 4.62 | Alpha peel PS, constant PS | Alpha-blended shapes (teapot, spheres, rings) |
-| ZSprite | ❌ | 0 | Z-sprite PS | Black screen, no rendering |
+| ZSprite | ⚠️ | 13 | Z-sprite PS | Teapots render but depth is disregarded |
 
 ### Bump Mapping
 | Sample | Status | FPS | Key Features | Notes |
@@ -102,7 +102,7 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 |--------|--------|-----|-------------|-------|
 | PointSprites | ✅ | 9.47 | GS-based point sprites | Glowing orange sprites on dark ground |
 | Billboard | ✅ | 5.56 | Billboarded trees, alpha test | Forest of billboarded trees |
-| PaintEffect | ⚠️ | 34.15 | Point sprite paint | Title only, black screen — no paint strokes visible |
+| PaintEffect | ⚠️ | 27 | Point sprite paint | Only works when pressing A, then fades back to black |
 | VolumeSprites | ✅ | 45.68 | Point sprites + floor | Bright particle explosion fountain on blue bg |
 
 ### Shadow & Stencil
@@ -117,21 +117,21 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
 | Fire | ✅ | 15.88 | `Fire.xpu` pixel shader | Fire effect with ground plane, purple sky |
-| Water | ⚠️ | 8.36 | Bumpenvmap, reflection, aniso=4, fog, `water.xpu` | Character on wooden dock, sandy ground visible but NO water surface |
+| Water | ⚠️ | 26 | Bumpenvmap, reflection, aniso=4, fog, `water.xpu` | Completely whitewashed (regression, was better before) |
 | Glass | ✅ | 9.59 | Alpha test, `Glass.xpu` | Reflective teapot on black bg, refraction off, reflection on |
 | FocusBlur | ⚠️ | 63 | DPNDNT_AR/GB, 5 pixel shaders | Visible geometry but garbled/blocky, checker patterns |
 | MotionBlur | ✅ | 2.94 | Motion blur with alpha test | Moon over purple horizon with motion blur |
-| VolumeLight | ⚠️ | 33.78 | PROJECT2D, PROJECT3D | Stonehenge scene rendered but volumetric light beam not visible |
+| VolumeLight | ⚠️ | 19 | PROJECT2D, PROJECT3D | Stonehenge scene rendered, light beam present but could be brighter |
 | XRay | ✅ | 0.06 | `TCI_CAMERASPACENORMAL`, X-ray effect | Translucent blue/purple x-ray robot, very low FPS |
 | FuzzyTeapot | ⚠️ | 9.49 | Alpha test, fuzzy material | Teapot visible but looks spiky/exploded, fuzz layers not rendering properly |
 
 ### Texture & Format
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
-| VolumeTexture | ⚠️ | 7.93 | 3D textures | Blue wireframe cube with very faint volume texture blob inside |
-| Swizzle | ⚠️ | 63 | Texture swizzling | Text only showing D3DFMT_LIN_R5G6B5, no swizzled texture visible |
+| VolumeTexture | ⚠️ | 44 | 3D textures | Volume-textured shape renders |
+| Swizzle | ⚠️ | 26 | Texture swizzling | Only draws when model is rotated |
 | Tiling | ✅ | 63 | Tiled textures | Text info screen showing tile configuration |
-| XPRViewer | ⚠️ | 6.56 | XPR texture format viewer | Text metadata only ("Resource 1 of 15"), no texture displayed |
+| XPRViewer | ⚠️ | 37 | XPR texture format viewer | No geometry rendered, not even when rotating |
 | DynamicGamma | ✅ | 0.06 | Gamma correction | Castle scene with gamma histogram/ramp, very low FPS |
 
 ### Rendering Infrastructure
@@ -142,22 +142,22 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | BackBufferScale | ✅ | 7.35 | Backbuffer scaling | Blue screen with text (expected — info display only) |
 | PersistDisplay | ✅ | 8.44 | Display persistence, fog | Dolphin over ocean with "press button to persist" text |
 | SwapCallback | ✅ | ~7 | Swap chain callbacks | VBlank timing info display |
-| AntiAlias | ❌ | 0 | MSAA, `CarOpaque.xpu`, `CarTransparent.xpu` | Black screen, no rendering |
-| FieldRender | ❌ | 0 | Interlaced rendering, Dolphin scene, fog, specular | Black screen, no rendering |
-| Patch | ⚠️ | 56.80 | N-patches / higher-order surfaces | Blue screen with text only, no tessellated patch visible |
+| AntiAlias | ✅ | — | MSAA, `CarOpaque.xpu`, `CarTransparent.xpu` | Renders correctly, may crash on mode switch |
+| FieldRender | ✅ | 18 | Interlaced rendering, Dolphin scene, fog, specular | Dolphin scene correct, stutters |
+| Patch | ⚠️ | 13 | N-patches / higher-order surfaces | Draws only when rotated, missing triangles (tessellation bug) |
 | PerfTest | ✅ | 52.22 | Performance benchmarking | Stonehenge scene rendered, purple sky |
 | BenchMark | ✅ | 4.58 | Benchmark suite | Repeating colored parallelogram pattern |
 | VisibilityTest | ✅ | 4.69 | Occlusion queries (zpass) | Red textured quad with "Sphere not rendered" text |
 | PlayField | ✅ | 7.71 | Aniso=4, gameplay prototype | Green grass field with purple sky |
 | HighDynamicRange | ✅ | 6.14 | HDR rendering, hot blur PS | Night village scene with bloom, stars, moon |
-| SkyBox | ⚠️ | 0.05 | Skybox rendering | Sunset landscape visible but extremely slow, inset corrupted |
+| SkyBox | ⚠️ | 49 | Skybox rendering | Sky gradient renders, uncertain if terrain/scene below is complete |
 
 ### Misc Samples
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
-| TrueTypeFont | ⚠️ | 10.30 | Font rendering | Title text rendered but no sample font text visible below it |
+| TrueTypeFont | ⚠️ | 32 | Font rendering | Only labels rendered, no demo font text visible |
 | Notifier | ✅ | 3.58 | GPU notification mechanism | Biplane over ground with fence notifier stats |
-| Trees | ❌ | — | Billboard trees, fog, alpha test, aniso | Crash — Cxbx-Reloaded splash screen only |
+| Trees | ❌ | — | Billboard trees, fog, alpha test, aniso | Needs more warmup time (killed too soon), black screen |
 | Gamepad | ✅ | 9.59 | Input only (no rendering) | Controller diagnostic screen fully rendered |
 | Rumble | ✅ | 19.91 | Input only (no rendering) | Motor Test Page with Left/Right 0% indicators |
 
@@ -168,20 +168,21 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 ### Active Issues
 | Issue | Sample(s) | Description | Root Cause | Priority |
 |-------|-----------|-------------|-----------|----------|
-| Black teapot | CubeMap | Teapot doesn't reflect environment cubemap | Reflection texgen (TCI_CAMERASPACEREFLECTIONVECTOR) not producing correct UVs for cubemap lookup | Medium |
-| No sphere | SphereMap | Blue gradient only, no sphere visible | TCI_CAMERASPACENORMAL texgen broken for sphere mapping | Medium |
-| No water | Water | Dock/ground visible but no water surface | Unknown — bumpenvmap or render-to-texture issue | Medium |
-| Missing geometry | VertexShaders | Only thin vertical line, should show geometry | Unknown VS execution issue | Medium |
+| Black teapot | CubeMap | Teapot lacks environment reflection | Reflection texgen (TCI_CAMERASPACEREFLECTIONVECTOR) not producing correct UVs for cubemap lookup | Medium |
+| No sphere | SphereMap | Teapot only visible when rotated | TCI_CAMERASPACENORMAL texgen partially broken | Medium |
+| Whitewashed scene | Water | Completely whitewashed (regression) | Unknown — bumpenvmap or render-to-texture issue | Medium |
 | Garbled output | FocusBlur | Visible geometry but garbled/blocky checker | DPNDNT_AR/GB dependent texture lookup broken | Medium |
-| Black textures | PixelShader | Cylinder visible but all textures are black | Texture binding issue in multi-texture PS sample | Medium |
-| No projected texture | ProjectedTexture | Spotlight thumbnail only, no projection on geometry | Eye-linear texgen not projecting correctly | Medium |
-| No fur shells | Fur | Bears visible but "Shells Drawn 0" | Shell rendering / alpha test layers not working | Medium |
+| Blue band | PerPixelLightingVS | Globe renders but has incorrect bright blue band | Unknown VS lighting issue | Medium |
+| ZSprite depth | ZSprite | Teapots render but depth is disregarded | Z-sprite depth handling broken | Medium |
+| Black textures | PixelShader | Robot visible but textures partially black | Texture binding issue in multi-texture PS sample | Medium |
+| No projected texture | ProjectedTexture | Title only, no geometry or projected texture | Eye-linear texgen not projecting correctly | Medium |
 | Spiky teapot | FuzzyTeapot | Teapot looks spiky/exploded | Fuzz layers not rendering properly | Low |
-| No paint strokes | PaintEffect | Title only, black screen | Point sprite paint not visible | Low |
-| No patch | Patch | Blue text screen only, no tessellated mesh | N-patch / higher-order surface not implemented | Low |
-| Black screen | multiple | No rendering at all | AntiAlias, CompressedVertices, Explosion, FastVSConstants, FieldRender, FresnelReflect, PerPixelLightingVS, ShaderSplicer, UserClipPlane, ZSprite | High |
-| Crash | ShadowBuffer, Trees | Sample didn't load (splash screen only) | Unknown crash during init | Medium |
-| Very low FPS | Cartoon, HeatShimmer, Minnaert, XRay, SkyBox, DolphinHDTV, VertexBlend | Renders but <1 FPS | Unknown perf issue — possibly shader compilation or fallback path | Low |
+| Paint fades | PaintEffect | Only works when pressing A, then fades back to black | Point sprite paint not persisting | Low |
+| Missing triangles | Patch | Draws only when rotated, missing triangles | Tessellation bug in N-patch implementation | Low |
+| Help screen overlay | All XDK samples | Duke image overlay doesn't render, pause when opening | Unknown HLE/overlay issue | Low |
+| Crash | ShadowBuffer | Sample crashes during init | Unknown crash during init | Medium |
+| Slow warmup | Trees | Black screen — needs more warmup time | Killed before rendering started | Low |
+| Very low FPS | HeatShimmer, XRay, DolphinHDTV | Renders but <1 FPS | Unknown perf issue — possibly shader compilation or fallback path | Low |
 | MSAA disabled | All | Aliased edges everywhere | D3D11 MSAA not implemented | Low |
 
 ### Fixed Issues
@@ -274,9 +275,9 @@ These games are referenced in code comments as test cases for specific features:
 
 ---
 
-## XDK Source Feature Coverage
+## XDK Sample Feature Coverage
 
-Feature usage from XDK Graphics sample source code scan (for test planning):
+Feature usage from XDK Graphics samples (for test planning):
 
 ### Specular Power (Material.Power set explicitly)
 Fur (40.0), Strip (16.0)
