@@ -2133,7 +2133,7 @@ XBSYSAPI EXPORTNUM(220) xbox::ntstatus_xt NTAPI xbox::NtReadFileScatter
 
 	LOG_UNIMPLEMENTED();
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(X_STATUS_NOT_IMPLEMENTED);
 }
 
 // ******************************************************************
@@ -3088,7 +3088,7 @@ XBSYSAPI EXPORTNUM(237) xbox::ntstatus_xt NTAPI xbox::NtWriteFileGather
 
 	LOG_UNIMPLEMENTED();
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(X_STATUS_NOT_IMPLEMENTED);
 }
 
 // ******************************************************************
