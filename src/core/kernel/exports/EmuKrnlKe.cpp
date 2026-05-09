@@ -1712,7 +1712,7 @@ XBSYSAPI EXPORTNUM(132) xbox::long_xt NTAPI xbox::KeReleaseSemaphore
 	Semaphore->Header.SignalState = adjusted_signalstate;
 
 	KiWaitListLock();
-	if ((initial_state == 0) && (IsListEmpty(&Semaphore->Header.WaitListHead) == FALSE)) {
+	if ((adjusted_signalstate > 0) && (IsListEmpty(&Semaphore->Header.WaitListHead) == FALSE)) {
 		KiWaitTest(&Semaphore->Header, Increment);
 		std::this_thread::yield();
 	}
