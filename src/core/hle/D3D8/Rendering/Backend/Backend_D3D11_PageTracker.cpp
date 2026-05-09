@@ -717,6 +717,119 @@ void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size)
 }
 
 // ******************************************************************
+// * Public: Flush GPU-dirty pages overlapping a VB range to the mirror
+// *
+// * When a vertex buffer aliases render target memory, the D3D11 RT
+// * content must be read back to Xbox RAM and then uploaded to the
+// * GPU mirror buffer before the draw can read correct vertex data.
+// ******************************************************************
+bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
+{
+	if (!s_pMirrorBuf || size == 0 || startOffset >= CONTIG_SIZE)
+		return false;
+	if (startOffset + size > CONTIG_SIZE)
+		size = CONTIG_SIZE - startOffset;
+
+	uint32_t firstPage = startOffset / PAGE_SIZE_;
+	uint32_t lastPage = (startOffset + size - 1) / PAGE_SIZE_;
+
+	// Quick check: any GPU-dirty pages in this range?
+	bool anyDirty = false;
+	for (uint32_t p = firstPage; p <= lastPage; p++) {
+		if (TestBit(s_GpuDirtyBitmap, p)) {
+			anyDirty = true;
+			break;
+		}
+	}
+	if (!anyDirty)
+		return false;
+
+	// Find and readback all registered RTs that overlap this VB range
+	for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
+		const RegisteredRT& rt = s_RegisteredRTs[i];
+		uint32_t rtSize = rt.pitch * rt.height;
+		uint32_t rtEnd = rt.offset + rtSize;
+
+		// Check overlap with VB range
+		if (startOffset >= rtEnd || rt.offset >= startOffset + size)
+			continue;
+
+		// Check if this RT has any GPU-dirty pages
+		uint32_t rtFirstPage = rt.offset / PAGE_SIZE_;
+		uint32_t rtLastPage = (rtEnd - 1) / PAGE_SIZE_;
+		bool rtDirty = false;
+		for (uint32_t p = rtFirstPage; p <= rtLastPage; p++) {
+			if (TestBit(s_GpuDirtyBitmap, p)) {
+				rtDirty = true;
+				break;
+			}
+		}
+		if (!rtDirty || !rt.pTexture || !g_pD3DDeviceContext)
+			continue;
+
+		// Clear GPU-dirty and restore access FIRST (so memcpy won't fault)
+		for (uint32_t p = rtFirstPage; p <= rtLastPage; p++) {
+			if (TestBit(s_GpuDirtyBitmap, p)) {
+				ClearBit(s_GpuDirtyBitmap, p);
+				DWORD oldProtect;
+				VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
+					PAGE_SIZE_, PAGE_READWRITE, &oldProtect);
+			}
+		}
+
+		// Readback RT from D3D11 → staging → Xbox RAM
+		D3D11_TEXTURE2D_DESC desc = {};
+		rt.pTexture->GetDesc(&desc);
+
+		D3D11_TEXTURE2D_DESC stagingDesc = desc;
+		stagingDesc.Usage = D3D11_USAGE_STAGING;
+		stagingDesc.BindFlags = 0;
+		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		stagingDesc.MiscFlags = 0;
+
+		ID3D11Texture2D* pStaging = nullptr;
+		HRESULT hr = g_pD3DDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
+		if (SUCCEEDED(hr)) {
+			g_pD3DDeviceContext->CopyResource(pStaging, rt.pTexture);
+
+			D3D11_MAPPED_SUBRESOURCE mapped = {};
+			hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
+			if (SUCCEEDED(hr)) {
+				uint8_t* pDst = (uint8_t*)(CONTIG_BASE + rt.offset);
+				uint8_t* pSrc = (uint8_t*)mapped.pData;
+				uint32_t xboxRowBytes = rt.width * rt.bpp;
+
+				if (desc.Width >= rt.width && desc.Height >= rt.height) {
+					for (uint32_t row = 0; row < rt.height; row++) {
+						memcpy(pDst, pSrc, xboxRowBytes);
+						pDst += rt.pitch;
+						pSrc += mapped.RowPitch;
+					}
+				}
+
+				g_pD3DDeviceContext->Unmap(pStaging, 0);
+			}
+			pStaging->Release();
+		}
+	}
+
+	// Flush the readback pages to the GPU mirror (NO_OVERWRITE for mid-frame safety)
+	D3D11_MAPPED_SUBRESOURCE mapped = {};
+	HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0,
+		D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
+	if (SUCCEEDED(hr)) {
+		for (uint32_t p = firstPage; p <= lastPage; p++) {
+			uint32_t offset = p * PAGE_SIZE_;
+			memcpy((uint8_t*)mapped.pData + offset,
+				(void*)(CONTIG_BASE + offset), PAGE_SIZE_);
+		}
+		g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+	}
+
+	return true;
+}
+
+// ******************************************************************
 // * Public: Get the mirror buffer SRV
 // ******************************************************************
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV()

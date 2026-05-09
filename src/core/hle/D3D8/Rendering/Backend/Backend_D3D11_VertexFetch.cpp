@@ -465,6 +465,26 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 	}
 
 	// ---------------------------------------------------------------
+	// Step 2a: Flush GPU-dirty RT pages that overlap VB streams
+	// ---------------------------------------------------------------
+	// When a game renders to a surface then reads it back as a vertex buffer
+	// (e.g. DisplacementMap XDK sample using XGSetVertexBufferHeader), the
+	// D3D11 RT content must be read back to Xbox RAM and re-uploaded to the
+	// GPU mirror before the vertex shader can fetch correct data.
+	if (!bIsUPDraw && g_NV2A != nullptr) {
+		PGRAPHState* pgVB = &g_NV2A->GetDeviceState()->pgraph;
+		for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
+			const VertexAttribute& attr = pgVB->vertex_attributes[i];
+			if (attr.count == 0) continue;
+			// attr.offset is a physical address (27-bit, masked into 64 MiB)
+			uint32_t vbOffset = (uint32_t)(attr.offset & 0x07FFFFFF);
+			uint32_t vbSize = attr.stride * DrawContext.dwVertexCount;
+			if (vbSize == 0) continue;
+			CxbxPageTrackerFlushGPUDirtyToMirror(vbOffset, vbSize);
+		}
+	}
+
+	// ---------------------------------------------------------------
 	// Step 2b: Upload UP vertex data to staging buffer
 	// ---------------------------------------------------------------
 	if (bIsUPDraw) {

@@ -3,7 +3,7 @@
 Consolidated tracking of XDK sample rendering status, known issues, and game compatibility.
 This is the single source of truth — other docs should reference this file instead of duplicating status tables.
 
-Last updated: May 2026 (dx11 branch, commit 6cc383454)
+Last updated: May 2026 (dx11 branch, commit 8a3313414)
 
 > **Note:** ⚠️ and ❌ entries are from automated 20-second captures and need further manual confirmation/investigation.
 
@@ -35,7 +35,7 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | CompressedVertices | ✅ | 37 | NORMPACKED3 decode | Yellow teapot renders correctly |
 | MatrixPaletteSkinning | ✅ | 58.70 | ARL, blend weights, multi-stream | Green snake/worm with 20 bones, high FPS |
 | VertexBlend | ✅ | 31 | Blend weights | "Microsoft" wobble text with vertex blending |
-| DisplacementMap | ⚠️ | 63 | D3DCOLOR streams, SGE, ARL | Purple bg + text only, no displaced mesh visible |
+| DisplacementMap | ⚠️ | 131 | D3DCOLOR streams, SGE, ARL | Displaced mesh visible (RT-as-VB readback working), but colors/shape look off |
 | FastVSConstants | ✅ | 7 | Constant upload perf | Triangles + perf counter render correctly |
 | MultiShader | ✅ | 0.06 | Multiple VS programs | Color gradient quad rotating, very low FPS |
 | ShaderSplicer | ✅ | 29 | VS program switching | Torus with reflections, lighting correct |
@@ -51,7 +51,7 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | TwoSidedLighting | ✅ | 8.50 | Two-sided lighting, back material alpha | Cylinder with front/back colors |
 | Strip | ✅ | ~1 | `Power=16`, specular, reflection texgen, aniso | Robot mesh with perf stats |
 | Fur | ✅ | 15.87 | `Power=40`, specular, alpha test | Bears with fur shells now rendering |
-| Lensflare | ⚠️ | 4.08 | `SPECULARMATERIALSOURCE`, point light | Trees/grass visible, no sun/corona rendered but occlusion detection works |
+| Lensflare | ⚠️ | 32 | `SPECULARMATERIALSOURCE`, point light | Trees/grass visible, no sun/corona rendered but occlusion detection works |
 | Minnaert | ✅ | 47 | Custom lighting model via PS | Female model with Minnaert lighting |
 | PerPixelLighting | ✅ | 9.35 | Per-pixel lighting | Earth globe with per-pixel lighting, crosshair cursor |
 | PerPixelLightingVS | ⚠️ | 24 | Per-pixel lighting via VS | Globe renders but incorrect bright blue band around it |
@@ -81,8 +81,8 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | ModifyPixelShader | ⚠️ | — | Runtime PS modification, fog | Blue cylinder on blue bg, no menu bar visible |
 | DotProduct3 | ✅ | 0.29 | DOT product in combiners, `D3DFVF_SPECULAR` | 3D face with bump normal map, very low FPS |
 | Cartoon | ✅ | 12 | Toon shading via PS | Cel-shading and edge rendering correct |
-| QuadLerp | ⚠️ | 5.47 | 4-way lerp blending PS | Blue gradient screen with text only, no visible quad lerp geometry |
-| Explosion | ⚠️ | 12 | PROJECT2D, DOT_ZW | Landscape blinks, billboard explosions don't render |
+| QuadLerp | ✅ | 44 | 4-way lerp blending PS | Robot model with quad lerp blending visible, "optimized shader" mode |
+| Explosion | ✅ | 12 | PROJECT2D, DOT_ZW | Landscape + billboard explosions render correctly |
 | NoSortAlphaBlend | ✅ | 4.62 | Alpha peel PS, constant PS | Alpha-blended shapes (teapot, spheres, rings) |
 | ZSprite | ⚠️ | 13 | Z-sprite PS | Teapots render but depth is disregarded |
 
@@ -121,15 +121,15 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | Glass | ⚠️ | 23 | Alpha test, `Glass.xpu` | Teapot with refraction + reflection, but missing skybox background |
 | FocusBlur | ⚠️ | 63 | DPNDNT_AR/GB, 5 pixel shaders | Visible geometry but garbled/blocky, checker patterns |
 | MotionBlur | ✅ | 2.94 | Motion blur with alpha test | Moon over purple horizon with motion blur |
-| VolumeLight | ⚠️ | 19 | PROJECT2D, PROJECT3D | Stonehenge scene rendered, light beam present but could be brighter |
+| VolumeLight | ✅ | 60 | PROJECT2D, PROJECT3D | Stonehenge scene rendered, light beam visible (beam rotates in/out of view) |
 | XRay | ✅ | 0.06 | `TCI_CAMERASPACENORMAL`, X-ray effect | Translucent blue/purple x-ray robot, very low FPS |
-| FuzzyTeapot | ⚠️ | 9.49 | Alpha test, fuzzy material | Teapot visible but looks spiky/exploded, fuzz layers not rendering properly |
+| FuzzyTeapot | ✅ | 9.49 | Alpha test, fuzzy material | Teapot with spiky fuzz shell effect (intended look) |
 
 ### Texture & Format
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
 | VolumeTexture | ⚠️ | 44 | 3D textures | Volume-textured shape renders |
-| Swizzle | ⚠️ | 26 | Texture swizzling | Only draws when model is rotated |
+| Swizzle | ✅ | 26 | Texture swizzling | Textured model renders correctly |
 | Tiling | ✅ | 63 | Tiled textures | Text info screen showing tile configuration |
 | XPRViewer | ⚠️ | 37 | XPR texture format viewer | No geometry rendered, not even when rotating |
 | DynamicGamma | ✅ | 0.06 | Gamma correction | Castle scene with gamma histogram/ramp, very low FPS |
@@ -157,7 +157,7 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 |--------|--------|-----|-------------|-------|
 | TrueTypeFont | ⚠️ | 32 | Font rendering | Only labels rendered, no demo font text visible |
 | Notifier | ✅ | 3.58 | GPU notification mechanism | Biplane over ground with fence notifier stats |
-| Trees | ❌ | — | Billboard trees, fog, alpha test, aniso | Needs more warmup time (killed too soon), black screen |
+| Trees | ❌ | — | Billboard trees, fog, alpha test, aniso | TDR crash (DXGI_ERROR_DEVICE_REMOVED 0x887A0006) |
 | Gamepad | ✅ | 9.59 | Input only (no rendering) | Controller diagnostic screen fully rendered |
 | Rumble | ✅ | 19.91 | Input only (no rendering) | Motor Test Page with Left/Right 0% indicators |
 
@@ -177,12 +177,11 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | ZSprite depth | ZSprite | Teapots render but depth is disregarded | Z-sprite depth handling broken | Medium |
 | Black textures | PixelShader | Robot visible but textures partially black | Texture binding issue in multi-texture PS sample | Medium |
 | No projected texture | ProjectedTexture | Title only, no geometry or projected texture | Eye-linear texgen not projecting correctly | Medium |
-| Spiky teapot | FuzzyTeapot | Teapot looks spiky/exploded | Fuzz layers not rendering properly | Low |
 | Paint fades | PaintEffect | Only works when pressing A, then fades back to black | Point sprite paint not persisting | Low |
 | Missing triangles | Patch | Draws only when rotated, missing triangles | Tessellation bug in N-patch implementation | Low |
 | Help screen overlay | All XDK samples | Duke image overlay doesn't render, pause when opening | Unknown HLE/overlay issue | Low |
 | Crash | ShadowBuffer | Sample crashes during init | Unknown crash during init | Medium |
-| Slow warmup | Trees | Black screen — needs more warmup time | Killed before rendering started | Low |
+| TDR crash | Trees | D3D11 device removed (0x887A0006) — GPU driver crash | Unknown — billboard trees trigger invalid shader dispatch or resource hazard | Medium |
 | Very low FPS | HeatShimmer, XRay, DolphinHDTV | Renders but <1 FPS | Unknown perf issue — possibly shader compilation or fallback path | Low |
 | MSAA disabled | All | Aliased edges everywhere | D3D11 MSAA not implemented | Low |
 
@@ -208,6 +207,9 @@ Last updated: May 2026 (dx11 branch, commit 6cc383454)
 | TCI_OBJECT texgen | — | 3455abb61 | Object-space texgen not implemented |
 | RT cubemap composition | CubeMap, Glass | — | PGRAPH RT cache stored cubemap faces as separate ArraySize=1 textures; composed 6 faces into proper TEXTURECUBE |
 | FF constant cache stale | SphereMap, Swizzle | — | FF VS constant upload cache (`memcmp`) skipped re-upload when unchanged, but VP draws between frames overwrote the shared D3D11 constant buffer |
+| Singular world matrix | Explosion | 8a3313414 | FF VS tried to invert MMAT to decompose CMAT; `Scale(r,r,0)` billboard matrices are singular → inverse fails. Fix: upload CMAT directly, shader does screen-to-NDC conversion (xemu approach) |
+| QuadLerp geometry missing | QuadLerp | 316672b26 | Robot model with quad lerp blending now renders (was blue screen + text only) |
+| Swizzle no draw | Swizzle | 316672b26 | Textured model now renders without needing rotation |
 | Filter construction | — | c37cc4fa3 | Use D3D11_ENCODE_BASIC_FILTER for correctness |
 
 ---

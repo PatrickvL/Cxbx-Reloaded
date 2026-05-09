@@ -108,6 +108,13 @@ void CxbxPageTrackerUnlockD3D11Context();
 // Used by CPU read paths to trigger readback before accessing the data.
 bool CxbxPageTrackerIsGPUDirty(uint32_t pageIndex);
 
+// Flush GPU-dirty pages that overlap a contiguous memory range to the GPU mirror.
+// When a vertex buffer aliases render target memory, the D3D11 RT content must be
+// read back to Xbox RAM and then uploaded to the GPU mirror buffer before the draw.
+// Called from the vertex fetch draw path for each active stream's address range.
+// Returns true if any pages were flushed.
+bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size);
+
 // Clear GPU-dirty flags for a range after readback completes.
 void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size);
 
