@@ -2480,7 +2480,7 @@ XBSYSAPI EXPORTNUM(226) xbox::ntstatus_xt NTAPI xbox::NtSetInformationFile
 
 				// Get file name only since FileObjectTarget will return parent directory handle.
 				auto FileName = PSTRING_to_string(&ObjectStringTarget);
-				if (std::size_t n = FileName.find_last_of("\\") != std::string::npos) {
+				if (std::size_t n; (n = FileName.find_last_of("\\")) != std::string::npos) {
 					FileName = FileName.substr(n + 1);
 				}
 
