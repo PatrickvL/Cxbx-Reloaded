@@ -1138,6 +1138,11 @@ static xbox::void_xt NTAPI IopDeleteFile(IN xbox::PVOID Object)
 		xbox::ExFreePool(FileObject->CompletionContext);
 		FileObject->CompletionContext = xbox::zeroptr;
 	}
+
+	// Balance the ReferenceCount increment done by IopCheckDeviceAndDriver
+	if (FileObject->DeviceObject != xbox::zeroptr) {
+		FileObject->DeviceObject->ReferenceCount--;
+	}
 }
 
 // ******************************************************************
