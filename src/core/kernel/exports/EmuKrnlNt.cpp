@@ -223,6 +223,9 @@ XBSYSAPI EXPORTNUM(187) xbox::ntstatus_xt NTAPI xbox::NtClose
 	else if (DWORD flags = 0; GetHandleInformation(Handle, &flags)) {
 		result = NtDll::NtClose(Handle);
 	}
+	else {
+		result = X_STATUS_INVALID_HANDLE;
+	}
 
 	RETURN(result);
 }
