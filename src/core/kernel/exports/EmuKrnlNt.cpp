@@ -672,6 +672,8 @@ namespace xbox {
 			return X_STATUS_INVALID_PARAMETER;
 		}
 
+		PIO_COMPLETION_CONTEXT CompletionContext = FileObject->CompletionContext;
+
 		/* Check for an event */
 		if (Event) {
 #if ENABLE_OB_EVENT // TODO: Enable this block once event handle is handled by xbox's end.
@@ -838,6 +840,17 @@ namespace xbox {
 		//return IopPerformSynchronousRequest(...);
 
 		// TODO: Remove ObfDereferenceObject as it may already had been done elsewhere.
+
+		// Post IO completion packet if the file has an associated completion port
+		if (CompletionContext && X_NT_SUCCESS(result)) {
+			IoSetIoCompletion(
+				reinterpret_cast<PKQUEUE>(CompletionContext->Port),
+				CompletionContext->Key,
+				ApcContext,
+				IoStatusBlock->Status,
+				static_cast<ulong_xt>(IoStatusBlock->Information));
+		}
+
 		ObfDereferenceObject(FileObject);
 
 		return result;
@@ -1251,6 +1264,8 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 		return X_STATUS_INVALID_PARAMETER;
 	}
 
+	PIO_COMPLETION_CONTEXT CompletionContext = FileObject->CompletionContext;
+
 	const auto& nFileHandle = GetObjectNativeHandle(FileObject);
 
 	NtDll::UNICODE_STRING NtFileMask;
@@ -1314,6 +1329,16 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 
 	// TODO: Cache the last search result for quicker access with CreateFile (xbox does this internally!)
 	free(NtFileDirInfo);
+
+	// Post IO completion packet if the file has an associated completion port
+	if (CompletionContext && X_NT_SUCCESS(ret)) {
+		IoSetIoCompletion(
+			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
+			CompletionContext->Key,
+			ApcContext,
+			IoStatusBlock->Status,
+			static_cast<ulong_xt>(IoStatusBlock->Information));
+	}
 
 	ObfDereferenceObject(FileObject);
 
