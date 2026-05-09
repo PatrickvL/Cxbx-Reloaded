@@ -574,6 +574,7 @@ XBSYSAPI EXPORTNUM(66) xbox::ntstatus_xt NTAPI xbox::IoCreateFile
 			/* Clear the device object to invalidate the FO, and dereference */
 			OpenPacket.FileObject->DeviceObject = nullptr;
 			ObfDereferenceObject(OpenPacket.FileObject);
+			OpenPacket.FileObject = nullptr;
 		}
 	}
 	else {
@@ -681,9 +682,7 @@ XBSYSAPI EXPORTNUM(69) xbox::ntstatus_xt NTAPI xbox::IoDeleteSymbolicLink
 
 	/* Make the link temporary and close its handle */
 	result = NtMakeTemporaryObject(Handle);
-	if (X_NT_SUCCESS(result)) {
-		NtClose(Handle);
-	}
+	NtClose(Handle);
 
 	RETURN(result);
 }
@@ -1565,7 +1564,7 @@ XBSYSAPI EXPORTNUM(84) xbox::ntstatus_xt NTAPI xbox::IoSynchronousDeviceIoContro
 
 	LOG_UNIMPLEMENTED();
 
-	RETURN(S_OK);
+	RETURN(X_STATUS_NOT_IMPLEMENTED);
 }
 
 // ******************************************************************
@@ -1590,7 +1589,7 @@ XBSYSAPI EXPORTNUM(85) xbox::ntstatus_xt NTAPI xbox::IoSynchronousFsdRequest
 
 	LOG_UNIMPLEMENTED();
 
-	RETURN(S_OK);
+	RETURN(X_STATUS_NOT_IMPLEMENTED);
 }
 
 // ******************************************************************
