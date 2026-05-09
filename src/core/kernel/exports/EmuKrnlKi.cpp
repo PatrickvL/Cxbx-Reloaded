@@ -1282,3 +1282,28 @@ xbox::void_xt xbox::KiUnlinkThread
 	// way, we will crash instead of silently using the pointer to the old block
 	Thread->WaitBlockList = zeroptr;
 }
+
+// Remove all wait blocks from their respective dispatcher objects' wait lists
+// and cancel the thread's timer if one is pending.  Must be called with
+// KiWaitListLock held.  Acquires KiTimerLock internally if needed.
+xbox::void_xt xbox::KiCleanupWaitBlocks
+(
+	IN PKTHREAD Thread
+)
+{
+	PKWAIT_BLOCK WaitBlock = Thread->WaitBlockList;
+	if (WaitBlock) {
+		PKWAIT_BLOCK FirstBlock = WaitBlock;
+		do {
+			RemoveEntryList(&WaitBlock->WaitListEntry);
+			WaitBlock = WaitBlock->NextWaitBlock;
+		} while (WaitBlock != FirstBlock);
+	}
+
+	PKTIMER Timer = &Thread->Timer;
+	if (Timer->Header.Inserted) {
+		KiTimerLock();
+		KxRemoveTreeTimer(Timer);
+		KiTimerUnlock();
+	}
+}

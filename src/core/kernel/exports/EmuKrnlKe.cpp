@@ -2797,6 +2797,7 @@ XBSYSAPI EXPORTNUM(158) xbox::ntstatus_xt NTAPI xbox::KeWaitForMultipleObjects
 					if (ObjectMutant->Header.SignalState > 0) {
 						if (WaitType == WaitAny) {
 							KiWaitSatisfyOther(ObjectMutant);
+							KiCleanupWaitBlocks(Thread);
 							KiWaitListUnlock();
 							Thread->WaitStatus = (ntstatus_xt)i;
 							Thread->State = Ready;
@@ -2812,6 +2813,7 @@ XBSYSAPI EXPORTNUM(158) xbox::ntstatus_xt NTAPI xbox::KeWaitForMultipleObjects
 					for (ulong_xt i = 0; i < Count; i++) {
 						KiWaitSatisfyOther((PKMUTANT)Object[i]);
 					}
+					KiCleanupWaitBlocks(Thread);
 					KiWaitListUnlock();
 					Thread->WaitStatus = X_STATUS_SUCCESS;
 					Thread->State = Ready;
@@ -3016,6 +3018,7 @@ XBSYSAPI EXPORTNUM(159) xbox::ntstatus_xt NTAPI xbox::KeWaitForSingleObject
 					KiWaitListLock();
 					if (ObjectMutant->Header.SignalState > 0) {
 						KiWaitSatisfyOther(ObjectMutant);
+						KiCleanupWaitBlocks(Thread);
 						KiWaitListUnlock();
 						Thread->WaitStatus = X_STATUS_SUCCESS;
 						Thread->State = Ready;

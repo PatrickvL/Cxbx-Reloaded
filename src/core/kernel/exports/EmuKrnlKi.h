@@ -239,6 +239,11 @@ namespace xbox
 		IN PKTHREAD Thread,
 		IN long_ptr_xt WaitStatus
 	);
+
+	void_xt KiCleanupWaitBlocks
+	(
+		IN PKTHREAD Thread
+	);
 };
 
 extern xbox::KPROCESS KiUniqueProcess;
