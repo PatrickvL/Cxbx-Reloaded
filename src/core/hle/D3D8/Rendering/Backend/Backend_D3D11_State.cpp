@@ -1050,9 +1050,10 @@ HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice, U
 	CxbxMarkTextureSRVsDirty();
 	if (pHostRenderTarget == nullptr) {
 		g_pD3DCurrentHostRenderTarget = g_pD3DBackBufferSurface;
-		if (g_pD3DCurrentRTV != nullptr && g_pD3DCurrentRTV != g_pD3DBackBufferView) {
-			g_pD3DCurrentRTV->Release();
-		}
+		// Don't release g_pD3DCurrentRTV — it's either the default
+		// backbuffer view or a cached RTV (owned by g_RTVCache).
+		// Releasing here would leave a dangling pointer in the cache,
+		// causing use-after-free when the swap chain buffer rotates back.
 		g_pD3DCurrentRTV = g_pD3DBackBufferView;
 		g_pD3DDeviceContext->OMSetRenderTargets(1, &g_pD3DBackBufferView, g_pD3DDepthStencilView);
 		hRet = S_OK;
