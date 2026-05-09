@@ -2109,12 +2109,16 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	// Post IO completion packet if the file has an associated completion port.
 	// Post for all completed statuses (including errors), only skip STATUS_PENDING.
 	if (CompletionContext && result != X_STATUS_PENDING) {
+		// On error paths IoStatusBlock may not have been filled by the host,
+		// so use result directly as the status and 0 for information.
+		ntstatus_xt ioStatus = X_NT_SUCCESS(result) ? IoStatusBlock->Status : result;
+		ulong_xt ioInfo = X_NT_SUCCESS(result) ? static_cast<ulong_xt>(IoStatusBlock->Information) : 0;
 		IoSetIoCompletion(
 			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
 			CompletionContext->Key,
 			ApcContext,
-			IoStatusBlock->Status,
-			static_cast<ulong_xt>(IoStatusBlock->Information));
+			ioStatus,
+			ioInfo);
 	}
 
 	ObfDereferenceObject(FileObject);
@@ -3071,12 +3075,16 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	// Post IO completion packet if the file has an associated completion port.
 	// Post for all completed statuses (including errors), only skip STATUS_PENDING.
 	if (CompletionContext && result != X_STATUS_PENDING) {
+		// On error paths IoStatusBlock may not have been filled by the host,
+		// so use result directly as the status and 0 for information.
+		ntstatus_xt ioStatus = X_NT_SUCCESS(result) ? IoStatusBlock->Status : result;
+		ulong_xt ioInfo = X_NT_SUCCESS(result) ? static_cast<ulong_xt>(IoStatusBlock->Information) : 0;
 		IoSetIoCompletion(
 			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
 			CompletionContext->Key,
 			ApcContext,
-			IoStatusBlock->Status,
-			static_cast<ulong_xt>(IoStatusBlock->Information));
+			ioStatus,
+			ioInfo);
 	}
 
 	ObfDereferenceObject(FileObject);
