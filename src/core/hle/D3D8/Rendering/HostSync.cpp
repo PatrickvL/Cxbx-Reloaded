@@ -126,6 +126,279 @@ void CxbxD3D11InvalidateCachedSRVForTexture(ID3D11Resource* pTexture)
 	}
 }
 
+// Compose a cubemap from 6 individual face render targets in the PGRAPH RT cache.
+// Returns the composed cubemap texture, or nullptr if composition fails.
+static ID3D11Texture2D* CxbxComposeRTCubemap(
+	int stage, uint32_t texOffset, uint32_t texFmtReg, ID3D11Texture2D* pFace0RT)
+{
+	D3D11_TEXTURE2D_DESC rtDesc;
+	pFace0RT->GetDesc(&rtDesc);
+	if (rtDesc.ArraySize != 1)
+		return nullptr;
+
+	// Calculate bytes-per-pixel from the RT format
+	uint32_t bpp;
+	switch (rtDesc.Format) {
+	case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8X8_UNORM:
+	case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R10G10B10A2_UNORM:
+		bpp = 4; break;
+	case DXGI_FORMAT_B5G6R5_UNORM: case DXGI_FORMAT_B5G5R5A1_UNORM:
+	case DXGI_FORMAT_R8G8_UNORM:
+		bpp = 2; break;
+	default: bpp = 4; break;
+	}
+
+	// NV2A cubemap face stride: sum of all mip levels,
+	// rounded up to 128-byte alignment (NV2A_CUBEMAP_FACE_ALIGNMENT).
+	uint32_t faceStride = 0;
+	{
+		uint32_t mipW = rtDesc.Width, mipH = rtDesc.Height;
+		uint32_t mips = GET_MASK(texFmtReg, NV_PGRAPH_TEXFMT0_MIPMAP_LEVELS);
+		if (mips == 0) mips = 1;
+		for (uint32_t m = 0; m < mips; m++) {
+			faceStride += (mipW > 0 ? mipW : 1) * (mipH > 0 ? mipH : 1) * bpp;
+			mipW >>= 1; mipH >>= 1;
+		}
+		faceStride = (faceStride + 127) & ~127u; // 128-byte align
+	}
+
+	// Look up all 6 face RTs by sequential VRAM offsets
+	ID3D11Texture2D* faceRTs[6] = {};
+	faceRTs[0] = pFace0RT;
+	for (int face = 1; face < 6; face++) {
+		faceRTs[face] = (ID3D11Texture2D*)CxbxLookupPgraphRTByOffset(
+			texOffset + face * faceStride);
+		if (!faceRTs[face]) {
+			LOG_TEST_CASE("Cubemap RT composition: not all 6 faces found in RT cache");
+			return nullptr;
+		}
+	}
+
+	// Per-stage cubemap cache to avoid recreating the D3D11 resource every frame
+	static ID3D11Texture2D* s_CubemapCache[NV2A_MAX_TEXTURES] = {};
+	static uint32_t s_CubemapOffset[NV2A_MAX_TEXTURES] = {};
+	static UINT s_CubemapSize[NV2A_MAX_TEXTURES] = {};
+
+	uint32_t texMipLevels = GET_MASK(texFmtReg, NV_PGRAPH_TEXFMT0_MIPMAP_LEVELS);
+	if (texMipLevels == 0) texMipLevels = 1;
+
+	if (!s_CubemapCache[stage]
+		|| s_CubemapOffset[stage] != texOffset
+		|| s_CubemapSize[stage] != rtDesc.Width) {
+		if (s_CubemapCache[stage])
+			s_CubemapCache[stage]->Release();
+		s_CubemapCache[stage] = nullptr;
+
+		D3D11_TEXTURE2D_DESC cubeDesc = rtDesc;
+		cubeDesc.ArraySize = 6;
+		cubeDesc.MipLevels = texMipLevels;
+		cubeDesc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE
+			| (texMipLevels > 1 ? D3D11_RESOURCE_MISC_GENERATE_MIPS : 0);
+		cubeDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE
+			| (texMipLevels > 1 ? D3D11_BIND_RENDER_TARGET : 0);
+		g_pD3DDevice->CreateTexture2D(&cubeDesc, nullptr, &s_CubemapCache[stage]);
+		s_CubemapOffset[stage] = texOffset;
+		s_CubemapSize[stage] = rtDesc.Width;
+	}
+
+	if (!s_CubemapCache[stage])
+		return nullptr;
+
+	// Copy each face RT (mip 0) into the composed cubemap
+	for (int face = 0; face < 6; face++) {
+		g_pD3DDeviceContext->CopySubresourceRegion(
+			s_CubemapCache[stage],
+			D3D11CalcSubresource(0, face, texMipLevels),
+			0, 0, 0,
+			faceRTs[face], 0,
+			nullptr);
+	}
+
+	// Generate lower mip levels if the game expects them
+	if (texMipLevels > 1) {
+		ID3D11ShaderResourceView* pMipSRV = nullptr;
+		D3D11_SHADER_RESOURCE_VIEW_DESC mipSrvDesc = {};
+		mipSrvDesc.Format = rtDesc.Format;
+		mipSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+		mipSrvDesc.TextureCube.MipLevels = texMipLevels;
+		mipSrvDesc.TextureCube.MostDetailedMip = 0;
+		if (SUCCEEDED(g_pD3DDevice->CreateShaderResourceView(
+				s_CubemapCache[stage], &mipSrvDesc, &pMipSRV))) {
+			g_pD3DDeviceContext->GenerateMips(pMipSRV);
+			pMipSRV->Release();
+		}
+	}
+
+	return s_CubemapCache[stage];
+}
+
+// Resolve the host texture resource for a given stage from PGRAPH state.
+// Checks RT cache (with cubemap composition), then side-map, then HLE texture,
+// then constructs a synthetic texture from PGRAPH registers.
+// Returns the host resource (or nullptr), and sets bIsRenderTargetTexture if from RT cache.
+static ID3D11Resource* CxbxResolveTextureSource(
+	NV2AState* d, PGRAPHState* pg, int stage,
+	uint32_t texOffset, uint32_t texFmtReg, bool isCubemap,
+	xbox::X_D3DBaseTexture*& pXboxBaseTexture,
+	bool& bIsRenderTargetTexture)
+{
+	bIsRenderTargetTexture = false;
+
+	if (texOffset == 0)
+		return nullptr;
+
+	// Check if this texture offset corresponds to a render target.
+	// Only treat as RT-texture if the offset is NOT the currently bound
+	// color surface or depth surface.
+	if (texOffset != pg->regs[RI(NV_PGRAPH_BOFFSET4)]
+		&& texOffset != pg->regs[RI(NV_PGRAPH_BOFFSET3)]) {
+		auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
+		if (pPgraphRT) {
+			ID3D11Resource* pResult = nullptr;
+			if (isCubemap) {
+				pResult = CxbxComposeRTCubemap(stage, texOffset, texFmtReg,
+					(ID3D11Texture2D*)pPgraphRT);
+			}
+			if (!pResult) {
+				// Non-cubemap RT, or cubemap composition failed
+				pResult = pPgraphRT;
+			}
+			bIsRenderTargetTexture = true;
+			CxbxInvalidatePgraphRTBinding();
+			return pResult;
+		}
+	}
+
+	// For non-RT textures, try the texture side-map first, then HLE texture,
+	// then construct a synthetic Xbox texture from PGRAPH registers.
+	auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
+	if (pgTex != nullptr) {
+		pXboxBaseTexture = pgTex;
+	} else if (pXboxBaseTexture != xbox::zeroptr
+	           && pXboxBaseTexture != &s_SyntheticTextures[stage]) {
+		CxbxRegisterTextureByDataAddr(texOffset, pXboxBaseTexture);
+	} else {
+		// Build synthetic X_D3DBaseTexture from PGRAPH registers
+		auto& synth = s_SyntheticTextures[stage];
+		synth.Common = X_D3DCOMMON_TYPE_TEXTURE | X_D3DCOMMON_D3DCREATED | 1;
+		synth.Data = texOffset;
+		synth.Lock = 0;
+		synth.Format = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
+
+		uint32_t fmtColor = GET_MASK(synth.Format, NV097_SET_TEXTURE_FORMAT_COLOR);
+		if (IsNV2AColorFormatLinear(fmtColor)) {
+			uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
+			uint32_t texCtl1 = pg->regs[RI(NV_PGRAPH_TEXCTL1_0 + stage * 4)];
+			uint32_t width = (texImageRect >> 16) & 0x1FFF;
+			uint32_t height = texImageRect & 0x1FFF;
+			uint32_t pitch = (texCtl1 >> 16) & 0xFFFF;
+			if (pitch < 64) pitch = 64;
+			if (width > 0 && height > 0)
+				synth.Size = ((width - 1) & 0xFFF)
+					| (((height - 1) & 0xFFF) << X_D3DSIZE_HEIGHT_SHIFT)
+					| ((((pitch / 64) - 1) & 0xFF) << X_D3DSIZE_PITCH_SHIFT);
+			else
+				synth.Size = 0;
+		} else {
+			synth.Size = 0;
+		}
+
+		pXboxBaseTexture = &synth;
+		g_pXbox_SetTexture[stage] = &synth;
+	}
+
+	return nullptr; // No RT texture — caller should use pXboxBaseTexture path
+}
+
+// Create an SRV for the texture and bind it to the appropriate PS slots.
+// Handles SRV caching to avoid redundant creation.
+static void CxbxBindTextureSRV(int stage, ID3D11Resource* pHostBaseTexture, bool bNeedRelease)
+{
+	LOG_INIT;
+
+	// Reuse cached SRV if the underlying resource hasn't changed
+	if (s_CachedResource[stage] == pHostBaseTexture && s_CachedSRV[stage] != nullptr) {
+		if (s_TextureSRVsDirty) {
+			g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &s_CachedSRV[stage]);
+			if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURE3D)
+				g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &s_CachedSRV[stage]);
+			else if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURECUBE)
+				g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &s_CachedSRV[stage]);
+		}
+		return;
+	}
+
+	// Release old cached SRV
+	if (s_CachedSRV[stage]) {
+		s_CachedSRV[stage]->Release();
+		s_CachedSRV[stage] = nullptr;
+	}
+	s_CachedResource[stage] = nullptr;
+
+	// Create a shader resource view for the texture
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	D3D11_RESOURCE_DIMENSION dim;
+	pHostBaseTexture->GetType(&dim);
+
+	switch (dim) {
+	case D3D11_RESOURCE_DIMENSION_TEXTURE2D: {
+		D3D11_TEXTURE2D_DESC texDesc = {};
+		((ID3D11Texture2D*)pHostBaseTexture)->GetDesc(&texDesc);
+		srvDesc.Format = IsDepthFormat(texDesc.Format) ? GetDepthSRVFormat(texDesc.Format) : texDesc.Format;
+		if (texDesc.ArraySize == 6) {
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+			srvDesc.TextureCube.MipLevels = texDesc.MipLevels;
+			srvDesc.TextureCube.MostDetailedMip = 0;
+		} else {
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = texDesc.MipLevels;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+		}
+		break;
+	}
+	case D3D11_RESOURCE_DIMENSION_TEXTURE3D: {
+		D3D11_TEXTURE3D_DESC texDesc = {};
+		((ID3D11Texture3D*)pHostBaseTexture)->GetDesc(&texDesc);
+		srvDesc.Format = texDesc.Format;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
+		srvDesc.Texture3D.MipLevels = texDesc.MipLevels;
+		srvDesc.Texture3D.MostDetailedMip = 0;
+		break;
+	}
+	default:
+		if (bNeedRelease) pHostBaseTexture->Release();
+		return;
+	}
+
+	ID3D11ShaderResourceView* pSRV = nullptr;
+	HRESULT hRet = g_pD3DDevice->CreateShaderResourceView(pHostBaseTexture, &srvDesc, &pSRV);
+	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateShaderResourceView");
+	if (FAILED(hRet)) {
+		if (hRet == DXGI_ERROR_DEVICE_REMOVED) {
+			HRESULT reason = g_pD3DDevice->GetDeviceRemovedReason();
+			CxbxrAbort("D3D11 device removed (DXGI_ERROR_DEVICE_REMOVED).\n"
+				"Reason: 0x%08X\n\n"
+				"This is usually caused by a GPU driver crash (TDR) triggered by\n"
+				"an invalid compute shader dispatch or resource hazard.\n"
+				"Enable D3D11 debug layer for more details.", reason);
+		}
+		EmuLog(LOG_LEVEL::WARNING, "CxbxUpdateHostTextures : g_pD3DDevice->CreateShaderResourceView "
+			"D3D error (0x%08X: format=%u)", hRet, srvDesc.Format);
+		return;
+	}
+
+	if (pSRV != nullptr) {
+		s_CachedResource[stage] = pHostBaseTexture;
+		s_CachedSRV[stage] = pSRV;
+		s_CachedDim[stage] = srvDesc.ViewDimension;
+		g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pSRV);
+		if (srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE3D)
+			g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pSRV);
+		else if (srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE)
+			g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pSRV);
+	}
+}
+
 void CxbxUpdateHostTextures()
 {
 	LOG_INIT; // Allows use of DEBUG_D3DRESULT
@@ -149,36 +422,25 @@ void CxbxUpdateHostTextures()
 			}
 		}
 		if (!anyChanged && !s_TextureSRVsDirty)
-			return; // All texture state unchanged and SRVs still bound — skip expensive work
+			return;
 		if (anyChanged)
-			s_TextureStateGeneration++; // Signal CxbxUpdateHostTextureScaling
+			s_TextureStateGeneration++;
 	}
 
-	// Set the host texture for each stage
 	for (int stage = 0; stage < NV2A_MAX_TEXTURES; stage++) {
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
 
-		// Check PGRAPH TEXCTL0 enable bit.  When the Xbox D3D runtime disables
-		// a texture stage, it writes CONTROL0 with the enable bit (bit 30) cleared.
-		// We must respect this: disabled stages should not have textures bound,
-		// otherwise we may create D3D11 resource hazards (e.g., the same texture
-		// bound as both RTV and SRV) or sample stale data from a previous draw.
-		//
-		// Exception: NV2A SHADERPROG mode overrides TEXCTL0.  When SHADERPROG
-		// specifies a non-NONE mode (e.g. PROJECT2D) for a stage, the texture
-		// unit IS active regardless of TEXCTL0.  This matters for point sprites
-		// where the game may not explicitly enable TEXCTL0 for stage 3.
+		// Check PGRAPH TEXCTL0 enable bit (with SHADERPROG override)
 		uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
 		bool bTextureEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
 		if (!bTextureEnabled) {
 			uint32_t shaderProg = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
 			uint32_t stageMode = (shaderProg >> (stage * 5)) & 0x1Fu;
-			if (stageMode != 0) // PS_TEXTUREMODES_NONE = 0
+			if (stageMode != 0)
 				bTextureEnabled = true;
 		}
 
 		if (!bTextureEnabled) {
-			// Texture stage is disabled in PGRAPH — unbind and skip
 			if (s_CachedSRV[stage]) {
 				s_CachedSRV[stage]->Release();
 				s_CachedSRV[stage] = nullptr;
@@ -191,16 +453,8 @@ void CxbxUpdateHostTextures()
 			continue;
 		}
 
-		// Read texture VRAM offset from PGRAPH — authoritative source.
-		// The Xbox D3D runtime always writes SET_TEXTURE_OFFSET to the
-		// pushbuffer, so PGRAPH has the physical address of the texture.
-		// The offset is relative to DMA context A or B (selected by TEXFMT0 bit 1).
-		ID3D11Resource* pHostBaseTexture = nullptr;
-		bool bNeedRelease = false;
-		bool bIsRenderTargetTexture = false;
+		// Resolve texture offset from PGRAPH
 		uint32_t texOffsetRaw = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
-
-		// Resolve DMA base: CONTEXT_DMA bit in TEXFMT selects dma_a (0) or dma_b (1)
 		uint32_t texFmtReg = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
 		bool isCubemap = (texFmtReg & NV_PGRAPH_TEXFMT0_CUBEMAPENABLE) != 0;
 		bool texDmaSelect = (texFmtReg & NV_PGRAPH_TEXFMT0_CONTEXT_DMA) != 0;
@@ -208,219 +462,25 @@ void CxbxUpdateHostTextures()
 			d, texDmaSelect ? pg->dma_b : pg->dma_a);
 		uint32_t texOffset = texDmaBase + texOffsetRaw;
 
-		if (texOffset != 0) {
-			// Check if this texture offset corresponds to a render target:
-			// the game may render caustics/shadows to an offscreen RT, then
-			// sample that RT as a texture in a later draw.
-			// Only treat as RT-texture if the offset is NOT the currently bound
-			// color surface (sampling the active RT is undefined) and is not the
-			// current depth surface (can't sample while bound as DSV).
-			if (texOffset != pg->regs[RI(NV_PGRAPH_BOFFSET4)]
-				&& texOffset != pg->regs[RI(NV_PGRAPH_BOFFSET3)]) {
-				auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
-				if (pPgraphRT) {
-					if (isCubemap) {
-						// The PGRAPH RT cache stores individual cubemap faces
-						// as separate 2D textures (ArraySize=1).  When the game
-						// samples the cubemap, TEXOFFSET points at face 0 and
-						// TEXFMT has CUBEMAPENABLE set.  We must compose all 6
-						// face RTs into a proper D3D11 cubemap texture so the
-						// pixel shader can sample via TextureCube at t8-t11.
-						D3D11_TEXTURE2D_DESC rtDesc;
-						((ID3D11Texture2D*)pPgraphRT)->GetDesc(&rtDesc);
+		// Resolve the host texture resource (RT cache or Xbox texture)
+		bool bIsRenderTargetTexture = false;
+		ID3D11Resource* pHostBaseTexture = CxbxResolveTextureSource(
+			d, pg, stage, texOffset, texFmtReg, isCubemap,
+			pXboxBaseTexture, bIsRenderTargetTexture);
 
-						if (rtDesc.ArraySize == 1) {
-							// Calculate bytes-per-pixel from the RT format
-							uint32_t bpp;
-							switch (rtDesc.Format) {
-							case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8X8_UNORM:
-							case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R10G10B10A2_UNORM:
-								bpp = 4; break;
-							case DXGI_FORMAT_B5G6R5_UNORM: case DXGI_FORMAT_B5G5R5A1_UNORM:
-							case DXGI_FORMAT_R8G8_UNORM:
-								bpp = 2; break;
-							default: bpp = 4; break;
-							}
-
-							// NV2A cubemap face stride: sum of all mip levels,
-							// rounded up to 128-byte alignment (NV2A_CUBEMAP_FACE_ALIGNMENT).
-							// For RT cubemaps the game typically uses 1 mip, so
-							// this simplifies to ROUND_UP(w*h*bpp, 128).
-							uint32_t faceStride = 0;
-							{
-								uint32_t mipW = rtDesc.Width, mipH = rtDesc.Height;
-								uint32_t mips = GET_MASK(texFmtReg, NV_PGRAPH_TEXFMT0_MIPMAP_LEVELS);
-								if (mips == 0) mips = 1;
-								for (uint32_t m = 0; m < mips; m++) {
-									faceStride += (mipW > 0 ? mipW : 1) * (mipH > 0 ? mipH : 1) * bpp;
-									mipW >>= 1; mipH >>= 1;
-								}
-								faceStride = (faceStride + 127) & ~127u; // 128-byte align
-							}
-
-							ID3D11Texture2D* faceRTs[6] = {};
-							faceRTs[0] = (ID3D11Texture2D*)pPgraphRT;
-							bool allFound = true;
-							for (int face = 1; face < 6; face++) {
-								faceRTs[face] = (ID3D11Texture2D*)CxbxLookupPgraphRTByOffset(
-									texOffset + face * faceStride);
-								if (!faceRTs[face]) { allFound = false; break; }
-							}
-
-							if (allFound) {
-								// Reuse a cached cubemap texture per stage to avoid
-								// creating a new D3D11 resource every frame.
-								static ID3D11Texture2D* s_CubemapCache[NV2A_MAX_TEXTURES] = {};
-								static uint32_t s_CubemapOffset[NV2A_MAX_TEXTURES] = {};
-								static UINT s_CubemapSize[NV2A_MAX_TEXTURES] = {};
-
-								// Determine mip count from TEXFMT register.
-								// RT faces are single-mip; we generate lower mips
-								// via GenerateMips so trilinear filtering works.
-								uint32_t texMipLevels = GET_MASK(texFmtReg, NV_PGRAPH_TEXFMT0_MIPMAP_LEVELS);
-								if (texMipLevels == 0) texMipLevels = 1;
-
-								if (!s_CubemapCache[stage]
-									|| s_CubemapOffset[stage] != texOffset
-									|| s_CubemapSize[stage] != rtDesc.Width) {
-									if (s_CubemapCache[stage])
-										s_CubemapCache[stage]->Release();
-									s_CubemapCache[stage] = nullptr;
-
-									D3D11_TEXTURE2D_DESC cubeDesc = rtDesc;
-									cubeDesc.ArraySize = 6;
-									cubeDesc.MipLevels = texMipLevels;
-									cubeDesc.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE
-										| (texMipLevels > 1 ? D3D11_RESOURCE_MISC_GENERATE_MIPS : 0);
-									cubeDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE
-										| (texMipLevels > 1 ? D3D11_BIND_RENDER_TARGET : 0);
-									g_pD3DDevice->CreateTexture2D(&cubeDesc, nullptr,
-										&s_CubemapCache[stage]);
-									s_CubemapOffset[stage] = texOffset;
-									s_CubemapSize[stage] = rtDesc.Width;
-								}
-
-								if (s_CubemapCache[stage]) {
-									// Copy each face RT (mip 0) into the composed cubemap
-									for (int face = 0; face < 6; face++) {
-										g_pD3DDeviceContext->CopySubresourceRegion(
-											s_CubemapCache[stage],
-											D3D11CalcSubresource(0, face, texMipLevels),
-											0, 0, 0,
-											faceRTs[face], 0,
-											nullptr);
-									}
-									// Generate lower mip levels if the game expects them
-									if (texMipLevels > 1) {
-										ID3D11ShaderResourceView* pMipSRV = nullptr;
-										D3D11_SHADER_RESOURCE_VIEW_DESC mipSrvDesc = {};
-										mipSrvDesc.Format = rtDesc.Format;
-										mipSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
-										mipSrvDesc.TextureCube.MipLevels = texMipLevels;
-										mipSrvDesc.TextureCube.MostDetailedMip = 0;
-										if (SUCCEEDED(g_pD3DDevice->CreateShaderResourceView(
-												s_CubemapCache[stage], &mipSrvDesc, &pMipSRV))) {
-											g_pD3DDeviceContext->GenerateMips(pMipSRV);
-											pMipSRV->Release();
-										}
-									}
-									pHostBaseTexture = s_CubemapCache[stage];
-									bIsRenderTargetTexture = true;
-								}
-							} else {
-								LOG_TEST_CASE("Cubemap RT composition: not all 6 faces found in RT cache");
-							}
-						}
-					}
-
-					if (!bIsRenderTargetTexture) {
-						// Non-cubemap RT, or cubemap composition failed — use
-						// the single RT directly (existing behaviour).
-						pHostBaseTexture = pPgraphRT;
-						bIsRenderTargetTexture = true;
-					}
-					// D3D11 will unbind the RTV when this resource is bound as SRV.
-					// Invalidate RT tracking so the next draw rebinds the RTV.
-					CxbxInvalidatePgraphRTBinding();
-				}
-			}
-
-			// For non-RT textures, try the texture side-map first (populated
-			// by SetTexture patches if they're enabled), then fall back to
-			// the HLE-tracked texture, then to constructing a synthetic
-			// Xbox texture from PGRAPH registers.
-			if (!bIsRenderTargetTexture) {
-				auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
-				if (pgTex != nullptr) {
-					pXboxBaseTexture = pgTex;
-				} else if (pXboxBaseTexture != xbox::zeroptr
-				           && pXboxBaseTexture != &s_SyntheticTextures[stage]) {
-					// No side-map entry, but HLE has a genuine texture for
-					// this stage (set via SetTexture/SwitchTexture patches).
-					// Prefer it and register in the side-map for future lookups.
-					// Exclude stale synthetic textures: their Data/Format fields
-					// may belong to the previous draw's texture, not the current
-					// one identified by texOffset (PGRAPH TEXOFFSET).
-					CxbxRegisterTextureByDataAddr(texOffset, pXboxBaseTexture);
-				} else {
-					// No side-map entry: build/update synthetic X_D3DBaseTexture
-					// from current PGRAPH registers.  Must re-derive every draw
-					// because the same stage may bind different textures across
-					// draws (e.g., ocean floor then font overlay in Dolphin).
-					// The Xbox D3D runtime writes pTexture->Format directly as
-					// the NV097_SET_TEXTURE_FORMAT argument, so PGRAPH TEXFMT
-					// contains the exact Xbox Format field value.
-					auto& synth = s_SyntheticTextures[stage];
-					synth.Common = X_D3DCOMMON_TYPE_TEXTURE | X_D3DCOMMON_D3DCREATED | 1; // type + d3d-created + refcount
-					synth.Data = texOffset;
-					synth.Lock = 0;
-					synth.Format = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
-
-					// Reconstruct the Size field for linear textures.
-					// Swizzled textures use Size=0 (dimensions from Format log2 bits).
-					uint32_t fmtColor = GET_MASK(synth.Format, NV097_SET_TEXTURE_FORMAT_COLOR);
-					if (IsNV2AColorFormatLinear(fmtColor)) {
-						uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
-						uint32_t texCtl1 = pg->regs[RI(NV_PGRAPH_TEXCTL1_0 + stage * 4)];
-						uint32_t width = (texImageRect >> 16) & 0x1FFF;
-						uint32_t height = texImageRect & 0x1FFF;
-						uint32_t pitch = (texCtl1 >> 16) & 0xFFFF;
-						// NV2A minimum pitch alignment is 64 bytes; clamp to
-						// avoid synth.Size=0 which would force swizzled decode.
-						if (pitch < 64)
-							pitch = 64;
-						if (width > 0 && height > 0)
-							synth.Size = ((width - 1) & 0xFFF)
-								| (((height - 1) & 0xFFF) << X_D3DSIZE_HEIGHT_SHIFT)
-								| ((((pitch / 64) - 1) & 0xFF) << X_D3DSIZE_PITCH_SHIFT);
-						else
-							synth.Size = 0;
-					} else {
-						synth.Size = 0;
-					}
-
-					pXboxBaseTexture = &synth;
-					// Publish so downstream code (CxbxGetTexFmtFixup,
-					// CxbxUpdateHostTextureScaling) can resolve this stage.
-					g_pXbox_SetTexture[stage] = &synth;
-				}
-			}
-		}
-
+		bool bNeedRelease = false;
 		if (!bIsRenderTargetTexture && pXboxBaseTexture != xbox::zeroptr) {
 			DWORD XboxResourceType = GetXboxCommonResourceType(pXboxBaseTexture);
 			switch (XboxResourceType) {
 			case X_D3DCOMMON_TYPE_TEXTURE: {
 				DXGI_FORMAT hostFormat = DXGI_FORMAT_UNKNOWN;
-				pHostBaseTexture = GetHostBaseTextureWithFormat(pXboxBaseTexture, /*D3DUsage=*/0, stage, &hostFormat);
+				pHostBaseTexture = GetHostBaseTextureWithFormat(pXboxBaseTexture, 0, stage, &hostFormat);
 				if (hostFormat != DXGI_FORMAT_UNKNOWN)
 					g_HostTextureFormats[stage] = hostFormat;
 				break;
 			}
 			case X_D3DCOMMON_TYPE_SURFACE:
-				// Surfaces can be set in the texture stages, instead of textures
-				LOG_TEST_CASE("ActiveTexture set to a surface (non-texture) resource"); // Test cases : Burnout, Outrun 2006
-				// For D3D11, the surface IS already the texture (ID3D11Texture2D)
+				LOG_TEST_CASE("ActiveTexture set to a surface (non-texture) resource");
 				{
 					ID3D11Texture2D* pHostSurface = GetHostSurface(pXboxBaseTexture);
 					if (pHostSurface) {
@@ -430,7 +490,6 @@ void CxbxUpdateHostTextures()
 						LOG_TEST_CASE("Failed to get host surface");
 					}
 				}
-				// Release this texture (after SetTexture) when we succeeded in creating it :
 				bNeedRelease = pHostBaseTexture != nullptr;
 				break;
 			default:
@@ -440,93 +499,8 @@ void CxbxUpdateHostTextures()
 		}
 
 		if (pHostBaseTexture != nullptr) {
-			// Reuse cached SRV if the underlying resource hasn't changed
-			if (s_CachedResource[stage] == pHostBaseTexture && s_CachedSRV[stage] != nullptr) {
-				// SRV already cached and resource unchanged — rebind only if externally dirtied
-				if (s_TextureSRVsDirty) {
-					g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &s_CachedSRV[stage]);
-					if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURE3D)
-						g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &s_CachedSRV[stage]);
-					else if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURECUBE)
-						g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &s_CachedSRV[stage]);
-				}
-			} else {
-				// Release old cached SRV
-				if (s_CachedSRV[stage]) {
-					s_CachedSRV[stage]->Release();
-					s_CachedSRV[stage] = nullptr;
-				}
-				s_CachedResource[stage] = nullptr;
-
-				// Create a shader resource view for the texture
-				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-				D3D11_RESOURCE_DIMENSION dim;
-				pHostBaseTexture->GetType(&dim);
-
-				switch (dim) {
-				case D3D11_RESOURCE_DIMENSION_TEXTURE2D: {
-					D3D11_TEXTURE2D_DESC texDesc = {};
-					((ID3D11Texture2D*)pHostBaseTexture)->GetDesc(&texDesc);
-					// Depth textures use typeless format — map to SRV-compatible format for sampling
-					srvDesc.Format = IsDepthFormat(texDesc.Format) ? GetDepthSRVFormat(texDesc.Format) : texDesc.Format;
-					if (texDesc.ArraySize == 6) {
-						srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
-						srvDesc.TextureCube.MipLevels = texDesc.MipLevels;
-						srvDesc.TextureCube.MostDetailedMip = 0;
-					} else {
-						srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-						srvDesc.Texture2D.MipLevels = texDesc.MipLevels;
-						srvDesc.Texture2D.MostDetailedMip = 0;
-					}
-					break;
-				}
-				case D3D11_RESOURCE_DIMENSION_TEXTURE3D: {
-					D3D11_TEXTURE3D_DESC texDesc = {};
-					((ID3D11Texture3D*)pHostBaseTexture)->GetDesc(&texDesc);
-					srvDesc.Format = texDesc.Format;
-					srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
-					srvDesc.Texture3D.MipLevels = texDesc.MipLevels;
-					srvDesc.Texture3D.MostDetailedMip = 0;
-					break;
-				}
-				default:
-					// Unsupported resource type
-					if (bNeedRelease) pHostBaseTexture->Release();
-					continue;
-				}
-
-				ID3D11ShaderResourceView* pSRV = nullptr;
-				HRESULT hRet = g_pD3DDevice->CreateShaderResourceView(pHostBaseTexture, &srvDesc, &pSRV);
-				DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateShaderResourceView");
-				if (FAILED(hRet)) {
-					if (hRet == DXGI_ERROR_DEVICE_REMOVED) {
-						HRESULT reason = g_pD3DDevice->GetDeviceRemovedReason();
-						CxbxrAbort("D3D11 device removed (DXGI_ERROR_DEVICE_REMOVED).\n"
-							"Reason: 0x%08X\n\n"
-							"This is usually caused by a GPU driver crash (TDR) triggered by\n"
-							"an invalid compute shader dispatch or resource hazard.\n"
-							"Enable D3D11 debug layer for more details.", reason);
-					}
-					EmuLog(LOG_LEVEL::WARNING, "CxbxUpdateHostTextures : g_pD3DDevice->CreateShaderResourceView "
-						"D3D error (0x%08X: format=%u)", hRet, srvDesc.Format);
-				}
-
-				if (SUCCEEDED(hRet) && pSRV != nullptr) {
-					s_CachedResource[stage] = pHostBaseTexture;
-					s_CachedSRV[stage] = pSRV; // Keep ref for cache
-					s_CachedDim[stage] = srvDesc.ViewDimension;
-					// Always bind to the base slot (for compiled PS path)
-					g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pSRV);
-					// All pixel shaders use separate Texture2D/3D/Cube declarations
-					// at t0-3/t4-7/t8-11; bind to the type-appropriate slot too
-					if (srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE3D)
-						g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pSRV);
-					else if (srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE)
-						g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pSRV);
-				}
-			}
+			CxbxBindTextureSRV(stage, pHostBaseTexture, bNeedRelease);
 		} else {
-			// Clear cache and unbind
 			if (s_CachedSRV[stage]) {
 				s_CachedSRV[stage]->Release();
 				s_CachedSRV[stage] = nullptr;
@@ -537,6 +511,7 @@ void CxbxUpdateHostTextures()
 			g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pNullSRV);
 			g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pNullSRV);
 		}
+
 		if (bNeedRelease) {
 			pHostBaseTexture->Release();
 		}
