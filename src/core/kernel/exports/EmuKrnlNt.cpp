@@ -841,6 +841,12 @@ namespace xbox {
 
 		// TODO: Remove ObfDereferenceObject as it may already had been done elsewhere.
 
+		// Fill in IoStatusBlock with the operation result
+		if (IoStatusBlock) {
+			IoStatusBlock->Status = result;
+			IoStatusBlock->Information = 0;
+		}
+
 		// Post IO completion packet if the file has an associated completion port.
 		// Post for all completed statuses (including errors like STATUS_END_OF_FILE),
 		// only skip if the operation is still pending.
