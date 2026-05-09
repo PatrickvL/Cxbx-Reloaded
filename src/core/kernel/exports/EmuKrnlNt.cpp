@@ -1381,7 +1381,7 @@ XBSYSAPI EXPORTNUM(208) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryObject
 
 	LOG_UNIMPLEMENTED();
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(X_STATUS_NOT_IMPLEMENTED);
 }
 
 // ******************************************************************
