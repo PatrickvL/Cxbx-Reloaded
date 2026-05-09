@@ -682,89 +682,37 @@ void UpdateFixedFunctionVertexShaderState()
 		ReadXFCTXMatrix(&mmat, NV_IGRAPH_XF_XFCTX_MMAT0);
 		ReadXFCTXMatrix(&cmat, NV_IGRAPH_XF_XFCTX_CMAT0);
 
-		// Derive Projection-with-viewport (VP * Proj)
-		D3DXMATRIX projVP;
-		bool validProjVP = false;
-
-		if (skinMode != NV_PGRAPH_CSV0_D_SKIN_OFF) {
-			// Skinning active: CMAT is already VP * Proj (no ModelView baked in)
-			projVP = cmat;
-			validProjVP = (cmat.m[3][2] != 0.0f); // sanity: perspective w-row should have non-zero z
-		} else {
-			// No skinning: CMAT = VP * Proj * ModelView → strip MV via inv(MMAT)
-			// NV2A register data is stored transposed vs D3DX row-major convention.
-			// D3DXMatrixMultiply/Inverse operate in row-major, so their results
-			// come out transposed relative to the NV2A/HLSL convention.
-			// The final transpose in the upload step corrects for this.
-			D3DXMATRIX mmatInv;
-			if (D3DXMatrixInverse(&mmatInv, nullptr, &mmat) != nullptr) {
-				D3DXMatrixMultiply(&projVP, &cmat, &mmatInv);
-				validProjVP = true;
-			} else {
-				D3DXMatrixIdentity(&projVP);
-			}
+		// Read viewport offset from PGRAPH XFCTX (half-pixel bias applied by Xbox runtime)
+		float vpoff[4];
+		for (int i = 0; i < 4; i++) {
+			std::memcpy(&vpoff[i], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i], sizeof(float));
 		}
 
-		// Strip the NV2A viewport from the projection.
-		// The NV2A viewport matrix (column-vector):
-		//   VP = [[sx,  0,  0, ox],  with sx = ox = W/2
-		//         [ 0, sy,  0, oy],       sy = -H/2, oy = H/2
-		//         [ 0,  0, sz, oz],       sz = z-buffer max, oz = 0
-		//         [ 0,  0,  0,  1]]
-		// PureProj = VP^-1 * projVP, computed element-by-element:
-		//   row 0: (projVP[0][j] - ox * projVP[3][j]) / sx
-		//   row 1: (projVP[1][j] - oy * projVP[3][j]) / sy
-		//   row 2: projVP[2][j] / sz  (since oz = 0)
-		//   row 3: projVP[3][j]
-		D3DXMATRIX pureProj;
-		float vpWidth = 0, vpHeight = 0;
+		// NV2A FF pipeline: CMAT × position → screen-space coordinates (viewport baked in).
+		// We upload CMAT directly and do the screen→NDC conversion in the HLSL shader,
+		// matching xemu's approach:
+		//   1. screenPos = CMAT × position (or CMAT × blended_eye_pos when skinning)
+		//   2. screenPos.xy /= screenPos.w  (perspective divide for xy)
+		//   3. screenPos.xy += VPOFF.xy     (half-pixel offset)
+		//   4. clipPos.xy = (2 * screenPos.xy - surfaceSize) / surfaceSize * w  (screen→NDC)
+		//   5. clipPos.z = screenPos.z / clipRange  (depth normalization)
+		// D3D11 viewport is set to full surface size by CxbxD3D11UpdateViewportFromPGRAPH().
+		std::memcpy(&ffShaderState.Transforms.Projection, &cmat, sizeof(cmat));
+		ffShaderState.Modes.UseDirectComposite = (skinMode == NV_PGRAPH_CSV0_D_SKIN_OFF) ? 1 : 0;
 
-		if (validProjVP && projVP.m[3][2] != 0.0f) {
-			// Extract viewport offsets from the projection.
-			// For standard perspective: projVP[3] = [0, 0, 1, 0], so
-			// projVP[0][2] = ox (viewport X offset) and projVP[1][2] = oy (viewport Y offset).
-			float ox = projVP.m[0][2] / projVP.m[3][2]; // typically W/2
-			float oy = projVP.m[1][2] / projVP.m[3][2]; // typically H/2
-			float sx = ox;      // centered viewport: sx = ox
-			float sy = -oy;     // Y-flip: sy = -oy
+		// Pass surface size and viewport offset to shader for screen→NDC conversion.
+		// Guarantee >= 1 so the shader can unconditionally divide by these.
+		auto surf = NV2AGetSurfaceState(pg);
+		ffShaderState.Modes.SurfaceWidth = std::max(1.0f, static_cast<float>(surf.clipWidth));
+		ffShaderState.Modes.SurfaceHeight = std::max(1.0f, static_cast<float>(surf.clipHeight));
+		ffShaderState.Modes.ViewportOffsetX = vpoff[0];
+		ffShaderState.Modes.ViewportOffsetY = vpoff[1];
 
-			vpWidth  = 2.0f * ox;
-			vpHeight = 2.0f * oy;
-
-			// Z-buffer depth scale from surface format
-			float sz = 1.0f;
-			switch (NV2AGetSurfaceState(pg).zetaFormat) {
-				case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   sz = 65535.0f;    break;
-				case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: sz = 16777215.0f; break;
-				default:                                  sz = 65535.0f;    break;
-			}
-
-			for (int j = 0; j < 4; j++) {
-				pureProj.m[0][j] = (projVP.m[0][j] - ox * projVP.m[3][j]) / sx;
-				pureProj.m[1][j] = (projVP.m[1][j] - oy * projVP.m[3][j]) / sy;
-				pureProj.m[2][j] =  projVP.m[2][j] / sz;
-				pureProj.m[3][j] =  projVP.m[3][j];
-			}
-		} else {
-			D3DXMatrixIdentity(&pureProj);
-		}
-
-		// Upload Projection (direct copy, no C++ transpose).
-		// NV2A register layout with column-major HLSL cbuffer means
-		// mul(v, M) computes CppRow_j . v for each j — matching NV2A's M * v.
-		std::memcpy(&ffShaderState.Transforms.Projection, &pureProj, sizeof(pureProj));
-
-		// Set D3D11 viewport for FF mode (since VPSCL/VPOFF are zero, the
-		// normal viewport update skips FF mode — we must set it here).
-		if (vpWidth > 0 && vpHeight > 0) {
-			D3D11_VIEWPORT hostViewport;
-			hostViewport.TopLeftX = 0;
-			hostViewport.TopLeftY = 0;
-			hostViewport.Width    = vpWidth  * g_RenderUpscaleFactor;
-			hostViewport.Height   = vpHeight * g_RenderUpscaleFactor;
-			hostViewport.MinDepth = 0.0f;
-			hostViewport.MaxDepth = 1.0f;
-			CxbxSetViewport(&hostViewport);
+		// Depth max (zmax) for Z normalization — matches xemu clipRange.y.
+		// Always > 0, so the shader can unconditionally divide.
+		switch (surf.zetaFormat) {
+			case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   ffShaderState.Modes.DepthMax = 65535.0f;    break;
+			default:                                  ffShaderState.Modes.DepthMax = 16777215.0f; break;
 		}
 
 		// View matrix: PGRAPH XFCTX doesn't store View separately (only combined ModelView).

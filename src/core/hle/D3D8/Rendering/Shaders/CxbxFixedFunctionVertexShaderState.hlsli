@@ -120,6 +120,15 @@ struct Modes {
     PADDED_INT(VertexBlend_NrOfMatrices);
     PADDED_INT(VertexBlend_CalcLastWeight); // Could be a bool in higer shader models
     PADDED_INT(NormalizeNormals);
+    PADDED_INT(UseDirectComposite); // When true, oPos = mul(position, Projection) directly (Projection = Proj×MV composite)
+    // Surface size for screen→NDC conversion (matches xemu surfaceSize uniform)
+    PADDED_FLOAT(SurfaceWidth);
+    PADDED_FLOAT(SurfaceHeight);
+    // Viewport offset from NV2A XFCTX (added to screen-space pos after CMAT multiply)
+    PADDED_FLOAT(ViewportOffsetX);
+    PADDED_FLOAT(ViewportOffsetY);
+    // Depth buffer max value (zmax) for Z normalization: 65535 for Z16, 16777215 for Z24S8
+    PADDED_FLOAT(DepthMax);
 };
 
 struct PointSprite {

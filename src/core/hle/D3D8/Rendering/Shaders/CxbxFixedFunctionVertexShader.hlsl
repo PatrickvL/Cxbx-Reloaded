@@ -388,7 +388,36 @@ VS_OUTPUT main(const VS_INPUT xInput)
         View.Normal = normalize(View.Normal);
 
     // Projection transform
-    Projection.Position = mul(View.Position, state.Transforms.Projection);
+    // NV2A uploads CMAT (composite matrix with viewport baked in) directly.
+    // CMAT × position produces screen-space coordinates. We convert
+    // screen→NDC here in the shader, matching xemu's approach.
+    float4 screenPos;
+    if (state.Modes.UseDirectComposite) {
+        // Skinning OFF: CMAT = VP × Proj × MV, multiply object-space position
+        screenPos = mul(Get(position), state.Transforms.Projection);
+    } else {
+        // Skinning ON: CMAT = VP × Proj, multiply blended eye-space position
+        screenPos = mul(View.Position, state.Transforms.Projection);
+    }
+
+    // Screen→NDC conversion (matches xemu vsh-ff.c):
+    // 1. Perspective divide for xy
+    // 2. Add viewport offset (half-pixel bias from NV2A XFCTX)
+    // 3. Convert screen coords to NDC: (2*pos - surfaceSize) / surfaceSize
+    // 4. Multiply by w to produce clip-space (D3D11 will perspective-divide)
+    // 5. Normalize Z by dividing by zmax (depth range)
+    // CPU guarantees SurfaceWidth, SurfaceHeight >= 1 and DepthMax > 0
+    float2 surfaceSize = float2(state.Modes.SurfaceWidth, state.Modes.SurfaceHeight);
+    float w = screenPos.w;
+    float invW = (abs(w) > 1e-30f) ? (1.0f / w) : 0.0f;
+    float2 xy = screenPos.xy * invW;                       // perspective divide
+    xy += float2(state.Modes.ViewportOffsetX, state.Modes.ViewportOffsetY); // VPOFF
+    xy.x = (2.0f * xy.x - surfaceSize.x) / surfaceSize.x;  // screen → NDC (X)
+    xy.y = (surfaceSize.y - 2.0f * xy.y) / surfaceSize.y;  // screen → NDC (Y flipped for D3D11)
+    screenPos.xy = xy * w;                                 // back to clip-space
+    // Z: CMAT produces Z scaled by zmax; divide to normalize to [0,1] for D3D11 depth
+    screenPos.z /= state.Modes.DepthMax;
+    Projection.Position = screenPos;
     // Normal unused...
 
     // Projection transform - final position
