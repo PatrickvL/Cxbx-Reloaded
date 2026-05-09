@@ -655,27 +655,26 @@ void pgraph_handle_method(NV2AState *d,
 				static int64_t s_flipStallAnchor = 0;
 				unsigned int totalLines = pcrtc_get_total_lines(d);
 				unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
-				LARGE_INTEGER freq, now;
-				QueryPerformanceFrequency(&freq);
-				QueryPerformanceCounter(&now);
-				int64_t vblankPeriodTicks = freq.QuadPart / refreshRate;
+				int64_t vblankPeriodTicks = HostQPCFrequency / refreshRate;
 
 				// Seed anchor from the real VBlank timestamp on first call,
 				// or reseed if it's fallen too far behind (e.g. after a stall).
+				// SleepPrecise handles the "already behind" case internally
+				// (returns current QPC immediately), so no pre-check needed.
 				int64_t lastVBlank = d->vblank_last_qpc.load(std::memory_order_acquire);
-				if (s_flipStallAnchor == 0
-					|| now.QuadPart - s_flipStallAnchor > vblankPeriodTicks * 2) {
-					s_flipStallAnchor = lastVBlank;
+				if (s_flipStallAnchor == 0) {
+					LARGE_INTEGER now;
+					QueryPerformanceCounter(&now);
+					if (now.QuadPart - lastVBlank > vblankPeriodTicks * 2) {
+						s_flipStallAnchor = lastVBlank;
+					}
 				}
 
 				if (s_flipStallAnchor > 0) {
 					int64_t nextVBlankQPC = s_flipStallAnchor + vblankPeriodTicks;
-					if (now.QuadPart < nextVBlankQPC) {
-						qemu_mutex_unlock(&d->pgraph.pgraph_lock);
-						SleepPrecise(nextVBlankQPC);
-						qemu_mutex_lock(&d->pgraph.pgraph_lock);
-					}
-					s_flipStallAnchor = nextVBlankQPC;
+					qemu_mutex_unlock(&d->pgraph.pgraph_lock);
+					s_flipStallAnchor = SleepPrecise(nextVBlankQPC);
+					qemu_mutex_lock(&d->pgraph.pgraph_lock);
 				}
 			}
 

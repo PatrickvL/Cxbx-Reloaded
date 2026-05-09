@@ -46,6 +46,6 @@ extern int64_t HostQPCFrequency;
 void timer_init();
 uint64_t get_now();
 int64_t Timer_GetScaledPerformanceCounter(int64_t Period);
-void SleepPrecise(int64_t targetQPC);
+int64_t SleepPrecise(int64_t targetQPC);
 
 #endif

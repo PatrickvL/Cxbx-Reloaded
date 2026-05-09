@@ -69,7 +69,9 @@ void timer_init()
 
 // More precise sleep, but with increased CPU usage.
 // Takes an absolute QPC target — no conversion, no drift.
-void SleepPrecise(int64_t targetQPC)
+// Returns the final QPC value at wake-up, so callers can use it as
+// the next anchor without a redundant QueryPerformanceCounter call.
+int64_t SleepPrecise(int64_t targetQPC)
 {
 	// Adaptive sleep strategy — every phase self-calibrates to never overshoot:
 	// 1. Sleep() for the bulk, with margin based on worst-case Sleep() overshoot
@@ -91,7 +93,7 @@ void SleepPrecise(int64_t targetQPC)
 
 	// Early-out: target already passed
 	if (now.QuadPart >= targetQPC)
-		return;
+		return now.QuadPart;
 
 	// Phase 1: Sleep() for the bulk, with margin based on worst-case overshoot
 	int64_t avgYield = s_avgYieldTicks.load(std::memory_order_relaxed);
@@ -142,6 +144,8 @@ void SleepPrecise(int64_t targetQPC)
 	while (now.QuadPart < targetQPC) {
 		QueryPerformanceCounter(&now);
 	}
+
+	return now.QuadPart;
 }
 
 // NOTE: the pit device is not implemented right now, so we put this here
@@ -230,11 +234,13 @@ xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 
 		// Wait precisely for the next periodic event deadline.
 		// Target is anchored to the previous SleepPrecise wake-up, not "now".
+		// SleepPrecise returns the final QPC — use it as the next anchor.
+		// If the target already passed, SleepPrecise returns current QPC
+		// immediately, snapping the anchor forward (prevents catch-up spin).
 		if (nearest_next > 0) {
 			int64_t targetQPC = wall_anchor
 				+ (int64_t)nearest_next * HostQPCFrequency / 1000000;
-			SleepPrecise(targetQPC);
-			wall_anchor = targetQPC; // exact wake-up becomes next anchor
+			wall_anchor = SleepPrecise(targetQPC);
 		}
 
 		// Process non-periodic events again after waking (handles any
