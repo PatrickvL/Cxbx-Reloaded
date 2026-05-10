@@ -107,6 +107,6 @@ Draw callbacks registered in XbPushBuffer.cpp `CxbxInitD3D11Renderer()`:
 
 - Light enable mask: `pg->regs[NV_PGRAPH_CSV0_D / 4] & NV_PGRAPH_CSV0_D_LIGHTS` (2 bits/light)
 - NV2A type mapping: 1(INFINITE)→3(DIRECTIONAL), 2(LOCAL)→1(POINT), 3(SPOT)→2(SPOT)
-- Colors from `pg->ltctxb[]` (pre-multiplied by material by Xbox D3D runtime)
+- Colors from `pg->xf.ltctxb[]` (pre-multiplied by material by Xbox D3D runtime)
 - Material forced to white — ltctxb already contains light×material product
-- Scene ambient from `pg->ltctxa[FR_AMB]` / `pg->ltctxa[BR_AMB]`
+- Scene ambient from `pg->xf.ltctxa[FR_AMB]` / `pg->xf.ltctxa[BR_AMB]`

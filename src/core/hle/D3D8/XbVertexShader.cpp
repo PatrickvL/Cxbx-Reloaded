@@ -1,4 +1,4 @@
-﻿// This is an open source non-commercial project. Dear PVS-Studio, please check it.
+// This is an open source non-commercial project. Dear PVS-Studio, please check it.
 // PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 // ******************************************************************
 // *
@@ -96,9 +96,9 @@ ID3D11VertexShader* InitShader(const char* csoName, const char* label, ID3DBlob*
 // Upload NV2A XFPR (Transform Program RAM) and bind SRVs for the VS interpreter.
 //
 // Two StructuredBuffers feed the interpreter shader:
-//   - g_PGRegs (t12): shared PGRAPH register array — already uploaded by
+//   - g_PGRegs (t12): shared PGRAPH register array - already uploaded by
 //     CxbxD3D11UploadRCInterpreterState(). We just bind it to the VS stage.
-//   - g_XFPR (t5): pg->program_data[136][4] — the XFPR RAM mirror,
+//   - g_XFPR (t5): pg->xf.xfpr[136][4] - the XFPR RAM mirror,
 //     uploaded here.  On real NV2A hardware this is on-chip XF SRAM
 //     behind the RDI interface, uploaded via NV097_SET_TRANSFORM_PROGRAM
 //     with an auto-incrementing write pointer (CHEOPS_OFFSET.PROG_LD_PTR).
@@ -115,15 +115,14 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
 	// Skip XFPR upload if program data hasn't changed (dirty flag set by NV097_SET_TRANSFORM_PROGRAM)
-	static bool s_XFPRUploaded = false;
-	if (!s_XFPRUploaded || pg->program_data_dirty) {
+	static uint32_t s_LastProgramGen = ~0u;
+	if (pg->dirty[NV2A_DIRTY_PROGRAM] != s_LastProgramGen) {
 		CxbxD3D11UpdateDynamicBuffer(g_pD3D11XFPRBuf,
-			pg->program_data, sizeof(pg->program_data));
-		s_XFPRUploaded = true;
-		pg->program_data_dirty = false;
+			pg->xf.xfpr, sizeof(pg->xf.xfpr));
+		s_LastProgramGen = pg->dirty[NV2A_DIRTY_PROGRAM];
 	}
 
-	// Bind VS interpreter SRVs once — pointers are stable for device lifetime
+	// Bind VS interpreter SRVs once - pointers are stable for device lifetime
 	static bool s_VSInterpreterSRVsBound = false;
 	if (!s_VSInterpreterSRVsBound) {
 		g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
@@ -169,7 +168,7 @@ void CxbxUpdateHostVertexShader()
 		uint32_t startAddr = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
 			NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START);
 		if (startAddr < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH) {
-			pTokens = (xbox::dword_xt*)&pg->program_data[startAddr][0];
+			pTokens = (xbox::dword_xt*)&pg->xf.xfpr[startAddr][0];
 		}
 		if (!pTokens) {
 			LOG_TEST_CASE("PGRAPH program_data not available");
@@ -181,7 +180,7 @@ void CxbxUpdateHostVertexShader()
 			CXBX_PROFILE_SCOPE(PROF_VS_SHADER);
 			ID3DBlob* pJITBytecode = nullptr;
 			ID3D11VertexShader* pJITVS = g_VertexShaderCache.GetShader(
-				pg->program_data, startAddr, g_pD3DDevice, &pJITBytecode);
+				pg->xf.xfpr, startAddr, g_pD3DDevice, &pJITBytecode);
 			if (pJITVS) {
 				InterlockedIncrement(&g_ProfileVSJITHits);
 				// Release previous JIT bytecode ref
@@ -256,15 +255,16 @@ void D3D11_launch_transform_program(NV2AState *d, unsigned int program_start)
 	// Cache the parsed program globally; only re-parse when program_data changes
 	static Nv2aVshProgram s_CachedProgram = {};
 	static bool s_CachedProgramValid = false;
+	static uint32_t s_LastXFPRGen = ~0u;
 
-	if (pg->program_data_dirty || !s_CachedProgramValid) {
+	if (pg->dirty[NV2A_DIRTY_PROGRAM] != s_LastXFPRGen || !s_CachedProgramValid) {
 		if (s_CachedProgramValid) {
 			nv2a_vsh_program_destroy(&s_CachedProgram);
 		}
 		s_CachedProgram = {};
 		Nv2aVshParseResult result = nv2a_vsh_parse_program(
 			&s_CachedProgram,
-			pg->program_data[0],
+			pg->xf.xfpr[0],
 			NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
 		if (result != NV2AVPR_SUCCESS) {
 			LOG_TEST_CASE("nv2a_vsh_parse_program failed (cached full parse)");
@@ -276,7 +276,7 @@ void D3D11_launch_transform_program(NV2AState *d, unsigned int program_start)
 		// even if no instruction in the program sets the final bit.
 		s_CachedProgram.steps[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH - 1].is_final = true;
 		s_CachedProgramValid = true;
-		pg->program_data_dirty = false;
+		s_LastXFPRGen = pg->dirty[NV2A_DIRTY_PROGRAM];
 	}
 
 	// Create a view into the cached program starting at program_start
@@ -286,11 +286,11 @@ void D3D11_launch_transform_program(NV2AState *d, unsigned int program_start)
 
 	Nv2aVshCPUXVSSExecutionState state_linkage;
 	Nv2aVshExecutionState state = nv2a_vsh_emu_initialize_xss_execution_state(
-		&state_linkage, (float*)pg->vsh_constants);
-	memcpy(state_linkage.input_regs, pg->vertex_state_shader_v0,
-		sizeof(pg->vertex_state_shader_v0));
+		&state_linkage, (float*)pg->xf.xfctx);
+	memcpy(state_linkage.input_regs, pg->xf.vertex_state_shader_v0,
+		sizeof(pg->xf.vertex_state_shader_v0));
 
-	nv2a_vsh_emu_execute_track_context_writes(&state, &program, pg->vsh_constants_dirty);
-	// Note: Above emulation's primary purpose is to update pg->vsh_constants and pg->vsh_constants_dirty
-	// Do NOT call nv2a_vsh_program_destroy here — program.steps is a borrowed pointer
+	nv2a_vsh_emu_execute_track_context_writes(&state, &program, pg->xf.xfctx_dirty);
+	// Note: Above emulation's primary purpose is to update pg->xf.xfctx and pg->xf.xfctx_dirty
+	// Do NOT call nv2a_vsh_program_destroy here - program.steps is a borrowed pointer
 }

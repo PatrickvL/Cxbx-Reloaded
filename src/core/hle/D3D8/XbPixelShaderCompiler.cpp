@@ -268,14 +268,14 @@ void CxbxD3D11UploadRCInterpreterState()
 	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
 	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
-	// Only re-upload when regs actually changed (generation counter bumped
+	// Only re-upload when regs actually changed (dirty generation bumped
 	// by nv097_dispatch_method on any register write).
 	// NOTE: Both JIT and interpreter shaders read dynamic constants (C0/C1,
 	// fog color, bump matrices) from this SRV at runtime, so upload is required.
 	{
 		static uint32_t s_LastRegsGeneration = ~0u;
-		if (pg->regs_generation != s_LastRegsGeneration) {
-			s_LastRegsGeneration = pg->regs_generation;
+		if (pg->dirty[NV2A_DIRTY_PGRAPH] != s_LastRegsGeneration) {
+			s_LastRegsGeneration = pg->dirty[NV2A_DIRTY_PGRAPH];
 			CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));
 		}
 	}
@@ -289,12 +289,15 @@ void CxbxD3D11UploadRCInterpreterState()
 	}
 
 	// --- Build the auxiliary cbuffer (software-computed fields only) ---
-	// Skip rebuild if regs_generation hasn't changed (aux depends only on regs[])
+	// Skip rebuild if none of the relevant dirty groups changed.
+	// Aux CB reads only SHADER, TEXTURE, BLEND, and RASTERIZER registers.
 	{
 		static uint32_t s_LastAuxGeneration = ~0u;
-		if (pg->regs_generation == s_LastAuxGeneration)
+		uint32_t auxGen = pg->dirty[NV2A_DIRTY_SHADER] + pg->dirty[NV2A_DIRTY_TEXTURE]
+		                + pg->dirty[NV2A_DIRTY_BLEND] + pg->dirty[NV2A_DIRTY_RASTERIZER];
+		if (auxGen == s_LastAuxGeneration)
 			return; // Aux CB and regs SRV are still current
-		s_LastAuxGeneration = pg->regs_generation;
+		s_LastAuxGeneration = auxGen;
 	}
 	PSAuxCBLayout aux = {};
 

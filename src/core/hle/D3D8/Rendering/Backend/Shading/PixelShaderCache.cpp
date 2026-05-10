@@ -875,13 +875,16 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
 
     PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
 
-    // Fast path: if PGRAPH registers haven't changed since last call,
-    // the combiner topology is identical — return cached result directly
-    // without rebuilding the key or hashing.
+    // Fast path: if none of the relevant dirty groups changed since last
+    // call, the combiner topology is identical — return cached result
+    // directly without rebuilding the key or hashing.
+    // PS JIT reads SHADER, TEXTURE, BLEND, and RASTERIZER registers.
     static uint32_t s_LastPSRegsGen = ~0u;
     static ID3D11PixelShader* s_LastPSResult = nullptr;
     static PSJITKey s_LastKey = {};
-    if (pg->regs_generation == s_LastPSRegsGen)
+    uint32_t psRegsGen = pg->dirty[NV2A_DIRTY_SHADER] + pg->dirty[NV2A_DIRTY_TEXTURE]
+                       + pg->dirty[NV2A_DIRTY_BLEND] + pg->dirty[NV2A_DIRTY_RASTERIZER];
+    if (psRegsGen == s_LastPSRegsGen)
         return s_LastPSResult;
 
     // Capture current state — read directly from PGRAPH registers
@@ -926,10 +929,10 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     key.alphaKill[3] = aux.AlphaKill.w;
 
     // Second fast path: if the key matches the last one (combiner state unchanged
-    // despite regs_generation bumping from non-combiner register writes like VS
-    // constants), skip the expensive hash + mutex + map lookup.
+    // despite dirty groups bumping from non-combiner register writes),
+    // skip the expensive hash + mutex + map lookup.
     if (memcmp(&key, &s_LastKey, sizeof(PSJITKey)) == 0) {
-        s_LastPSRegsGen = pg->regs_generation;
+        s_LastPSRegsGen = psRegsGen;
         return s_LastPSResult;
     }
 
@@ -940,7 +943,7 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
         auto it = g_PSJITCache.find(hash);
         if (it != g_PSJITCache.end()) {
             s_LastKey = key;
-            s_LastPSRegsGen = pg->regs_generation;
+            s_LastPSRegsGen = psRegsGen;
             s_LastPSResult = it->second.pPS;
             return s_LastPSResult; // nullptr = known failure
         }
@@ -963,7 +966,7 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
             std::lock_guard<std::mutex> lock(g_PSJITMutex);
             g_PSJITCache[hash] = { pPS };
             s_LastKey = key;
-            s_LastPSRegsGen = pg->regs_generation;
+            s_LastPSRegsGen = psRegsGen;
             s_LastPSResult = pPS;
             return pPS;
         }
@@ -993,7 +996,7 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
         std::lock_guard<std::mutex> lock(g_PSJITMutex);
         g_PSJITCache[hash] = { nullptr };
         s_LastKey = key;
-        s_LastPSRegsGen = pg->regs_generation;
+        s_LastPSRegsGen = psRegsGen;
         s_LastPSResult = nullptr;
         return nullptr;
     }
@@ -1009,7 +1012,7 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
         std::lock_guard<std::mutex> lock(g_PSJITMutex);
         g_PSJITCache[hash] = { nullptr };
         s_LastKey = key;
-        s_LastPSRegsGen = pg->regs_generation;
+        s_LastPSRegsGen = psRegsGen;
         s_LastPSResult = nullptr;
         return nullptr;
     }
@@ -1024,7 +1027,7 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     std::lock_guard<std::mutex> lock(g_PSJITMutex);
     g_PSJITCache[hash] = { pPS };
     s_LastKey = key;
-    s_LastPSRegsGen = pg->regs_generation;
+    s_LastPSRegsGen = psRegsGen;
     s_LastPSResult = pPS;
     return pPS;
 }

@@ -182,7 +182,7 @@ ID3D11ShaderResourceView  *g_pD3D11PGRegsSRV = nullptr;          // SRV for g_PG
 bool                       g_bUseVSInterpreter = true; // default on — ubershader path
 ID3D11VertexShader        *g_pD3D11VSInterpreterVS = nullptr;
 ID3DBlob                  *g_pD3D11VSInterpreterBytecode = nullptr; // kept for input layout creation
-ID3D11Buffer              *g_pD3D11XFPRBuf = nullptr;           // XFPR (Transform Program RAM) structured buffer — pg->program_data[]
+ID3D11Buffer              *g_pD3D11XFPRBuf = nullptr;           // XFPR (Transform Program RAM) structured buffer — pg->xf.xfpr[]
 ID3D11ShaderResourceView  *g_pD3D11XFPRSRV = nullptr;           // SRV for g_XFPR : register(t5)
 
 // ******************************************************************

@@ -171,7 +171,7 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	// Disabled: trampoline-only after CxbxImpl_LoadVertexShader removal.
 	// Xbox code runs unpatched and writes to push buffer directly.
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader", xbox::EMUPATCH(D3DDevice_LoadVertexShader), PATCH_HLE_D3D),
-	// Step 11: LoadVertexShaderProgram flows through push buffer → PFIFO → pg->program_data[].
+	// Step 11: LoadVertexShaderProgram flows through push buffer → PFIFO → pg->xf.xfpr[].
 	// LTCG LoadVertexShader variants kept for logging only (no trampoline available).
 	//PATCH_ENTRY("D3DDevice_LoadVertexShaderProgram", xbox::EMUPATCH(D3DDevice_LoadVertexShaderProgram), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2", xbox::EMUPATCH(D3DDevice_LoadVertexShader_0__LTCG_ecx1_eax2), PATCH_HLE_D3D),
@@ -275,10 +275,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("D3DDevice_SetVertexDataColor", xbox::EMUPATCH(D3DDevice_SetVertexDataColor), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexShader", xbox::EMUPATCH(D3DDevice_SetVertexShader), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexShader_0__LTCG_ebx1", xbox::EMUPATCH(D3DDevice_SetVertexShader_0__LTCG_ebx1), PATCH_HLE_D3D),
-	// Step 9.2: VS constants flow through pushbuffer → puller → pg->vsh_constants[]
+	// Step 9.2: VS constants flow through pushbuffer → puller → pg->xf.xfctx[]
 	// with dirty tracking. pfifo_flush before draws ensures constants are up to date.
 	// Xbox native SetVertexShaderConstant generates NV097_SET_TRANSFORM_CONSTANT push buffer
-	// commands, which pgraph_handle_method writes to pg->vsh_constants[] with dirty flags.
+	// commands, which pgraph_handle_method writes to pg->xf.xfctx[] with dirty flags.
 	// Removing these patches lets the push buffer path be the sole source of truth.
 	//PATCH_ENTRY("D3DDevice_SetVertexShaderConstant", xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant), PATCH_HLE_D3D),
 	//PATCH_ENTRY("D3DDevice_SetVertexShaderConstant1", xbox::EMUPATCH(D3DDevice_SetVertexShaderConstant1), PATCH_HLE_D3D),

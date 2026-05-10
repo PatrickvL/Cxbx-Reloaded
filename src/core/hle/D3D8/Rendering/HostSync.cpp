@@ -727,10 +727,10 @@ void CxbxUpdateHostVertexShaderConstants()
 		isXboxConstants = false;
 	}
 	else {
-		auto constant_floats = (float*)pg->vsh_constants;
+		auto constant_floats = (float*)pg->xf.xfctx;
 
 		if (isXboxConstants) {
-			CxbxUpdateDirtyVertexShaderConstants(constant_floats, pg->vsh_constants_dirty);
+			CxbxUpdateDirtyVertexShaderConstants(constant_floats, pg->xf.xfctx_dirty);
 		}
 		else {
 			CxbxSetVertexShaderConstantF(0, constant_floats, X_D3DVS_CONSTREG_COUNT);

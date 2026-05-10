@@ -522,10 +522,9 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 	// The calculation is cheap (a few floats + two D3D11 calls).
 
 	// Read viewport offset and scale from XFCTX constants
-	float vpoff[4], vpscl[4];
-	for (int i = 0; i < 4; i++) {
-		std::memcpy(&vpoff[i], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i], sizeof(float));
-		std::memcpy(&vpscl[i], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPSCL][i], sizeof(float));
+	float vpscl[2];
+	for (int i = 0; i < 2; i++) {
+		std::memcpy(&vpscl[i], &pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][i], sizeof(float));
 	}
 
 	// If the viewport scale constants are zero, PGRAPH hasn't been programmed

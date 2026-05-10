@@ -528,7 +528,7 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	// With draws going through pfifo, the PGRAPH values ARE the source of
 	// truth — they are written before the draw in the push buffer and
 	// processed sequentially by the puller.  CxbxUpdateHostVertexShaderConstants
-	// already uploads them from pg->vsh_constants[58/59].
+	// already uploads them from pg->xf.xfctx[58/59].
 	//
 	// TODO: Re-enable this overwrite if HLE draw patches are restored.
 	// Test Case: GTA III, Soldier of Fortune II (needed when HLE draws are active)
@@ -673,7 +673,7 @@ void UpdateFixedFunctionVertexShaderState()
 		// Helper: direct-copy a 4x4 matrix from vsh_constants[base..base+3] — NO transpose
 		auto ReadXFCTXMatrix = [&](D3DXMATRIX* pDst, int base) {
 			for (int row = 0; row < 4; row++) {
-				std::memcpy(&pDst->m[row][0], &pg->vsh_constants[base + row][0], 16);
+				std::memcpy(&pDst->m[row][0], &pg->xf.xfctx[base + row][0], 16);
 			}
 		};
 
@@ -685,7 +685,7 @@ void UpdateFixedFunctionVertexShaderState()
 		// Read viewport offset from PGRAPH XFCTX (half-pixel bias applied by Xbox runtime)
 		float vpoff[4];
 		for (int i = 0; i < 4; i++) {
-			std::memcpy(&vpoff[i], &pg->vsh_constants[NV_IGRAPH_XF_XFCTX_VPOFF][i], sizeof(float));
+			std::memcpy(&vpoff[i], &pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPOFF][i], sizeof(float));
 		}
 
 		// NV2A FF pipeline: CMAT × position → screen-space coordinates (viewport baked in).
@@ -963,9 +963,9 @@ void UpdateFixedFunctionVertexShaderState()
 			// Diffuse color from ltctxb (3 floats stored as uint32_t bit patterns)
 			int base = NV_IGRAPH_XF_LTCTXB_L0_DIF + (int)i * 6;
 			pShaderLight->Diffuse = D3DXVECTOR4(
-				AsFloat(pg->ltctxb[base][0]),
-				AsFloat(pg->ltctxb[base][1]),
-				AsFloat(pg->ltctxb[base][2]),
+				AsFloat(pg->xf.ltctxb[base][0]),
+				AsFloat(pg->xf.ltctxb[base][1]),
+				AsFloat(pg->xf.ltctxb[base][2]),
 				1.0f);
 
 			// Specular color
@@ -973,9 +973,9 @@ void UpdateFixedFunctionVertexShaderState()
 			base = NV_IGRAPH_XF_LTCTXB_L0_SPC + (int)i * 6;
 			if (SpecularEnable) {
 				pShaderLight->Specular = D3DXVECTOR4(
-					AsFloat(pg->ltctxb[base][0]),
-					AsFloat(pg->ltctxb[base][1]),
-					AsFloat(pg->ltctxb[base][2]),
+					AsFloat(pg->xf.ltctxb[base][0]),
+					AsFloat(pg->xf.ltctxb[base][1]),
+					AsFloat(pg->xf.ltctxb[base][2]),
 					1.0f);
 			} else {
 				pShaderLight->Specular = D3DXVECTOR4(0, 0, 0, 0);
@@ -983,48 +983,48 @@ void UpdateFixedFunctionVertexShaderState()
 
 			// Accumulate per-light ambient
 			base = NV_IGRAPH_XF_LTCTXB_L0_AMB + (int)i * 6;
-			LightAmbient.x += AsFloat(pg->ltctxb[base][0]);
-			LightAmbient.y += AsFloat(pg->ltctxb[base][1]);
-			LightAmbient.z += AsFloat(pg->ltctxb[base][2]);
+			LightAmbient.x += AsFloat(pg->xf.ltctxb[base][0]);
+			LightAmbient.y += AsFloat(pg->xf.ltctxb[base][1]);
+			LightAmbient.z += AsFloat(pg->xf.ltctxb[base][2]);
 
 			// Direction (for directional lights — already in view-space, normalized)
 			pShaderLight->DirectionVN = D3DXVECTOR3(
-				pg->light_infinite_direction[i][0],
-				pg->light_infinite_direction[i][1],
-				pg->light_infinite_direction[i][2]);
+				pg->light[i].infinite_direction[0],
+				pg->light[i].infinite_direction[1],
+				pg->light[i].infinite_direction[2]);
 
 			// Position (for point/spot lights — already in view-space)
 			pShaderLight->PositionV = D3DXVECTOR3(
-				pg->light_local_position[i][0],
-				pg->light_local_position[i][1],
-				pg->light_local_position[i][2]);
+				pg->light[i].local_position[0],
+				pg->light[i].local_position[1],
+				pg->light[i].local_position[2]);
 
 			// Attenuation
 			pShaderLight->Attenuation = D3DXVECTOR3(
-				pg->light_local_attenuation[i][0],
-				pg->light_local_attenuation[i][1],
-				pg->light_local_attenuation[i][2]);
+				pg->light[i].local_attenuation[0],
+				pg->light[i].local_attenuation[1],
+				pg->light[i].local_attenuation[2]);
 
 			// Range (stored in ltc1)
-			pShaderLight->Range = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_r0 + i][0]);
+			pShaderLight->Range = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_r0 + i][0]);
 
 			// Spot parameters from ltctxa
 			int spotBase = NV_IGRAPH_XF_LTCTXA_L0_K + (int)i * 2;
-			pShaderLight->Falloff = AsFloat(pg->ltctxa[spotBase][2]); // falloff stored in K[2]
-			pShaderLight->CosHalfPhi = AsFloat(pg->ltctxa[spotBase][0]);
-			pShaderLight->SpotIntensityDivisor = AsFloat(pg->ltctxa[spotBase][1]);
+			pShaderLight->Falloff = AsFloat(pg->xf.ltctxa[spotBase][2]); // falloff stored in K[2]
+			pShaderLight->CosHalfPhi = AsFloat(pg->xf.ltctxa[spotBase][0]);
+			pShaderLight->SpotIntensityDivisor = AsFloat(pg->xf.ltctxa[spotBase][1]);
 		}
 
 		// Scene ambient from PGRAPH ltctxa[FR_AMB] (3 floats)
 		D3DXVECTOR4 SceneAmbient(
-			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][0]),
-			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][1]),
-			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][2]),
+			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][0]),
+			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][1]),
+			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][2]),
 			0.f);
 		D3DXVECTOR4 BackSceneAmbient(
-			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][0]),
-			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][1]),
-			AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][2]),
+			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][0]),
+			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][1]),
+			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][2]),
 			0.f);
 
 		ffShaderState.TotalLightsAmbient.Front = (D3DXVECTOR3)(LightAmbient + SceneAmbient);
@@ -1034,8 +1034,8 @@ void UpdateFixedFunctionVertexShaderState()
 		// The shader computes (material * light), so white material preserves the pre-multiplied values.
 		// Emission is already baked into the scene ambient register (FR_AMB/BR_AMB) by the Xbox D3D runtime.
 		// Material alpha comes from NV097_SET_MATERIAL_ALPHA → ltctxa[CM_COL][3].
-		float materialAlpha     = AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_CM_COL][3]);
-		float backMaterialAlpha = AsFloat(pg->ltctxa[NV_IGRAPH_XF_LTCTXA_BCM_COL][3]);
+		float materialAlpha     = AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_CM_COL][3]);
+		float backMaterialAlpha = AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BCM_COL][3]);
 
 		ffShaderState.Materials[0].Diffuse  = D3DXVECTOR4(1, 1, 1, materialAlpha);
 		ffShaderState.Materials[0].Ambient  = D3DXVECTOR4(1, 1, 1, 1);
@@ -1045,8 +1045,8 @@ void UpdateFixedFunctionVertexShaderState()
 		// Reconstruct specular power from NV2A's 6 polynomial coefficients (LTC1).
 		// Front specular params: ltc1[l0][0..3] + ltc1[l0+1][0..1]
 		float frontParams[6];
-		for (int j = 0; j < 4; j++) frontParams[j]     = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_l0][j]);
-		for (int j = 0; j < 2; j++) frontParams[4 + j]  = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_l0 + 1][j]);
+		for (int j = 0; j < 4; j++) frontParams[j]     = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_l0][j]);
+		for (int j = 0; j < 2; j++) frontParams[4 + j]  = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_l0 + 1][j]);
 		ffShaderState.Materials[0].Power = ReconstructSpecularPower(frontParams);
 
 		ffShaderState.Materials[1] = ffShaderState.Materials[0]; // back material (start from front)
@@ -1054,8 +1054,8 @@ void UpdateFixedFunctionVertexShaderState()
 
 		// Back specular params: ltc1[Bl0][0..3] + ltc1[Bl0+1][0..1]
 		float backParams[6];
-		for (int j = 0; j < 4; j++) backParams[j]     = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_Bl0][j]);
-		for (int j = 0; j < 2; j++) backParams[4 + j]  = AsFloat(pg->ltc1[NV_IGRAPH_XF_LTC1_Bl0 + 1][j]);
+		for (int j = 0; j < 4; j++) backParams[j]     = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_Bl0][j]);
+		for (int j = 0; j < 2; j++) backParams[4 + j]  = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_Bl0 + 1][j]);
 		ffShaderState.Materials[1].Power = ReconstructSpecularPower(backParams);
 	}
 

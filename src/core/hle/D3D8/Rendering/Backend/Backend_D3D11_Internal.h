@@ -130,7 +130,7 @@ extern ID3D11ShaderResourceView  *g_pD3D11PGRegsSRV;            // SRV for g_PGR
 extern bool                       g_bUseVSInterpreter;
 extern ID3D11VertexShader        *g_pD3D11VSInterpreterVS;
 extern ID3DBlob                  *g_pD3D11VSInterpreterBytecode;
-extern ID3D11Buffer              *g_pD3D11XFPRBuf;              // XFPR (Transform Program RAM) StructuredBuffer — pg->program_data[]
+extern ID3D11Buffer              *g_pD3D11XFPRBuf;              // XFPR (Transform Program RAM) StructuredBuffer — pg->xf.xfpr[]
 extern ID3D11ShaderResourceView  *g_pD3D11XFPRSRV;              // SRV for g_XFPR : register(t5)
 
 // VS interpreter instruction field constants — shared with HLSL.
