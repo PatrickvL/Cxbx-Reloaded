@@ -2029,6 +2029,16 @@ XBSYSAPI EXPORTNUM(312) xbox::void_xt NTAPI xbox::RtlUnwind
 	// The Xbox RtlUnwind signature is identical to the Windows one.
 	// Delegate to the host to walk and unwind the SEH chain back to
 	// TargetFrame, invoking termination handlers along the way.
+	//
+	// WARNING: RtlUnwind does not respect stdcall non-volatile register
+	// conventions. It captures the register context via RtlCaptureContext
+	// after some of its prologue has already trashed non-volatile registers,
+	// then ZwContinue restores that (already corrupted) context to return
+	// to the caller. On the Xbox kernel, RtlUnwind is only ever called from
+	// _global_unwind2, which saves/restores non-volatile registers around it
+	// (Microsoft was aware of the problem). We return immediately after
+	// the call here, so the register trashing is harmless. Do NOT add code
+	// after this call that depends on non-volatile register values.
 	::RtlUnwind(TargetFrame, TargetIp,
 		reinterpret_cast<::PEXCEPTION_RECORD>(ExceptionRecord),
 		ReturnValue);
