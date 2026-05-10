@@ -176,8 +176,6 @@ void D3D11_draw_state_update(NV2AState *d)
 	}
 
 	CxbxUpdateNativeD3DResources();
-
-	LOG_INCOMPLETE(); // TODO : Read state from pgraph, convert to D3D
 }
 
 // ---- NV2A Zpass pixel count (visibility test) via D3D11 occlusion queries ----
