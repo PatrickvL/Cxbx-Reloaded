@@ -109,8 +109,6 @@ static int ffs(int valu)
 #define CASE_16(v, step) CASE_8(v, step) : CASE_8(v + (step) * 8, step)
 #define CASE_32(v, step) CASE_16(v, step) : CASE_16(v + (step) * 16, step)
 #define CASE_64(v, step) CASE_32(v, step) : CASE_32(v + (step) * 32, step)
-#define CASE_128(v, step) CASE_64(v, step) : CASE_64(v + (step) * 64, step)
-#define CASE_256(v, step) CASE_128(v, step) : CASE_128(v + (step) * 128, step)
 
 // Non-power-of-two CASE statements
 #define CASE_3(v, step) CASE_2(v, step) : CASE_1(v + (step) * 2, step)
@@ -217,9 +215,53 @@ typedef struct PatchState {
 	int totalCoeffs;                // total float4 entries written
 } PatchState;
 
+// Dirty group indices for PGRAPHState::dirty[] array.
+// Indexed from NV097MethodEntry::dirty_group (0 = no dirty flag).
+enum NV2ADirtyGroup {
+	NV2A_DIRTY_NONE = 0,         // no dirty flag (must be 0 — table guard skips this)
+	NV2A_DIRTY_PGRAPH = 0,       // alias: any pg->regs[] write (set explicitly, not via table guard)
+	NV2A_DIRTY_PROGRAM,          // program_data[] was written
+	NV2A_DIRTY_SURFACE,          // surface configuration changed
+	NV2A_DIRTY_TEXTURE,          // texture state changed
+	NV2A_DIRTY_BLEND,            // blend / color mask state changed
+	NV2A_DIRTY_RASTERIZER,       // rasterizer state changed (cull, polygon, etc.)
+	NV2A_DIRTY_DEPTH_STENCIL,    // depth/stencil state changed
+	NV2A_DIRTY_SHADER,           // shader/combiner program changed
+	NV2A_DIRTY_COUNT             // total number of groups (max 7 for 3-bit field in store)
+};
+
 typedef struct KelvinState {
 	xbox::addr_xt object_instance;
 } KelvinState;
+
+// NV2A Transform Engine ("Cheops") internal SRAM state.
+// These banks are NOT MMIO-mapped; accessed indirectly via pushbuffer
+// methods (auto-incrementing CHEOPS_OFFSET) or RDI debug interface.
+typedef struct CheopsState {
+	// XFPR: Transform Program RAM (136 × 128-bit instructions)
+	uint32_t xfpr[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][VSH_TOKEN_SIZE];
+
+	// XFCTX: Transform Context RAM (192 × float4) — vertex shader constants,
+	// matrices, viewport params, eye position, etc.
+	uint32_t xfctx[NV2A_VERTEXSHADER_CONSTANTS][4];
+	bool     xfctx_dirty[NV2A_VERTEXSHADER_CONSTANTS];
+
+	// LTCTXA: Lighting Context A (26 × float4) — fog, ambient, material color,
+	// per-light attenuation/spot params
+	uint32_t ltctxa[NV2A_LTCTXA_COUNT][4];
+	bool     ltctxa_dirty[NV2A_LTCTXA_COUNT];
+
+	// LTCTXB: Lighting Context B (52 × float4) — per-light diffuse/specular/ambient colors
+	uint32_t ltctxb[NV2A_LTCTXB_COUNT][4];
+	bool     ltctxb_dirty[NV2A_LTCTXB_COUNT];
+
+	// LTC1: Lighting Constants 1 (20 × float4) — light range, material power params
+	uint32_t ltc1[NV2A_LTC1_COUNT][4];
+	bool     ltc1_dirty[NV2A_LTC1_COUNT];
+
+	// SET_TRANSFORM_DATA (0x1E80): input v0 register for LAUNCH_TRANSFORM_PROGRAM
+	uint32_t vertex_state_shader_v0[4];
+} CheopsState;
 
 typedef struct ContextSurfaces2DState {
 	xbox::addr_xt object_instance;
@@ -270,28 +312,24 @@ typedef struct PGRAPHState {
 
 	uint32_t clear_surface_flags; // NV097_CLEAR_SURFACE parameter (Z/STENCIL/COLOR mask)
 
-	uint32_t program_data[NV2A_MAX_TRANSFORM_PROGRAM_LENGTH][VSH_TOKEN_SIZE]; // XFPR RAM mirror: NV2A Transform Program RAM (on-chip XF SRAM, 136 × 92-bit instructions in 128-bit containers)
-	bool program_data_dirty; // Set when any program_data slot is written; cleared after re-parse
+	// NV2A Transform Engine ("Cheops") — internal SRAM banks
+	CheopsState xf;
 
-	uint32_t vertex_state_shader_v0[4]; // NV097_SET_TRANSFORM_DATA (0x1E80): input v0 for LAUNCH_TRANSFORM_PROGRAM
+	// Dirty generation counters indexed by NV2ADirtyGroup.  Bumped by
+	// nv097_dispatch_method and PGRAPH switch handlers; each consumer
+	// independently tracks its own "last seen" value per group.
+	uint32_t dirty[NV2A_DIRTY_COUNT];
 
-	uint32_t vsh_constants[NV2A_VERTEXSHADER_CONSTANTS][4]; // XFCTX RAM mirror: NV2A Transform Context RAM (on-chip XF SRAM, 192 × float4)
-	bool vsh_constants_dirty[NV2A_VERTEXSHADER_CONSTANTS];
-	uint32_t vsh_constants_generation; // Bumped when any vsh_constant is written; consumer skips dirty scan if unchanged
-
-	/* lighting constant arrays */
-	uint32_t ltctxa[NV2A_LTCTXA_COUNT][4];
-	bool ltctxa_dirty[NV2A_LTCTXA_COUNT];
-	uint32_t ltctxb[NV2A_LTCTXB_COUNT][4];
-	bool ltctxb_dirty[NV2A_LTCTXB_COUNT];
-	uint32_t ltc1[NV2A_LTC1_COUNT][4];
-	bool ltc1_dirty[NV2A_LTC1_COUNT];
-
-	// should figure out where these are in lighting context
-	float light_infinite_half_vector[NV2A_MAX_LIGHTS][3];
-	float light_infinite_direction[NV2A_MAX_LIGHTS][3];
-	float light_local_position[NV2A_MAX_LIGHTS][3];
-	float light_local_attenuation[NV2A_MAX_LIGHTS][3];
+	// Light geometry — SRAM bank unknown (xemu: "should figure out where
+	// these are in lighting context").  Packed contiguously for data-driven
+	// dispatch via NV097_TARGET_LIGHT.  Per-light: 12 floats (48 bytes).
+	struct LightGeometry {
+		float infinite_half_vector[3];
+		float infinite_direction[3];
+		float local_position[3];
+		float local_attenuation[3];
+	} light[NV2A_MAX_LIGHTS];
+	static_assert(sizeof(LightGeometry) == 12 * sizeof(float), "LightGeometry must be 48 bytes");
 
 	float point_params[8]; // NV097_SET_POINT_PARAMS attenuation coefficients
 	float line_width;      // NV097_SET_LINE_WIDTH (float, pixels)
@@ -319,7 +357,6 @@ typedef struct PGRAPHState {
 	bool texture_matrix_enable[NV2A_MAX_TEXTURES]; // NV097_SET_TEXTURE_MATRIX_ENABLE per stage
 
 	uint32_t regs[NV_PGRAPH_SIZE]; // TODO : union
-	uint32_t regs_generation; // bumped on any regs[] write (for GPU upload skip)
 } PGRAPHState;
 
 typedef struct OverlayState {
