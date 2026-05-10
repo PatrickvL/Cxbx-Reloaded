@@ -28,10 +28,6 @@
 #include <core\kernel\exports\xboxkrnl.h>
 
 #include <windows.h>
-#include <chrono>
-#include <thread>
-#include <vector>
-#include <mutex>
 #include <array>
 #include "Timer.h"
 #include "common\util\CxbxUtil.h"
@@ -44,20 +40,36 @@
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 
 
-static std::atomic_uint64_t last_qpc; // last time when QPC was called
-static std::atomic_uint64_t exec_time; // total execution time in us since the emulation started
-static uint64_t pit_last; // last time when the pit time was updated
-static uint64_t pit_last_qpc; // last QPC time of the pit
+std::atomic_uint64_t HostLastQPC; // last absolute host QPC reading
+static uint64_t pit_last; // QPC ticks (relative to start) when PIT last fired
+static int64_t PIT_PERIOD_QPC; // 1ms in QPC ticks, set by timer_init()
 // The frequency of the high resolution clock of the host, and the start time
 int64_t HostQPCFrequency, HostQPCStartTime;
+
+// High-resolution waitable timer handle, created once in timer_init().
+// CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (Win10 1803+) uses a dedicated
+// kernel timer queue with ~0.5ms resolution and zero CPU burn.
+static HANDLE g_hPreciseTimer = NULL;
 
 
 void timer_init()
 {
 	QueryPerformanceFrequency(reinterpret_cast<LARGE_INTEGER *>(&HostQPCFrequency));
 	QueryPerformanceCounter(reinterpret_cast<LARGE_INTEGER *>(&HostQPCStartTime));
-	pit_last_qpc = last_qpc = HostQPCStartTime;
-	pit_last = get_now();
+	HostLastQPC = HostQPCStartTime;
+	PIT_PERIOD_QPC = HostQPCFrequency / 1000; // 1ms in QPC ticks
+	pit_last = 0; // get_now() returns 0 at start
+
+	// Create high-resolution waitable timer (Win10 1803+, build 17134).
+	g_hPreciseTimer = CreateWaitableTimerEx(NULL, NULL,
+		CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+	// If CREATE_WAITABLE_TIMER_HIGH_RESOLUTION fails, fall back to a
+	// regular waitable timer — with timeBeginPeriod(1) already called
+	// in CxbxrKrnlInit, even regular waitable timers get ~1ms precision,
+	// sufficient for our needs.
+	if (g_hPreciseTimer == NULL) {
+		g_hPreciseTimer = CreateWaitableTimerEx(NULL, NULL, 0, TIMER_ALL_ACCESS);
+	}
 
 	// Synchronize xbox system time with host time
 	LARGE_INTEGER HostSystemTime;
@@ -67,27 +79,11 @@ void timer_init()
 	xbox::KeSystemTime.High1Time = HostSystemTime.u.HighPart;
 }
 
-// More precise sleep, but with increased CPU usage.
-// Takes an absolute QPC target — no conversion, no drift.
+// Precise sleep until an absolute QPC deadline, with zero busy-wait.
 // Returns the final QPC value at wake-up, so callers can use it as
 // the next anchor without a redundant QueryPerformanceCounter call.
 int64_t SleepPrecise(int64_t targetQPC)
 {
-	// Adaptive sleep strategy — every phase self-calibrates to never overshoot:
-	// 1. Sleep() for the bulk, with margin based on worst-case Sleep() overshoot
-	// 2. SwitchToThread() yielding, exits when remaining < 2x average yield duration
-	// 3. Final tight spin for sub-yield precision
-
-	// Max-tracked Sleep overshoot with slow decay (not EMA — avoids overshooting
-	// on outlier spikes). Yield duration uses EMA since overshooting a single
-	// yield just means one extra spin iteration, not a missed deadline.
-	// Atomic for thread safety (called from system_events + PGRAPH puller).
-	// Cache-line aligned to prevent false sharing between the two atomics
-	// and with any adjacent static data.
-	alignas(64) static std::atomic<int64_t> s_maxSleepOvershoot{HostQPCFrequency * 2 / 1000}; // init ~2ms
-	alignas(64) static std::atomic<int64_t> s_avgYieldTicks{HostQPCFrequency / 1000};          // init ~1ms
-	const int64_t kMaxYieldThreshold = HostQPCFrequency * 5 / 1000; // cap yield exit at ~5ms
-
 	LARGE_INTEGER now;
 	QueryPerformanceCounter(&now);
 
@@ -95,157 +91,131 @@ int64_t SleepPrecise(int64_t targetQPC)
 	if (now.QuadPart >= targetQPC)
 		return now.QuadPart;
 
-	// Phase 1: Sleep() for the bulk, with margin based on worst-case overshoot
-	int64_t avgYield = s_avgYieldTicks.load(std::memory_order_relaxed);
-	int64_t yieldExit = avgYield * 2;
-	if (yieldExit > kMaxYieldThreshold)
-		yieldExit = kMaxYieldThreshold;
-	int64_t remaining = targetQPC - now.QuadPart;
-	int64_t sleepMargin = s_maxSleepOvershoot.load(std::memory_order_relaxed) + yieldExit;
-	if (remaining > sleepMargin) {
-		DWORD sleepMs = (DWORD)((remaining - sleepMargin) * 1000 / HostQPCFrequency);
-		if (sleepMs > 0) {
-			LARGE_INTEGER before = now;
-			Sleep(sleepMs);
-			QueryPerformanceCounter(&now);
-			// Track worst-case overshoot with slow decay
-			int64_t requestedTicks = (int64_t)sleepMs * HostQPCFrequency / 1000;
-			int64_t overshoot = (now.QuadPart - before.QuadPart) - requestedTicks;
-			if (overshoot < 0) overshoot = 0;
-			int64_t prev = s_maxSleepOvershoot.load(std::memory_order_relaxed);
-			if (overshoot > prev) {
-				s_maxSleepOvershoot.store(overshoot, std::memory_order_relaxed);
-			} else {
-				// Slow decay: shrink by 1/64 per sample so it adapts down over time
-				// Floor at 0.5ms to prevent near-zero margin after long stable periods
-				int64_t decayed = prev - (prev >> 6);
-				int64_t floor = HostQPCFrequency / 2000; // 0.5ms
-				if (decayed < floor) decayed = floor;
-				s_maxSleepOvershoot.store(decayed, std::memory_order_relaxed);
-			}
-		}
+	// Convert QPC delta to 100ns units (negative = relative deadline).
+	// QPC ticks * 10,000,000 / HostQPCFrequency = 100ns units.
+	// Multiply-before-divide preserves precision for short intervals.
+	int64_t remainingQPC = targetQPC - now.QuadPart;
+	LARGE_INTEGER dueTime;
+	dueTime.QuadPart = -(remainingQPC * 10000000LL / HostQPCFrequency);
+
+	// Clamp to at least -1 (100ns) to avoid zero (which means "already signaled").
+	if (dueTime.QuadPart == 0)
+		dueTime.QuadPart = -1;
+
+	if (g_hPreciseTimer != NULL) {
+		// High-resolution waitable timer: kernel wakes us at ~0.5ms precision
+		// with no CPU burn. No Phase 2/3 spin needed — the timer's precision
+		// is sufficient for both system_events (1ms PIT) and PGRAPH FLIP_STALL
+		// (16.67ms VBlank). The slight undershoot (<0.5ms) is acceptable since
+		// callers re-read QPC after wake-up and anchor from the actual time.
+		SetWaitableTimerEx(g_hPreciseTimer, &dueTime, 0, NULL, NULL, NULL, 0);
+		WaitForSingleObject(g_hPreciseTimer, INFINITE);
+	} else {
+		// Fallback for older Windows: convert to ms and use Sleep().
+		// timeBeginPeriod(1) is already called in CxbxrKrnlInit, so
+		// Sleep(1) actually sleeps ~1ms. Sleep(0) yields timeslice.
+		// Sub-ms remainders return immediately (caller loops with
+		// useful dispatch work, not a tight spin).
+		Sleep((DWORD)(remainingQPC * 1000 / HostQPCFrequency));
 	}
 
-	// Phase 2: Adaptive yield via SwitchToThread(), exit when remaining < 2x avg yield
-	// Reuses post-yield QPC as next iteration's timestamp (no redundant QPC call).
-	while (true) {
-		remaining = targetQPC - now.QuadPart;
-		if (remaining <= yieldExit)
-			break;
-		SwitchToThread();
-		LARGE_INTEGER prev = now;
-		QueryPerformanceCounter(&now);
-		int64_t yieldTicks = now.QuadPart - prev.QuadPart;
-		avgYield += (yieldTicks - avgYield) >> 3; // EMA 1/8
-	}
-	s_avgYieldTicks.store(avgYield, std::memory_order_relaxed);
-
-	// Phase 3: Final tight spin — compare QPC directly, no clock domain crossing
-	while (now.QuadPart < targetQPC) {
-		QueryPerformanceCounter(&now);
-	}
-
+	QueryPerformanceCounter(&now);
 	return now.QuadPart;
 }
 
-// NOTE: the pit device is not implemented right now, so we put this here
-static uint64_t pit_next(uint64_t now)
+// ── Emulated Xbox clock ──────────────────────────────────────────
+
+// Read the host QPC and return elapsed ticks since timer_init().
+// All subsystems (NV2A, OHCI, DSound, PIT) operate in QPC ticks
+// to avoid integer truncation from µs conversion.
+uint64_t get_now()
 {
-	constexpr uint64_t pit_period = 1000;
-	uint64_t next = pit_last + pit_period;
-
-	if (now >= next) {
-		xbox::KiClockIsr(now - pit_last);
-		pit_last = get_now();
-		return pit_period;
-	}
-
-	return pit_last + pit_period - now; // time remaining until next clock interrupt
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	HostLastQPC = now.QuadPart;
+	return now.QuadPart - HostQPCStartTime;
 }
 
-static void update_non_periodic_events()
+// ── PIT (Programmable Interval Timer) ────────────────────────────
+
+// Dispatch the PIT clock ISR if overdue, return QPC ticks until next.
+static uint64_t pit_tick(uint64_t now)
 {
-	// update dsound
+	uint64_t next = pit_last + PIT_PERIOD_QPC;
+	if (now >= next) {
+		uint64_t elapsed_qpc = now - pit_last;
+		uint64_t elapsed_us = elapsed_qpc * 1000000 / HostQPCFrequency;
+		xbox::KiClockIsr(elapsed_us);
+		pit_last = now;
+		return PIT_PERIOD_QPC;
+	}
+	return next - now;
+}
+
+// ── Non-periodic event dispatch ──────────────────────────────────
+
+static void dispatch_non_periodic_events()
+{
 	dsound_worker();
 
-	// check for hw interrupts
 	for (int i = 0; i < MAX_BUS_INTERRUPT_LEVEL; i++) {
-		// Skip IRQ 3 (GPU/NV2A) - it's delivered explicitly by nv2a_vblank_interrupt
-		// and the PGRAPH INTR_ERROR mechanism. Triggering it here races with the DPC
-		// that re-enables PMC_INTR_EN_0, causing an ISR/DPC ping-pong deadlock.
+		// Skip IRQ 3 (GPU/NV2A) — delivered explicitly by
+		// nv2a_vblank_interrupt and PGRAPH INTR_ERROR mechanism.
 		if (i == 3) continue;
 
-		// If the interrupt is pending and connected, process it
 		if (g_bEnableAllInterrupts && HalSystemInterrupts[i].IsPending() && EmuInterruptList[i] && EmuInterruptList[i]->Connected) {
 			HalSystemInterrupts[i].Trigger(EmuInterruptList[i]);
 		}
 	}
 }
 
-uint64_t get_now()
+// ── Periodic event dispatch + deadline ────────────────────────────
+
+// Tick all periodic subsystems — each dispatches if overdue and
+// returns QPC ticks until its next deadline. Returns the earliest.
+static uint64_t dispatch_periodic_events(uint64_t now)
 {
-	LARGE_INTEGER now;
-	QueryPerformanceCounter(&now);
-	uint64_t elapsed_us = now.QuadPart - last_qpc;
-	last_qpc = now.QuadPart;
-	elapsed_us *= 1000000;
-	elapsed_us /= HostQPCFrequency;
-	exec_time += elapsed_us;
-	return exec_time;
+	std::array<uint64_t, 5> deadlines = {
+		pit_tick(now),
+		g_NV2A->vblank_tick(now),
+		g_NV2A->ptimer_tick(now),
+		g_USB0->m_HostController->OHCI_tick(now),
+		dsound_tick(now)
+	};
+	return *std::min_element(deadlines.begin(), deadlines.end());
 }
 
-static uint64_t get_next(uint64_t now)
-{
-	std::array<uint64_t, 5> next = {
-		pit_next(now),
-		g_NV2A->vblank_next(now),
-		g_NV2A->ptimer_next(now),
-		g_USB0->m_HostController->OHCI_next(now),
-		dsound_next(now)
-	};
-	return *std::min_element(next.begin(), next.end());
-}
+// ── System events thread ─────────────────────────────────────────
 
 xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 {
-	// Testing shows that, if this thread has the same priority of the other xbox threads, it can take tens, even hundreds of ms to complete a single loop.
-	// So we increase its priority to above normal, so that it scheduled more often
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
-	// Always run this thread at dpc level to prevent it from ever executing APCs/DPCs
+	// Run at DPC level to prevent this thread from executing APCs/DPCs
 	xbox::KeRaiseIrqlToDpcLevel();
 
-	// Persistent anchor: after SleepPrecise spins to targetQPC, we use
-	// that exact value as the base for the next iteration — no fresh QPC
-	// read in between, so no accumulating drift.
-	LARGE_INTEGER qpc;
-	QueryPerformanceCounter(&qpc);
-	int64_t wall_anchor = qpc.QuadPart;
+	// Drift-free wall-clock anchor: seed from last_qpc (set by
+	// timer_init / get_now) to avoid a redundant QPC call.
+	// SleepPrecise returns the actual wake-up QPC each iteration,
+	// which becomes the base for the next sleep target.
+	int64_t wall_anchor = HostLastQPC.load(std::memory_order_relaxed);
 
 	while (true) {
 		LARGE_INTEGER loop_start;
 		if (g_bCxbxProfilerEnabled) QueryPerformanceCounter(&loop_start);
 
-		const uint64_t last_time = get_now();
-		const uint64_t nearest_next = get_next(last_time);
+		// 1. Read the host clock (QPC ticks since start)
+		const uint64_t now = get_now();
 
-		// Process non-periodic events once at the start of each cycle
-		update_non_periodic_events();
+		// 2. Dispatch all events and find earliest next deadline
+		dispatch_non_periodic_events();
+		const uint64_t deadline = dispatch_periodic_events(now);
 
-		// Wait precisely for the next periodic event deadline.
-		// Target is anchored to the previous SleepPrecise wake-up, not "now".
-		// SleepPrecise returns the final QPC — use it as the next anchor.
-		// If the target already passed, SleepPrecise returns current QPC
-		// immediately, snapping the anchor forward (prevents catch-up spin).
-		if (nearest_next > 0) {
-			int64_t targetQPC = wall_anchor
-				+ (int64_t)nearest_next * HostQPCFrequency / 1000000;
+		// 3. Sleep until that deadline, anchored to prevent drift
+		if (deadline > 0) {
+			int64_t targetQPC = wall_anchor + deadline;
 			wall_anchor = SleepPrecise(targetQPC);
 		}
-
-		// Process non-periodic events again after waking (handles any
-		// that arrived during the sleep)
-		update_non_periodic_events();
 
 		if (g_bCxbxProfilerEnabled) {
 			LARGE_INTEGER loop_end;

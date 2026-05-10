@@ -129,8 +129,8 @@ public:
 	static int GetFrameWidth(NV2AState *d);
 	static int GetFrameHeight(NV2AState *d);
 
-	uint64_t vblank_next(uint64_t now);
-	uint64_t ptimer_next(uint64_t now);
+	uint64_t vblank_tick(uint64_t now);
+	uint64_t ptimer_tick(uint64_t now);
 
 	// Resolve a DMA object's physical base address from its PRAMIN offset.
 	// Returns the base address (masked to 128 MB), or 0 if dma_obj_address is 0.

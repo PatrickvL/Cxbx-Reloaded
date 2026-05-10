@@ -42,6 +42,7 @@
 
 
 extern int64_t HostQPCFrequency;
+extern std::atomic_uint64_t HostLastQPC; // last host QPC reading (updated by get_now/timer_init)
 
 void timer_init();
 uint64_t get_now();

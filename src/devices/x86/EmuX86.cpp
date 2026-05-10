@@ -41,6 +41,7 @@
 #include "core\kernel\support\Emu.h" // For EmuLog
 #include "devices\x86\EmuX86.h"
 #include "core\hle\Intercept.hpp"
+#include "common/Timer.h"
 
 #include <assert.h>
 #include "devices\Xbox.h" // For g_PCIBus
@@ -69,12 +70,10 @@ uint32_t EmuX86_IORead(xbox::addr_xt addr, int size)
 	switch (addr) {
 	case 0x8008: { // TODO : Move 0x8008 TIMER to a device
 		if (size == sizeof(uint32_t)) {
-			// HACK: This is very wrong.
-			// This timer should count at a specific frequency (3579.545 ticks per ms)
-			// But this is enough to keep NXDK from hanging for now.
-			LARGE_INTEGER performanceCount;
-			QueryPerformanceCounter(&performanceCount);
-			return static_cast<uint32_t>(performanceCount.QuadPart);
+			// Xbox ACPI timer runs at 3,579,545 Hz (3579.545 ticks/ms).
+			// Use Timer_GetScaledPerformanceCounter to scale host QPC
+			// to the correct frequency instead of returning raw host ticks.
+			return static_cast<uint32_t>(Timer_GetScaledPerformanceCounter(3579545));
 		}
 		break;
 	}

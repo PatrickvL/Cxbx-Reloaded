@@ -40,8 +40,8 @@
 static uint64_t ptimer_get_clock(NV2AState *d)
 {
 	return Muldiv64(Muldiv64(get_now(),
-					(uint32_t)d->pramdac.core_clock_freq, // TODO : Research how this can be updated to accept uint64_t
-					SCALE_S_IN_US), // Was CLOCKS_PER_SEC
+					(uint32_t)d->pramdac.core_clock_freq,
+					(uint32_t)HostQPCFrequency), // get_now() is in QPC ticks
 				d->ptimer.denominator,
 				d->ptimer.numerator);
 }
@@ -104,7 +104,7 @@ DEVICE_WRITE32(PTIMER)
 		break;
 	case NV_PTIMER_ALARM_0:
 		d->ptimer.alarm_time = value;
-		d->ptimer_period = ((uint64_t(d->ptimer.alarm_time >> 5) * SCALE_S_IN_US) / d->pramdac.core_clock_freq);
+		d->ptimer_period = ((uint64_t(d->ptimer.alarm_time >> 5) * HostQPCFrequency) / d->pramdac.core_clock_freq);
 		break;
 	default: 
 		//DEVICE_WRITE32_REG(ptimer); // Was : DEBUG_WRITE32_UNHANDLED(PTIMER);

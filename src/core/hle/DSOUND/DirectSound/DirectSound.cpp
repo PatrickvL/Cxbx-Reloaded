@@ -481,18 +481,19 @@ void dsound_worker()
 	}
 }
 
-uint64_t dsound_next(uint64_t now)
+uint64_t dsound_tick(uint64_t now)
 {
-    constexpr uint64_t dsound_period = 300 * 1000;
+    // 300ms in QPC ticks
+    const int64_t dsound_period = HostQPCFrequency * 300 / 1000;
     uint64_t next = dsound_last + dsound_period;
 
     if (now >= next) {
         dsound_async_worker();
-        dsound_last = get_now();
+        dsound_last = now;
         return dsound_period;
     }
 
-    return dsound_last + dsound_period - now; // time remaining until next dsound async event
+    return dsound_last + dsound_period - now; // QPC ticks remaining until next dsound async event
 }
 
 // Kismet given name for RadWolfie's experiment major issue in the mutt.

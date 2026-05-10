@@ -603,48 +603,45 @@ int NV2ADevice::GetFrameWidth(NV2AState* d)
 	return width;
 }
 
-uint64_t NV2ADevice::vblank_next(uint64_t now)
+uint64_t NV2ADevice::vblank_tick(uint64_t now)
 {
 	// PCRTC always fires VBlank at the NTSC rate (~59.94Hz / ~16.67ms).
 	// Some PAL games (e.g. Dead or Alive Ultimate) disable PCRTC VBlank and
 	// instead use PTIMER to generate VBlank interrupts at 50Hz, suggesting
 	// that PCRTC can only trigger VBlanks at the NTSC frequency.
 	NV2AState *d = m_nv2a_state;
-	constexpr uint64_t vblank_period = 16667; // ~59.94Hz in microseconds
+	// ~59.94Hz in QPC ticks: freq * 16667 / 1000000
+	const int64_t vblank_period = HostQPCFrequency * 16667 / 1000000;
 
 	uint64_t next = d->vblank_last + vblank_period;
 
 	if (now >= next) {
-		// Record QPC timestamp *before* firing the callback so PCRTC_RASTER
-		// can compute scanline position relative to this VBlank.
-		LARGE_INTEGER qpc;
-		QueryPerformanceCounter(&qpc);
+		// Use the absolute QPC from HostLastQPC (set by get_now() moments
+		// before) for PCRTC_RASTER scanline position and jitter profiling.
+		int64_t qpcNow = HostLastQPC.load(std::memory_order_relaxed);
 
 		// Measure VBlank jitter: how late (or early) did we fire vs ideal?
 		if (g_bCxbxProfilerEnabled) {
 			int64_t lastQPC = d->vblank_last_qpc.load(std::memory_order_acquire);
 			if (lastQPC > 0) {
-				LARGE_INTEGER freq;
-				QueryPerformanceFrequency(&freq);
-				LONGLONG idealTicks = freq.QuadPart * vblank_period / 1000000;
-				LONGLONG actualTicks = qpc.QuadPart - lastQPC;
-				LONGLONG jitterTicks = actualTicks > idealTicks
-					? actualTicks - idealTicks : idealTicks - actualTicks;
+				LONGLONG actualTicks = qpcNow - lastQPC;
+				LONGLONG jitterTicks = actualTicks > vblank_period
+					? actualTicks - vblank_period : vblank_period - actualTicks;
 				InterlockedAdd64(&g_ProfileAccum[PROF_VBLANK_JITTER], jitterTicks);
 			}
 		}
 
-		d->vblank_last_qpc.store(qpc.QuadPart, std::memory_order_release);
+		d->vblank_last_qpc.store(qpcNow, std::memory_order_release);
 
 		d->vblank_cb(d);
-		d->vblank_last = get_now();
+		d->vblank_last = now;
 		return vblank_period;
 	}
 
-	return d->vblank_last + vblank_period - now; // time remaining until next vblank
+	return d->vblank_last + vblank_period - now; // QPC ticks remaining until next vblank
 }
 
-uint64_t NV2ADevice::ptimer_next(uint64_t now)
+uint64_t NV2ADevice::ptimer_tick(uint64_t now)
 {
 	// Test case: Dead or Alive Ultimate uses this when in PAL50 mode only
 	if (m_nv2a_state->ptimer_active) {
@@ -662,11 +659,11 @@ uint64_t NV2ADevice::ptimer_next(uint64_t now)
 				extern void KeSignalVBlankPending();
 				KeSignalVBlankPending();
 			}
-			m_nv2a_state->ptimer_last = get_now();
+			m_nv2a_state->ptimer_last = now;
 			return ptimer_period;
 		}
 
-		return m_nv2a_state->ptimer_last + ptimer_period - now; // time remaining until next ptimer interrupt
+		return m_nv2a_state->ptimer_last + ptimer_period - now; // QPC ticks remaining until next ptimer interrupt
 	}
 
 	return -1;

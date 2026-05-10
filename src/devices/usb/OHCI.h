@@ -146,7 +146,7 @@ class OHCI
 		// write a register
 		void OHCI_WriteRegister(xbox::addr_xt Addr, uint32_t Value);
 		// calculates when the next EOF is due
-		uint64_t OHCI_next(uint64_t now);
+		uint64_t OHCI_tick(uint64_t now);
 		// EOF callback function
 		void OHCI_FrameBoundaryWorker();
 

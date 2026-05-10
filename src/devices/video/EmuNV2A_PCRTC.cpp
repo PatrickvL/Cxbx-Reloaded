@@ -118,11 +118,10 @@ DEVICE_READ32(PCRTC)
 			totalLines = 525;
 		}
 		unsigned int refreshRate = pcrtc_get_refresh_rate(d, totalLines);
-		LARGE_INTEGER freq, now;
-		QueryPerformanceFrequency(&freq);
+		LARGE_INTEGER now;
 		QueryPerformanceCounter(&now);
-		// Frame period in QPC ticks
-		LONGLONG frameTicks = freq.QuadPart / refreshRate;
+		// Frame period in QPC ticks (HostQPCFrequency from Timer.h, set once in timer_init)
+		LONGLONG frameTicks = HostQPCFrequency / refreshRate;
 		// Compute position relative to last VBlank (instead of free-running QPC modulo)
 		int64_t lastVBlankQPC = d->vblank_last_qpc.load(std::memory_order_acquire);
 		LONGLONG posInFrame;
