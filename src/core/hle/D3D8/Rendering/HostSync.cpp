@@ -344,7 +344,12 @@ static void CxbxBindTextureSRV(int stage, ID3D11Resource* pHostBaseTexture, bool
 	case D3D11_RESOURCE_DIMENSION_TEXTURE2D: {
 		D3D11_TEXTURE2D_DESC texDesc = {};
 		((ID3D11Texture2D*)pHostBaseTexture)->GetDesc(&texDesc);
-		srvDesc.Format = IsDepthFormat(texDesc.Format) ? GetDepthSRVFormat(texDesc.Format) : texDesc.Format;
+		if (IsDepthFormat(texDesc.Format))
+			srvDesc.Format = GetDepthSRVFormat(texDesc.Format);
+		else if (texDesc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS)
+			srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		else
+			srvDesc.Format = texDesc.Format;
 		if (texDesc.ArraySize == 6) {
 			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
 			srvDesc.TextureCube.MipLevels = texDesc.MipLevels;

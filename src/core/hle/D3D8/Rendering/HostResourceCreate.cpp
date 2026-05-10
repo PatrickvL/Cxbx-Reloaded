@@ -324,16 +324,16 @@ static HRESULT CreateGpuPixelContainerResource(
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 				desc.CPUAccessFlags = 0;
 			} else if (bSwizzled && X_Format == xbox::X_D3DFMT_P8) {
-				// P8 textures use DEFAULT + UAV for GPU palette expand CS
-				// Use R8G8B8A8_UNORM (not B8G8R8A8) for R32_UINT UAV compatibility
-				desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+				// P8 textures use DEFAULT + UAV for GPU palette expand CS.
+				// Typeless allows R32_UINT UAV reinterpretation; SRV uses R8G8B8A8_UNORM.
+				desc.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
 				desc.Usage = D3D11_USAGE_DEFAULT;
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 				desc.CPUAccessFlags = 0;
 			} else if (bConvertTextureFormat && CxbxGetFormatConvertType(X_Format) != 0) {
-				// Format-convertible textures use DEFAULT + UAV for GPU CS format conversion
-				// Output is always R8G8B8A8_UNORM (CS writes packed RGBA via R32_UINT UAV)
-				desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+				// Format-convertible textures use DEFAULT + UAV for GPU CS format conversion.
+				// Typeless allows R32_UINT UAV reinterpretation; SRV uses R8G8B8A8_UNORM.
+				desc.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
 				desc.Usage = D3D11_USAGE_DEFAULT;
 				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 				desc.CPUAccessFlags = 0;

@@ -786,7 +786,7 @@ HRESULT CxbxD3D11Blt(
 	// Create temporary SRV for source
 	ID3D11ShaderResourceView* pSRV = nullptr;
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	srvDesc.Format = srcDesc.Format;
+	srvDesc.Format = (srcDesc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS) ? DXGI_FORMAT_R8G8B8A8_UNORM : srcDesc.Format;
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = 1;
 	HRESULT hr = g_pD3DDevice->CreateShaderResourceView(pSrc, &srvDesc, &pSRV);
