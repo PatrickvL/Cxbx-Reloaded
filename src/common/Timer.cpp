@@ -91,32 +91,26 @@ int64_t SleepPrecise(int64_t targetQPC)
 	if (now.QuadPart >= targetQPC)
 		return now.QuadPart;
 
-	// Convert QPC delta to 100ns units (negative = relative deadline).
-	// QPC ticks * 10,000,000 / HostQPCFrequency = 100ns units.
-	// Multiply-before-divide preserves precision for short intervals.
-	int64_t remainingQPC = targetQPC - now.QuadPart;
-	LARGE_INTEGER dueTime;
-	dueTime.QuadPart = -(remainingQPC * 10000000LL / HostQPCFrequency);
-
-	// Clamp to at least -1 (100ns) to avoid zero (which means "already signaled").
-	if (dueTime.QuadPart == 0)
-		dueTime.QuadPart = -1;
-
 	if (g_hPreciseTimer != NULL) {
+		// Convert QPC delta to 100ns units (negative = relative deadline).
+		// Multiply-before-divide preserves precision for short intervals.
+		LARGE_INTEGER dueTime;
+		dueTime.QuadPart = -((targetQPC - now.QuadPart) * 10000000LL / HostQPCFrequency);
+
+		// Clamp to at least -1 (100ns) to avoid zero (which means "already signaled").
+		if (dueTime.QuadPart == 0)
+			dueTime.QuadPart = -1;
+
 		// High-resolution waitable timer: kernel wakes us at ~0.5ms precision
-		// with no CPU burn. No Phase 2/3 spin needed — the timer's precision
-		// is sufficient for both system_events (1ms PIT) and PGRAPH FLIP_STALL
-		// (16.67ms VBlank). The slight undershoot (<0.5ms) is acceptable since
-		// callers re-read QPC after wake-up and anchor from the actual time.
+		// with no CPU burn. The slight undershoot (<0.5ms) is acceptable since
+		// callers re-read QPC after wake-up.
 		SetWaitableTimerEx(g_hPreciseTimer, &dueTime, 0, NULL, NULL, NULL, 0);
 		WaitForSingleObject(g_hPreciseTimer, INFINITE);
 	} else {
 		// Fallback for older Windows: convert to ms and use Sleep().
 		// timeBeginPeriod(1) is already called in CxbxrKrnlInit, so
 		// Sleep(1) actually sleeps ~1ms. Sleep(0) yields timeslice.
-		// Sub-ms remainders return immediately (caller loops with
-		// useful dispatch work, not a tight spin).
-		Sleep((DWORD)(remainingQPC * 1000 / HostQPCFrequency));
+		Sleep((DWORD)((targetQPC - now.QuadPart) * 1000 / HostQPCFrequency));
 	}
 
 	QueryPerformanceCounter(&now);
@@ -138,18 +132,17 @@ uint64_t get_now()
 
 // ── PIT (Programmable Interval Timer) ────────────────────────────
 
-// Dispatch the PIT clock ISR if overdue, return QPC ticks until next.
+// Dispatch the PIT clock ISR if overdue, return absolute next deadline.
 static uint64_t pit_tick(uint64_t now)
 {
 	uint64_t next = pit_last + PIT_PERIOD_QPC;
 	if (now >= next) {
-		uint64_t elapsed_qpc = now - pit_last;
-		uint64_t elapsed_us = elapsed_qpc * 1000000 / HostQPCFrequency;
+		uint64_t elapsed_us = (now - pit_last) * 1000000 / HostQPCFrequency;
 		xbox::KiClockIsr(elapsed_us);
 		pit_last = now;
-		return PIT_PERIOD_QPC;
+		return now + PIT_PERIOD_QPC;
 	}
-	return next - now;
+	return next;
 }
 
 // ── Non-periodic event dispatch ──────────────────────────────────
@@ -172,7 +165,8 @@ static void dispatch_non_periodic_events()
 // ── Periodic event dispatch + deadline ────────────────────────────
 
 // Tick all periodic subsystems — each dispatches if overdue and
-// returns QPC ticks until its next deadline. Returns the earliest.
+// returns the absolute QPC time of its next deadline. Returns
+// the earliest deadline (relative to HostQPCStartTime).
 static uint64_t dispatch_periodic_events(uint64_t now)
 {
 	std::array<uint64_t, 5> deadlines = {
@@ -194,12 +188,6 @@ xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 	// Run at DPC level to prevent this thread from executing APCs/DPCs
 	xbox::KeRaiseIrqlToDpcLevel();
 
-	// Drift-free wall-clock anchor: seed from last_qpc (set by
-	// timer_init / get_now) to avoid a redundant QPC call.
-	// SleepPrecise returns the actual wake-up QPC each iteration,
-	// which becomes the base for the next sleep target.
-	int64_t wall_anchor = HostLastQPC.load(std::memory_order_relaxed);
-
 	while (true) {
 		LARGE_INTEGER loop_start;
 		if (g_bCxbxProfilerEnabled) QueryPerformanceCounter(&loop_start);
@@ -209,12 +197,11 @@ xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 
 		// 2. Dispatch all events and find earliest next deadline
 		dispatch_non_periodic_events();
-		const uint64_t deadline = dispatch_periodic_events(now);
+		const uint64_t next_deadline = dispatch_periodic_events(now);
 
-		// 3. Sleep until that deadline, anchored to prevent drift
-		if (deadline > 0) {
-			int64_t targetQPC = wall_anchor + deadline;
-			wall_anchor = SleepPrecise(targetQPC);
+		// 3. Sleep until the absolute deadline (skip if no subsystem is active)
+		if (next_deadline != UINT64_MAX) {
+			SleepPrecise((int64_t)next_deadline + HostQPCStartTime);
 		}
 
 		if (g_bCxbxProfilerEnabled) {

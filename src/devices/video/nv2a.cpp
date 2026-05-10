@@ -635,10 +635,10 @@ uint64_t NV2ADevice::vblank_tick(uint64_t now)
 
 		d->vblank_cb(d);
 		d->vblank_last = now;
-		return vblank_period;
+		return now + vblank_period;
 	}
 
-	return d->vblank_last + vblank_period - now; // QPC ticks remaining until next vblank
+	return next;
 }
 
 uint64_t NV2ADevice::ptimer_tick(uint64_t now)
@@ -660,10 +660,10 @@ uint64_t NV2ADevice::ptimer_tick(uint64_t now)
 				KeSignalVBlankPending();
 			}
 			m_nv2a_state->ptimer_last = now;
-			return ptimer_period;
+			return now + ptimer_period;
 		}
 
-		return m_nv2a_state->ptimer_last + ptimer_period - now; // QPC ticks remaining until next ptimer interrupt
+		return next;
 	}
 
 	return -1;

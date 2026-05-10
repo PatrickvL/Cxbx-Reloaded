@@ -490,10 +490,10 @@ uint64_t dsound_tick(uint64_t now)
     if (now >= next) {
         dsound_async_worker();
         dsound_last = now;
-        return dsound_period;
+        return now + dsound_period;
     }
 
-    return dsound_last + dsound_period - now; // QPC ticks remaining until next dsound async event
+    return next;
 }
 
 // Kismet given name for RadWolfie's experiment major issue in the mutt.

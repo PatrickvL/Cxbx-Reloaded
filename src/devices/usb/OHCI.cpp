@@ -1249,10 +1249,10 @@ uint64_t OHCI::OHCI_tick(uint64_t now)
 
 		if (now >= next) {
 			OHCI_FrameBoundaryWorker();
-			return ohci_period;
+			return now + ohci_period;
 		}
 
-		return m_SOFtime + ohci_period - now; // QPC ticks remaining until EOF
+		return next;
 	}
 
 	return -1;
