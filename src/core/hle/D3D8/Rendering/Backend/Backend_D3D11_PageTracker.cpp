@@ -104,6 +104,7 @@ struct RegisteredRT {
 	uint32_t bpp;           // Bytes per pixel (2 or 4)
 	uint32_t surfaceType;   // NV097_SET_SURFACE_FORMAT_TYPE_PITCH or _SWIZZLE
 	ID3D11Texture2D* pTexture; // Host RT (NOT AddRef'd — owned by g_PgraphRTCache)
+	bool needsReadback;     // True when RT has been rendered to since last readback
 };
 
 static constexpr uint32_t MAX_REGISTERED_RTS = 16;
@@ -669,6 +670,17 @@ void CxbxPageTrackerMarkGPUDirty(uint32_t startOffset, uint32_t size)
 		VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
 			PAGE_SIZE_, PAGE_NOACCESS, &oldProtect);
 	}
+
+	// Mark any registered RTs overlapping this range as needing readback.
+	// This ensures that after MarkGPUDirty (RT rendered to), the next
+	// FlushGPUDirtyToMirror will re-read the D3D11 texture contents.
+	for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
+		RegisteredRT& rt = s_RegisteredRTs[i];
+		uint32_t rtEnd = rt.offset + rt.pitch * rt.height;
+		if (startOffset < rtEnd && rt.offset < startOffset + size) {
+			rt.needsReadback = true;
+		}
+	}
 }
 
 // ******************************************************************
@@ -753,7 +765,28 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 	// premature readback (before the D3D11 texture was fully rendered). By always
 	// re-reading the D3D11 texture here, we guarantee the vertex shader sees the
 	// latest rendered content.
+	//
+	// Swizzle policy: If ANY registered RT has surfaceType==SWIZZLE (0x2), the
+	// game uses Morton-order index/vertex addressing (e.g. DisplacementMap XDK
+	// sample). In that case ALL overlapping RTs are written in swizzled/Morton
+	// layout regardless of their individual surfaceType — the IB expects all
+	// attributes to share the same Morton addressing. If no registered RT is
+	// SWIZZLE, each RT is written per its own surfaceType (PITCH = linear).
+	//
+	// Note: We check ALL registered RTs, not just those overlapping the current
+	// VB range. The SWIZZLE RT might be at a different offset but still signals
+	// that the entire draw uses Morton addressing for all attribute streams.
 	{
+		// First pass: determine if any registered RT is SWIZZLE
+		bool bMortonDraw = false;
+		for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
+			if (s_RegisteredRTs[i].surfaceType == 0x2) {
+				bMortonDraw = true;
+				break;
+			}
+		}
+
+		// Second pass: readback each overlapping RT
 		for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
 			RegisteredRT& rt = s_RegisteredRTs[i];
 			uint32_t rtSize = rt.pitch * rt.height;
@@ -764,10 +797,6 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 				continue;
 
 			if (!rt.pTexture || !g_pD3DDeviceContext)
-				continue;
-
-			// Skip readback if RT hasn't been rendered to since last readback
-			if (!rt.needsReadback)
 				continue;
 
 			// Ensure pages are accessible for the readback write
@@ -804,12 +833,21 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 					uint8_t* pSrc = (uint8_t*)mapped.pData;
 
 					if (desc.Width >= rt.width && desc.Height >= rt.height) {
-						// Always write in swizzled/Morton order for VB readback.
-						// Games that render-to-VB (e.g. DisplacementMap) use Morton-order
-						// index buffers, so ALL attributes must be in swizzled layout
-						// regardless of the detected surface type.
-						swizzle_rect(pSrc, rt.width, rt.height,
-							pDst, mapped.RowPitch, rt.bpp);
+						if (bMortonDraw || rt.surfaceType == 0x2) {
+							// Morton draw or individual swizzled surface:
+							// write pixels in NV2A Morton/Z-order.
+							swizzle_rect(pSrc, rt.width, rt.height,
+								pDst, mapped.RowPitch, rt.bpp);
+						} else {
+							// Pitch-linear surface in a non-Morton draw:
+							// copy row by row respecting Xbox pitch.
+							uint32_t xboxRowBytes = rt.width * rt.bpp;
+							for (uint32_t row = 0; row < rt.height; row++) {
+								memcpy(pDst, pSrc, xboxRowBytes);
+								pDst += rt.pitch;
+								pSrc += mapped.RowPitch;
+							}
+						}
 					}
 
 					g_pD3DDeviceContext->Unmap(pStaging, 0);
@@ -817,7 +855,6 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 				pStaging->Release();
 			}
 
-			rt.needsReadback = false;
 		}
 	}
 
