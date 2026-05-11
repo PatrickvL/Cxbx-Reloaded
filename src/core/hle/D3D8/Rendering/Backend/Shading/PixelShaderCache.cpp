@@ -85,147 +85,154 @@ void PixelShaderCache::Clear()
 }
 
 // ============================================================
+// Dead-code analysis — which registers / channels are actually read
+// ============================================================
+
+// Channel flags (2-bit per register slot)
+static constexpr uint32_t CH_NONE = 0;
+static constexpr uint32_t CH_A    = 1;  // alpha only
+static constexpr uint32_t CH_RGB  = 2;  // rgb only
+static constexpr uint32_t CH_RGBA = 3;  // both
+
+struct ReadMasks {
+    uint32_t regChans;   // 16 slots × 2 bits = 32 bits (regIdx 0..15)
+    uint16_t stageC0;    // one bit per combiner stage (0..7), bit 8 = final combiner
+    uint16_t stageC1;    // one bit per combiner stage (0..7), bit 8 = final combiner
+    uint16_t texNeeded;  // one bit per texture stage (0..3) — needed by combiners or cross-stage deps
+};
+
+static inline void SetChan(uint32_t& regChans, uint32_t regIdx, uint32_t ch)
+{
+    uint32_t shift = (regIdx & PS_REGISTER_MASK) * 2;
+    regChans |= (ch << shift);
+}
+
+static inline uint32_t GetChan(uint32_t regChans, uint32_t regIdx)
+{
+    uint32_t shift = (regIdx & PS_REGISTER_MASK) * 2;
+    return (regChans >> shift) & 3;
+}
+
+// Extract one of four input bytes (A/B/C/D) packed into a 32-bit word.
+// Slot 0 = bits 31:24, slot 1 = bits 23:16, slot 2 = bits 15:8, slot 3 = bits 7:0.
+static inline uint32_t InputByte(uint32_t word, int slot)
+{
+    return (word >> ((3 - slot) * 8)) & 0xFF;
+}
+
+// Compute the source stage for a texture dependency at a given stage.
+static inline uint32_t GetTexSrcStage(uint32_t stage, uint32_t shaderCtl)
+{
+    return (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+}
+
+// Unpack the 4 texture modes from the packed PSTextureModes word.
+static inline void UnpackTexModes(uint32_t packed, uint32_t texModes[4])
+{
+    texModes[0] = (packed      ) & PS_TEXTUREMODES_MASK;
+    texModes[1] = (packed >>  5) & PS_TEXTUREMODES_MASK;
+    texModes[2] = (packed >> 10) & PS_TEXTUREMODES_MASK;
+    texModes[3] = (packed >> 15) & PS_TEXTUREMODES_MASK;
+}
+
+// ============================================================
 // HLSL code generation helpers
 // ============================================================
 
 static const char* RegName(uint32_t regIdx)
 {
     switch (regIdx) {
-    case 0x00: return nullptr;  // ZERO — handled specially
-    case 0x01: return "C0";
-    case 0x02: return "C1";
-    case 0x03: return "FOG";
-    case 0x04: return "V0";
-    case 0x05: return "V1";
-    case 0x08: return "T0";
-    case 0x09: return "T1";
-    case 0x0a: return "T2";
-    case 0x0b: return "T3";
-    case 0x0c: return "R0";
-    case 0x0d: return "R1";
-    case 0x0e: return "V1R0_SUM";
-    case 0x0f: return "EF_PROD";
-    default:   return "R0"; // reserved → R0 fallback
+    case PS_REGISTER_ZERO:     return nullptr;  // ZERO — handled specially
+    case PS_REGISTER_C0:       return "C0";
+    case PS_REGISTER_C1:       return "C1";
+    case PS_REGISTER_FOG:      return "FOG";
+    case PS_REGISTER_V0:       return "V0";
+    case PS_REGISTER_V1:       return "V1";
+    case PS_REGISTER_T0:       return "T0";
+    case PS_REGISTER_T1:       return "T1";
+    case PS_REGISTER_T2:       return "T2";
+    case PS_REGISTER_T3:       return "T3";
+    case PS_REGISTER_R0:       return "R0";
+    case PS_REGISTER_R1:       return "R1";
+    case PS_REGISTER_V1R0_SUM: return "V1R0_SUM";
+    case PS_REGISTER_EF_PROD:  return "EF_PROD";
+    default:                   return "R0"; // reserved → R0 fallback
     }
 }
 
-// Emit an RGB input expression with channel select + input mapping applied
-static std::string EmitRGBInput(uint32_t inputByte)
+// Emit a combiner input expression with channel select + input mapping applied.
+// isAlpha=false → float4 (RGB path, .aaaa swizzle when bit 4 set)
+// isAlpha=true  → scalar (alpha path, .a or .b selection)
+static std::string EmitInput(uint32_t inputByte, bool isAlpha)
 {
-    uint32_t regIdx  = inputByte & 0x0F;
-    uint32_t mapping = inputByte & 0xE0;
-    bool useAlpha    = (inputByte & 0x10) != 0;
+    uint32_t regIdx  = inputByte & PS_REGISTER_MASK;
+    uint32_t mapping = inputByte & PS_INPUTMAPPING_MASK;
+    bool useAlphaChan = (inputByte & 0x10) != 0;
 
-    // Value expression
-    std::string val;
-    if (regIdx == 0) {
-        // ZERO register
-        val = "(float4)0.0";
-    } else {
-        val = RegName(regIdx);
-        if (useAlpha)
-            val += ".aaaa";
-    }
-
-    // Apply input mapping
-    // For ZERO register, some mappings produce known constants
-    if (regIdx == 0) {
-        switch (mapping) {
-        case 0x00: return "(float4)0.0";      // UNSIGNED_IDENTITY(0) = 0
-        case 0x20: return "(float4)1.0";      // UNSIGNED_INVERT(0) = 1-0 = 1
-        case 0x40: return "(float4)(-1.0)";   // EXPAND_NORMAL(0) = -1
-        case 0x60: return "(float4)1.0";      // EXPAND_NEGATE(0) = 1
-        case 0x80: return "(float4)(-0.5)";   // HALFBIAS_NORMAL(0) = -0.5
-        case 0xa0: return "(float4)0.5";      // HALFBIAS_NEGATE(0) = 0.5
-        case 0xc0: return "(float4)0.0";      // SIGNED_IDENTITY(0) = 0
-        case 0xe0: return "(float4)0.0";      // SIGNED_NEGATE(0) = -0 = 0
-        default:   return "(float4)0.0";
-        }
-    }
-
-    switch (mapping) {
-    case 0x00: return "max((float4)0.0, " + val + ")";                   // UNSIGNED_IDENTITY
-    case 0x20: return "(1.0 - saturate(" + val + "))";                   // UNSIGNED_INVERT
-    case 0x40: return "(2.0 * max((float4)0.0, " + val + ") - 1.0)";     // EXPAND_NORMAL
-    case 0x60: return "(-(2.0 * max((float4)0.0, " + val + ") - 1.0))";  // EXPAND_NEGATE
-    case 0x80: return "(max((float4)0.0, " + val + ") - 0.5)";           // HALFBIAS_NORMAL
-    case 0xa0: return "(-(max((float4)0.0, " + val + ") - 0.5))";        // HALFBIAS_NEGATE
-    case 0xc0: return val;                                               // SIGNED_IDENTITY
-    case 0xe0: return "(-" + val + ")";                                  // SIGNED_NEGATE
-    default:   return val;
-    }
-}
-
-// Emit an alpha input expression (scalar)
-static std::string EmitAlphaInput(uint32_t inputByte)
-{
-    uint32_t regIdx  = inputByte & 0x0F;
-    uint32_t mapping = inputByte & 0xE0;
-    bool useAlpha    = (inputByte & 0x10) != 0;
-
-    // Value expression — scalar (.a or .b)
-    std::string val;
-    if (regIdx == 0) {
-        val = "0.0";
-    } else {
-        val = std::string(RegName(regIdx)) + (useAlpha ? ".a" : ".b");
-    }
+    const char* maxPfx = isAlpha ? "max(0.0, " : "max((float4)0.0, ";
 
     // ZERO register constant folding
-    if (regIdx == 0) {
+    if (regIdx == PS_REGISTER_ZERO) {
         switch (mapping) {
-        case 0x00: return "0.0";
-        case 0x20: return "1.0";
-        case 0x40: return "(-1.0)";
-        case 0x60: return "1.0";
-        case 0x80: return "(-0.5)";
-        case 0xa0: return "0.5";
-        case 0xc0: return "0.0";
-        case 0xe0: return "0.0";
-        default:   return "0.0";
+        case PS_INPUTMAPPING_UNSIGNED_IDENTITY: return isAlpha ? "0.0"    : "(float4)0.0";     // 0x00
+        case PS_INPUTMAPPING_UNSIGNED_INVERT:   return isAlpha ? "1.0"    : "(float4)1.0";     // 0x20
+        case PS_INPUTMAPPING_EXPAND_NORMAL:     return isAlpha ? "(-1.0)" : "(float4)(-1.0)";  // 0x40
+        case PS_INPUTMAPPING_EXPAND_NEGATE:     return isAlpha ? "1.0"    : "(float4)1.0";     // 0x60
+        case PS_INPUTMAPPING_HALFBIAS_NORMAL:   return isAlpha ? "(-0.5)" : "(float4)(-0.5)";  // 0x80
+        case PS_INPUTMAPPING_HALFBIAS_NEGATE:   return isAlpha ? "0.5"    : "(float4)0.5";     // 0xa0
+        case PS_INPUTMAPPING_SIGNED_IDENTITY:   return isAlpha ? "0.0"    : "(float4)0.0";     // 0xc0
+        case PS_INPUTMAPPING_SIGNED_NEGATE:     return isAlpha ? "0.0"    : "(float4)0.0";     // 0xe0
+        default:                                return isAlpha ? "0.0"    : "(float4)0.0";
         }
     }
 
+    // Value expression
+    std::string val = RegName(regIdx);
+    if (isAlpha)
+        val += useAlphaChan ? ".a" : ".b";
+    else if (useAlphaChan)
+        val += ".aaaa";
+
+    // Apply input mapping
     switch (mapping) {
-    case 0x00: return "max(0.0, " + val + ")";                   // UNSIGNED_IDENTITY
-    case 0x20: return "(1.0 - saturate(" + val + "))";           // UNSIGNED_INVERT
-    case 0x40: return "(2.0 * max(0.0, " + val + ") - 1.0)";     // EXPAND_NORMAL
-    case 0x60: return "(-(2.0 * max(0.0, " + val + ") - 1.0))";  // EXPAND_NEGATE
-    case 0x80: return "(max(0.0, " + val + ") - 0.5)";           // HALFBIAS_NORMAL
-    case 0xa0: return "(-(max(0.0, " + val + ") - 0.5))";        // HALFBIAS_NEGATE
-    case 0xc0: return val;                                       // SIGNED_IDENTITY
-    case 0xe0: return "(-" + val + ")";                          // SIGNED_NEGATE
-    default:   return val;
+    case PS_INPUTMAPPING_UNSIGNED_IDENTITY: return std::string(maxPfx) + val + ")";                       // 0x00
+    case PS_INPUTMAPPING_UNSIGNED_INVERT:   return "(1.0 - saturate(" + val + "))";                       // 0x20
+    case PS_INPUTMAPPING_EXPAND_NORMAL:     return "(2.0 * " + std::string(maxPfx) + val + ") - 1.0)";    // 0x40
+    case PS_INPUTMAPPING_EXPAND_NEGATE:     return "(-(2.0 * " + std::string(maxPfx) + val + ") - 1.0))"; // 0x60
+    case PS_INPUTMAPPING_HALFBIAS_NORMAL:   return "(" + std::string(maxPfx) + val + ") - 0.5)";          // 0x80
+    case PS_INPUTMAPPING_HALFBIAS_NEGATE:   return "(-(" + std::string(maxPfx) + val + ") - 0.5))";       // 0xa0
+    case PS_INPUTMAPPING_SIGNED_IDENTITY:   return val;                                                   // 0xc0
+    case PS_INPUTMAPPING_SIGNED_NEGATE:     return "(-" + val + ")";                                      // 0xe0
+    default:                                return val;
     }
 }
 
 // Emit a final combiner input (restricted mappings)
 static std::string EmitFinalInput(uint32_t inputByte, bool isFinalABCD)
 {
-    uint32_t regIdx  = inputByte & 0x0F;
-    uint32_t mapping = inputByte & 0xE0;
+    uint32_t regIdx  = inputByte & PS_REGISTER_MASK;
+    uint32_t mapping = inputByte & PS_INPUTMAPPING_MASK;
     bool useAlpha    = (inputByte & 0x10) != 0;
 
-    // Restrict mapping for final combiner: anything >= 0x40 → just bit 5
-    if (mapping >= 0x40)
-        mapping = mapping & 0x20;
+    // Restrict mapping for final combiner: anything >= EXPAND_NORMAL → just bit 5
+    if (mapping >= PS_INPUTMAPPING_EXPAND_NORMAL)
+        mapping = mapping & PS_INPUTMAPPING_UNSIGNED_INVERT;
 
     std::string val;
-    if (regIdx == 0) {
-        // ZERO
-        if (mapping == 0x20) return "(float4)1.0";
+    if (regIdx == PS_REGISTER_ZERO) {
+        if (mapping == PS_INPUTMAPPING_UNSIGNED_INVERT) return "(float4)1.0"; // 0x20
         return "(float4)0.0";
     }
 
     val = RegName(regIdx);
 
     // FOG special handling: rgb→0, alpha passthrough
-    if (regIdx == 0x03) {
+    if (regIdx == PS_REGISTER_FOG) {
         val = "float4(0.0, 0.0, 0.0, FOG.a)";
     }
 
     // V1R0_SUM / EF_PROD only valid in ABCD phase
-    if ((regIdx == 0x0e || regIdx == 0x0f) && !isFinalABCD) {
+    if ((regIdx == PS_REGISTER_V1R0_SUM || regIdx == PS_REGISTER_EF_PROD) && !isFinalABCD) {
         val = "(float4)0.0";
     }
 
@@ -233,7 +240,7 @@ static std::string EmitFinalInput(uint32_t inputByte, bool isFinalABCD)
         val += ".aaaa";
 
     // Apply the restricted mapping (only UNSIGNED_IDENTITY or UNSIGNED_INVERT)
-    if (mapping == 0x20)
+    if (mapping == PS_INPUTMAPPING_UNSIGNED_INVERT) // 0x20
         return "(1.0 - saturate(" + val + "))";
     else
         return "max((float4)0.0, " + val + ")";
@@ -252,14 +259,14 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     std::string tReg = "T" + sIdx;
     std::string coords = "input.iT" + sIdx;
 
-    if (mode == 0) {
+    if (mode == PS_TEXTUREMODES_NONE) {
         // NONE — T register keeps VS texcoord (already initialized)
         return;
     }
 
     // Emit the sample
     switch (mode) {
-    case 0x01: // PROJECT2D
+    case PS_TEXTUREMODES_PROJECT2D:
         ss << "    { float3 proj = " << coords << ".xyz / " << coords << ".w;\n";
         ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", proj.xy);\n";
         if (shadowCompare != 0.0f) {
@@ -268,7 +275,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         ss << "    }\n";
         break;
 
-    case 0x02: // PROJECT3D
+    case PS_TEXTUREMODES_PROJECT3D:
         ss << "    { float3 proj = " << coords << ".xyz / " << coords << ".w;\n";
         if (shadowCompare != 0.0f) {
             ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", proj.xy);\n";
@@ -279,22 +286,23 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         ss << "    }\n";
         break;
 
-    case 0x03: // CUBEMAP
+    case PS_TEXTUREMODES_CUBEMAP:
         ss << "    " << tReg << " = TexCube_" << sIdx << ".Sample(Samp" << sIdx << ", " << coords << ".xyz);\n";
         break;
 
-    case 0x04: // PASSTHRU
+    case PS_TEXTUREMODES_PASSTHRU:
         ss << "    " << tReg << " = saturate(" << coords << ");\n";
         break;
 
-    case 0x05: // CLIPPLANE
+    case PS_TEXTUREMODES_CLIPPLANE:
         ss << "    ApplyCompareMode((PG_UINT(0x1994) >> " << (stage * 4) << "u) & 0xFu, " << coords << ");\n";
         return; // no post-process
 
-    case 0x06: // BUMPENVMAP
+    case PS_TEXTUREMODES_BUMPENVMAP:
     {
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         uint32_t bumOff = (stage - 1) * 4;
-        ss << "    { float4 src = T" << ((shaderCtl >> (stage == 3 ? 20 : 16)) & (stage == 3 ? 3 : 1)) << ";\n";
+        ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float4 bem = float4(PG_FLOAT(0x" << std::hex << (0x181C + bumOff) << "), PG_FLOAT(0x" << (0x1828 + bumOff) << "), PG_FLOAT(0x" << (0x1834 + bumOff) << "), PG_FLOAT(0x" << (0x1840 + bumOff) << "));\n" << std::dec;
         ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", float2("
            << coords << ".x + bem.x * src.r + bem.z * src.g, "
@@ -303,10 +311,11 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x07: // BUMPENVMAP_LUM
+    case PS_TEXTUREMODES_BUMPENVMAP_LUM:
     {
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         uint32_t bumOff = (stage - 1) * 4;
-        ss << "    { float4 src = T" << ((shaderCtl >> (stage == 3 ? 20 : 16)) & (stage == 3 ? 3 : 1)) << ";\n";
+        ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float4 bem = float4(PG_FLOAT(0x" << std::hex << (0x181C + bumOff) << "), PG_FLOAT(0x" << (0x1828 + bumOff) << "), PG_FLOAT(0x" << (0x1834 + bumOff) << "), PG_FLOAT(0x" << (0x1840 + bumOff) << "));\n";
         ss << "      float lumS = PG_FLOAT(0x" << (0x1858 + (stage - 1) * 4) << ");\n";
         ss << "      float lumO = PG_FLOAT(0x" << (0x184C + (stage - 1) * 4) << ");\n" << std::dec;
@@ -318,27 +327,27 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x08: // BRDF
+    case PS_TEXTUREMODES_BRDF:
         ss << "    " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", " << coords << ".xy);\n";
         break;
 
-    case 0x0F: // DPNDNT_AR
+    case PS_TEXTUREMODES_DPNDNT_AR:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", T" << srcStage << ".ar);\n";
         break;
     }
 
-    case 0x10: // DPNDNT_GB
+    case PS_TEXTUREMODES_DPNDNT_GB:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", T" << srcStage << ".gb);\n";
         break;
     }
 
-    case 0x11: // DOTPRODUCT
+    case PS_TEXTUREMODES_DOTPRODUCT:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      " << tReg << " = float4(dot(" << coords << ".xyz, dm), 0.0, 0.0, 1.0);\n";
@@ -346,9 +355,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x09: // DOT_ST
+    case PS_TEXTUREMODES_DOT_ST:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx
@@ -357,9 +366,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x0A: // DOT_ZW
+    case PS_TEXTUREMODES_DOT_ZW:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      float d = dot(" << coords << ".xyz, dm);\n";
@@ -369,14 +378,14 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x0B: // DOT_RFLCT_DIFF
+    case PS_TEXTUREMODES_DOT_RFLCT_DIFF:
     {
         // xemu reference: normal = (dot[stage-1], dot[stage], dot_next)
         // where dot_next peeks at the next stage's dot mapping and source.
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         uint32_t dotMapping = (shaderCtl >> ((stage - 1) * 4)) & 7;
         uint32_t nextStage = stage + 1;
-        uint32_t nextSrcStage = (nextStage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1);
+        uint32_t nextSrcStage = GetTexSrcStage(nextStage, shaderCtl);
         uint32_t nextDotMapping = (shaderCtl >> ((nextStage - 1) * 4)) & 7;
         ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float3 dm = ApplyDotMapping(" << dotMapping << ", src);\n";
@@ -390,9 +399,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x0C: // DOT_RFLCT_SPEC
+    case PS_TEXTUREMODES_DOT_RFLCT_SPEC:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      float3 N = normalize(float3(T" << (stage - 2) << ".x, T" << (stage - 1) << ".x, dot(" << coords << ".xyz, dm)));\n";
@@ -402,9 +411,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x0D: // DOT_STR_3D
+    case PS_TEXTUREMODES_DOT_STR_3D:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      " << tReg << " = Tex3D_" << sIdx << ".Sample(Samp" << sIdx
@@ -413,9 +422,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x0E: // DOT_STR_CUBE
+    case PS_TEXTUREMODES_DOT_STR_CUBE:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      " << tReg << " = TexCube_" << sIdx << ".Sample(Samp" << sIdx
@@ -424,9 +433,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
     }
 
-    case 0x12: // DOT_RFLCT_SPEC_CONST
+    case PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST:
     {
-        uint32_t srcStage = (stage <= 1) ? 0 : ((stage == 3) ? ((shaderCtl >> 20) & 3) : ((shaderCtl >> 16) & 1));
+        uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      float3 N = normalize(float3(T" << (stage - 2) << ".x, T" << (stage - 1) << ".x, dot(" << coords << ".xyz, dm)));\n";
@@ -445,7 +454,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     // PASSTHRU (0x04) runs post-process for hardware parity — per-stage
     // fixup/colorSign/alphaKill values should be identity when no texture
     // is bound, but we honor whatever the game sets.
-    if (mode == 0x05) return; // CLIPPLANE has no texel
+    if (mode == PS_TEXTUREMODES_CLIPPLANE) return; // CLIPPLANE has no texel
 
     // Texture format fixup
     if (texFmtFixup != 0.0f) {
@@ -478,6 +487,163 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
 }
 
 // ============================================================
+// Dead-code collection — scan all combiner + final inputs
+// ============================================================
+
+// Scan one combiner or final-combiner input byte and mark the register + channel it reads.
+// Also sets the per-stage C0/C1 bits when the input references those regs.
+// For combiner stages: isFinal=false, stage=0..7.
+// For final combiner:  isFinal=true, isFinalABCD distinguishes EFG vs ABCD phase, stage=8.
+static void ScanInput(ReadMasks& m, uint32_t inputByte, uint32_t stage,
+                      bool isFinal = false, bool isFinalABCD = false)
+{
+    uint32_t regIdx = inputByte & PS_REGISTER_MASK;
+    if (regIdx == PS_REGISTER_ZERO) return;
+
+    // V1R0_SUM / EF_PROD only valid in final combiner ABCD phase
+    if (isFinal && !isFinalABCD && (regIdx == PS_REGISTER_V1R0_SUM || regIdx == PS_REGISTER_EF_PROD))
+        return;
+
+    // Bit 4: for RGB inputs selects .aaaa swizzle; for alpha inputs selects .a vs .b
+    // .b is the blue channel → part of RGB, not alpha
+    bool useAlpha = (inputByte & 0x10) != 0;
+    uint32_t ch = isFinal ? (useAlpha ? CH_A : CH_RGBA)
+                          : (useAlpha ? CH_A : CH_RGB);
+
+    SetChan(m.regChans, regIdx, ch);
+
+    // Track per-stage C0/C1 usage
+    if (regIdx == PS_REGISTER_C0) m.stageC0 |= (1u << stage);
+    if (regIdx == PS_REGISTER_C1) m.stageC1 |= (1u << stage);
+}
+
+// Compute which T registers are needed by texture-mode cross-stage dependencies.
+// Walk stages in reverse so later-stage dependencies propagate to earlier stages.
+static uint16_t ScanTextureDeps(const PSJITKey& key, const uint32_t texModes[4],
+                                uint16_t combinerNeeded)
+{
+    uint16_t needed = combinerNeeded; // start with what combiners need
+
+    // Reverse pass — if stage i is needed, mark its source dependencies
+    for (int i = 3; i >= 0; i--) {
+        if (!(needed & (1u << i))) continue;
+
+        uint32_t mode = texModes[i];
+        uint32_t srcStage;
+        switch (mode) {
+        case PS_TEXTUREMODES_BUMPENVMAP: case PS_TEXTUREMODES_BUMPENVMAP_LUM:
+        case PS_TEXTUREMODES_DPNDNT_AR: case PS_TEXTUREMODES_DPNDNT_GB:
+        case PS_TEXTUREMODES_DOTPRODUCT:
+        case PS_TEXTUREMODES_DOT_ST: case PS_TEXTUREMODES_DOT_ZW:
+            srcStage = GetTexSrcStage(i, key.shaderCtl);
+            needed |= (1u << srcStage);
+            // DOT_ST, DOT_ZW also read T[stage-1]
+            if ((mode == PS_TEXTUREMODES_DOT_ST || mode == PS_TEXTUREMODES_DOT_ZW) && i >= 1)
+                needed |= (1u << (i - 1));
+            break;
+
+        case PS_TEXTUREMODES_DOT_RFLCT_DIFF:
+        {
+            srcStage = GetTexSrcStage(i, key.shaderCtl);
+            needed |= (1u << srcStage);
+            if (i >= 1) needed |= (1u << (i - 1));
+            // Peeks at next stage's source
+            uint32_t nextStage = i + 1;
+            if (nextStage < 4) {
+                needed |= (1u << GetTexSrcStage(nextStage, key.shaderCtl));
+                needed |= (1u << nextStage);
+            }
+            break;
+        }
+
+        case PS_TEXTUREMODES_DOT_RFLCT_SPEC: case PS_TEXTUREMODES_DOT_STR_3D: case PS_TEXTUREMODES_DOT_STR_CUBE: case PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST:
+            srcStage = GetTexSrcStage(i, key.shaderCtl);
+            needed |= (1u << srcStage);
+            if (i >= 1) needed |= (1u << (i - 1));
+            if (i >= 2) needed |= (1u << (i - 2));
+            break;
+
+        default:
+            break;
+        }
+    }
+    return needed;
+}
+
+// Collect all read masks from the full combiner + final combiner configuration.
+static ReadMasks CollectReadRegs(const PSJITKey& key)
+{
+    ReadMasks m = {};
+    uint32_t numStages = key.numStages;
+    uint32_t ccFlags = key.combinectl >> 8;
+
+    // --- Combiner stage inputs ---
+    for (uint32_t stage = 0; stage < numStages; stage++) {
+        uint32_t rgbIn = key.rgbInputs[stage];
+        uint32_t aIn   = key.alphaInputs[stage];
+
+        for (int slot = 0; slot < 4; slot++) {
+            ScanInput(m, InputByte(rgbIn, slot), stage);
+            ScanInput(m, InputByte(aIn, slot), stage);
+        }
+
+        // MUX implicitly reads R0.a
+        uint32_t rgbFlags = key.rgbOutputs[stage] >> 12;
+        uint32_t aFlags   = key.alphaOutputs[stage] >> 12;
+        if ((rgbFlags & PS_COMBINEROUTPUT_AB_CD_MUX) || (aFlags & PS_COMBINEROUTPUT_AB_CD_MUX))
+            SetChan(m.regChans, PS_REGISTER_R0, CH_A); // R0.a
+    }
+
+    // --- Final combiner inputs ---
+    uint32_t fcABCD = key.fcABCD;
+    uint32_t fcEFG  = key.fcEFG;
+
+    if (fcABCD != 0 || fcEFG != 0) {
+        // EFG phase (not ABCD — V1R0_SUM/EF_PROD not yet valid)
+        for (int slot = 0; slot < 3; slot++)
+            ScanInput(m, InputByte(fcEFG, slot), 8, true, false);
+
+        // ABCD phase
+        for (int slot = 0; slot < 4; slot++)
+            ScanInput(m, InputByte(fcABCD, slot), 8, true, true);
+
+        // V1R0_SUM transitively reads V1.rgb and R0.rgb
+        if (GetChan(m.regChans, PS_REGISTER_V1R0_SUM)) {
+            SetChan(m.regChans, PS_REGISTER_V1, CH_RGB);
+            SetChan(m.regChans, PS_REGISTER_R0, CH_RGB);
+        }
+    } else {
+        // No final combiner → output is R0
+        SetChan(m.regChans, PS_REGISTER_R0, CH_RGBA);
+    }
+
+    // --- Fog reads FOG ---
+    if (key.fogEnable)
+        SetChan(m.regChans, PS_REGISTER_FOG, CH_A);
+
+    // --- Texture cross-stage dependencies ---
+    // Start with T registers referenced by combiners
+    uint16_t combinerTexNeeded = 0;
+    for (uint32_t i = 0; i < 4; i++) {
+        if (GetChan(m.regChans, PS_REGISTER_T0 + i))
+            combinerTexNeeded |= (1u << i);
+    }
+
+    uint32_t texModes[4];
+    UnpackTexModes(key.textureModes, texModes);
+
+    // Also mark stages with side effects (CLIPPLANE) as needed
+    for (uint32_t i = 0; i < 4; i++) {
+        if (texModes[i] == PS_TEXTUREMODES_CLIPPLANE) // CLIPPLANE — side effect
+            combinerTexNeeded |= (1u << i);
+    }
+
+    m.texNeeded = ScanTextureDeps(key, texModes, combinerTexNeeded);
+
+    return m;
+}
+
+// ============================================================
 // Generate complete HLSL source
 // ============================================================
 
@@ -493,10 +659,12 @@ static std::string GenerateHLSL(const PSJITKey& key)
 
     // Determine which texture types are needed per stage
     uint32_t texModes[4];
-    texModes[0] = (key.textureModes      ) & 0x1F;
-    texModes[1] = (key.textureModes >>  5) & 0x1F;
-    texModes[2] = (key.textureModes >> 10) & 0x1F;
-    texModes[3] = (key.textureModes >> 15) & 0x1F;
+    UnpackTexModes(key.textureModes, texModes);
+
+    // Dead-code analysis
+    ReadMasks masks = CollectReadRegs(key);
+    auto isRead     = [&](uint32_t regIdx) { return GetChan(masks.regChans, regIdx) != CH_NONE; };
+    auto isReadChan = [&](uint32_t regIdx, uint32_t ch) { return (GetChan(masks.regChans, regIdx) & ch) != 0; };
 
     // ---- Header / resource declarations ----
     ss << "// Auto-generated by CxbxPixelShaderJIT\n";
@@ -522,22 +690,22 @@ static std::string GenerateHLSL(const PSJITKey& key)
     for (uint32_t i = 0; i < 4; i++) {
         bool need2D = false, need3D = false, needCube = false;
         switch (texModes[i]) {
-        case 0x01: case 0x06: case 0x07: case 0x08: case 0x09:
-        case 0x0F: case 0x10:
+        case PS_TEXTUREMODES_PROJECT2D: case PS_TEXTUREMODES_BUMPENVMAP: case PS_TEXTUREMODES_BUMPENVMAP_LUM: case PS_TEXTUREMODES_BRDF: case PS_TEXTUREMODES_DOT_ST:
+        case PS_TEXTUREMODES_DPNDNT_AR: case PS_TEXTUREMODES_DPNDNT_GB:
             need2D = true; break;
-        case 0x02: case 0x0D:
+        case PS_TEXTUREMODES_PROJECT3D: case PS_TEXTUREMODES_DOT_STR_3D:
             need3D = true; break;
-        case 0x03: case 0x0B: case 0x0C: case 0x0E: case 0x12:
+        case PS_TEXTUREMODES_CUBEMAP: case PS_TEXTUREMODES_DOT_RFLCT_DIFF: case PS_TEXTUREMODES_DOT_RFLCT_SPEC: case PS_TEXTUREMODES_DOT_STR_CUBE: case PS_TEXTUREMODES_DOT_RFLCT_SPEC_CONST:
             needCube = true; break;
         }
         // PROJECT3D with shadow uses 2D
-        if (texModes[i] == 0x02 && key.shadowCompare[i] != 0.0f)
+        if (texModes[i] == PS_TEXTUREMODES_PROJECT3D && key.shadowCompare[i] != 0.0f)
             need2D = true, need3D = false;
 
         if (need2D)   ss << "Texture2D<float4>   Tex2D_" << i << "   : register(t" << i << ");\n";
         if (need3D)   ss << "Texture3D<float4>   Tex3D_" << i << "   : register(t" << (i+4) << ");\n";
         if (needCube) ss << "TextureCube<float4> TexCube_" << i << " : register(t" << (i+8) << ");\n";
-        if (texModes[i] != 0)
+        if (texModes[i] != PS_TEXTUREMODES_NONE)
             ss << "SamplerState Samp" << i << " : register(s" << i << ");\n";
     }
     ss << "\n";
@@ -580,14 +748,14 @@ static std::string GenerateHLSL(const PSJITKey& key)
     // Eye vector for DOT_RFLCT_SPEC
     bool needsEyeVec = false;
     for (int i = 0; i < 4; i++)
-        if (texModes[i] == 0x0C) needsEyeVec = true;
+        if (texModes[i] == PS_TEXTUREMODES_DOT_RFLCT_SPEC) needsEyeVec = true;
     if (needsEyeVec)
         ss << "    float3 eyeVec = float3(input.iT1.w, input.iT2.w, input.iT3.w);\n";
 
     // Texture fetches (sequential — later stages can depend on earlier)
     ss << "\n    // --- Texture fetches ---\n";
     for (uint32_t i = 0; i < 4; i++) {
-        if (texModes[i] != 0) {
+        if (texModes[i] != PS_TEXTUREMODES_NONE && (masks.texNeeded & (1u << i))) {
             float cs4[4] = { key.colorSign[i*4+0], key.colorSign[i*4+1],
                              key.colorSign[i*4+2], key.colorSign[i*4+3] };
             EmitTextureFetch(ss, i, texModes[i], key.shaderCtl,
@@ -598,139 +766,189 @@ static std::string GenerateHLSL(const PSJITKey& key)
 
     // Vertex colors with front/back face selection
     ss << "\n    // --- Vertex colors ---\n";
-    if (key.frontFaceFactor != 0.0f) {
+    if (key.frontFaceFactor != 0.0f && (isRead(PS_REGISTER_V0) || isRead(PS_REGISTER_V1))) {
         ss << "    float faceSign = input.iFF ? 1.0 : -1.0;\n";
         ss << "    bool isFront = (faceSign * FrontFaceInfo.x) >= 0.0;\n";
-        ss << "    float4 V0 = isFront ? input.iD0 : input.iB0;\n";
-        ss << "    float4 V1 = isFront ? input.iD1 : input.iB1;\n";
+        if (isRead(PS_REGISTER_V0))
+            ss << "    float4 V0 = isFront ? input.iD0 : input.iB0;\n";
+        if (isRead(PS_REGISTER_V1))
+            ss << "    float4 V1 = isFront ? input.iD1 : input.iB1;\n";
     } else {
-        ss << "    float4 V0 = input.iD0;\n";
-        ss << "    float4 V1 = input.iD1;\n";
+        if (isRead(PS_REGISTER_V0))
+            ss << "    float4 V0 = input.iD0;\n";
+        if (isRead(PS_REGISTER_V1))
+            ss << "    float4 V1 = input.iD1;\n";
     }
-    ss << "    float4 FOG = float4(PG_COLOR_ARGB(0x1980).rgb, saturate(input.iFog));\n";
+    if (isRead(PS_REGISTER_FOG))
+        ss << "    float4 FOG = float4(PG_COLOR_ARGB(0x1980).rgb, saturate(input.iFog));\n";
     ss << "    float4 R0 = float4(0.0, 0.0, 0.0, T0.a);\n";
-    ss << "    float4 R1 = (float4)0.0;\n";
-    ss << "    float4 V1R0_SUM = (float4)0.0;\n";
-    ss << "    float4 EF_PROD = (float4)0.0;\n";
-    ss << "    float4 C0, C1;\n";
+    if (isRead(PS_REGISTER_R1))
+        ss << "    float4 R1 = (float4)0.0;\n";
+    if (isRead(PS_REGISTER_V1R0_SUM))
+        ss << "    float4 V1R0_SUM = (float4)0.0;\n";
+    if (isRead(PS_REGISTER_EF_PROD))
+        ss << "    float4 EF_PROD = (float4)0.0;\n";
+    // Declare C0/C1 only if any stage or the final combiner references them
+    bool anyC0 = (masks.stageC0 != 0);
+    bool anyC1 = (masks.stageC1 != 0);
+    if (anyC0) ss << "    float4 C0;\n";
+    if (anyC1) ss << "    float4 C1;\n";
+
+    // Hoist shared (non-unique) C0/C1 loads before the stage loop
+    if (!flagUniqueC0 && anyC0 && (masks.stageC0 & 0xFF))
+        ss << "    C0 = PG_COLOR(0x" << std::hex << 0x1880 << ");\n" << std::dec;
+    if (!flagUniqueC1 && anyC1 && (masks.stageC1 & 0xFF))
+        ss << "    C1 = PG_COLOR(0x" << std::hex << 0x18A0 << ");\n" << std::dec;
 
     // Combiner stages
     ss << "\n    // --- Combiner stages ---\n";
     for (uint32_t stage = 0; stage < numStages; stage++) {
         ss << "    // Stage " << stage << "\n";
 
-        // Load C0/C1 from PGRAPH
-        uint32_t c0Off = flagUniqueC0 ? (0x1880 + stage * 4) : 0x1880;
-        uint32_t c1Off = flagUniqueC1 ? (0x18A0 + stage * 4) : 0x18A0;
-        ss << "    C0 = PG_COLOR(0x" << std::hex << c0Off << ");\n";
-        ss << "    C1 = PG_COLOR(0x" << c1Off << ");\n" << std::dec;
+        // Load per-stage C0/C1 from PGRAPH (only when unique per stage)
+        if (flagUniqueC0 && (masks.stageC0 & (1u << stage))) {
+            uint32_t c0Off = 0x1880 + stage * 4;
+            ss << "    C0 = PG_COLOR(0x" << std::hex << c0Off << ");\n" << std::dec;
+        }
+        if (flagUniqueC1 && (masks.stageC1 & (1u << stage))) {
+            uint32_t c1Off = 0x18A0 + stage * 4;
+            ss << "    C1 = PG_COLOR(0x" << std::hex << c1Off << ");\n" << std::dec;
+        }
 
         // Decode output control
         uint32_t rgbOut = key.rgbOutputs[stage];
         uint32_t aOut   = key.alphaOutputs[stage];
         uint32_t rgbFlags = rgbOut >> 12;
         uint32_t aFlags   = aOut >> 12;
-        bool flagCDDot  = (rgbFlags & 0x01) != 0;
-        bool flagABDot  = (rgbFlags & 0x02) != 0;
-        bool flagRGBMux = (rgbFlags & 0x04) != 0;
-        bool flagAMux   = (aFlags   & 0x04) != 0;
-        bool cdBlue2A   = (rgbFlags & 0x40) != 0;
-        bool abBlue2A   = (rgbFlags & 0x80) != 0;
+        bool flagCDDot  = (rgbFlags & PS_COMBINEROUTPUT_CD_DOT_PRODUCT)   != 0;
+        bool flagABDot  = (rgbFlags & PS_COMBINEROUTPUT_AB_DOT_PRODUCT)   != 0;
+        bool flagRGBMux = (rgbFlags & PS_COMBINEROUTPUT_AB_CD_MUX)        != 0;
+        bool flagAMux   = (aFlags   & PS_COMBINEROUTPUT_AB_CD_MUX)        != 0;
+        bool cdBlue2A   = (rgbFlags & PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA) != 0;
+        bool abBlue2A   = (rgbFlags & PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA) != 0;
 
         // Output destinations
-        uint32_t rgbRegAB  = (rgbOut >> 4) & 0xF;
-        uint32_t rgbRegCD  = (rgbOut     ) & 0xF;
-        uint32_t rgbRegSum = (rgbOut >> 8) & 0xF;
-        uint32_t aRegAB    = (aOut   >> 4) & 0xF;
-        uint32_t aRegCD    = (aOut       ) & 0xF;
-        uint32_t aRegSum   = (aOut   >> 8) & 0xF;
+        uint32_t rgbRegAB  = (rgbOut >> 4) & PS_REGISTER_MASK;
+        uint32_t rgbRegCD  = (rgbOut     ) & PS_REGISTER_MASK;
+        uint32_t rgbRegSum = (rgbOut >> 8) & PS_REGISTER_MASK;
+        uint32_t aRegAB    = (aOut   >> 4) & PS_REGISTER_MASK;
+        uint32_t aRegCD    = (aOut       ) & PS_REGISTER_MASK;
+        uint32_t aRegSum   = (aOut   >> 8) & PS_REGISTER_MASK;
+
+        // SUM output only exists when neither AB nor CD use dot product
+        bool writeSumRGB = !flagABDot && !flagCDDot;
+
+        // Whole-stage skip: if none of the output destinations are read, skip
+        bool anyOutRead = isReadChan(rgbRegAB, CH_RGB) || isReadChan(rgbRegCD, CH_RGB)
+                       || (writeSumRGB && isReadChan(rgbRegSum, CH_RGB))
+                       || isReadChan(aRegAB, CH_A)    || isReadChan(aRegCD, CH_A)
+                       || isReadChan(aRegSum, CH_A);
+        if (!anyOutRead) {
+            ss << "    // (stage " << stage << " skipped — outputs not read)\n";
+            continue;
+        }
+
+        // Determine which halves of the stage are needed
+        bool needSum_rgb = writeSumRGB && isReadChan(rgbRegSum, CH_RGB);
+        bool needSum_a   = isReadChan(aRegSum, CH_A);
+        bool needAB_rgb  = isReadChan(rgbRegAB, CH_RGB) || needSum_rgb;
+        bool needCD_rgb  = isReadChan(rgbRegCD, CH_RGB) || needSum_rgb;
+        bool needAB_a    = isReadChan(aRegAB, CH_A) || needSum_a;
+        bool needCD_a    = isReadChan(aRegCD, CH_A) || needSum_a;
+        bool needRGB     = needAB_rgb || needCD_rgb;
+        bool needA       = needAB_a || needCD_a;
+        bool needMux     = (flagRGBMux && needSum_rgb) || (flagAMux && needSum_a);
 
         // Decode inputs
         uint32_t rgbIn = key.rgbInputs[stage];
         uint32_t aIn   = key.alphaInputs[stage];
 
-        std::string prefix = "s" + std::to_string(stage) + "_";
-
-        // RGB inputs
-        std::string rgbA = EmitRGBInput((rgbIn >> 24) & 0xFF);
-        std::string rgbB = EmitRGBInput((rgbIn >> 16) & 0xFF);
-        std::string rgbC = EmitRGBInput((rgbIn >>  8) & 0xFF);
-        std::string rgbD = EmitRGBInput((rgbIn      ) & 0xFF);
-
-        // Alpha inputs
-        std::string aA = EmitAlphaInput((aIn >> 24) & 0xFF);
-        std::string aB = EmitAlphaInput((aIn >> 16) & 0xFF);
-        std::string aC = EmitAlphaInput((aIn >>  8) & 0xFF);
-        std::string aD = EmitAlphaInput((aIn      ) & 0xFF);
-
         // Compute AB, CD
         ss << "    {\n";
-        ss << "        float4 rgbA = " << rgbA << ";\n";
-        ss << "        float4 rgbB = " << rgbB << ";\n";
-        ss << "        float4 rgbC = " << rgbC << ";\n";
-        ss << "        float4 rgbD = " << rgbD << ";\n";
-        ss << "        float aA = " << aA << ";\n";
-        ss << "        float aB = " << aB << ";\n";
-        ss << "        float aC = " << aC << ";\n";
-        ss << "        float aD = " << aD << ";\n";
 
-        // RGB products
-        if (flagABDot)
-            ss << "        float3 rgbAB = (float3)dot(rgbA.rgb, rgbB.rgb);\n";
-        else
-            ss << "        float3 rgbAB = nv2a_mul3(rgbA.rgb, rgbB.rgb);\n";
+        if (needRGB) {
+            std::string rgbA = EmitInput(InputByte(rgbIn, 0), false);
+            std::string rgbB = EmitInput(InputByte(rgbIn, 1), false);
+            std::string rgbC = EmitInput(InputByte(rgbIn, 2), false);
+            std::string rgbD = EmitInput(InputByte(rgbIn, 3), false);
 
-        if (flagCDDot)
-            ss << "        float3 rgbCD = (float3)dot(rgbC.rgb, rgbD.rgb);\n";
-        else
-            ss << "        float3 rgbCD = nv2a_mul3(rgbC.rgb, rgbD.rgb);\n";
+            if (needAB_rgb) {
+                ss << "        float4 rgbA = " << rgbA << ";\n";
+                ss << "        float4 rgbB = " << rgbB << ";\n";
+                if (flagABDot)
+                    ss << "        float3 rgbAB = (float3)dot(rgbA.rgb, rgbB.rgb);\n";
+                else
+                    ss << "        float3 rgbAB = nv2a_mul3(rgbA.rgb, rgbB.rgb);\n";
+            }
+            if (needCD_rgb) {
+                ss << "        float4 rgbC = " << rgbC << ";\n";
+                ss << "        float4 rgbD = " << rgbD << ";\n";
+                if (flagCDDot)
+                    ss << "        float3 rgbCD = (float3)dot(rgbC.rgb, rgbD.rgb);\n";
+                else
+                    ss << "        float3 rgbCD = nv2a_mul3(rgbC.rgb, rgbD.rgb);\n";
+            }
+        }
 
-        // Alpha products
-        ss << "        float aAB = nv2a_mul1(aA, aB);\n";
-        ss << "        float aCD = nv2a_mul1(aC, aD);\n";
+        if (needA) {
+            std::string aA = EmitInput(InputByte(aIn, 0), true);
+            std::string aB = EmitInput(InputByte(aIn, 1), true);
+            std::string aC = EmitInput(InputByte(aIn, 2), true);
+            std::string aD = EmitInput(InputByte(aIn, 3), true);
 
-        // SUM/MUX
-        bool writeSumRGB = !flagABDot && !flagCDDot;
-        if (flagRGBMux || flagAMux) {
+            if (needAB_a) {
+                ss << "        float aA = " << aA << ";\n";
+                ss << "        float aB = " << aB << ";\n";
+                ss << "        float aAB = nv2a_mul1(aA, aB);\n";
+            }
+            if (needCD_a) {
+                ss << "        float aC = " << aC << ";\n";
+                ss << "        float aD = " << aD << ";\n";
+                ss << "        float aCD = nv2a_mul1(aC, aD);\n";
+            }
+        }
+
+        // MUX selector
+        if (needMux) {
             if (flagMuxMsb)
                 ss << "        bool muxSel = (R0.a >= 0.5);\n";
             else
                 ss << "        bool muxSel = (((uint)(saturate(R0.a)*255.0+0.5) & 1u) != 0u);\n";
         }
 
-        if (writeSumRGB) {
+        // SUM/MUX results
+        if (needSum_rgb) {
             if (flagRGBMux)
                 ss << "        float3 rgbSUM = muxSel ? rgbCD : rgbAB;\n";
             else
                 ss << "        float3 rgbSUM = rgbAB + rgbCD;\n";
         }
 
-        if (flagAMux)
-            ss << "        float aSUM = muxSel ? aCD : aAB;\n";
-        else
-            ss << "        float aSUM = aAB + aCD;\n";
-
-        // Output mapping
-        bool hasBias = (rgbFlags & 0x08) != 0;
-        uint32_t scaleMode = (rgbFlags >> 4) & 3;
-        float rgbBias = hasBias ? -0.5f : 0.0f;
-        float rgbScale = 1.0f;
-        switch (scaleMode) {
-        case 0: rgbScale = 1.0f; break;
-        case 1: rgbScale = 2.0f; break;
-        case 2: rgbScale = 4.0f; break;
-        case 3: rgbScale = 0.5f; break;
+        if (needSum_a) {
+            if (flagAMux)
+                ss << "        float aSUM = muxSel ? aCD : aAB;\n";
+            else
+                ss << "        float aSUM = aAB + aCD;\n";
         }
 
-        bool aBiasBit = (aFlags & 0x08) != 0;
-        uint32_t aScaleMode = (aFlags >> 4) & 3;
-        float aBias = aBiasBit ? -0.5f : 0.0f;
-        float aScale = 1.0f;
-        switch (aScaleMode) {
-        case 0: aScale = 1.0f; break;
-        case 1: aScale = 2.0f; break;
-        case 2: aScale = 4.0f; break;
-        case 3: aScale = 0.5f; break;
+        // Output mapping
+        float rgbBias = 0.0f, rgbScale = 1.0f;
+        float aBias = 0.0f, aScale = 1.0f;
+        if (needRGB) {
+            if (rgbFlags & PS_COMBINEROUTPUT_OUTPUTMAPPING_BIAS) rgbBias = -0.5f;
+            switch ((rgbFlags >> 4) & 3) {
+            case 1: rgbScale = 2.0f; break;
+            case 2: rgbScale = 4.0f; break;
+            case 3: rgbScale = 0.5f; break;
+            }
+        }
+        if (needA) {
+            if (aFlags & PS_COMBINEROUTPUT_OUTPUTMAPPING_BIAS) aBias = -0.5f;
+            switch ((aFlags >> 4) & 3) {
+            case 1: aScale = 2.0f; break;
+            case 2: aScale = 4.0f; break;
+            case 3: aScale = 0.5f; break;
+            }
         }
 
         // Emit output expressions
@@ -746,20 +964,13 @@ static std::string GenerateHLSL(const PSJITKey& key)
             return out.str();
         };
 
-        std::string outRGB_AB = emitClamp("rgbAB", rgbBias, rgbScale);
-        std::string outRGB_CD = emitClamp("rgbCD", rgbBias, rgbScale);
-        std::string outRGB_Sum = writeSumRGB ? emitClamp("rgbSUM", rgbBias, rgbScale) : "(float3)0.0";
-        std::string outA_AB  = emitClamp("aAB", aBias, aScale);
-        std::string outA_CD  = emitClamp("aCD", aBias, aScale);
-        std::string outA_Sum = emitClamp("aSUM", aBias, aScale);
-
         // RGB writes
         auto emitRGBWrite = [&](uint32_t dest, const std::string& rgbExpr,
                                 bool blue2Alpha, uint32_t aRegSame) {
-            if (dest == 0) return; // DISCARD
+            if (dest == PS_REGISTER_DISCARD) return;
             const char* dName = RegName(dest);
             if (!dName) return;
-            bool aOverwrite = (aRegSame == dest) && (aRegSame != 0);
+            bool aOverwrite = (aRegSame == dest) && (aRegSame != PS_REGISTER_DISCARD);
             if (blue2Alpha && !aOverwrite) {
                 ss << "        { float3 _rgb = " << rgbExpr << ";\n";
                 ss << "          " << dName << " = float4(_rgb, _rgb.b); }\n";
@@ -768,25 +979,32 @@ static std::string GenerateHLSL(const PSJITKey& key)
             }
         };
 
-        emitRGBWrite(rgbRegAB, outRGB_AB, abBlue2A, aRegAB);
-        emitRGBWrite(rgbRegCD, outRGB_CD, cdBlue2A, aRegCD);
-        if (writeSumRGB && rgbRegSum != 0) {
-            const char* dName = RegName(rgbRegSum);
-            if (dName)
-                ss << "        " << dName << ".rgb = " << outRGB_Sum << ";\n";
+        if (needRGB) {
+            if (needAB_rgb && isReadChan(rgbRegAB, CH_RGB))
+                emitRGBWrite(rgbRegAB, emitClamp("rgbAB", rgbBias, rgbScale), abBlue2A, aRegAB);
+            if (needCD_rgb && isReadChan(rgbRegCD, CH_RGB))
+                emitRGBWrite(rgbRegCD, emitClamp("rgbCD", rgbBias, rgbScale), cdBlue2A, aRegCD);
+            if (needSum_rgb && rgbRegSum != PS_REGISTER_DISCARD && isReadChan(rgbRegSum, CH_RGB)) {
+                const char* dName = RegName(rgbRegSum);
+                if (dName)
+                    ss << "        " << dName << ".rgb = " << emitClamp("rgbSUM", rgbBias, rgbScale) << ";\n";
+            }
         }
 
         // Alpha writes
-        auto emitAlphaWrite = [&](uint32_t dest, const std::string& aExpr) {
-            if (dest == 0) return; // DISCARD
-            const char* dName = RegName(dest);
-            if (!dName) return;
-            ss << "        " << dName << ".a = " << aExpr << ";\n";
-        };
+        if (needA) {
+            auto emitAlphaWrite = [&](uint32_t dest, const std::string& aExpr) {
+                if (dest == PS_REGISTER_DISCARD) return;
+                if (!isReadChan(dest, CH_A)) return;
+                const char* dName = RegName(dest);
+                if (!dName) return;
+                ss << "        " << dName << ".a = " << aExpr << ";\n";
+            };
 
-        emitAlphaWrite(aRegAB, outA_AB);
-        emitAlphaWrite(aRegCD, outA_CD);
-        emitAlphaWrite(aRegSum, outA_Sum);
+            if (needAB_a)  emitAlphaWrite(aRegAB,  emitClamp("aAB", aBias, aScale));
+            if (needCD_a)  emitAlphaWrite(aRegCD,  emitClamp("aCD", aBias, aScale));
+            if (needSum_a) emitAlphaWrite(aRegSum, emitClamp("aSUM", aBias, aScale));
+        }
 
         ss << "    }\n";
     }
@@ -800,40 +1018,46 @@ static std::string GenerateHLSL(const PSJITKey& key)
         ss << "    float4 result = R0;\n";
     } else {
         // Load final combiner C0/C1
-        ss << "    C0 = PG_COLOR(0x19AC);\n";
-        ss << "    C1 = PG_COLOR(0x19B0);\n";
+        if (masks.stageC0 & (1u << 8))
+            ss << "    C0 = PG_COLOR(0x19AC);\n";
+        if (masks.stageC1 & (1u << 8))
+            ss << "    C1 = PG_COLOR(0x19B0);\n";
 
         // EFG phase
         uint32_t settings = (fcEFG) & 0xFF;
-        uint32_t eReg = (fcEFG >> 24) & 0xFF;
-        uint32_t fReg = (fcEFG >> 16) & 0xFF;
-        uint32_t gReg = (fcEFG >>  8) & 0xFF;
+        uint32_t eReg = InputByte(fcEFG, 0);
+        uint32_t fReg = InputByte(fcEFG, 1);
+        uint32_t gReg = InputByte(fcEFG, 2);
 
-        ss << "    float3 fcE = (" << EmitFinalInput(eReg, false) << ").rgb;\n";
-        ss << "    float3 fcF = (" << EmitFinalInput(fReg, false) << ").rgb;\n";
         ss << "    float  fcG = (" << EmitFinalInput(gReg, false) << ").a;\n";
 
-        ss << "    EF_PROD = float4(fcE * fcF, 1.0);\n";
+        if (isRead(PS_REGISTER_EF_PROD)) {
+            ss << "    float3 fcE = (" << EmitFinalInput(eReg, false) << ").rgb;\n";
+            ss << "    float3 fcF = (" << EmitFinalInput(fReg, false) << ").rgb;\n";
+            ss << "    EF_PROD = float4(fcE * fcF, 1.0);\n";
+        }
 
-        // V1R0_SUM
-        ss << "    {\n";
-        ss << "        float3 v1s = V1.rgb;\n";
-        ss << "        float3 r0s = R0.rgb;\n";
-        if (settings & 0x40)
-            ss << "        v1s = 1.0 - v1s;\n";
-        if (settings & 0x20)
-            ss << "        r0s = 1.0 - r0s;\n";
-        ss << "        float3 sum = v1s + r0s;\n";
-        if (settings & 0x80)
-            ss << "        sum = saturate(sum);\n";
-        ss << "        V1R0_SUM = float4(sum, 1.0);\n";
-        ss << "    }\n";
+        // V1R0_SUM — only if referenced by ABCD inputs
+        if (isRead(PS_REGISTER_V1R0_SUM)) {
+            ss << "    {\n";
+            ss << "        float3 v1s = V1.rgb;\n";
+            ss << "        float3 r0s = R0.rgb;\n";
+            if (settings & 0x40)
+                ss << "        v1s = 1.0 - v1s;\n";
+            if (settings & 0x20)
+                ss << "        r0s = 1.0 - r0s;\n";
+            ss << "        float3 sum = v1s + r0s;\n";
+            if (settings & 0x80)
+                ss << "        sum = saturate(sum);\n";
+            ss << "        V1R0_SUM = float4(sum, 1.0);\n";
+            ss << "    }\n";
+        }
 
         // ABCD phase
-        uint32_t aReg = (fcABCD >> 24) & 0xFF;
-        uint32_t bReg = (fcABCD >> 16) & 0xFF;
-        uint32_t cReg = (fcABCD >>  8) & 0xFF;
-        uint32_t dReg = (fcABCD      ) & 0xFF;
+        uint32_t aReg = InputByte(fcABCD, 0);
+        uint32_t bReg = InputByte(fcABCD, 1);
+        uint32_t cReg = InputByte(fcABCD, 2);
+        uint32_t dReg = InputByte(fcABCD, 3);
 
         ss << "    float4 fcA = " << EmitFinalInput(aReg, true) << ";\n";
         ss << "    float4 fcB = " << EmitFinalInput(bReg, true) << ";\n";
