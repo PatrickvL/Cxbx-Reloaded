@@ -28,6 +28,7 @@
 #define LOG_PREFIX CXBXR_MODULE::PSHB
 
 #include <assert.h> // For assert()
+#include <cstring>  // For memcpy (type-punning in float depth decode)
 
 #include "core\kernel\support\Emu.h"
 #include "core\hle\D3D8\XbD3D8Types.h" // For X_D3DFORMAT
@@ -303,18 +304,47 @@ void D3D11_draw_clear(NV2AState *d)
 	// Decode Z and stencil based on the surface zeta format:
 	// Z16 (format 1): 16-bit depth in bits [15:0], no stencil
 	// Z24S8 (format 2): 24-bit depth in bits [31:8], 8-bit stencil in bits [7:0]
+	// When z_format is set, the depth is stored as a float (F16 or F24) rather
+	// than a fixed-point integer — must be decoded accordingly.
 	float z;
 	DWORD stencil;
 	unsigned int zeta_format = NV2AGetSurfaceState(pg).zetaFormat;
+	bool z_format = (pg->regs[RI(NV_PGRAPH_SETUPRASTER)] & NV_PGRAPH_SETUPRASTER_Z_FORMAT) != 0;
 	if (zeta_format == NV097_SET_SURFACE_FORMAT_ZETA_Z16) {
-		z = (float)(zstencil & 0xFFFF) / (float)0xFFFF;
+		uint16_t zRaw = (uint16_t)(zstencil & 0xFFFF);
+		if (z_format) {
+			// F16 float depth: shift left 11 bits + add exponent bias to form float32
+			if (zRaw == 0) {
+				z = 0.0f;
+			} else {
+				uint32_t f32bits = ((uint32_t)zRaw << 11) + 0x3C000000;
+				float f16val;
+				memcpy(&f16val, &f32bits, sizeof(float));
+				z = f16val / 511.9375f; // f16_max
+			}
+		} else {
+			z = (float)zRaw / (float)0xFFFF;
+		}
 		stencil = 0;
 		// Z16 has no stencil — strip stencil clear flag
 		hostFlags &= ~D3DCLEAR_STENCIL;
 	} else {
-		// Z24S8 (default)
-		z = (float)(zstencil >> 8) / (float)0xFFFFFF;
+		// Z24S8
 		stencil = zstencil & 0xFF;
+		uint32_t zRaw = zstencil >> 8;
+		if (z_format) {
+			// F24 float depth: shift left 7 bits to form float32
+			if (zRaw == 0) {
+				z = 0.0f;
+			} else {
+				uint32_t f32bits = zRaw << 7;
+				float f24val;
+				memcpy(&f24val, &f32bits, sizeof(float));
+				z = f24val / 1.0e30f; // f24_max
+			}
+		} else {
+			z = (float)zRaw / (float)0xFFFFFF;
+		}
 	}
 
 	// Read clear rect from PGRAPH.  Use a single rect covering the clear area.
