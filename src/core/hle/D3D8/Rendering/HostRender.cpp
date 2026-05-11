@@ -508,18 +508,28 @@ void CxbxUpdateHostViewPortOffsetAndScaleConstants()
 	float xboxScreenspaceWidth = xboxRenderTargetWidth * screenScaleX;
 	float xboxScreenspaceHeight = xboxRenderTargetHeight * screenScaleY;
 
-	// Z output scale derived from PGRAPH depth surface format.
-	// NV2A VS programs encode Z in the depth buffer's native integer range
-	// (0..65535 for Z16, 0..16777215 for Z24S8).  The reverse screen-space
-	// transform divides by this to normalize Z into [0,1] for D3D11.
+	// Z output scale: read directly from NV2A viewport scale Z component (VPSCL.z).
+	// The game's VS multiplies clip-space Z by this value (via reserved constant c-38.z).
+	// We divide by it to reverse back to normalized [0,1] for D3D11.
+	// Clamp to host depth format range: since we use D24_UNORM (max representable = 1.0),
+	// extremely large scales (e.g. 1e30 for F24S8) would lose precision in the dp4 math.
+	// The host stores depth as UNORM regardless of Xbox float format, so the effective
+	// max is limited by the host format's integer depth range.
 	float zOutputScale = 1.0f;
 	{
 		auto pg_z = &(g_NV2A->GetDeviceState()->pgraph);
-		auto surf = NV2AGetSurfaceState(pg_z);
-		switch (surf.zetaFormat) {
-			case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   zOutputScale = 65535.0f;    break;
-			case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: zOutputScale = 16777215.0f; break;
-			default:                                  zOutputScale = 65535.0f;    break;
+		float vpscl_z;
+		std::memcpy(&vpscl_z, &pg_z->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][2], sizeof(float));
+		if (vpscl_z != 0.0f) {
+			zOutputScale = vpscl_z;
+		} else {
+			// Fallback: use format-derived default if VPSCL not yet programmed
+			auto surf = NV2AGetSurfaceState(pg_z);
+			switch (surf.zetaFormat) {
+				case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   zOutputScale = 65535.0f;    break;
+				case NV097_SET_SURFACE_FORMAT_ZETA_Z24S8: zOutputScale = 16777215.0f; break;
+				default:                                  zOutputScale = 65535.0f;    break;
+			}
 		}
 	}
 
@@ -728,11 +738,20 @@ static void UpdateFFState_Transforms(PGRAPHState* pg, uint32_t skinMode)
 		ffShaderState.Modes.ViewportOffsetX = vpoff[0];
 		ffShaderState.Modes.ViewportOffsetY = vpoff[1];
 
-		// Depth max (zmax) for Z normalization — matches xemu clipRange.y.
-		// Always > 0, so the shader can unconditionally divide.
-		switch (surf.zetaFormat) {
-			case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   ffShaderState.Modes.DepthMax = 65535.0f;    break;
-			default:                                  ffShaderState.Modes.DepthMax = 16777215.0f; break;
+		// Depth max (zmax) for Z normalization — read from NV2A viewport scale Z (VPSCL.z).
+		// The viewport transform bakes VPSCL.z into CMAT's Z column, so we must reverse it.
+		{
+			float vpscl_z;
+			std::memcpy(&vpscl_z, &pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][2], sizeof(float));
+			if (vpscl_z > 0.0f) {
+				ffShaderState.Modes.DepthMax = vpscl_z;
+			} else {
+				// Fallback: format-based default if VPSCL not yet programmed
+				switch (surf.zetaFormat) {
+					case NV097_SET_SURFACE_FORMAT_ZETA_Z16:   ffShaderState.Modes.DepthMax = 65535.0f;    break;
+					default:                                  ffShaderState.Modes.DepthMax = 16777215.0f; break;
+				}
+			}
 		}
 
 		// View matrix: PGRAPH XFCTX doesn't store View separately (only combined ModelView).
