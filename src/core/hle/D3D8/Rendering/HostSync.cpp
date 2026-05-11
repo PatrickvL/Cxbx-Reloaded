@@ -267,6 +267,17 @@ static ID3D11Resource* CxbxResolveTextureSource(
 			CxbxInvalidatePgraphRTBinding();
 			return pResult;
 		}
+	} else {
+		// texOffset matches currently bound RT/DS — check if it's in the cache anyway
+		// (shadow mapping: game may read depth texture while it's still "bound" as BOFFSET4)
+		auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
+		if (pPgraphRT) {
+			EmuLog(LOG_LEVEL::WARNING, "CxbxResolveTextureSource: texOffset=0x%08X matches bound surface (BOFFSET3=0x%08X BOFFSET4=0x%08X) but found in RT cache — using RT texture (shadow map?)",
+				texOffset, pg->regs[RI(NV_PGRAPH_BOFFSET3)], pg->regs[RI(NV_PGRAPH_BOFFSET4)]);
+			bIsRenderTargetTexture = true;
+			CxbxInvalidatePgraphRTBinding();
+			return pPgraphRT;
+		}
 	}
 
 	// For non-RT textures, try the texture side-map first, then HLE texture,
