@@ -141,6 +141,7 @@ static void D3D11_draw_inline_elements(NV2AState *d)
 // which vertex data buffer was filled between BEGIN and END.
 void D3D11_draw(NV2AState *d)
 {
+	CxbxPageTrackerLockD3D11Context();
 	PGRAPHState *pg = &d->pgraph;
 
 	if (pg->draw_arrays_length) {
@@ -152,10 +153,12 @@ void D3D11_draw(NV2AState *d)
 	} else if (pg->inline_elements_length) {
 		D3D11_draw_inline_elements(d);
 	}
+	CxbxPageTrackerUnlockD3D11Context();
 }
 
 void D3D11_draw_state_update(NV2AState *d)
 {
+	CxbxPageTrackerLockD3D11Context();
 	PGRAPHState *pg = &d->pgraph;
 
 	// Vertex attribute inline_value may have changed via NV2A push buffer
@@ -176,6 +179,7 @@ void D3D11_draw_state_update(NV2AState *d)
 	}
 
 	CxbxUpdateNativeD3DResources();
+	CxbxPageTrackerUnlockD3D11Context();
 }
 
 // ---- NV2A Zpass pixel count (visibility test) via D3D11 occlusion queries ----
@@ -267,6 +271,7 @@ static void D3D11_zpass_collect(NV2AState *d)
 
 void D3D11_draw_clear(NV2AState *d)
 {
+	CxbxPageTrackerLockD3D11Context();
 	PGRAPHState *pg = &d->pgraph;
 
 	CxbxUpdateNativeD3DResources();
@@ -287,8 +292,10 @@ void D3D11_draw_clear(NV2AState *d)
 	if (flags & NV097_CLEAR_SURFACE_STENCIL)
 		hostFlags |= D3DCLEAR_STENCIL;
 
-	if (hostFlags == 0)
+	if (hostFlags == 0) {
+		CxbxPageTrackerUnlockD3D11Context();
 		return;
+	}
 
 	D3DCOLOR color = pg->regs[RI(NV_PGRAPH_COLORCLEARVALUE)];
 	uint32_t zstencil = pg->regs[RI(NV_PGRAPH_ZSTENCILCLEARVALUE)];
@@ -335,6 +342,7 @@ void D3D11_draw_clear(NV2AState *d)
 	rect.bottom = static_cast<LONG>(rect.bottom * Yscale);
 
 	CxbxD3DClear(1, &rect, hostFlags, color, z, stencil);
+	CxbxPageTrackerUnlockD3D11Context();
 }
 
 // Import pgraph_draw_* variables, declared in EmuNV2A_PGRAPH.cpp :
@@ -354,11 +362,14 @@ extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget)
 // Blits the PGRAPH-tracked backbuffer to the host swap chain and presents.
 static void D3D11_flip_stall(NV2AState *d)
 {
+	CxbxPageTrackerLockD3D11Context();
 	// Get host swap chain backbuffer
 	ID3D11Texture2D *pHostBackBuffer = nullptr;
 	HRESULT hRet = CxbxGetBackBuffer(&pHostBackBuffer);
-	if (hRet != S_OK || !pHostBackBuffer)
+	if (hRet != S_OK || !pHostBackBuffer) {
+		CxbxPageTrackerUnlockD3D11Context();
 		return;
+	}
 
 	// Save and restore the game's render target around the present blit.
 	// CxbxD3D11Blt manages its own RT state internally, so the PGRAPH RT
@@ -368,9 +379,15 @@ static void D3D11_flip_stall(NV2AState *d)
 	// Clear host backbuffer to black (prevents artifacts on aspect ratio change)
 	(void)CxbxSetRenderTarget(pHostBackBuffer);
 	CxbxD3DClear(0, nullptr, D3DCLEAR_TARGET, 0xFF000000, 1.0f, 0);
-	if (pExistingRT) {
-		(void)CxbxSetRenderTarget(pExistingRT);
-	}
+
+	// Restore the previous RT. When the game was in depth-only mode
+	// (shadow pass), pExistingRT is nullptr — we must still call
+	// CxbxSetRenderTarget to reset g_pD3DCurrentHostRenderTarget away from
+	// pHostBackBuffer (which is about to be Released). Passing nullptr
+	// resets to the default backbuffer view (safe, persistent surface).
+	// The next CxbxD3D11UpdateRenderTargetFromPGRAPH will rebind the correct
+	// RT/DS from PGRAPH state anyway.
+	(void)CxbxSetRenderTarget(pExistingRT);
 
 	// Calculate destination rect (centered, aspect-ratio aware)
 	float width, height;
@@ -524,6 +541,7 @@ static void D3D11_flip_stall(NV2AState *d)
 
 	// Profiler: tick frame and dump timing breakdown once per second
 	CxbxProfilerFrameTick();
+	CxbxPageTrackerUnlockD3D11Context();
 }
 
 void D3D11_init_pgraph_plugins()
