@@ -96,7 +96,7 @@ void CxbxPageTrackerMarkGPUDirty(uint32_t startOffset, uint32_t size);
 struct ID3D11Texture2D;
 void CxbxPageTrackerRegisterRT(uint32_t startOffset, uint32_t pitch,
 	uint32_t width, uint32_t height, uint32_t bpp,
-	ID3D11Texture2D* pTexture);
+	uint32_t surfaceType, ID3D11Texture2D* pTexture);
 
 // Lock/unlock the D3D11 context for the render path (puller thread).
 // The readback VEH uses TryEnter — if the puller holds the lock, readback

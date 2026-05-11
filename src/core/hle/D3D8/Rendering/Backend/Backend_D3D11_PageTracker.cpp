@@ -46,6 +46,7 @@
 #include "Backend_D3D11_PageTracker.h"
 #include "common/AddressRanges.h"
 #include "common/win32/WineEnv.h"
+#include "devices/video/swizzle.h"
 
 #include <cstring>
 
@@ -101,6 +102,7 @@ struct RegisteredRT {
 	uint32_t width;         // Xbox width in pixels
 	uint32_t height;        // Xbox height in pixels
 	uint32_t bpp;           // Bytes per pixel (2 or 4)
+	uint32_t surfaceType;   // NV097_SET_SURFACE_FORMAT_TYPE_PITCH or _SWIZZLE
 	ID3D11Texture2D* pTexture; // Host RT (NOT AddRef'd — owned by g_PgraphRTCache)
 };
 
@@ -243,19 +245,22 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 						D3D11_MAPPED_SUBRESOURCE mapped = {};
 						hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
 						if (SUCCEEDED(hr)) {
-							// Copy from staging to Xbox RAM, row by row.
+							// Copy from staging to Xbox RAM.
 							// Host RT may have different pitch than Xbox RT.
 							uint8_t* pDst = (uint8_t*)(CONTIG_BASE + pRT->offset);
 							uint8_t* pSrc = (uint8_t*)mapped.pData;
-							uint32_t xboxRowBytes = pRT->width * pRT->bpp;
-							uint32_t copyRows = pRT->height;
 
 							// If host is upscaled, only copy the top-left 1x region
 							if (desc.Width > pRT->width || desc.Height > pRT->height) {
 								// Can't directly copy upscaled data — skip readback
 								// (would need a resolve/downscale pass)
+							} else if (pRT->surfaceType == 0x2 /*SWIZZLE*/) {
+								// NV2A swizzled surface: write pixels in Morton order.
+								swizzle_rect(pSrc, pRT->width, pRT->height,
+									pDst, mapped.RowPitch, pRT->bpp);
 							} else {
-								for (uint32_t row = 0; row < copyRows; row++) {
+								uint32_t xboxRowBytes = pRT->width * pRT->bpp;
+								for (uint32_t row = 0; row < pRT->height; row++) {
 									memcpy(pDst, pSrc, xboxRowBytes);
 									pDst += pRT->pitch;
 									pSrc += mapped.RowPitch;
@@ -671,12 +676,12 @@ void CxbxPageTrackerMarkGPUDirty(uint32_t startOffset, uint32_t size)
 // ******************************************************************
 void CxbxPageTrackerRegisterRT(uint32_t startOffset, uint32_t pitch,
 	uint32_t width, uint32_t height, uint32_t bpp,
-	ID3D11Texture2D* pTexture)
+	uint32_t surfaceType, ID3D11Texture2D* pTexture)
 {
 	// Check if already registered at this offset — update in place
 	for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
 		if (s_RegisteredRTs[i].offset == startOffset) {
-			s_RegisteredRTs[i] = { startOffset, pitch, width, height, bpp, pTexture };
+			s_RegisteredRTs[i] = { startOffset, pitch, width, height, bpp, surfaceType, pTexture, true };
 			return;
 		}
 	}
@@ -688,7 +693,7 @@ void CxbxPageTrackerRegisterRT(uint32_t startOffset, uint32_t pitch,
 			(MAX_REGISTERED_RTS - 1) * sizeof(RegisteredRT));
 		s_NumRegisteredRTs = MAX_REGISTERED_RTS - 1;
 	}
-	s_RegisteredRTs[s_NumRegisteredRTs++] = { startOffset, pitch, width, height, bpp, pTexture };
+	s_RegisteredRTs[s_NumRegisteredRTs++] = { startOffset, pitch, width, height, bpp, surfaceType, pTexture, true };
 }
 
 // ******************************************************************
@@ -725,7 +730,7 @@ void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size)
 // ******************************************************************
 bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 {
-	if (!s_pMirrorBuf || size == 0 || startOffset >= CONTIG_SIZE)
+	if (!s_pMirrorBuf || !g_pD3DDeviceContext || size == 0 || startOffset >= CONTIG_SIZE)
 		return false;
 	if (startOffset + size > CONTIG_SIZE)
 		size = CONTIG_SIZE - startOffset;
@@ -733,7 +738,8 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 	uint32_t firstPage = startOffset / PAGE_SIZE_;
 	uint32_t lastPage = (startOffset + size - 1) / PAGE_SIZE_;
 
-	// Quick check: any GPU-dirty pages in this range?
+	// Check if any GPU-dirty pages exist in this range.
+	// If so, perform RT readback from D3D11 into Xbox RAM first.
 	bool anyDirty = false;
 	for (uint32_t p = firstPage; p <= lastPage; p++) {
 		if (TestBit(s_GpuDirtyBitmap, p)) {
@@ -741,79 +747,86 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 			break;
 		}
 	}
-	if (!anyDirty)
-		return false;
 
-	// Find and readback all registered RTs that overlap this VB range
-	for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
-		const RegisteredRT& rt = s_RegisteredRTs[i];
-		uint32_t rtSize = rt.pitch * rt.height;
-		uint32_t rtEnd = rt.offset + rtSize;
+	// Always readback registered RTs that overlap this VB range, regardless of
+	// dirty bits. The VEH fault handler may have cleared dirty bits after a
+	// premature readback (before the D3D11 texture was fully rendered). By always
+	// re-reading the D3D11 texture here, we guarantee the vertex shader sees the
+	// latest rendered content.
+	{
+		for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
+			RegisteredRT& rt = s_RegisteredRTs[i];
+			uint32_t rtSize = rt.pitch * rt.height;
+			uint32_t rtEnd = rt.offset + rtSize;
 
-		// Check overlap with VB range
-		if (startOffset >= rtEnd || rt.offset >= startOffset + size)
-			continue;
+			// Check overlap with VB range
+			if (startOffset >= rtEnd || rt.offset >= startOffset + size)
+				continue;
 
-		// Check if this RT has any GPU-dirty pages
-		uint32_t rtFirstPage = rt.offset / PAGE_SIZE_;
-		uint32_t rtLastPage = (rtEnd - 1) / PAGE_SIZE_;
-		bool rtDirty = false;
-		for (uint32_t p = rtFirstPage; p <= rtLastPage; p++) {
-			if (TestBit(s_GpuDirtyBitmap, p)) {
-				rtDirty = true;
-				break;
-			}
-		}
-		if (!rtDirty || !rt.pTexture || !g_pD3DDeviceContext)
-			continue;
+			if (!rt.pTexture || !g_pD3DDeviceContext)
+				continue;
 
-		// Clear GPU-dirty and restore access FIRST (so memcpy won't fault)
-		for (uint32_t p = rtFirstPage; p <= rtLastPage; p++) {
-			if (TestBit(s_GpuDirtyBitmap, p)) {
-				ClearBit(s_GpuDirtyBitmap, p);
-				DWORD oldProtect;
-				VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
-					PAGE_SIZE_, PAGE_READWRITE, &oldProtect);
-			}
-		}
+			// Skip readback if RT hasn't been rendered to since last readback
+			if (!rt.needsReadback)
+				continue;
 
-		// Readback RT from D3D11 → staging → Xbox RAM
-		D3D11_TEXTURE2D_DESC desc = {};
-		rt.pTexture->GetDesc(&desc);
-
-		D3D11_TEXTURE2D_DESC stagingDesc = desc;
-		stagingDesc.Usage = D3D11_USAGE_STAGING;
-		stagingDesc.BindFlags = 0;
-		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-		stagingDesc.MiscFlags = 0;
-
-		ID3D11Texture2D* pStaging = nullptr;
-		HRESULT hr = g_pD3DDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
-		if (SUCCEEDED(hr)) {
-			g_pD3DDeviceContext->CopyResource(pStaging, rt.pTexture);
-
-			D3D11_MAPPED_SUBRESOURCE mapped = {};
-			hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
-			if (SUCCEEDED(hr)) {
-				uint8_t* pDst = (uint8_t*)(CONTIG_BASE + rt.offset);
-				uint8_t* pSrc = (uint8_t*)mapped.pData;
-				uint32_t xboxRowBytes = rt.width * rt.bpp;
-
-				if (desc.Width >= rt.width && desc.Height >= rt.height) {
-					for (uint32_t row = 0; row < rt.height; row++) {
-						memcpy(pDst, pSrc, xboxRowBytes);
-						pDst += rt.pitch;
-						pSrc += mapped.RowPitch;
-					}
+			// Ensure pages are accessible for the readback write
+			uint32_t rtFirstPage = rt.offset / PAGE_SIZE_;
+			uint32_t rtLastPage = (rtEnd - 1) / PAGE_SIZE_;
+			for (uint32_t p = rtFirstPage; p <= rtLastPage; p++) {
+				if (TestBit(s_GpuDirtyBitmap, p)) {
+					ClearBit(s_GpuDirtyBitmap, p);
+					DWORD oldProtect;
+					VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
+						PAGE_SIZE_, PAGE_READWRITE, &oldProtect);
 				}
-
-				g_pD3DDeviceContext->Unmap(pStaging, 0);
 			}
-			pStaging->Release();
+
+			// Readback RT from D3D11 → staging → Xbox RAM
+			D3D11_TEXTURE2D_DESC desc = {};
+			rt.pTexture->GetDesc(&desc);
+
+			D3D11_TEXTURE2D_DESC stagingDesc = desc;
+			stagingDesc.Usage = D3D11_USAGE_STAGING;
+			stagingDesc.BindFlags = 0;
+			stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+			stagingDesc.MiscFlags = 0;
+
+			ID3D11Texture2D* pStaging = nullptr;
+			HRESULT hr = g_pD3DDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
+			if (SUCCEEDED(hr)) {
+				g_pD3DDeviceContext->CopyResource(pStaging, rt.pTexture);
+
+				D3D11_MAPPED_SUBRESOURCE mapped = {};
+				hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
+				if (SUCCEEDED(hr)) {
+					uint8_t* pDst = (uint8_t*)(CONTIG_BASE + rt.offset);
+					uint8_t* pSrc = (uint8_t*)mapped.pData;
+
+					if (desc.Width >= rt.width && desc.Height >= rt.height) {
+						// Always write in swizzled/Morton order for VB readback.
+						// Games that render-to-VB (e.g. DisplacementMap) use Morton-order
+						// index buffers, so ALL attributes must be in swizzled layout
+						// regardless of the detected surface type.
+						swizzle_rect(pSrc, rt.width, rt.height,
+							pDst, mapped.RowPitch, rt.bpp);
+					}
+
+					g_pD3DDeviceContext->Unmap(pStaging, 0);
+				}
+				pStaging->Release();
+			}
+
+			rt.needsReadback = false;
 		}
 	}
 
-	// Flush the readback pages to the GPU mirror (NO_OVERWRITE for mid-frame safety)
+	// Always flush the requested VB pages to the GPU mirror.
+	// Even if no GPU-dirty pages were found above, the VEH fault handler
+	// may have already read back RT data into Xbox RAM (clearing the dirty
+	// bits in the process). That data must still reach the GPU mirror for
+	// the vertex fetch shader to see it. The normal FlushToGPU path skips
+	// mid-frame flushes for performance, so this is the only opportunity.
 	D3D11_MAPPED_SUBRESOURCE mapped = {};
 	HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0,
 		D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
@@ -826,7 +839,7 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 		g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
 	}
 
-	return true;
+	return anyDirty;
 }
 
 // ******************************************************************

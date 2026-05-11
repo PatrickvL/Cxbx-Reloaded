@@ -879,6 +879,12 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 	UINT rtWidth = surf.clipWidth;
 	UINT rtHeight = surf.clipHeight;
 
+	// For swizzled surfaces, actual dimensions are power-of-2 from logWidth/logHeight
+	if (surf.surfaceType == 0x2 /*NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE*/) {
+		rtWidth = 1u << surf.logWidth;
+		rtHeight = 1u << surf.logHeight;
+	}
+
 	// Color render target (rebind if offset changed, or if format/pitch/clip changed)
 	bool colorChanged = (colorOffset != prevColorOffset) ||
 		(surf.colorFormat != g_LastBoundSurfaceState.colorFormat) ||
@@ -906,7 +912,7 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 			uint32_t rtSize = colorPitch * rtHeight;
 			CxbxPageTrackerMarkGPUDirty(colorOffset, rtSize);
 			CxbxPageTrackerRegisterRT(colorOffset, colorPitch,
-				rtWidth, rtHeight, colorBpp, pHostRT);
+				rtWidth, rtHeight, colorBpp, surf.surfaceType, pHostRT);
 		}
 
 		// Track the backbuffer by matching RT dimensions against presentation parameters.
