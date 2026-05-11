@@ -960,10 +960,10 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 					pHostDS->GetDesc(&dsDesc);
 					g_pD3DCurrentHostRenderTarget->GetDesc(&rtDesc);
 					if (dsDesc.Width != rtDesc.Width || dsDesc.Height != rtDesc.Height) {
-						// Unbind color RT — depth-only rendering
-						if (g_pD3DCurrentRTV && g_pD3DCurrentRTV != g_pD3DBackBufferView) {
-							g_pD3DCurrentRTV->Release();
-						}
+						// Unbind color RT — depth-only rendering.
+						// Do NOT release g_pD3DCurrentRTV: it's owned by g_RTVCache.
+						// Releasing here would leave a dangling pointer in the cache,
+						// causing use-after-free when the same RT is rebound later.
 						g_pD3DCurrentRTV = nullptr;
 						g_pD3DCurrentHostRenderTarget = nullptr;
 						unboundColorForDepthOnly = true;
