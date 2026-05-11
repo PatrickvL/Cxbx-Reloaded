@@ -3,7 +3,7 @@
 Consolidated tracking of XDK sample rendering status, known issues, and game compatibility.
 This is the single source of truth — other docs should reference this file instead of duplicating status tables.
 
-Last updated: May 2026 (dx11 branch, commit 8a3313414)
+Last updated: May 2026 (dx11 branch, commit c12572573)
 
 > **Note:** ⚠️ and ❌ entries are from automated 20-second captures and need further manual confirmation/investigation.
 
@@ -108,10 +108,10 @@ Last updated: May 2026 (dx11 branch, commit 8a3313414)
 ### Shadow & Stencil
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
-| ShadowBuffer | ❌ | — | Shadow compare, depth texture, `.xpu` PS | Cxbx-Reloaded splash screen — sample crashed/didn't load |
-| ShadowVolume | ✅ | 7.15 | D3DFOG_LINEAR, stencil volumes | Biplane over mountains with shadow volume info text |
+| ShadowBuffer | ✅ | 155 | Shadow compare, depth texture, `.xpu` PS | Biplane with shadow on tiled ground, all 4 depth formats (D16/D24S8/F16/F24S8) working |
+| ShadowVolume | ⚠️ | 415 | D3DFOG_LINEAR, stencil volumes | Shadow applied to entire mountain width instead of projected cone below biplane; guidelines visible (enabled) |
 | StencilDepth | ✅ | ~8 | Stencil operations, DPH, SLT, RCC | Helicopter with rotor on blue/purple bg |
-| StencilMirror | ✅ | ~9 | D3DFOG_LINEAR, stencil mirror | Biplane with glowing lights |
+| StencilMirror | ✅ | 464 | D3DFOG_LINEAR, stencil mirror | Biplane over bumpy terrain with dark water mirror reflection (multiply blend — dark is correct); no shadow expected (mirror-only demo) |
 
 ### Fire, Water & Effects
 | Sample | Status | FPS | Key Features | Notes |
@@ -121,7 +121,7 @@ Last updated: May 2026 (dx11 branch, commit 8a3313414)
 | Glass | ✅ | 334 | Alpha test, `Glass.xpu` | Glass teapot with refraction + reflection, skybox environment now renders |
 | FocusBlur | ⚠️ | 185 | DPNDNT_AR/GB, 5 pixel shaders | Geometry now visible (robot, cylinders) instead of garbled, but blur effect not applied |
 | MotionBlur | ✅ | 116 | Motion blur with alpha test | Moon over purple horizon with motion blur |
-| VolumeLight | ✅ | 60 | PROJECT2D, PROJECT3D | Stonehenge scene rendered, light beam visible (beam rotates in/out of view) |
+| VolumeLight | ✅ | 261 | PROJECT2D, PROJECT3D | Stonehenge scene rendered, light beam visible (beam rotates in/out of view) |
 | XRay | ✅ | 0.06 | `TCI_CAMERASPACENORMAL`, X-ray effect | Translucent blue/purple x-ray robot, very low FPS |
 | FuzzyTeapot | ✅ | 9.49 | Alpha test, fuzzy material | Teapot with spiky fuzz shell effect (intended look) |
 
@@ -180,7 +180,8 @@ Last updated: May 2026 (dx11 branch, commit 8a3313414)
 | Paint fades | PaintEffect | Only works when pressing A, then fades back to black | Point sprite paint not persisting | Low |
 | Missing triangles | Patch | Draws only when rotated, missing triangles | Tessellation bug in N-patch implementation | Low |
 | Help screen overlay | All XDK samples | Duke image overlay doesn't render, pause when opening | Unknown HLE/overlay issue | Low |
-| Crash | ShadowBuffer | Sample crashes during init | Unknown crash during init | Medium |
+| ~~Crash~~ | ~~ShadowBuffer~~ | ~~Sample crashes during init~~ | ~~Fixed: thread-safety + use-after-free in draw/clear/flip paths~~ | ~~Fixed~~ |
+| Shadow too broad | ShadowVolume | Shadow darkens entire mountain width instead of projected cone below biplane | Stencil volume intersection not clipped correctly — shadow extends beyond volume bounds | Medium |
 | TDR crash | Trees | D3D11 device removed (0x887A0006) — GPU driver crash | Unknown — billboard trees trigger invalid shader dispatch or resource hazard | Medium |
 | Very low FPS | HeatShimmer, XRay, DolphinHDTV | Renders but <1 FPS | Unknown perf issue — possibly shader compilation or fallback path | Low |
 | MSAA disabled | All | Aliased edges everywhere | D3D11 MSAA not implemented | Low |
@@ -216,6 +217,7 @@ Last updated: May 2026 (dx11 branch, commit 8a3313414)
 | Glass missing skybox | Glass | — | Skybox/environment background now renders behind glass teapot |
 | Water whitewashed | Water | — | Water surface with ripples and reflections now renders (was all whitewashed); boat still white |
 | FocusBlur garbled | FocusBlur | — | Geometry now renders correctly instead of garbled/blocky checker patterns |
+| ShadowBuffer crash | ShadowBuffer | aefc3d5dc, d49dbd837, ecb85cce1 | Thread-safety locks on D3D11 context + use-after-free RTV fix + F24S8/F16 float depth clear decode |
 
 ---
 
@@ -241,6 +243,11 @@ Last updated: May 2026 (dx11 branch, commit 8a3313414)
 | a2cfd7374 | YUY2/UYVY texture conversion | FMV/video |
 | 160e8b55c | Linear texture pitch < 64 fix | Narrow textures |
 | a8827161e | RT-as-VB readback with Morton swizzle (DisplacementMap fix) | Render-to-VB |
+| aefc3d5dc | Fix use-after-free: RTV owned by cache, don't Release on unbind | Crash fix |
+| d49dbd837 | Thread-safety locks on D3D11 draw/clear/flip + flip RT restore | Crash fix |
+| ecb85cce1 | F24S8/F16 float depth clear decode (NV_PGRAPH_SETUPRASTER_Z_FORMAT) | Shadow maps |
+| 2f4dea2ed | Z output scale from VPSCL.z register | Depth precision |
+| c12572573 | Shadow map texture resolve from RT cache when bound as depth | Shadow maps |
 
 ---
 

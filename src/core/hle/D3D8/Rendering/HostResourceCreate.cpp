@@ -556,7 +556,8 @@ static void CreateHostPixelContainer(
 	}
 
 	if (dwDepth != 1) {
-		LOG_TEST_CASE("CreateHostPixelContainer : Depth != 1");
+		// VolumeLight and VolumeTexture samples legitimately use Depth > 1
+		// LOG_TEST_CASE("CreateHostPixelContainer : Depth != 1");
 	}
 
 
