@@ -72,45 +72,11 @@ void CxbxInitHostD3DDevice()
 	CxbxResetPgraphSurfaceTracking();
 }
 
-void CreateDefaultDevice
-(
-   	const xbox::X_D3DPRESENT_PARAMETERS     *pPresentationParameters
-)
+// ---- Helper: Create D3D11 device with fallback chain ----
+static void CreateD3D11DeviceWithFallbacks(UINT creationFlags)
 {
    	LOG_INIT;
 
-   	// only one device should be created at once
-   	if (g_pD3DDevice != nullptr) {
-   	   	EmuLog(LOG_LEVEL::DEBUG, "CreateDefaultDevice releasing old Device.");
-
-		CxbxEndScene();
-
-   	   	ClearAllResourceCaches();
-
-   	   	// TODO: ensure all other resources are cleaned up too
-
-   	   	// Final release of IDirect3DDevice9 must be called from the window message thread
-   	   	// See https://docs.microsoft.com/en-us/windows/win32/direct3d9/multithreading-issues
-   	   	RunOnWndMsgThread([] {
-   	   	   	// We only need to call bundled device release once here.
-   	   	   	g_renderbase->DeviceRelease();
-   	   	});
-   	}
-
-   	// Apply render scale factor for high-resolution rendering
-   	g_RenderUpscaleFactor = g_XBVideo.renderScaleFactor;
-
-   	// Setup the HostPresentationParameters
-   	SetupPresentationParameters(pPresentationParameters);
-
-	// This flag adds support for surfaces with a different color channel 
-	// ordering than the API default. It is required for compatibility with
-	// Direct2D.
-	UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT; // See enum D3D11_CREATE_DEVICE_FLAG
-#if defined(_DEBUG)
-	// If the project is in a debug build, enable debugging via SDK Layers.
-	creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
 	// only use feature level 10.0
 	D3D_FEATURE_LEVEL featureLevels[] = {
 		D3D_FEATURE_LEVEL_11_0, // Required for cs_5_0, typed UAV access, ByteAddressBuffer
@@ -191,9 +157,12 @@ void CreateDefaultDevice
 	// Store pointers to the Direct3D 11 API device and immediate context.
 	device->QueryInterface(__uuidof(ID3D11Device), reinterpret_cast<void**>(&g_pD3DDevice));
 	context->QueryInterface(__uuidof(ID3D11DeviceContext), reinterpret_cast<void**>(&g_pD3DDeviceContext));
+}
 
-	// Create a swap chain using the HWND (Win32 window)
-	// Get DXGI objects from device
+// ---- Helper: Create a DXGI swap chain using the HWND (Win32 window) for the emulator window ----
+static void CreateSwapChainForWindow()
+{
+	LOG_INIT;
 	ComPtr<IDXGIDevice1> dxgiDevice;
 	g_pD3DDevice->QueryInterface(__uuidof(IDXGIDevice1), reinterpret_cast<void**>(dxgiDevice.GetAddressOf()));
 
@@ -203,6 +172,7 @@ void CreateDefaultDevice
 	ComPtr<IDXGIFactory2> dxgiFactory;
 	dxgiAdapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(dxgiFactory.GetAddressOf()));
 
+	// Get DXGI objects from device
 	// Check if the system supports tearing (variable refresh rate / no-vsync fast path)
 	bool bTearingSupported = false;
 	{
@@ -240,7 +210,7 @@ void CreateDefaultDevice
 	fullscreenDesc.Windowed = g_EmuCDPD.HostPresentationParameters.Windowed;
 
 	ComPtr<IDXGISwapChain1> swapChain1;
-	hr = dxgiFactory->CreateSwapChainForHwnd(
+	HRESULT hr = dxgiFactory->CreateSwapChainForHwnd(
 		g_pD3DDevice,
 		g_hEmuWindow,
 		&SwapChainDesc,
@@ -266,10 +236,14 @@ void CreateDefaultDevice
 	// (Default is 3, but 2 keeps input latency reasonable while avoiding
 	// the Present-blocks-every-frame bottleneck of latency=1.)
 	dxgiDevice->SetMaximumFrameLatency(2);
+}
 
-	// Configure the back buffer as a render target
+// ---- Helper: Set up back buffer, depth stencil, and default render target ----
+static void SetupBackBufferAndDepthStencil()
+{
+	LOG_INIT;
 	ComPtr<ID3D11Texture2D> backBuffer;
-	hr = g_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(backBuffer.GetAddressOf()));
+	HRESULT hr = g_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(backBuffer.GetAddressOf()));
 	DEBUG_D3DRESULT(hr, "IDXGISwapChain::GetBuffer");
 
 	// Create a render target view on the back buffer.
@@ -322,8 +296,11 @@ void CreateDefaultDevice
 	viewport.MinDepth = 0.0f;
 	viewport.MaxDepth = 1.0f;
 	g_pD3DDeviceContext->RSSetViewports(1, &viewport);
+}
 
-	// Initialize default D3D11 rasterizer state desc
+// ---- Helper: Initialize default D3D11 pipeline state descriptors ----
+static void InitializeDefaultPipelineState()
+{
 	g_D3D11RasterizerDesc.FillMode = D3D11_FILL_SOLID;
 	g_D3D11RasterizerDesc.CullMode = D3D11_CULL_BACK;
 	g_D3D11RasterizerDesc.FrontCounterClockwise = FALSE;
@@ -359,6 +336,51 @@ void CreateDefaultDevice
 	g_D3D11BlendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
 	g_D3D11BlendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
 	g_D3D11BlendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+}
+
+void CreateDefaultDevice
+(
+   	const xbox::X_D3DPRESENT_PARAMETERS     *pPresentationParameters
+)
+{
+   	LOG_INIT;
+
+   	// only one device should be created at once
+   	if (g_pD3DDevice != nullptr) {
+   	   	EmuLog(LOG_LEVEL::DEBUG, "CreateDefaultDevice releasing old Device.");
+
+		CxbxEndScene();
+
+   	   	ClearAllResourceCaches();
+  	   	// TODO: ensure all other resources are cleaned up too
+
+   	   	// Final release of IDirect3DDevice9 must be called from the window message thread
+   	   	// See https://docs.microsoft.com/en-us/windows/win32/direct3d9/multithreading-issues
+   	   	RunOnWndMsgThread([] {
+   	   	   	// We only need to call bundled device release once here.
+   	   	   	g_renderbase->DeviceRelease();
+   	   	});
+   	}
+
+	// Apply render scale factor for high-resolution rendering
+   	g_RenderUpscaleFactor = g_XBVideo.renderScaleFactor;
+
+	// Setup the HostPresentationParameters
+   	SetupPresentationParameters(pPresentationParameters);
+
+	// This flag adds support for surfaces with a different color channel 
+	// ordering than the API default. It is required for compatibility with
+	// Direct2D.
+	UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT; // See enum D3D11_CREATE_DEVICE_FLAG
+#if defined(_DEBUG)
+	// If the project is in a debug build, enable debugging via SDK Layers.
+	creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+
+	CreateD3D11DeviceWithFallbacks(creationFlags);
+	CreateSwapChainForWindow();
+	SetupBackBufferAndDepthStencil();
+	InitializeDefaultPipelineState();
 
 	// Create the vertex shader constant buffer for D3D11
 	{
@@ -391,7 +413,7 @@ void CreateDefaultDevice
    	   	// Is host GPU query creation enabled?
    	   	if (!g_bHack_DisableHostGPUQueries) {
    	   	   	// Create a D3D event query to handle "wait-for-idle" with
-   	   	   	hr = g_pD3DDevice->CreateQuery(&QueryDesc, &g_pHostQueryWaitForIdle);
+   	   	   	HRESULT hr = g_pD3DDevice->CreateQuery(&QueryDesc, &g_pHostQueryWaitForIdle);
    	   	   	DEBUG_D3DRESULT(hr, "g_pD3DDevice->CreateQuery (wait for idle)");
    	   	}
    	} else {
@@ -617,18 +639,9 @@ static float ReconstructSpecularPower(const float* params)
 	return power;
 }
 
-// ******************************************************************
-// * patch: D3DDevice_SetViewport
-// ******************************************************************
-void UpdateFixedFunctionVertexShaderState()
+// ---- Helper: Update vertex blending state from PGRAPH ----
+static uint32_t UpdateFFState_VertexBlending(PGRAPHState* pg, uint32_t csv0d)
 {
-	using namespace xbox;
-
-	PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
-	uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
-	uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
-	uint32_t ctl3  = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
-
 	// Vertex blending — read from PGRAPH CSV0_D SKIN field
 	// SKIN values 0..6 map directly to D3D VertexBlend (DISABLE, 1WEIGHTS, 2W2M, 2WEIGHTS, 3W3M, 3WEIGHTS, 4W4M)
 	uint32_t skinMode = GET_MASK(csv0d, NV_PGRAPH_CSV0_D_SKIN);
@@ -649,6 +662,13 @@ void UpdateFixedFunctionVertexShaderState()
 	// Copy the resulting values over to shader state :
 	ffShaderState.Modes.VertexBlend_NrOfMatrices = NrBlendMatrices;
 	ffShaderState.Modes.VertexBlend_CalcLastWeight = CalcLastBlendWeight;
+	return skinMode;
+}
+
+// ---- Helper: Update transform matrices from PGRAPH XFCTX ----
+static void UpdateFFState_Transforms(PGRAPHState* pg, uint32_t skinMode)
+{
+	using namespace xbox;
 
 	// Transforms
 	// Read transform matrices from PGRAPH XFCTX constants.
@@ -760,14 +780,11 @@ void UpdateFixedFunctionVertexShaderState()
 			std::memcpy(&ffShaderState.Transforms.WorldViewInverseTranspose[i], &wvInvT, sizeof(wvInvT));
 		}
 	}
+}
 
-	// Point sprite enable comes from NV_PGRAPH_SETUPRASTER (D3DRS_POINTSPRITEENABLE →
-	// NV097_SET_POINT_SMOOTH_ENABLE → NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE).
-	// Point scale/params enable comes from NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE
-	// (D3DRS_POINTSCALEENABLE → NV097_SET_POINT_PARAMETERS_ENABLE).
-	// These are distinct Xbox render states and must be derived from separate PGRAPH bits.
-	uint32_t setupRaster = pg->regs[RI(NV_PGRAPH_SETUPRASTER)];
-	bool PointSpriteEnable = (setupRaster & NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE) != 0;
+// ---- Helper: Update lighting and material source modes from PGRAPH ----
+static void UpdateFFState_LightingModes(PGRAPHState* pg, uint32_t csv0c, bool PointSpriteEnable)
+{
 	bool LightingEnable = (csv0c & NV_PGRAPH_CSV0_C_LIGHTING) != 0;
 	ffShaderState.Modes.Lighting = LightingEnable && !PointSpriteEnable;
 	ffShaderState.Modes.TwoSidedLighting = (csv0c & NV_PGRAPH_CSV0_C_TWO_SIDE_LIGHTING) ? 1 : 0;
@@ -785,7 +802,11 @@ void UpdateFixedFunctionVertexShaderState()
 	ffShaderState.Modes.BackDiffuseMaterialSource  = ffShaderState.Modes.DiffuseMaterialSource;
 	ffShaderState.Modes.BackSpecularMaterialSource = ffShaderState.Modes.SpecularMaterialSource;
 	ffShaderState.Modes.BackEmissiveMaterialSource = ffShaderState.Modes.EmissiveMaterialSource;
+}
 
+// ---- Helper: Update point sprite state from PGRAPH ----
+static void UpdateFFState_PointSprites(PGRAPHState* pg, uint32_t ctl3, bool PointSpriteEnable)
+{
 	// Point sprites — read from PGRAPH registers using NV2A's native formula.
 	// NV_PGRAPH_POINTSIZE is a fixed-point integer (value / 8.0 = size in pixels).
 	// NV2A point_params[0..7] are used directly (the Xbox D3D runtime pre-bakes
@@ -831,8 +852,11 @@ void UpdateFixedFunctionVertexShaderState()
 		ffShaderState.PointSprite.XboxRenderTargetHeight = 1.0f;
 	}
 	ffShaderState.PointSprite.RenderUpscaleFactor = (float)g_RenderUpscaleFactor;
+}
 
-	// Fog — sourced from PGRAPH registers (NV2A ground truth)
+// ---- Helper: Update fog state from PGRAPH ----
+static void UpdateFFState_Fog(PGRAPHState* pg, uint32_t csv0d, uint32_t ctl3)
+{
 	bool fogEnable = (ctl3 & NV_PGRAPH_CONTROL_3_FOGENABLE) != 0;
 	uint32_t fogMode = GET_MASK(ctl3, NV_PGRAPH_CONTROL_3_FOG_MODE);
 	ffShaderState.Fog.Enable = fogEnable ? 1 : 0;
@@ -872,7 +896,11 @@ void UpdateFixedFunctionVertexShaderState()
 		ffShaderState.Fog.FogParam0 = 0.0f;
 		ffShaderState.Fog.FogParam1 = 0.0f;
 	}
+}
 
+// ---- Helper: Update texture coordinate state from PGRAPH ----
+static void UpdateFFState_TextureStates(PGRAPHState* pg)
+{
 	// Texture state — read from PGRAPH (authoritative, no HLE dependency)
 	for (int i = 0; i < NV2A_MAX_TEXTURES; i++) {
 		// TextureTransformFlags: derived from PGRAPH texture_matrix_enable[]
@@ -931,144 +959,170 @@ void UpdateFixedFunctionVertexShaderState()
 		}
 		reinterpret_cast<float*>(&ffShaderState.TexCoordComponentCount)[i] = componentCount;
 	}
+}
 
-	// Update lights from PGRAPH registers.
-	// The NV2A light enable mask is in CSV0_D (2 bits per light: 0=off, 1=infinite/directional, 2=local/point, 3=spot).
-	// Light colors in ltctxb[] are pre-multiplied by material by the Xbox D3D runtime, so we set
-	// material to white to let the shader's (material × light) give the correct pre-multiplied result.
-	{
-		uint32_t lightMask = pg->regs[RI(NV_PGRAPH_CSV0_D)] & NV_PGRAPH_CSV0_D_LIGHTS;
+// ---- Helper: Update lights and materials from PGRAPH ----
+// The NV2A light enable mask is in CSV0_D (2 bits per light: 0=off, 1=infinite/directional, 2=local/point, 3=spot).
+// Light colors in ltctxb[] are pre-multiplied by material by the Xbox D3D runtime, so we set
+// material to white to let the shader's (material × light) give the correct pre-multiplied result.
+static void UpdateFFState_Lighting(PGRAPHState* pg, uint32_t csv0c)
+{
+	// Helper to reinterpret uint32_t bit pattern as float
+	auto AsFloat = [](uint32_t u) -> float { float f; std::memcpy(&f, &u, 4); return f; };
 
-		auto LightAmbient = D3DXVECTOR4(0.f, 0.f, 0.f, 0.f);
+	uint32_t lightMask = pg->regs[RI(NV_PGRAPH_CSV0_D)] & NV_PGRAPH_CSV0_D_LIGHTS;
+	auto LightAmbient = D3DXVECTOR4(0.f, 0.f, 0.f, 0.f);
 
-		// Helper to reinterpret uint32_t bit pattern as float
-		auto AsFloat = [](uint32_t u) -> float { float f; std::memcpy(&f, &u, 4); return f; };
+	for (size_t i = 0; i < ffShaderState.Lights.size(); i++) {
+		Light* pShaderLight = &ffShaderState.Lights[i];
+		unsigned nv2aType = (lightMask >> (i * 2)) & 0x3;
 
-		for (size_t i = 0; i < ffShaderState.Lights.size(); i++) {
-			Light* pShaderLight = &ffShaderState.Lights[i];
-			unsigned nv2aType = (lightMask >> (i * 2)) & 0x3;
+		if (nv2aType == 0) {
+			pShaderLight->Type = 0; // Disabled
+			continue;
+		}
 
-			if (nv2aType == 0) {
-				pShaderLight->Type = 0; // Disabled
-				continue;
-			}
+		// Map NV2A light type to shader type:
+		//   NV2A 1 (INFINITE) → shader 3 (DIRECTIONAL)
+		//   NV2A 2 (LOCAL)    → shader 1 (POINT)
+		//   NV2A 3 (SPOT)     → shader 2 (SPOT)
+		static const int typeMap[] = { 0, 3, 1, 2 };
+		pShaderLight->Type = typeMap[nv2aType];
 
-			// Map NV2A light type to shader type:
-			//   NV2A 1 (INFINITE) → shader 3 (DIRECTIONAL)
-			//   NV2A 2 (LOCAL)    → shader 1 (POINT)
-			//   NV2A 3 (SPOT)     → shader 2 (SPOT)
-			static const int typeMap[] = { 0, 3, 1, 2 };
-			pShaderLight->Type = typeMap[nv2aType];
+		// Diffuse color from ltctxb (3 floats stored as uint32_t bit patterns)
+		int base = NV_IGRAPH_XF_LTCTXB_L0_DIF + (int)i * 6;
+		pShaderLight->Diffuse = D3DXVECTOR4(
+			AsFloat(pg->xf.ltctxb[base][0]),
+			AsFloat(pg->xf.ltctxb[base][1]),
+			AsFloat(pg->xf.ltctxb[base][2]),
+			1.0f);
 
-			// Diffuse color from ltctxb (3 floats stored as uint32_t bit patterns)
-			int base = NV_IGRAPH_XF_LTCTXB_L0_DIF + (int)i * 6;
-			pShaderLight->Diffuse = D3DXVECTOR4(
+		// Specular color
+		bool SpecularEnable = (csv0c & NV_PGRAPH_CSV0_C_SPECULAR_ENABLE) != 0;
+		base = NV_IGRAPH_XF_LTCTXB_L0_SPC + (int)i * 6;
+		if (SpecularEnable) {
+			pShaderLight->Specular = D3DXVECTOR4(
 				AsFloat(pg->xf.ltctxb[base][0]),
 				AsFloat(pg->xf.ltctxb[base][1]),
 				AsFloat(pg->xf.ltctxb[base][2]),
 				1.0f);
-
-			// Specular color
-			bool SpecularEnable = (csv0c & NV_PGRAPH_CSV0_C_SPECULAR_ENABLE) != 0;
-			base = NV_IGRAPH_XF_LTCTXB_L0_SPC + (int)i * 6;
-			if (SpecularEnable) {
-				pShaderLight->Specular = D3DXVECTOR4(
-					AsFloat(pg->xf.ltctxb[base][0]),
-					AsFloat(pg->xf.ltctxb[base][1]),
-					AsFloat(pg->xf.ltctxb[base][2]),
-					1.0f);
-			} else {
-				pShaderLight->Specular = D3DXVECTOR4(0, 0, 0, 0);
-			}
-
-			// Accumulate per-light ambient
-			base = NV_IGRAPH_XF_LTCTXB_L0_AMB + (int)i * 6;
-			LightAmbient.x += AsFloat(pg->xf.ltctxb[base][0]);
-			LightAmbient.y += AsFloat(pg->xf.ltctxb[base][1]);
-			LightAmbient.z += AsFloat(pg->xf.ltctxb[base][2]);
-
-			// Direction (for directional lights — already in view-space, normalized)
-			pShaderLight->DirectionVN = D3DXVECTOR3(
-				pg->light[i].infinite_direction[0],
-				pg->light[i].infinite_direction[1],
-				pg->light[i].infinite_direction[2]);
-
-			// Position (for point/spot lights — already in view-space)
-			pShaderLight->PositionV = D3DXVECTOR3(
-				pg->light[i].local_position[0],
-				pg->light[i].local_position[1],
-				pg->light[i].local_position[2]);
-
-			// Attenuation
-			pShaderLight->Attenuation = D3DXVECTOR3(
-				pg->light[i].local_attenuation[0],
-				pg->light[i].local_attenuation[1],
-				pg->light[i].local_attenuation[2]);
-
-			// Range (stored in ltc1)
-			pShaderLight->Range = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_r0 + i][0]);
-
-			// Spot parameters from ltctxa
-			int spotBase = NV_IGRAPH_XF_LTCTXA_L0_K + (int)i * 2;
-			pShaderLight->Falloff = AsFloat(pg->xf.ltctxa[spotBase][2]); // falloff stored in K[2]
-			pShaderLight->CosHalfPhi = AsFloat(pg->xf.ltctxa[spotBase][0]);
-			pShaderLight->SpotIntensityDivisor = AsFloat(pg->xf.ltctxa[spotBase][1]);
+		} else {
+			pShaderLight->Specular = D3DXVECTOR4(0, 0, 0, 0);
 		}
 
-		// Scene ambient from PGRAPH ltctxa[FR_AMB] (3 floats)
-		D3DXVECTOR4 SceneAmbient(
-			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][0]),
-			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][1]),
-			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][2]),
-			0.f);
-		D3DXVECTOR4 BackSceneAmbient(
-			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][0]),
-			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][1]),
-			AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][2]),
-			0.f);
+		// Accumulate per-light ambient
+		base = NV_IGRAPH_XF_LTCTXB_L0_AMB + (int)i * 6;
+		LightAmbient.x += AsFloat(pg->xf.ltctxb[base][0]);
+		LightAmbient.y += AsFloat(pg->xf.ltctxb[base][1]);
+		LightAmbient.z += AsFloat(pg->xf.ltctxb[base][2]);
 
-		ffShaderState.TotalLightsAmbient.Front = (D3DXVECTOR3)(LightAmbient + SceneAmbient);
-		ffShaderState.TotalLightsAmbient.Back = (D3DXVECTOR3)(LightAmbient + BackSceneAmbient);
+		// Direction (for directional lights — already in view-space, normalized)
+		pShaderLight->DirectionVN = D3DXVECTOR3(
+			pg->light[i].infinite_direction[0],
+			pg->light[i].infinite_direction[1],
+			pg->light[i].infinite_direction[2]);
 
-		// Material: set to white since NV2A ltctxb values are pre-multiplied by material.
-		// The shader computes (material * light), so white material preserves the pre-multiplied values.
-		// Emission is already baked into the scene ambient register (FR_AMB/BR_AMB) by the Xbox D3D runtime.
-		// Material alpha comes from NV097_SET_MATERIAL_ALPHA → ltctxa[CM_COL][3].
-		float materialAlpha     = AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_CM_COL][3]);
-		float backMaterialAlpha = AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BCM_COL][3]);
+		// Position (for point/spot lights — already in view-space)
+		pShaderLight->PositionV = D3DXVECTOR3(
+			pg->light[i].local_position[0],
+			pg->light[i].local_position[1],
+			pg->light[i].local_position[2]);
 
-		ffShaderState.Materials[0].Diffuse  = D3DXVECTOR4(1, 1, 1, materialAlpha);
-		ffShaderState.Materials[0].Ambient  = D3DXVECTOR4(1, 1, 1, 1);
-		ffShaderState.Materials[0].Specular = D3DXVECTOR4(1, 1, 1, 1);
-		ffShaderState.Materials[0].Emissive = D3DXVECTOR4(0, 0, 0, 0);
+		// Attenuation
+		pShaderLight->Attenuation = D3DXVECTOR3(
+			pg->light[i].local_attenuation[0],
+			pg->light[i].local_attenuation[1],
+			pg->light[i].local_attenuation[2]);
 
-		// Reconstruct specular power from NV2A's 6 polynomial coefficients (LTC1).
-		// Front specular params: ltc1[l0][0..3] + ltc1[l0+1][0..1]
-		float frontParams[6];
-		for (int j = 0; j < 4; j++) frontParams[j]     = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_l0][j]);
-		for (int j = 0; j < 2; j++) frontParams[4 + j]  = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_l0 + 1][j]);
-		ffShaderState.Materials[0].Power = ReconstructSpecularPower(frontParams);
+		// Range (stored in ltc1)
+		pShaderLight->Range = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_r0 + i][0]);
 
-		ffShaderState.Materials[1] = ffShaderState.Materials[0]; // back material (start from front)
-		ffShaderState.Materials[1].Diffuse.w = backMaterialAlpha;
-
-		// Back specular params: ltc1[Bl0][0..3] + ltc1[Bl0+1][0..1]
-		float backParams[6];
-		for (int j = 0; j < 4; j++) backParams[j]     = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_Bl0][j]);
-		for (int j = 0; j < 2; j++) backParams[4 + j]  = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_Bl0 + 1][j]);
-		ffShaderState.Materials[1].Power = ReconstructSpecularPower(backParams);
+		// Spot parameters from ltctxa
+		int spotBase = NV_IGRAPH_XF_LTCTXA_L0_K + (int)i * 2;
+		pShaderLight->Falloff = AsFloat(pg->xf.ltctxa[spotBase][2]); // falloff stored in K[2]
+		pShaderLight->CosHalfPhi = AsFloat(pg->xf.ltctxa[spotBase][0]);
+		pShaderLight->SpotIntensityDivisor = AsFloat(pg->xf.ltctxa[spotBase][1]);
 	}
+
+	// Scene ambient from PGRAPH ltctxa[FR_AMB] (3 floats)
+	D3DXVECTOR4 SceneAmbient(
+		AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][0]),
+		AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][1]),
+		AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_FR_AMB][2]),
+		0.f);
+	D3DXVECTOR4 BackSceneAmbient(
+		AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][0]),
+		AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][1]),
+		AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BR_AMB][2]),
+		0.f);
+
+	ffShaderState.TotalLightsAmbient.Front = (D3DXVECTOR3)(LightAmbient + SceneAmbient);
+	ffShaderState.TotalLightsAmbient.Back = (D3DXVECTOR3)(LightAmbient + BackSceneAmbient);
+
+	// Material: set to white since NV2A ltctxb values are pre-multiplied by material.
+	// The shader computes (material * light), so white material preserves the pre-multiplied values.
+	// Emission is already baked into the scene ambient register (FR_AMB/BR_AMB) by the Xbox D3D runtime.
+	// Material alpha comes from NV097_SET_MATERIAL_ALPHA → ltctxa[CM_COL][3].
+	float materialAlpha     = AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_CM_COL][3]);
+	float backMaterialAlpha = AsFloat(pg->xf.ltctxa[NV_IGRAPH_XF_LTCTXA_BCM_COL][3]);
+
+	ffShaderState.Materials[0].Diffuse  = D3DXVECTOR4(1, 1, 1, materialAlpha);
+	ffShaderState.Materials[0].Ambient  = D3DXVECTOR4(1, 1, 1, 1);
+	ffShaderState.Materials[0].Specular = D3DXVECTOR4(1, 1, 1, 1);
+	ffShaderState.Materials[0].Emissive = D3DXVECTOR4(0, 0, 0, 0);
+
+	// Reconstruct specular power from NV2A's 6 polynomial coefficients (LTC1).
+	// Front specular params: ltc1[l0][0..3] + ltc1[l0+1][0..1]
+	float frontParams[6];
+	for (int j = 0; j < 4; j++) frontParams[j]     = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_l0][j]);
+	for (int j = 0; j < 2; j++) frontParams[4 + j]  = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_l0 + 1][j]);
+	ffShaderState.Materials[0].Power = ReconstructSpecularPower(frontParams);
+
+	ffShaderState.Materials[1] = ffShaderState.Materials[0]; // back material (start from front)
+	ffShaderState.Materials[1].Diffuse.w = backMaterialAlpha;
+
+	// Back specular params: ltc1[Bl0][0..3] + ltc1[Bl0+1][0..1]
+	float backParams[6];
+	for (int j = 0; j < 4; j++) backParams[j]     = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_Bl0][j]);
+	for (int j = 0; j < 2; j++) backParams[4 + j]  = AsFloat(pg->xf.ltc1[NV_IGRAPH_XF_LTC1_Bl0 + 1][j]);
+	ffShaderState.Materials[1].Power = ReconstructSpecularPower(backParams);
+}
+
+// ******************************************************************
+// * UpdateFixedFunctionVertexShaderState
+// ******************************************************************
+void UpdateFixedFunctionVertexShaderState()
+{
+	PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
+	uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
+	uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
+	uint32_t ctl3  = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
+
+	uint32_t skinMode = UpdateFFState_VertexBlending(pg, csv0d);
+	UpdateFFState_Transforms(pg, skinMode);
+
+	// Point sprite enable comes from NV_PGRAPH_SETUPRASTER (D3DRS_POINTSPRITEENABLE →
+	// NV097_SET_POINT_SMOOTH_ENABLE → NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE).
+	// Point scale/params enable comes from NV_PGRAPH_CONTROL_3_POINTPARAMSENABLE
+	// (D3DRS_POINTSCALEENABLE → NV097_SET_POINT_PARAMETERS_ENABLE).
+	// These are distinct Xbox render states and must be derived from separate PGRAPH bits.
+	uint32_t setupRaster = pg->regs[RI(NV_PGRAPH_SETUPRASTER)];
+	bool PointSpriteEnable = (setupRaster & NV_PGRAPH_SETUPRASTER_POINTSMOOTHENABLE) != 0;
+
+	UpdateFFState_LightingModes(pg, csv0c, PointSpriteEnable);
+	UpdateFFState_PointSprites(pg, ctl3, PointSpriteEnable);
+	UpdateFFState_Fog(pg, csv0d, ctl3);
+	UpdateFFState_TextureStates(pg);
+	UpdateFFState_Lighting(pg, csv0c);
 
 	// Misc flags
 	ffShaderState.Modes.NormalizeNormals = (csv0c & NV_PGRAPH_CSV0_C_NORMALIZATION_ENABLE) ? 1 : 0;
 
 	// Write fixed function state to shader constants.
 	// Must always upload because VP draws between FF draws overwrite the shared constant buffer.
-	{
-		const int slotSize = 16;
-		const int fixedFunctionStateSize = (sizeof(FixedFunctionVertexShaderState) + slotSize - 1) / slotSize;
-		CxbxSetVertexShaderConstantF(0, (float*)&ffShaderState, fixedFunctionStateSize);
-	}
+	const int slotSize = 16;
+	const int fixedFunctionStateSize = (sizeof(FixedFunctionVertexShaderState) + slotSize - 1) / slotSize;
+	CxbxSetVertexShaderConstantF(0, (float*)&ffShaderState, fixedFunctionStateSize);
 }
 
 // ******************************************************************

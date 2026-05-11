@@ -203,6 +203,116 @@ static DXGI_FORMAT ResolveHostFormat(
 	return PCFormat;
 }
 
+// ---- Helper: Create host Texture2D with appropriate usage/format ----
+static HRESULT CreateGpuTexture2D(
+	UINT hostWidth, UINT hostHeight, UINT dwMipMapLevels,
+	DXGI_FORMAT& PCFormat,
+	DWORD D3DUsage,
+	bool bSwizzled, bool& bConvertTextureFormat, xbox::X_D3DFORMAT X_Format,
+	xbox::X_D3DResource* pResource, const char* ResourceTypeName, int iTextureStage,
+	ComPtr<ID3D11Resource>& pNewHostResource, bool& bHostIsDynamic)
+{
+	LOG_INIT;
+	D3D11_TEXTURE2D_DESC desc;
+	desc.Width = hostWidth;
+	desc.Height = hostHeight;
+	desc.MipLevels = dwMipMapLevels;
+	desc.ArraySize = 1;
+	desc.Format = PCFormat;
+	desc.SampleDesc.Count = 1;
+	desc.SampleDesc.Quality = 0;
+	if ((D3DUsage & D3DUSAGE_DEPTHSTENCIL) || IsDepthFormat(PCFormat)) {
+		// Depth textures need typeless format + dual bind flags so they can
+		// serve as both depth stencil (DSV) and shader resource (SRV).
+		// Games like ShadowBuffer create D16 textures without DEPTHSTENCIL
+		// usage, then set them as depth targets via SetRenderTarget.
+		desc.Format = GetTypelessDepthFormat(PCFormat);
+		desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.CPUAccessFlags = 0;
+	} else if (D3DUsage & D3DUSAGE_RENDERTARGET) {
+		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.CPUAccessFlags = 0;
+	} else if (dwMipMapLevels == 1) {
+		// Check if the format supports typed UAV access (needed for GPU unswizzle CS)
+		UINT fmtSupport = 0;
+		bool bCanUAV = SUCCEEDED(g_pD3DDevice->CheckFormatSupport(PCFormat, &fmtSupport))
+			&& (fmtSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW);
+
+		if (bSwizzled && !bConvertTextureFormat && bCanUAV) {
+			// Swizzled textures use DEFAULT + UAV for GPU compute shader unswizzle
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+			desc.CPUAccessFlags = 0;
+		} else if (bSwizzled && X_Format == xbox::X_D3DFMT_P8) {
+			// P8 textures use DEFAULT + UAV for GPU palette expand CS.
+			// Typeless allows R32_UINT UAV reinterpretation; SRV uses R8G8B8A8_UNORM.
+			desc.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+			desc.CPUAccessFlags = 0;
+		} else if (bConvertTextureFormat && CxbxGetFormatConvertType(X_Format) != 0) {
+			// Format-convertible textures use DEFAULT + UAV for GPU CS format conversion.
+			// Typeless allows R32_UINT UAV reinterpretation; SRV uses R8G8B8A8_UNORM.
+			desc.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+			desc.CPUAccessFlags = 0;
+		} else {
+			// Block-compressed formats (BC1-BC3 / DXT1-DXT5) do not support
+			// D3D11_USAGE_DYNAMIC — use DEFAULT with UpdateSubresource upload.
+			bool isBlockCompressed = (PCFormat == EMUFMT_DXT1 || PCFormat == EMUFMT_DXT3 || PCFormat == EMUFMT_DXT5);
+			if (isBlockCompressed) {
+				desc.Usage = D3D11_USAGE_DEFAULT;
+				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+				desc.CPUAccessFlags = 0;
+			} else {
+				// D3D11_USAGE_DYNAMIC requires MipLevels == 1
+				desc.Usage = D3D11_USAGE_DYNAMIC;
+				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+				desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				bHostIsDynamic = true;
+			}
+		}
+	} else {
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		desc.CPUAccessFlags = 0;
+	}
+	desc.MiscFlags = 0;
+
+	EmuLog(LOG_LEVEL::DEBUG, "CreateTexture2D: XboxFmt=0x%02X PCFmt=%u (%ux%u mips=%u) "
+		"Usage=%u BindFlags=0x%X Swizzled=%d ConvertFmt=%d",
+		X_Format, desc.Format, desc.Width, desc.Height, desc.MipLevels,
+		desc.Usage, desc.BindFlags, bSwizzled, bConvertTextureFormat);
+
+	HRESULT hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
+	DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
+
+	// If the above failed, we might be able to use an ARGB texture instead
+	DXGI_FORMAT TmpPCFormat;
+	if ((hRet != S_OK) && (PCFormat != EMUFMT_A8R8G8B8) && EmuXBFormatCanBeConverted(X_Format, TmpPCFormat)) {
+		desc.Format = TmpPCFormat;
+		hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
+		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
+		if (hRet == S_OK) {
+			// Okay, now this works, make sure the texture gets converted
+			bConvertTextureFormat = true;
+			PCFormat = TmpPCFormat;
+		}
+	}
+
+	if (hRet != S_OK) {
+		CxbxrAbort("CreateTexture2D Failed!\n\n"
+			"Error: 0x%X\nFormat: %d\nDimensions: %dx%d", hRet, PCFormat, hostWidth, hostHeight);
+	}
+	SetHostResource(pResource, pNewHostResource.Get(), iTextureStage, D3DUsage);
+	EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
+		ResourceTypeName, pResource, pNewHostResource.Get());
+	return hRet;
+}
+
 // ---- Helper: Create the host GPU resource for a pixel container ----
 // Creates the D3D surface/texture/volume/cube resource based on XboxResourceType
 static HRESULT CreateGpuPixelContainerResource(
@@ -291,103 +401,12 @@ static HRESULT CreateGpuPixelContainerResource(
 	}
 
 	case xbox::X_D3DRTYPE_TEXTURE: {
-		D3D11_TEXTURE2D_DESC desc;
-		desc.Width = hostWidth;
-		desc.Height = hostHeight;
-		desc.MipLevels = dwMipMapLevels;
-		desc.ArraySize = 1;
-		desc.Format = PCFormat;
-		desc.SampleDesc.Count = 1;
-		desc.SampleDesc.Quality = 0;
-		if ((D3DUsage & D3DUSAGE_DEPTHSTENCIL) || IsDepthFormat(PCFormat)) {
-			// Depth textures need typeless format + dual bind flags so they can
-			// serve as both depth stencil (DSV) and shader resource (SRV).
-			// Games like ShadowBuffer create D16 textures without DEPTHSTENCIL
-			// usage, then set them as depth targets via SetRenderTarget.
-			desc.Format = GetTypelessDepthFormat(PCFormat);
-			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-			desc.Usage = D3D11_USAGE_DEFAULT;
-			desc.CPUAccessFlags = 0;
-		} else if (D3DUsage & D3DUSAGE_RENDERTARGET) {
-			desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-			desc.Usage = D3D11_USAGE_DEFAULT;
-			desc.CPUAccessFlags = 0;
-		} else if (dwMipMapLevels == 1) {
-			// Check if the format supports typed UAV access (needed for GPU unswizzle CS)
-			UINT fmtSupport = 0;
-			bool bCanUAV = SUCCEEDED(g_pD3DDevice->CheckFormatSupport(PCFormat, &fmtSupport))
-				&& (fmtSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW);
-
-			if (bSwizzled && !bConvertTextureFormat && bCanUAV) {
-				// Swizzled textures use DEFAULT + UAV for GPU compute shader unswizzle
-				desc.Usage = D3D11_USAGE_DEFAULT;
-				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-				desc.CPUAccessFlags = 0;
-			} else if (bSwizzled && X_Format == xbox::X_D3DFMT_P8) {
-				// P8 textures use DEFAULT + UAV for GPU palette expand CS.
-				// Typeless allows R32_UINT UAV reinterpretation; SRV uses R8G8B8A8_UNORM.
-				desc.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
-				desc.Usage = D3D11_USAGE_DEFAULT;
-				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-				desc.CPUAccessFlags = 0;
-			} else if (bConvertTextureFormat && CxbxGetFormatConvertType(X_Format) != 0) {
-				// Format-convertible textures use DEFAULT + UAV for GPU CS format conversion.
-				// Typeless allows R32_UINT UAV reinterpretation; SRV uses R8G8B8A8_UNORM.
-				desc.Format = DXGI_FORMAT_R8G8B8A8_TYPELESS;
-				desc.Usage = D3D11_USAGE_DEFAULT;
-				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-				desc.CPUAccessFlags = 0;
-			} else {
-				// Block-compressed formats (BC1-BC3 / DXT1-DXT5) do not support
-				// D3D11_USAGE_DYNAMIC — use DEFAULT with UpdateSubresource upload.
-				bool isBlockCompressed = (PCFormat == EMUFMT_DXT1 || PCFormat == EMUFMT_DXT3 || PCFormat == EMUFMT_DXT5);
-				if (isBlockCompressed) {
-					desc.Usage = D3D11_USAGE_DEFAULT;
-					desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-					desc.CPUAccessFlags = 0;
-				} else {
-					// D3D11_USAGE_DYNAMIC requires MipLevels == 1
-					desc.Usage = D3D11_USAGE_DYNAMIC;
-					desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-					desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-					bHostIsDynamic = true;
-				}
-			}
-		} else {
-			desc.Usage = D3D11_USAGE_DEFAULT;
-			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-			desc.CPUAccessFlags = 0;
-		}
-		desc.MiscFlags = 0;
-
-		EmuLog(LOG_LEVEL::DEBUG, "CreateTexture2D: XboxFmt=0x%02X PCFmt=%u (%ux%u mips=%u) "
-			"Usage=%u BindFlags=0x%X Swizzled=%d ConvertFmt=%d",
-			X_Format, desc.Format, desc.Width, desc.Height, desc.MipLevels,
-			desc.Usage, desc.BindFlags, bSwizzled, bConvertTextureFormat);
-
-		hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
-		DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
-
-		// If the above failed, we might be able to use an ARGB texture instead
-		DXGI_FORMAT TmpPCFormat;
-		if ((hRet != S_OK) && (PCFormat != EMUFMT_A8R8G8B8) && EmuXBFormatCanBeConverted(X_Format, TmpPCFormat)) {
-			desc.Format = TmpPCFormat;
-			hRet = g_pD3DDevice->CreateTexture2D(&desc, NULL, reinterpret_cast<ID3D11Texture2D**>(pNewHostResource.ReleaseAndGetAddressOf()));
-			DEBUG_D3DRESULT(hRet, "g_pD3DDevice->CreateTexture2D");
-			if (hRet == S_OK) {
-				// Okay, now this works, make sure the texture gets converted
-				bConvertTextureFormat = true;
-				PCFormat = TmpPCFormat;
-			}
-		}
-
-		if (hRet != S_OK) {
-			CxbxrAbort("CreateTexture2D Failed!\n\n"
-				"Error: 0x%X\nFormat: %d\nDimensions: %dx%d", hRet, PCFormat, hostWidth, hostHeight);
-		}
-		SetHostResource(pResource, pNewHostResource.Get(), iTextureStage, D3DUsage);
-		EmuLog(LOG_LEVEL::DEBUG, "CreateGpuPixelContainerResource : Successfully created %s (0x%.08X, 0x%.08X)",
-			ResourceTypeName, pResource, pNewHostResource.Get());
+		hRet = CreateGpuTexture2D(
+			hostWidth, hostHeight, dwMipMapLevels,
+			PCFormat, D3DUsage,
+			bSwizzled, bConvertTextureFormat, X_Format,
+			pResource, ResourceTypeName, iTextureStage,
+			pNewHostResource, bHostIsDynamic);
 		break;
 	}
 
