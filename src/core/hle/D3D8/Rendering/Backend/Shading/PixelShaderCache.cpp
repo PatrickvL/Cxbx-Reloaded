@@ -8,7 +8,7 @@
 // Dynamic per-frame data (C0/C1 colors, fog color, bump matrices) is still
 // read from g_PGRegs StructuredBuffer at runtime; only the STRUCTURE is baked.
 //
-// Compile with D3DCompile (ps_5_0, O3) and cache by FNV-1a hash of topology.
+// Compile with D3DCompile (ps_5_0, O3) and cache by hash of topology.
 
 #define LOG_PREFIX CXBXR_MODULE::PXSH
 

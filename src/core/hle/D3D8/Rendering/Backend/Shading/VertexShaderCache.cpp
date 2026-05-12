@@ -1,7 +1,7 @@
 // VertexShaderCache.cpp — Runtime NV2A→HLSL JIT compiler + cache
 //
 // Translates NV2A vertex transform microcode into straight-line HLSL,
-// compiles with D3DCompile, caches by FNV-1a hash of program tokens.
+// compiles with D3DCompile, caches by hash of program tokens.
 // A typical 20-instruction NV2A program becomes ~30 lines of HLSL
 // with zero loops — orders of magnitude faster than interpreting.
 
