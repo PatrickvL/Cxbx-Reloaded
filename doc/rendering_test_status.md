@@ -84,7 +84,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | QuadLerp | ✅ | 44 | 4-way lerp blending PS | Robot model with quad lerp blending visible, "optimized shader" mode |
 | Explosion | ✅ | 128 | PROJECT2D, DOT_ZW | Landscape + billboard explosions render correctly |
 | NoSortAlphaBlend | ✅ | 4.62 | Alpha peel PS, constant PS | Alpha-blended shapes (teapot, spheres, rings) |
-| ZSprite | ⚠️ | 13 | Z-sprite PS | Teapots render but depth is disregarded |
+| ZSprite | ✅ | 457 | Z-sprite PS | Teapots + green Z-wall render with correct depth occlusion |
 
 ### Bump Mapping
 | Sample | Status | FPS | Key Features | Notes |
@@ -94,7 +94,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | BumpDemo | ✅ | 9.65 | BUMPENVMAP, BUMPENVMAP_LUM, DOT_RFLCT_SPEC | Bump-mapped gears with glossmap on blue bg |
 | BumpLens | ✅ | 10.53 | `TCI_CAMERASPACEPOSITION`, bump lens distortion | Landscape photo with lens distortion overlay |
 | HighQualityBumpMapping | ✅ | 9.91 | 2D dependent texture lookup for specular (1–1000) | Torus with per-pixel bump+specular on blue bg |
-| NormalMapGeneration | ⚠️ | 9.01 | Normal map creation | Title+text only, no 3D model visible |
+| NormalMapGeneration | ✅ | 311 | Normal map creation | High-res female model with menu labels, normal map modes selectable |
 | PolynomialTextureMaps | ✅ | 8.94 | PTM via PS | Rocky moon-like sphere, looks correct |
 
 ### Point Sprites & Billboards

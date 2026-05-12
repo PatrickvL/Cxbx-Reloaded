@@ -68,6 +68,8 @@ RCI_BEGIN
     // --- Misc runtime state ---
     RCI_FLOAT4(FrontFaceInfo);                  // x=FrontFaceFactor
     RCI_FLOAT4(ShadowCompare);                  // Per-stage: 1.0 = depth texture bound (shadow compare active), 0.0 = normal
+    RCI_FLOAT4(DepthScale);                     // x=VPSCL.z (viewport Z scale for DOT_ZW normalization)
+    RCI_FLOAT4(DepthTexAlias);                  // Per-stage: 1.0 = host texture is depth SRV aliased as color (needs D24S8→ARGB unpack)
 RCI_END
 
 // Clean up macros
@@ -79,5 +81,5 @@ RCI_END
 #undef RCI_FLOAT4_ARRAY
 
 #ifdef __cplusplus
-static_assert(sizeof(PSAuxCBLayout) == 336, "PSAuxCBLayout size mismatch");
+static_assert(sizeof(PSAuxCBLayout) == 368, "PSAuxCBLayout size mismatch");
 #endif

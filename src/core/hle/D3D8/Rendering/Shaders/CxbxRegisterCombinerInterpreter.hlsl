@@ -875,7 +875,14 @@ float4 DoFinalCombiner(inout float4 Regs[16])
 // Pixel shader entry point
 // ============================================================
 
-float4 main(PS_INPUT input) : SV_Target
+// Pixel shader output — includes optional per-pixel depth from DOT_ZW.
+// When DOT_ZW is not active, fragDepth keeps SV_Position.z (rasterized depth).
+struct PS_OUTPUT {
+    float4 color : SV_Target;
+    float  depth : SV_Depth;
+};
+
+PS_OUTPUT main(PS_INPUT input)
 {
     // --- Decode PSCombinerCount ---
     // PSCombinerCount = PS_COMBINERCOUNT(count, flags) = (flags<<8) | count
@@ -930,6 +937,17 @@ float4 main(PS_INPUT input) : SV_Target
 #if NUM_TEXTURE_STAGES >= 4
     FetchTexture(Regs, 3u, texMode.w, eyeVec);
 #endif
+
+    // --- DOT_ZW per-pixel depth ---
+    // After texture stages, check if any stage used DOT_ZW (mode 0x0A).
+    // The DOT_ZW result is stored in the T register as depth.xxxx.
+    float fragDepth = input.iPos.z; // default: rasterized depth
+    [flatten] if (texMode.y == PS_TEXTUREMODES_DOT_ZW)
+        fragDepth = Regs[PS_REGISTER_T1].x;
+    [flatten] if (texMode.z == PS_TEXTUREMODES_DOT_ZW)
+        fragDepth = Regs[PS_REGISTER_T2].x;
+    [flatten] if (texMode.w == PS_TEXTUREMODES_DOT_ZW)
+        fragDepth = Regs[PS_REGISTER_T3].x;
 
     // --- Set vertex-derived registers ---
     // Use FRONTFACE_FACTOR to match compiled PS winding-order correction:
@@ -990,5 +1008,8 @@ float4 main(PS_INPUT input) : SV_Target
         result.rgb = lerp(PG_COLOR_ARGB(NV_PGRAPH_FOGCOLOR).rgb, result.rgb, saturate(input.iFog));
     }
 
-    return result;
+    PS_OUTPUT psOut;
+    psOut.color = result;
+    psOut.depth = saturate(fragDepth);
+    return psOut;
 }

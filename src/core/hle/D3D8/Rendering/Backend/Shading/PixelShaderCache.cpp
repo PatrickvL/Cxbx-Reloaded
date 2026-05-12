@@ -349,6 +349,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     {
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << srcStage << "] > 0.5)\n";
+        ss << "        src = (DepthTexAlias[" << srcStage << "] >= 1.5) ? RemapD16ToColor(src.r)\n";
+        ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      " << tReg << " = float4(dot(" << coords << ".xyz, dm), 0.0, 0.0, 1.0);\n";
         ss << "    }\n";
@@ -359,6 +362,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     {
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << srcStage << "] > 0.5)\n";
+        ss << "        src = (DepthTexAlias[" << srcStage << "] >= 1.5) ? RemapD16ToColor(src.r)\n";
+        ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx
            << ", float2(T" << (stage - 1) << ".x, dot(" << coords << ".xyz, dm)));\n";
@@ -370,10 +376,14 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     {
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << srcStage << "] > 0.5)\n";
+        ss << "        src = (DepthTexAlias[" << srcStage << "] >= 1.5) ? RemapD16ToColor(src.r)\n";
+        ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      float d = dot(" << coords << ".xyz, dm);\n";
-        ss << "      float depth = (abs(d) < 0.00001) ? 1.0 : (T" << (stage - 1) << ".x / d);\n";
+        ss << "      float depth = T" << (stage - 1) << ".x / d;\n";
         ss << "      " << tReg << " = depth.xxxx;\n";
+        ss << "      fragDepth = depth;\n";
         ss << "    }\n";
         break;
     }
@@ -388,9 +398,15 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         uint32_t nextSrcStage = GetTexSrcStage(nextStage, shaderCtl);
         uint32_t nextDotMapping = (shaderCtl >> ((nextStage - 1) * 4)) & 7;
         ss << "    { float4 src = T" << srcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << srcStage << "] > 0.5)\n";
+        ss << "        src = (DepthTexAlias[" << srcStage << "] >= 1.5) ? RemapD16ToColor(src.r)\n";
+        ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << dotMapping << ", src);\n";
         ss << "      float curDot = dot(" << coords << ".xyz, dm);\n";
         ss << "      float4 nextSrc = T" << nextSrcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << nextSrcStage << "] > 0.5)\n";
+        ss << "        nextSrc = (DepthTexAlias[" << nextSrcStage << "] >= 1.5) ? RemapD16ToColor(nextSrc.r)\n";
+        ss << "            : RemapD24S8ToColor(nextSrc.r, TexStencil_" << nextSrcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 nextDm = ApplyDotMapping(" << nextDotMapping << ", nextSrc);\n";
         ss << "      float nextDot = dot(T" << nextStage << ".xyz, nextDm);\n";
         ss << "      " << tReg << " = TexCube_" << sIdx << ".Sample(Samp" << sIdx
@@ -403,6 +419,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     {
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << srcStage << "] > 0.5)\n";
+        ss << "        src = (DepthTexAlias[" << srcStage << "] >= 1.5) ? RemapD16ToColor(src.r)\n";
+        ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      float3 N = normalize(float3(T" << (stage - 2) << ".x, T" << (stage - 1) << ".x, dot(" << coords << ".xyz, dm)));\n";
         ss << "      float3 E = normalize(eyeVec);\n";
@@ -415,6 +434,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     {
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << srcStage << "] > 0.5)\n";
+        ss << "        src = (DepthTexAlias[" << srcStage << "] >= 1.5) ? RemapD16ToColor(src.r)\n";
+        ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      " << tReg << " = Tex3D_" << sIdx << ".Sample(Samp" << sIdx
            << ", float3(T" << (stage - 2) << ".x, T" << (stage - 1) << ".x, dot(" << coords << ".xyz, dm)));\n";
@@ -426,6 +448,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     {
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << srcStage << "] > 0.5)\n";
+        ss << "        src = (DepthTexAlias[" << srcStage << "] >= 1.5) ? RemapD16ToColor(src.r)\n";
+        ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      " << tReg << " = TexCube_" << sIdx << ".Sample(Samp" << sIdx
            << ", float3(T" << (stage - 2) << ".x, T" << (stage - 1) << ".x, dot(" << coords << ".xyz, dm)));\n";
@@ -437,6 +462,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
     {
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         ss << "    { float4 src = T" << srcStage << ";\n";
+        ss << "      [flatten] if (DepthTexAlias[" << srcStage << "] > 0.5)\n";
+        ss << "        src = (DepthTexAlias[" << srcStage << "] >= 1.5) ? RemapD16ToColor(src.r)\n";
+        ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      float3 N = normalize(float3(T" << (stage - 2) << ".x, T" << (stage - 1) << ".x, dot(" << coords << ".xyz, dm)));\n";
         ss << "      " << tReg << " = TexCube_" << sIdx << ".Sample(Samp" << sIdx
@@ -632,9 +660,10 @@ static ReadMasks CollectReadRegs(const PSJITKey& key)
     uint32_t texModes[4];
     UnpackTexModes(key.textureModes, texModes);
 
-    // Also mark stages with side effects (CLIPPLANE) as needed
+    // Also mark stages with side effects (CLIPPLANE, DOT_ZW) as needed
     for (uint32_t i = 0; i < 4; i++) {
-        if (texModes[i] == PS_TEXTUREMODES_CLIPPLANE) // CLIPPLANE — side effect
+        if (texModes[i] == PS_TEXTUREMODES_CLIPPLANE || // CLIPPLANE — side effect
+            texModes[i] == PS_TEXTUREMODES_DOT_ZW)      // DOT_ZW — writes fragment depth
             combinerTexNeeded |= (1u << i);
     }
 
@@ -666,25 +695,17 @@ static std::string GenerateHLSL(const PSJITKey& key)
     auto isRead     = [&](uint32_t regIdx) { return GetChan(masks.regChans, regIdx) != CH_NONE; };
     auto isReadChan = [&](uint32_t regIdx, uint32_t ch) { return (GetChan(masks.regChans, regIdx) & ch) != 0; };
 
+    // DOT_ZW (z-sprite) produces per-pixel depth → needs SV_Depth output
+    bool hasDotZW = (texModes[0] == 0x0A || texModes[1] == 0x0A ||
+                     texModes[2] == 0x0A || texModes[3] == 0x0A);
+
     // ---- Header / resource declarations ----
     ss << "// Auto-generated by CxbxPixelShaderJIT\n";
     ss << "// Stages: " << numStages << " TexModes: "
        << texModes[0] << "/" << texModes[1] << "/" << texModes[2] << "/" << texModes[3] << "\n\n";
 
-    // StructuredBuffer for PGRAPH regs
-    ss << "StructuredBuffer<uint> g_PGRegs : register(t12);\n";
-    ss << "uint PG_UINT(uint byteOff) { return g_PGRegs[byteOff >> 2]; }\n";
-    ss << "float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs[byteOff >> 2]); }\n";
-    ss << "float4 UnpackABGR(uint c) {\n";
-    ss << "    return float4(float(c & 0xFFu)/255.0, float((c>>8)&0xFFu)/255.0,\n";
-    ss << "                  float((c>>16)&0xFFu)/255.0, float((c>>24)&0xFFu)/255.0);\n";
-    ss << "}\n";
-    ss << "float4 UnpackARGB(uint c) {\n";
-    ss << "    return float4(float((c>>16)&0xFFu)/255.0, float((c>>8)&0xFFu)/255.0,\n";
-    ss << "                  float(c&0xFFu)/255.0, float((c>>24)&0xFFu)/255.0);\n";
-    ss << "}\n";
-    ss << "float4 PG_COLOR(uint byteOff) { return UnpackABGR(PG_UINT(byteOff)); }\n";
-    ss << "float4 PG_COLOR_ARGB(uint byteOff) { return UnpackARGB(PG_UINT(byteOff)); }\n\n";
+    // PGRAPH register accessors and color unpacking — shared with RC interpreter
+    ss << "#include \"CxbxPGRAPHRegs.hlsli\"\n\n";
 
     // Texture/sampler declarations — only what's needed
     for (uint32_t i = 0; i < 4; i++) {
@@ -708,28 +729,19 @@ static std::string GenerateHLSL(const PSJITKey& key)
         if (texModes[i] != PS_TEXTUREMODES_NONE)
             ss << "SamplerState Samp" << i << " : register(s" << i << ");\n";
     }
+    // Stencil SRVs for depth-as-color remapping (X24_TYPELESS_G8_UINT, slots t16-t19)
+    for (uint32_t i = 0; i < 4; i++)
+        ss << "Texture2D<uint2> TexStencil_" << i << " : register(t" << (16 + i) << ");\n";
     ss << "\n";
 
-    // Aux cbuffer
-    ss << "cbuffer PSAuxCBLayout : register(b0) {\n";
-    ss << "    uint PSTextureModes; uint3 _p0;\n";
-    ss << "    uint PSFinalCombinerInputsABCD; uint3 _p1;\n";
-    ss << "    uint PSFinalCombinerInputsEFG; uint3 _p2;\n";
-    ss << "    float4 ColorSign[4];\n";
-    ss << "    float4 TexFmtFixup;\n";
-    ss << "    float4 ColorKeyOp[4];\n";
-    ss << "    float4 ColorKeyColor[4];\n";
-    ss << "    float4 AlphaKill;\n";
-    ss << "    float4 FogInfo;\n";
-    ss << "    uint FogEnable; uint3 _p3;\n";
-    ss << "    float4 FrontFaceInfo;\n";
-    ss << "    float4 ShadowCompare;\n";
-    ss << "};\n\n";
+    // Aux cbuffer — shared layout with RC interpreter
+    ss << "#include \"CxbxRegisterCombinerInterpreterState.hlsli\"\n\n";
 
     // PS_INPUT — shared with VS output and RC interpreter
     ss << "#include \"CxbxPixelShaderInput.hlsli\"\n\n";
 
-    // Shared helper functions (nv2a_mul, PerformColorSign, ApplyShadowCompare, ApplyCompareMode, etc.)
+    // Shared helper functions (nv2a_mul, PerformColorSign, ApplyShadowCompare,
+    // ApplyCompareMode, RemapD24S8ToColor, RemapD16ToColor, etc.)
     ss << "#include \"CxbxNV2AMathHelpers.hlsli\"\n";
     ss << "#include \"CxbxPixelShaderFunctions.hlsli\"\n\n";
 
@@ -737,13 +749,26 @@ static std::string GenerateHLSL(const PSJITKey& key)
     // provided by CxbxPixelShaderFunctions.hlsli (included above)
 
     // ---- main() ----
-    ss << "float4 main(PS_INPUT input) : SV_Target\n{\n";
+    if (hasDotZW) {
+        ss << "struct PS_OUTPUT {\n";
+        ss << "    float4 color : SV_Target;\n";
+        ss << "    float depth : SV_Depth;\n";
+        ss << "};\n\n";
+        ss << "PS_OUTPUT main(PS_INPUT input)\n{\n";
+    } else {
+        ss << "float4 main(PS_INPUT input) : SV_Target\n{\n";
+    }
 
     // Declare register variables
     ss << "    float4 T0 = input.iT0;\n";
     ss << "    float4 T1 = input.iT1;\n";
     ss << "    float4 T2 = input.iT2;\n";
     ss << "    float4 T3 = input.iT3;\n";
+
+    // Per-pixel depth variable for DOT_ZW (z-sprite)
+    if (hasDotZW) {
+        ss << "    float fragDepth = 0.0;\n";
+    }
 
     // Eye vector for DOT_RFLCT_SPEC
     bool needsEyeVec = false;
@@ -1083,7 +1108,14 @@ static std::string GenerateHLSL(const PSJITKey& key)
         ss << "    result.rgb = lerp(PG_COLOR_ARGB(0x1980).rgb, result.rgb, saturate(input.iFog));\n";
     }
 
-    ss << "\n    return result;\n}\n";
+    if (hasDotZW) {
+        ss << "\n    PS_OUTPUT psOut;\n";
+        ss << "    psOut.color = result;\n";
+        ss << "    psOut.depth = saturate(fragDepth / DepthScale.x);\n";
+        ss << "    return psOut;\n}\n";
+    } else {
+        ss << "\n    return result;\n}\n";
+    }
 
     return ss.str();
 }
@@ -1132,7 +1164,9 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     // Read from the last-built aux CB (already computed by CxbxD3D11UploadRCInterpreterState)
     const PSAuxCBLayout& aux = g_LastPSAuxCB;
 
-    key.textureModes = aux.PSTextureModes.value;
+    // Read textureModes directly from PGRAPH (NV_PGRAPH_SHADERPROG = 0x199C)
+    // to avoid stale g_LastPSAuxCB issues.
+    key.textureModes = pg->regs[0x199C >> 2]; // NV_PGRAPH_SHADERPROG
     key.fcABCD       = aux.PSFinalCombinerInputsABCD.value;
     key.fcEFG        = aux.PSFinalCombinerInputsEFG.value;
     key.fogEnable    = aux.FogEnable.value;

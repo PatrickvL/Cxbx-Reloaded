@@ -68,6 +68,7 @@ static xbox::X_D3DBaseTexture s_SyntheticTextures[NV2A_MAX_TEXTURES] = {};
 // Promoted to file scope so CxbxD3D11InvalidateCachedSRVForTexture can access them.
 static ID3D11Resource*           s_CachedResource[NV2A_MAX_TEXTURES] = {};
 static ID3D11ShaderResourceView* s_CachedSRV[NV2A_MAX_TEXTURES] = {};
+static ID3D11ShaderResourceView* s_CachedStencilSRV[NV2A_MAX_TEXTURES] = {};
 static D3D11_SRV_DIMENSION       s_CachedDim[NV2A_MAX_TEXTURES] = {};
 
 // Shared texture state generation counter — incremented by CxbxUpdateHostTextures
@@ -118,8 +119,13 @@ void CxbxD3D11InvalidateCachedSRVForTexture(ID3D11Resource* pTexture)
 				g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pNullSRV);
 				g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pNullSRV);
 				g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pNullSRV);
+				g_pD3DDeviceContext->PSSetShaderResources(16 + stage, 1, &pNullSRV);
 				s_CachedSRV[stage]->Release();
 				s_CachedSRV[stage] = nullptr;
+			}
+			if (s_CachedStencilSRV[stage]) {
+				s_CachedStencilSRV[stage]->Release();
+				s_CachedStencilSRV[stage] = nullptr;
 			}
 			s_CachedResource[stage] = nullptr;
 		}
@@ -335,6 +341,8 @@ static void CxbxBindTextureSRV(int stage, ID3D11Resource* pHostBaseTexture, bool
 				g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &s_CachedSRV[stage]);
 			else if (s_CachedDim[stage] == D3D11_SRV_DIMENSION_TEXTURECUBE)
 				g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &s_CachedSRV[stage]);
+			if (s_CachedStencilSRV[stage])
+				g_pD3DDeviceContext->PSSetShaderResources(16 + stage, 1, &s_CachedStencilSRV[stage]);
 		}
 		return;
 	}
@@ -343,6 +351,10 @@ static void CxbxBindTextureSRV(int stage, ID3D11Resource* pHostBaseTexture, bool
 	if (s_CachedSRV[stage]) {
 		s_CachedSRV[stage]->Release();
 		s_CachedSRV[stage] = nullptr;
+	}
+	if (s_CachedStencilSRV[stage]) {
+		s_CachedStencilSRV[stage]->Release();
+		s_CachedStencilSRV[stage] = nullptr;
 	}
 	s_CachedResource[stage] = nullptr;
 
@@ -412,6 +424,26 @@ static void CxbxBindTextureSRV(int stage, ID3D11Resource* pHostBaseTexture, bool
 			g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pSRV);
 		else if (srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE)
 			g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pSRV);
+
+		// For D24S8 depth textures, also create a stencil SRV (X24_TYPELESS_G8_UINT)
+		// bound to slot t16..t19, giving the shader access to the full 32-bit word.
+		if (dim == D3D11_RESOURCE_DIMENSION_TEXTURE2D) {
+			D3D11_TEXTURE2D_DESC texDesc2 = {};
+			((ID3D11Texture2D*)pHostBaseTexture)->GetDesc(&texDesc2);
+			if (texDesc2.Format == DXGI_FORMAT_R24G8_TYPELESS) {
+				D3D11_SHADER_RESOURCE_VIEW_DESC stencilSrvDesc = {};
+				stencilSrvDesc.Format = DXGI_FORMAT_X24_TYPELESS_G8_UINT;
+				stencilSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+				stencilSrvDesc.Texture2D.MipLevels = texDesc2.MipLevels;
+				stencilSrvDesc.Texture2D.MostDetailedMip = 0;
+				ID3D11ShaderResourceView* pStencilSRV = nullptr;
+				HRESULT hr2 = g_pD3DDevice->CreateShaderResourceView(pHostBaseTexture, &stencilSrvDesc, &pStencilSRV);
+				if (SUCCEEDED(hr2) && pStencilSRV) {
+					s_CachedStencilSRV[stage] = pStencilSRV;
+					g_pD3DDeviceContext->PSSetShaderResources(16 + stage, 1, &pStencilSRV);
+				}
+			}
+		}
 	}
 }
 
@@ -461,11 +493,16 @@ void CxbxUpdateHostTextures()
 				s_CachedSRV[stage]->Release();
 				s_CachedSRV[stage] = nullptr;
 			}
+			if (s_CachedStencilSRV[stage]) {
+				s_CachedStencilSRV[stage]->Release();
+				s_CachedStencilSRV[stage] = nullptr;
+			}
 			s_CachedResource[stage] = nullptr;
 			ID3D11ShaderResourceView* pNullSRV = nullptr;
 			g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pNullSRV);
 			g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pNullSRV);
 			g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pNullSRV);
+			g_pD3DDeviceContext->PSSetShaderResources(16 + stage, 1, &pNullSRV);
 			continue;
 		}
 
@@ -521,11 +558,16 @@ void CxbxUpdateHostTextures()
 				s_CachedSRV[stage]->Release();
 				s_CachedSRV[stage] = nullptr;
 			}
+			if (s_CachedStencilSRV[stage]) {
+				s_CachedStencilSRV[stage]->Release();
+				s_CachedStencilSRV[stage] = nullptr;
+			}
 			s_CachedResource[stage] = nullptr;
 			ID3D11ShaderResourceView* pNullSRV = nullptr;
 			g_pD3DDeviceContext->PSSetShaderResources(stage, 1, &pNullSRV);
 			g_pD3DDeviceContext->PSSetShaderResources(4 + stage, 1, &pNullSRV);
 			g_pD3DDeviceContext->PSSetShaderResources(8 + stage, 1, &pNullSRV);
+			g_pD3DDeviceContext->PSSetShaderResources(16 + stage, 1, &pNullSRV);
 		}
 
 		if (bNeedRelease) {
@@ -583,6 +625,21 @@ void CxbxUpdateHostTextureScaling()
 		bool texEnabled = (texCtl0 & (1 << 30)) != 0;
 		if (!texEnabled || texOffset == 0) {
 			continue;
+		}
+
+		// Skip RECT texcoord scaling for dot product texture modes.
+		// These modes use the interpolated texcoords for dot product math,
+		// not for texture addressing, so pixel-space scaling must not apply.
+		{
+			uint32_t shaderProg = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
+			uint32_t texMode = (shaderProg >> (stage * 5)) & 0x1F;
+			// Dot product modes: DOTPRODUCT(0x11), DOT_ST(0x09), DOT_ZW(0x0A),
+			// DOT_RFLCT_DIFF(0x0B), DOT_RFLCT_SPEC(0x0C), DOT_STR_3D(0x0D),
+			// DOT_STR_CUBE(0x0E), DOT_RFLCT_SPEC_CONST(0x12)
+			if (texMode == 0x09 || (texMode >= 0x0A && texMode <= 0x0E) ||
+				texMode == 0x11 || texMode == 0x12) {
+				continue;
+			}
 		}
 
 		uint32_t colorFmt = GET_MASK(texFmt, NV097_SET_TEXTURE_FORMAT_COLOR);

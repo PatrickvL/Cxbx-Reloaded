@@ -182,4 +182,31 @@ void ApplyCompareMode(uint clipBits, float4 coords)
         discard;
 }
 
+// Remap a host D24S8 depth SRV value back into the ARGB channel layout
+// that the Xbox pixel shader would see when aliasing a depth buffer as color.
+// D24S8 memory layout: [D23:D16][D15:D8][D7:D0][S7:S0]
+// Aliased as A8R8G8B8: A=D[23:16], R=D[15:8], G=D[7:0], B=S[7:0]
+// depthNorm: R24_UNORM_X8_TYPELESS SRV .r channel (0..1 normalized 24-bit depth)
+// stencil:   X24_TYPELESS_G8_UINT SRV .g channel (8-bit stencil)
+float4 RemapD24S8ToColor(float depthNorm, uint stencil)
+{
+    uint D24 = (uint)(depthNorm * 16777215.0 + 0.5);
+    uint A = (D24 >> 16u) & 0xFFu;
+    uint R = (D24 >>  8u) & 0xFFu;
+    uint G =  D24         & 0xFFu;
+    uint B =  stencil     & 0xFFu;
+    return float4(R, G, B, A) / 255.0;
+}
+
+// Remap a host D16 depth SRV value back into the ARGB channel layout.
+// D16 memory: [D15:D8][D7:D0] aliased as L16 (single 16-bit luminance)
+// depthNorm: R16_UNORM SRV .r channel (0..1 normalized 16-bit depth)
+float4 RemapD16ToColor(float depthNorm)
+{
+    uint D16val = (uint)(depthNorm * 65535.0 + 0.5);
+    uint Gd = (D16val >> 8u) & 0xFFu;
+    uint Bd =  D16val        & 0xFFu;
+    return float4(0.0, Gd / 255.0, Bd / 255.0, 0.0);
+}
+
 #endif // CXBX_PIXEL_SHADER_FUNCTIONS_HLSLI

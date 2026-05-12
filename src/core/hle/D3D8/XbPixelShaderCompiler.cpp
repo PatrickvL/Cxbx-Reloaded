@@ -436,6 +436,57 @@ void CxbxD3D11UploadRCInterpreterState()
 		aux.ShadowCompare = { sc[0], sc[1], sc[2], sc[3] };
 	}
 
+	// DepthScale: viewport Z scale, reserved for future DOT_ZW interpreter use.
+	// The JIT path normalizes DOT_ZW depth with saturate() (the ratio is already
+	// in [0,1]), so this field is currently unused by the JIT.
+	{
+		float vpscl_z;
+		std::memcpy(&vpscl_z, &pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][2], sizeof(float));
+		if (vpscl_z == 0.0f) {
+			uint32_t surfFmt = pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)];
+			unsigned int zetaFmt = GET_MASK(surfFmt, NV_PGRAPH_SURFACEFORMAT_ZETA);
+			vpscl_z = (zetaFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16) ? 65535.0f : 16777215.0f;
+		}
+		aux.DepthScale = { vpscl_z, 0.0f, 0.0f, 0.0f };
+	}
+
+	// DepthTexAlias: per-stage depth format code indicating the host texture is
+	// a depth-stencil buffer aliased as a color texture.  The PS JIT's
+	// RemapDepthToColor() uses this to reconstruct the Xbox byte layout:
+	//   0.0 = normal color texture (no remapping)
+	//   1.0 = D24S8 (R24_UNORM_X8_TYPELESS SRV → A8R8G8B8 reinterpretation)
+	//   2.0 = D16   (R16_UNORM SRV             → L16 reinterpretation)
+	{
+		float dta[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		for (int i = 0; i < 4; i++) {
+			uint32_t texOffsetRaw = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + i * 4)];
+			if (texOffsetRaw == 0) continue;
+			uint32_t texFmtReg = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
+			bool dmaSelect = (texFmtReg & NV_PGRAPH_TEXFMT0_CONTEXT_DMA) != 0;
+			uint32_t dmaBase = NV2ADevice::ResolveDmaBaseAddress(
+				g_NV2A->GetDeviceState(), dmaSelect ? pg->dma_b : pg->dma_a);
+			uint32_t texOffset = dmaBase + texOffsetRaw;
+			auto* pRT = CxbxLookupPgraphRTByOffset(texOffset);
+			if (pRT) {
+				D3D11_TEXTURE2D_DESC desc;
+				pRT->GetDesc(&desc);
+				switch (desc.Format) {
+					case DXGI_FORMAT_R24G8_TYPELESS:
+					case DXGI_FORMAT_D24_UNORM_S8_UINT:
+						dta[i] = 1.0f; // D24S8
+						break;
+					case DXGI_FORMAT_R16_TYPELESS:
+					case DXGI_FORMAT_D16_UNORM:
+						dta[i] = 2.0f; // D16
+						break;
+					default:
+						break;
+				}
+			}
+		}
+		aux.DepthTexAlias = { dta[0], dta[1], dta[2], dta[3] };
+	}
+
 	// Upload aux cbuffer and bind to b0 (bind only once — buffer pointer is stable)
 	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterAuxCB, &aux, sizeof(aux));
 	{

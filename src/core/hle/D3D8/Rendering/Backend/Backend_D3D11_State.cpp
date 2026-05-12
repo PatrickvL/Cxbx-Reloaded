@@ -265,6 +265,25 @@ void CxbxD3D11UpdatePipelineStateFromPGRAPH(PGRAPHState *pg)
 		}
 	}
 
+	// DOT_ZW depth override: On NV2A, DOT_ZW replaces the fragment Z value which
+	// then flows through the normal depth pipeline. If the game disabled depth
+	// (DepthEnable=FALSE) but DOT_ZW is active, we must force depth writing so
+	// SV_Depth from the pixel shader actually reaches the depth buffer.
+	{
+		uint32_t shaderProg = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
+		bool hasDotZW = false;
+		for (int i = 0; i < 4; i++) {
+			if (((shaderProg >> (i * 5)) & 0x1F) == 0x0A) { hasDotZW = true; break; }
+		}
+		if (hasDotZW) {
+			// Force depth enabled with full write — DOT_ZW replaces
+			// the fragment Z unconditionally on NV2A hardware.
+			g_D3D11DepthStencilDesc.DepthEnable = TRUE;
+			g_D3D11DepthStencilDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+			g_bD3D11DepthStencilStateDirty = true;
+		}
+	}
+
 	// ---- Rasterizer state from NV_PGRAPH_SETUPRASTER (0x1990) ----
 	{
 		uint32_t setup = pg->regs[RI(NV_PGRAPH_SETUPRASTER)];
