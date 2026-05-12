@@ -122,6 +122,12 @@ SamplerState Samp1     : register(s1);
 SamplerState Samp2     : register(s2);
 SamplerState Samp3     : register(s3);
 
+// Stencil SRVs for depth-as-color remapping (X24_TYPELESS_G8_UINT, slots t16-t19)
+Texture2D<uint2> TexStencil_0 : register(t16);
+Texture2D<uint2> TexStencil_1 : register(t17);
+Texture2D<uint2> TexStencil_2 : register(t18);
+Texture2D<uint2> TexStencil_3 : register(t19);
+
 #include "CxbxPixelShaderInput.hlsli"
 
 // ============================================================
@@ -471,7 +477,28 @@ float4 ApplyShadowCompareForStage(uint stage, float4 sampled, float3 coords)
 // Texture stage fetch
 // ============================================================
 
-void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
+// Apply depth-as-color remapping for a source register read from a depth-aliased texture.
+// srcStage: the stage whose texture is aliased as depth.
+// src: the value read from the T register (contains depth SRV .r in .r channel).
+// input: PS_INPUT for screen-space position (stencil Load coordinate).
+float4 RemapDepthSrc(uint srcStage, float4 src, PS_INPUT input)
+{
+    [flatten] if (DepthTexAlias[srcStage] > 0.5f) {
+        if (DepthTexAlias[srcStage] >= 1.5f) {
+            src = RemapD16ToColor(src.r);
+        } else {
+            uint stencil;
+            if (srcStage == 0u) stencil = TexStencil_0.Load(int3((int2)input.iPos.xy, 0)).g;
+            else if (srcStage == 1u) stencil = TexStencil_1.Load(int3((int2)input.iPos.xy, 0)).g;
+            else if (srcStage == 2u) stencil = TexStencil_2.Load(int3((int2)input.iPos.xy, 0)).g;
+            else stencil = TexStencil_3.Load(int3((int2)input.iPos.xy, 0)).g;
+            src = RemapD24S8ToColor(src.r, stencil);
+        }
+    }
+    return src;
+}
+
+void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec, PS_INPUT input)
 {
     // NUM_TEXTURE_STAGES is always a power of 2 (4); bitmask is faster than modulo
     stage &= (NUM_TEXTURE_STAGES - 1u);
@@ -518,7 +545,13 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
     float4 src      = (float4)0.0f;
 
     if (mode >= PS_TEXTUREMODES_BUMPENVMAP) {   // 0x06+
-        src = Regs[PS_REGISTER_T0 + (GetSourceStage(stage) & (NUM_TEXTURE_STAGES - 1u))];
+        uint srcStage = GetSourceStage(stage) & (NUM_TEXTURE_STAGES - 1u);
+        src = Regs[PS_REGISTER_T0 + srcStage];
+
+        // Depth-as-color remapping: if the source texture is a depth buffer aliased
+        // as color, reconstruct the Xbox ARGB layout from the host depth/stencil SRVs.
+        if (mode >= PS_TEXTUREMODES_DOTPRODUCT)  // 0x08+ (all DOT modes use dot mapping on src)
+            src = RemapDepthSrc(srcStage, src, input);
 
         if (mode >= PS_TEXTUREMODES_DOT_ST) {   // 0x09+
             prevReg1 = Regs[tBase - 1u];
@@ -621,7 +654,12 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
     {
         float3 dm    = ApplyDotMappingForStage(stage, src);
         float  d     = dot(coords.xyz, dm);
-        float  depth = (abs(d) < 0.00001f) ? 1.0f : (prevReg1.x / d);
+        // WARNING: Do NOT add an epsilon guard here (e.g. "abs(d) < 1e-5 ? 1.0 : ...").
+        // For D24S8, the VS passes c2 = (0, 0, 1/16777215) so d ≈ 5.96e-8 which is
+        // a perfectly valid denominator. An epsilon guard would force depth to 1.0,
+        // making the z-sprite always render at near-plane and breaking occlusion.
+        // HLSL handles d=0 gracefully: INF is clamped by saturate() in the output.
+        float  depth = prevReg1.x / d;
         val = depth.xxxx;
         break;
     }
@@ -633,7 +671,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec)
         float3 dm = ApplyDotMappingForStage(stage, src);
         float currentDot = dot(coords.xyz, dm);
         uint nextStage = stage + 1u;
-        float4 nextSrc = Regs[PS_REGISTER_T0 + (GetSourceStage(nextStage) & (NUM_TEXTURE_STAGES - 1u))];
+        uint nextSrcStage = GetSourceStage(nextStage) & (NUM_TEXTURE_STAGES - 1u);
+        float4 nextSrc = RemapDepthSrc(nextSrcStage, Regs[PS_REGISTER_T0 + nextSrcStage], input);
         float4 nextCoords = Regs[PS_REGISTER_T0 + nextStage];
         float3 nextDm = ApplyDotMappingForStage(nextStage, nextSrc);
         float nextDot = dot(nextCoords.xyz, nextDm);
@@ -927,15 +966,15 @@ PS_OUTPUT main(PS_INPUT input)
     // float4(dot_result, 0, 0, 1), destroying the original .w values.
     float3 eyeVec = float3(input.iT1.w, input.iT2.w, input.iT3.w);
 
-    FetchTexture(Regs, 0u, texMode.x, eyeVec);
+    FetchTexture(Regs, 0u, texMode.x, eyeVec, input);
 #if NUM_TEXTURE_STAGES >= 2
-    FetchTexture(Regs, 1u, texMode.y, eyeVec);
+    FetchTexture(Regs, 1u, texMode.y, eyeVec, input);
 #endif
 #if NUM_TEXTURE_STAGES >= 3
-    FetchTexture(Regs, 2u, texMode.z, eyeVec);
+    FetchTexture(Regs, 2u, texMode.z, eyeVec, input);
 #endif
 #if NUM_TEXTURE_STAGES >= 4
-    FetchTexture(Regs, 3u, texMode.w, eyeVec);
+    FetchTexture(Regs, 3u, texMode.w, eyeVec, input);
 #endif
 
     // --- DOT_ZW per-pixel depth ---

@@ -381,6 +381,11 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         ss << "            : RemapD24S8ToColor(src.r, TexStencil_" << srcStage << ".Load(int3((int2)input.iPos.xy, 0)).g);\n";
         ss << "      float3 dm = ApplyDotMapping(" << ((shaderCtl >> ((stage - 1) * 4)) & 7) << ", src);\n";
         ss << "      float d = dot(" << coords << ".xyz, dm);\n";
+        // WARNING: Do NOT add an epsilon guard here (e.g. "abs(d) < 1e-5 ? 1.0 : ...").
+        // For D24S8, the VS passes c2 = (0, 0, 1/16777215) so d ≈ 5.96e-8 which is
+        // a perfectly valid denominator. An epsilon guard would force depth to 1.0,
+        // making the z-sprite always render at near-plane and breaking occlusion.
+        // HLSL handles d=0 gracefully: INF is clamped by saturate() in the output.
         ss << "      float depth = T" << (stage - 1) << ".x / d;\n";
         ss << "      " << tReg << " = depth.xxxx;\n";
         ss << "      fragDepth = depth;\n";
