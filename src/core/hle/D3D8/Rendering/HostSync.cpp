@@ -638,6 +638,7 @@ void CxbxUpdateHostTextureScaling()
 			// DOT_STR_CUBE(0x0E), DOT_RFLCT_SPEC_CONST(0x12)
 			if (texMode == 0x09 || (texMode >= 0x0A && texMode <= 0x0E) ||
 				texMode == 0x11 || texMode == 0x12) {
+				// Test case: ZSprite, Minnaert, Explosion
 				continue;
 			}
 		}

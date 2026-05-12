@@ -485,6 +485,7 @@ void CxbxD3D11UploadRCInterpreterState()
 			}
 		}
 		aux.DepthTexAlias = { dta[0], dta[1], dta[2], dta[3] };
+		// Test case: ZSprite (binds D24S8 depth buffer as texture on a DOT source stage)
 	}
 
 	// Upload aux cbuffer and bind to b0 (bind only once — buffer pointer is stable)

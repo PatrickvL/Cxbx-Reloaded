@@ -52,7 +52,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | Strip | ✅ | ~1 | `Power=16`, specular, reflection texgen, aniso | Robot mesh with perf stats |
 | Fur | ✅ | 15.87 | `Power=40`, specular, alpha test | Bears with fur shells now rendering |
 | Lensflare | ⚠️ | 32 | `SPECULARMATERIALSOURCE`, point light | Trees/grass visible, no sun/corona rendered but occlusion detection works |
-| Minnaert | ✅ | 47 | Custom lighting model via PS | Female model with Minnaert lighting |
+| Minnaert | ✅ | 47 | Custom lighting model via PS, RECT-DOT skip | Female model with Minnaert lighting |
 | PerPixelLighting | ✅ | 9.35 | Per-pixel lighting | Earth globe with per-pixel lighting, crosshair cursor |
 | PerPixelLightingVS | ⚠️ | 24 | Per-pixel lighting via VS | Globe renders but incorrect bright blue band around it |
 
@@ -82,9 +82,9 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | DotProduct3 | ✅ | 0.29 | DOT product in combiners, `D3DFVF_SPECULAR` | 3D face with bump normal map, very low FPS |
 | Cartoon | ✅ | 12 | Toon shading via PS | Cel-shading and edge rendering correct |
 | QuadLerp | ✅ | 44 | 4-way lerp blending PS | Robot model with quad lerp blending visible, "optimized shader" mode |
-| Explosion | ✅ | 128 | PROJECT2D, DOT_ZW | Landscape + billboard explosions render correctly |
+| Explosion | ✅ | 128 | PROJECT2D, DOT_ZW, RECT-DOT skip | Landscape + billboard explosions render correctly |
 | NoSortAlphaBlend | ✅ | 4.62 | Alpha peel PS, constant PS | Alpha-blended shapes (teapot, spheres, rings) |
-| ZSprite | ✅ | 457 | Z-sprite PS | Teapots + green Z-wall render with correct depth occlusion |
+| ZSprite | ✅ | 457 | Z-sprite PS, DepthTexAlias, RECT-DOT skip | Teapots + green Z-wall render with correct depth occlusion |
 
 ### Bump Mapping
 | Sample | Status | FPS | Key Features | Notes |
