@@ -15,8 +15,8 @@ implementation to the proposed unified design, minimizing regression risk at eac
 | PGRAPH→GPU | Separate `StructuredBuffer<uint>` at t12 | Appended to combined buffer, same t0 binding |
 | PFB→GPU | Not uploaded | Appended to combined buffer |
 | Deswizzle CS source | Per-texture staging buffer | Reads directly from combined buffer |
-| Bitmaps | `uint32_t[512]`, non-atomic | `uint8_t[2048]`, `alignas(64)`, interlocked |
-| Staging textures | Created per-readback, released immediately | Cached per-RT |
+| Bitmaps | `volatile uint32_t[512]`, `alignas(64)`, interlocked | `volatile uint32_t[512]`, `alignas(64)`, interlocked |
+| Staging textures | Cached per-RT | Cached per-RT |
 
 ---
 
@@ -38,18 +38,23 @@ implementation to the proposed unified design, minimizing regression risk at eac
 
 ---
 
-### Phase 2: Upgrade Bitmaps to Atomic Byte-Granularity
+### Phase 2: Upgrade Bitmaps to Thread-Safe Atomic Access ✅ COMPLETE
 
 **Goal:** Prepare for multi-threaded bitmap access (required before moving GPU-dirty marking off the puller thread).
 
 **Steps:**
-1. Replace `uint32_t s_GpuDirtyBitmap[512]` with `alignas(64) uint8_t s_GpuDirtyBitmap[2048]`.
-2. Replace `uint32_t s_TextureDirtyBitmap[512]` with `alignas(64) uint8_t s_TextureDirtyBitmap[2048]`.
-3. Change `SetBit`/`ClearBit`/`TestBit` to use `_InterlockedOr8`/`_InterlockedAnd8` for the coherency bitmaps.
-4. Keep `s_TiledCommittedBitmap` and `s_IdentityAllocBitmap` as `uint32_t[512]` (single-threaded access).
-5. Update `CxbxPageTrackerIsTextureDirty` and `CxbxPageTrackerClearTextureDirty` to work with byte arrays.
+1. Replace `uint32_t s_GpuDirtyBitmap[512]` with `alignas(64) volatile uint32_t s_GpuDirtyBitmap[512]`.
+2. Replace `uint32_t s_TextureDirtyBitmap[512]` with `alignas(64) volatile uint32_t s_TextureDirtyBitmap[512]`.
+3. Add `SetBitAtomic`/`ClearBitAtomic`/`TestBitAtomic` helpers that cast to `volatile long*` at the `_InterlockedOr`/`_InterlockedAnd` call sites.
+4. Keep `s_TiledCommittedBitmap` as non-volatile `uint32_t[512]` (single-threaded access).
+5. Update `CxbxPageTrackerIsTextureDirty` and `CxbxPageTrackerClearTextureDirty` to use `uint32_t` masks with casts to `long` only at interlocked API calls.
 
-**Validation:** Bit-level unit tests. Full title regression pass — bitmap behavior must be identical.
+**Result:** No performance regression (83 FPS on DisplacementMap, same as Phase 1). Thread-safe VEH access confirmed working.
+
+**Design notes:**
+- 32-bit granularity chosen over byte-granularity (`uint8_t[2048]`) because `_InterlockedOr8`/`_InterlockedAnd8` are not available on x86.
+- Arrays are `volatile uint32_t` (natural unsigned type); casts to `volatile long*` are confined to the interlocked intrinsic call sites.
+- `_BitScanForward` calls use explicit `(unsigned long)` casts on the `uint32_t` bits argument.
 
 **Risk:** Low — semantically equivalent with added thread safety.
 

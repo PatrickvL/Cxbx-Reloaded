@@ -67,8 +67,9 @@ static constexpr uint32_t BITMAP_DWORDS   = PAGE_COUNT / 32;         // 512
 
 // ******************************************************************
 // * GPU-dirty bitmap (1 bit per 4 KB page) — set when RT writes here
+// * Uses interlocked 32-bit ops for thread-safe VEH access.
 // ******************************************************************
-static uint32_t s_GpuDirtyBitmap[BITMAP_DWORDS] = {};
+alignas(64) static volatile uint32_t s_GpuDirtyBitmap[BITMAP_DWORDS] = {};
 
 // ******************************************************************
 // * Texture-dirty bitmap — set when CPU-written pages are flushed to
@@ -76,11 +77,13 @@ static uint32_t s_GpuDirtyBitmap[BITMAP_DWORDS] = {};
 // * This gates texture re-upload: if no texture-dirty pages overlap
 // * a texture's address range, the host texture is still valid.
 // * Applies to all texture types (swizzled, linear, compressed).
+// * Uses interlocked 32-bit ops for thread-safe access.
 // ******************************************************************
-static uint32_t s_TextureDirtyBitmap[BITMAP_DWORDS] = {};
+alignas(64) static volatile uint32_t s_TextureDirtyBitmap[BITMAP_DWORDS] = {};
 
 // ******************************************************************
 // * Tiled committed bitmap — tracks which 0xF0 pages are committed
+// * (single-threaded access only, no atomics needed)
 // ******************************************************************
 static uint32_t s_TiledCommittedBitmap[BITMAP_DWORDS] = {};
 
@@ -138,7 +141,25 @@ static void* s_hVEH = nullptr;
 static PVOID s_WriteWatchPages[PAGE_COUNT];
 
 // ******************************************************************
-// * Bitmap helpers
+// * Bitmap helpers — atomic 32-bit (for GpuDirty/TextureDirty)
+// ******************************************************************
+static inline void SetBitAtomic(volatile uint32_t* bitmap, uint32_t index)
+{
+	_InterlockedOr((volatile long*)&bitmap[index >> 5], 1L << (index & 31));
+}
+
+static inline void ClearBitAtomic(volatile uint32_t* bitmap, uint32_t index)
+{
+	_InterlockedAnd((volatile long*)&bitmap[index >> 5], ~(1L << (index & 31)));
+}
+
+static inline bool TestBitAtomic(const volatile uint32_t* bitmap, uint32_t index)
+{
+	return (bitmap[index >> 5] & (1u << (index & 31))) != 0;
+}
+
+// ******************************************************************
+// * Bitmap helpers — non-atomic (for TiledCommitted, single-threaded)
 // ******************************************************************
 static inline void SetBit(uint32_t* bitmap, uint32_t index)
 {
@@ -197,7 +218,7 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 		uint32_t offset = (uint32_t)(addr - CONTIG_BASE);
 		uint32_t pageIdx = offset / PAGE_SIZE_;
 
-		if (TestBit(s_GpuDirtyBitmap, pageIdx)) {
+		if (TestBitAtomic(s_GpuDirtyBitmap, pageIdx)) {
 			// Perform readback from D3D11 render target into Xbox memory.
 			// On CPU reads, copy the entire RT back to Xbox RAM so all pages
 			// in the RT are restored at once (amortizes the GPU stall).
@@ -224,8 +245,8 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 					uint32_t rtFirstPage = pRT->offset / PAGE_SIZE_;
 					uint32_t rtLastPage = (pRT->offset + rtSize - 1) / PAGE_SIZE_;
 					for (uint32_t p = rtFirstPage; p <= rtLastPage; p++) {
-						if (TestBit(s_GpuDirtyBitmap, p)) {
-							ClearBit(s_GpuDirtyBitmap, p);
+						if (TestBitAtomic(s_GpuDirtyBitmap, p)) {
+							ClearBitAtomic(s_GpuDirtyBitmap, p);
 							DWORD oldProtect;
 							VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
 								PAGE_SIZE_, PAGE_READWRITE, &oldProtect);
@@ -286,7 +307,7 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 
 			// Fallback: no matching RT found, write access, or lock contended —
 			// just restore the page (graceful degradation to stale data).
-			ClearBit(s_GpuDirtyBitmap, pageIdx);
+			ClearBitAtomic(s_GpuDirtyBitmap, pageIdx);
 
 			DWORD oldProtect;
 			VirtualProtect((void*)(CONTIG_BASE + pageIdx * PAGE_SIZE_),
@@ -319,7 +340,7 @@ static void SyncTiledPagesBack()
 
 		while (bits) {
 			unsigned long pos;
-			_BitScanForward(&pos, bits);
+			_BitScanForward(&pos, (unsigned long)bits);
 			bits &= bits - 1;
 
 			uint32_t pageIdx = dw * 32 + pos;
@@ -345,10 +366,10 @@ static void SyncTiledPagesBack()
 // ******************************************************************
 void CxbxPageTrackerInit()
 {
-	memset(s_GpuDirtyBitmap, 0, sizeof(s_GpuDirtyBitmap));
+	memset((void*)s_GpuDirtyBitmap, 0, sizeof(s_GpuDirtyBitmap));
 	memset(s_TiledCommittedBitmap, 0, sizeof(s_TiledCommittedBitmap));
 	// All pages start texture-dirty so the first deswizzle for each texture is triggered
-	memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
+	memset((void*)s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
 
 	// Initialize D3D11 context lock for thread-safe readback from VEH
 	if (!s_D3D11ContextLockInitialized) {
@@ -471,7 +492,7 @@ void CxbxPageTrackerShutdown()
 		if (bits == 0) continue;
 		while (bits) {
 			unsigned long pos;
-			_BitScanForward(&pos, bits);
+			_BitScanForward(&pos, (unsigned long)bits);
 			bits &= bits - 1;
 			uint32_t offset = (dw * 32 + pos) * PAGE_SIZE_;
 			DWORD oldProtect;
@@ -485,7 +506,7 @@ void CxbxPageTrackerShutdown()
 		if (bits == 0) continue;
 		while (bits) {
 			unsigned long pos;
-			_BitScanForward(&pos, bits);
+			_BitScanForward(&pos, (unsigned long)bits);
 			bits &= bits - 1;
 			uint32_t offset = (dw * 32 + pos) * PAGE_SIZE_;
 			VirtualFree((void*)(TILED_BASE + offset), PAGE_SIZE_, MEM_DECOMMIT);
@@ -505,9 +526,9 @@ void CxbxPageTrackerShutdown()
 	if (s_pMirrorSRV) { s_pMirrorSRV->Release(); s_pMirrorSRV = nullptr; }
 	if (s_pMirrorBuf) { s_pMirrorBuf->Release(); s_pMirrorBuf = nullptr; }
 
-	memset(s_GpuDirtyBitmap, 0, sizeof(s_GpuDirtyBitmap));
+	memset((void*)s_GpuDirtyBitmap, 0, sizeof(s_GpuDirtyBitmap));
 	memset(s_TiledCommittedBitmap, 0, sizeof(s_TiledCommittedBitmap));
-	memset(s_TextureDirtyBitmap, 0, sizeof(s_TextureDirtyBitmap));
+	memset((void*)s_TextureDirtyBitmap, 0, sizeof(s_TextureDirtyBitmap));
 }
 
 // ******************************************************************
@@ -534,7 +555,7 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	// Use DISCARD only on the first flush of the frame to avoid orphaning
 	// the buffer while earlier draws in this frame are still referencing it.
 	if (s_bWineFallback) {
-		memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
+		memset((void*)s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
 		D3D11_MAP mapType = s_bFirstFlushOfFrame
 			? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -563,11 +584,11 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	// HostResourceRequiresUpdate can detect which textures need re-deswizzle.
 	if (count > PAGE_COUNT / 4) {
 		// Bulk dirty — mark all pages as texture-dirty
-		memset(s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
+		memset((void*)s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
 	} else {
 		for (ULONG_PTR i = 0; i < count; i++) {
 			uint32_t pageIdx = (uint32_t)((uintptr_t)s_WriteWatchPages[i] - CONTIG_BASE) / PAGE_SIZE_;
-			SetBit(s_TextureDirtyBitmap, pageIdx);
+			SetBitAtomic(s_TextureDirtyBitmap, pageIdx);
 		}
 	}
 
@@ -676,7 +697,7 @@ void CxbxPageTrackerMarkGPUDirty(uint32_t startOffset, uint32_t size)
 	uint32_t lastPage = (startOffset + size - 1) / PAGE_SIZE_;
 
 	for (uint32_t p = firstPage; p <= lastPage; p++) {
-		SetBit(s_GpuDirtyBitmap, p);
+		SetBitAtomic(s_GpuDirtyBitmap, p);
 		// Set PAGE_NOACCESS so CPU reads/writes fault for readback
 		DWORD oldProtect;
 		VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
@@ -760,7 +781,7 @@ void CxbxPageTrackerRegisterRT(uint32_t startOffset, uint32_t pitch,
 bool CxbxPageTrackerIsGPUDirty(uint32_t pageIndex)
 {
 	if (pageIndex >= PAGE_COUNT) return false;
-	return TestBit(s_GpuDirtyBitmap, pageIndex);
+	return TestBitAtomic(s_GpuDirtyBitmap, pageIndex);
 }
 
 // ******************************************************************
@@ -775,7 +796,7 @@ void CxbxPageTrackerClearGPUDirty(uint32_t startOffset, uint32_t size)
 	uint32_t lastPage = (startOffset + size - 1) / PAGE_SIZE_;
 
 	for (uint32_t p = firstPage; p <= lastPage; p++) {
-		ClearBit(s_GpuDirtyBitmap, p);
+		ClearBitAtomic(s_GpuDirtyBitmap, p);
 	}
 }
 
@@ -800,7 +821,7 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 	// If so, perform RT readback from D3D11 into Xbox RAM first.
 	bool anyDirty = false;
 	for (uint32_t p = firstPage; p <= lastPage; p++) {
-		if (TestBit(s_GpuDirtyBitmap, p)) {
+		if (TestBitAtomic(s_GpuDirtyBitmap, p)) {
 			anyDirty = true;
 			break;
 		}
@@ -849,8 +870,8 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 			uint32_t rtFirstPage = rt.offset / PAGE_SIZE_;
 			uint32_t rtLastPage = (rtEnd - 1) / PAGE_SIZE_;
 			for (uint32_t p = rtFirstPage; p <= rtLastPage; p++) {
-				if (TestBit(s_GpuDirtyBitmap, p)) {
-					ClearBit(s_GpuDirtyBitmap, p);
+				if (TestBitAtomic(s_GpuDirtyBitmap, p)) {
+					ClearBitAtomic(s_GpuDirtyBitmap, p);
 					DWORD oldProtect;
 					VirtualProtect((void*)(CONTIG_BASE + p * PAGE_SIZE_),
 						PAGE_SIZE_, PAGE_READWRITE, &oldProtect);
@@ -1013,7 +1034,7 @@ void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size)
 		uint32_t lo = firstPage & 31;
 		uint32_t hi = lastPage & 31;
 		uint32_t mask = ((2u << hi) - 1) & ~((1u << lo) - 1);
-		s_TextureDirtyBitmap[firstDW] &= ~mask;
+		_InterlockedAnd((volatile long*)&s_TextureDirtyBitmap[firstDW], (long)~mask);
 		return;
 	}
 
@@ -1021,7 +1042,7 @@ void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size)
 	{
 		uint32_t lo = firstPage & 31;
 		uint32_t mask = ~((1u << lo) - 1);
-		s_TextureDirtyBitmap[firstDW] &= ~mask;
+		_InterlockedAnd((volatile long*)&s_TextureDirtyBitmap[firstDW], (long)~mask);
 	}
 
 	// Clear full DWORDs in the middle
@@ -1033,7 +1054,7 @@ void CxbxPageTrackerClearTextureDirty(uint32_t offset, uint32_t size)
 	{
 		uint32_t hi = lastPage & 31;
 		uint32_t mask = (2u << hi) - 1;
-		s_TextureDirtyBitmap[lastDW] &= ~mask;
+		_InterlockedAnd((volatile long*)&s_TextureDirtyBitmap[lastDW], (long)~mask);
 	}
 }
 
