@@ -69,7 +69,7 @@ Xbox x86 code runs **directly on the host x86/x64 processor** — Cxbx-Reloaded 
 
 ### 2.2 The GPU-Side Mirror — s_pMirrorBuf (Xbox RAM Only)
 
-**Current implementation:** A single `D3D11_USAGE_DYNAMIC` buffer (`s_pMirrorBuf`) on the host GPU holds the 64 MiB Xbox RAM image. It is bound as a raw `ByteAddressBuffer` SRV at t0 for vertex fetch (IA-bypass architecture, §12). NV2A MMIO register state is uploaded separately (§2.4).
+**Current implementation:** A single `D3D11_USAGE_DEFAULT` buffer (`s_pMirrorBuf`) on the host GPU holds the 64 MiB Xbox RAM image. It is bound as a raw `ByteAddressBuffer` SRV at t0 for vertex fetch (IA-bypass architecture, §12), and additionally has an `RWByteAddressBuffer` UAV for future compute shader use. Updates from CPU to GPU use `UpdateSubresource` with `D3D11_BOX` for per-page-run granularity. NV2A MMIO register state is uploaded separately (§2.4).
 
 ```cpp
 // Current implementation (Backend_D3D11_PageTracker.cpp)
@@ -77,9 +77,9 @@ static constexpr uint32_t CONTIG_SIZE = 64 * 1024 * 1024; // 64 MiB
 
 D3D11_BUFFER_DESC desc = {};
 desc.ByteWidth  = CONTIG_SIZE;
-desc.Usage      = D3D11_USAGE_DYNAMIC;
-desc.BindFlags  = D3D11_BIND_SHADER_RESOURCE;
-desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+desc.Usage      = D3D11_USAGE_DEFAULT;
+desc.BindFlags  = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+desc.CPUAccessFlags = 0;
 desc.MiscFlags  = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
 g_pD3DDevice->CreateBuffer(&desc, nullptr, &s_pMirrorBuf);
 
@@ -90,6 +90,14 @@ srvDesc.ViewDimension        = D3D11_SRV_DIMENSION_BUFFEREX;
 srvDesc.BufferEx.Flags       = D3D11_BUFFEREX_SRV_FLAG_RAW;
 srvDesc.BufferEx.NumElements = CONTIG_SIZE / 4;
 g_pD3DDevice->CreateShaderResourceView(s_pMirrorBuf, &srvDesc, &s_pMirrorSRV);
+
+// RWByteAddressBuffer UAV — for future CS use
+D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+uavDesc.Format               = DXGI_FORMAT_R32_TYPELESS;
+uavDesc.ViewDimension        = D3D11_UAV_DIMENSION_BUFFER;
+uavDesc.Buffer.NumElements   = CONTIG_SIZE / 4;
+uavDesc.Buffer.Flags         = D3D11_BUFFER_UAV_FLAG_RAW;
+g_pD3DDevice->CreateUnorderedAccessView(s_pMirrorBuf, &uavDesc, &s_pMirrorUAV);
 ```
 
 Additionally, typed SRV views are created over the same buffer for hardware-accelerated vertex attribute format decode:
@@ -112,24 +120,22 @@ Proposed GPU buffer layout:
 
 The combined design would use `D3D11_USAGE_DEFAULT` with `D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS` and updates via `UpdateSubresource` with `D3D11_BOX` for per-page granularity.
 
-#### Current: Per-Page Updates via Map/Unmap
+#### Current: Per-Page Updates via UpdateSubresource
 
-The current implementation uses `Map`/`Unmap` with `WRITE_DISCARD` (first flush per frame, orphans the buffer) or `WRITE_NO_OVERWRITE` (subsequent flushes). Dirty pages from `GetWriteWatch` are coalesced into contiguous runs and `memcpy`'d into the mapped region:
+The current implementation uses `UpdateSubresource` with `D3D11_BOX` for incremental updates. Dirty pages from `GetWriteWatch` are coalesced into contiguous runs and uploaded one run at a time. When many pages are dirty (>25% of total), a full-buffer `UpdateSubresource` without a box is cheaper:
 
 ```cpp
 // Current implementation (Backend_D3D11_PageTracker.cpp — CxbxPageTrackerFlushToGPU)
-if (count > PAGE_COUNT / 4 && s_bFirstFlushOfFrame) {
-    // Bulk: DISCARD + full 64 MiB memcpy
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
-    g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+if (count > PAGE_COUNT / 4) {
+    // Bulk: full 64 MiB upload (no box — entire buffer)
+    g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, nullptr,
+        (const void*)CONTIG_BASE, CONTIG_SIZE, 0);
 } else {
-    // Incremental: NO_OVERWRITE, coalesced page-run memcpy
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
-    // Walk GetWriteWatch results, merge consecutive pages, memcpy runs
-    g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+    // Incremental: one UpdateSubresource per coalesced page run
+    // GetWriteWatch guarantees ascending order — merge consecutive pages
+    D3D11_BOX box = { offset, 0, 0, offset + runBytes, 1, 1 };
+    g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box,
+        (const void*)startAddr, runBytes, 0);
 }
 ```
 

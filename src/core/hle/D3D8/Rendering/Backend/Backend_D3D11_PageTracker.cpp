@@ -123,12 +123,13 @@ static CRITICAL_SECTION s_D3D11ContextLock;
 static bool s_D3D11ContextLockInitialized = false;
 
 // ******************************************************************
-// * GPU mirror buffer (64 MiB ByteAddressBuffer + typed SRV views)
+// * GPU mirror buffer (64 MiB ByteAddressBuffer — DEFAULT + SRV + UAV)
 // ******************************************************************
-static ID3D11Buffer*             s_pMirrorBuf = nullptr;
-static ID3D11ShaderResourceView* s_pMirrorSRV = nullptr;
-static ID3D11ShaderResourceView* s_pMirrorSRV_SNORM16x2 = nullptr; // R16G16_SNORM typed view
-static ID3D11ShaderResourceView* s_pMirrorSRV_UNORM8x4 = nullptr;  // R8G8B8A8_UNORM typed view
+static ID3D11Buffer*              s_pMirrorBuf = nullptr;
+static ID3D11ShaderResourceView*  s_pMirrorSRV = nullptr;
+static ID3D11ShaderResourceView*  s_pMirrorSRV_SNORM16x2 = nullptr; // R16G16_SNORM typed view
+static ID3D11ShaderResourceView*  s_pMirrorSRV_UNORM8x4 = nullptr;  // R8G8B8A8_UNORM typed view
+static ID3D11UnorderedAccessView* s_pMirrorUAV = nullptr;            // RWByteAddressBuffer for CS
 
 // ******************************************************************
 // * VEH handle
@@ -377,12 +378,12 @@ void CxbxPageTrackerInit()
 		s_D3D11ContextLockInitialized = true;
 	}
 
-	// Create 64 MiB GPU mirror buffer (DYNAMIC ByteAddressBuffer with SRV)
+	// Create 64 MiB GPU mirror buffer (DEFAULT ByteAddressBuffer with SRV + UAV)
 	D3D11_BUFFER_DESC desc = {};
 	desc.ByteWidth = CONTIG_SIZE;
-	desc.Usage = D3D11_USAGE_DYNAMIC;
-	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+	desc.CPUAccessFlags = 0;
 	desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
 
 	HRESULT hr = g_pD3DDevice->CreateBuffer(&desc, nullptr, &s_pMirrorBuf);
@@ -427,6 +428,19 @@ void CxbxPageTrackerInit()
 			EmuLog(LOG_LEVEL::WARNING, "PageTrackerInit: Failed to create UNORM8x4 SRV (hr=0x%08X)", hr);
 	}
 
+	// Create RWByteAddressBuffer UAV (for future compute shader use)
+	{
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+		uavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		uavDesc.Buffer.FirstElement = 0;
+		uavDesc.Buffer.NumElements = CONTIG_SIZE / 4;
+		uavDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+		hr = g_pD3DDevice->CreateUnorderedAccessView(s_pMirrorBuf, &uavDesc, &s_pMirrorUAV);
+		if (FAILED(hr))
+			EmuLog(LOG_LEVEL::WARNING, "PageTrackerInit: Failed to create mirror UAV (hr=0x%08X)", hr);
+	}
+
 	// Reset write-watch BEFORE the initial upload. This ensures that any writes
 	// occurring concurrently (from the Xbox title thread) during the memcpy will
 	// have their dirty bits preserved and picked up by the first flush. If we
@@ -436,14 +450,8 @@ void CxbxPageTrackerInit()
 	ResetWriteWatch((PVOID)CONTIG_BASE, CONTIG_SIZE);
 
 	// Initial full upload of contiguous memory to GPU mirror
-	{
-		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (SUCCEEDED(hr)) {
-			memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
-			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
-		}
-	}
+	g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, nullptr,
+		(const void*)CONTIG_BASE, CONTIG_SIZE, 0);
 
 	// Detect Wine — GetWriteWatch may not reliably track dirty pages.
 	// When running on Wine, always do a full upload on every flush.
@@ -521,6 +529,7 @@ void CxbxPageTrackerShutdown()
 		}
 	}
 
+	if (s_pMirrorUAV) { s_pMirrorUAV->Release(); s_pMirrorUAV = nullptr; }
 	if (s_pMirrorSRV_UNORM8x4) { s_pMirrorSRV_UNORM8x4->Release(); s_pMirrorSRV_UNORM8x4 = nullptr; }
 	if (s_pMirrorSRV_SNORM16x2) { s_pMirrorSRV_SNORM16x2->Release(); s_pMirrorSRV_SNORM16x2 = nullptr; }
 	if (s_pMirrorSRV) { s_pMirrorSRV->Release(); s_pMirrorSRV = nullptr; }
@@ -552,18 +561,10 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	SyncTiledPagesBack();
 
 	// Wine / broken-write-watch fallback: always do a full upload.
-	// Use DISCARD only on the first flush of the frame to avoid orphaning
-	// the buffer while earlier draws in this frame are still referencing it.
 	if (s_bWineFallback) {
 		memset((void*)s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
-		D3D11_MAP mapType = s_bFirstFlushOfFrame
-			? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
-		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, mapType, 0, &mapped);
-		if (SUCCEEDED(hr)) {
-			memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
-			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
-		}
+		g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, nullptr,
+			(const void*)CONTIG_BASE, CONTIG_SIZE, 0);
 		s_bFirstFlushOfFrame = false;
 		return PAGE_COUNT;
 	}
@@ -592,53 +593,34 @@ uint32_t CxbxPageTrackerFlushToGPU()
 		}
 	}
 
-	// Many pages dirty AND first flush of frame: safe to DISCARD + full memcpy.
-	// DISCARD orphans the GPU buffer — any draw calls issued earlier in this frame
-	// that haven't completed yet would read from the orphaned (old) buffer, which is
-	// fine because DISCARD gives us a fresh allocation. But mid-frame DISCARD would
-	// lose updates from earlier flushes, so we only allow it on the first flush.
-	if (count > PAGE_COUNT / 4 && s_bFirstFlushOfFrame) {
-		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (SUCCEEDED(hr)) {
-			memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
-			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
-		}
-		s_bFirstFlushOfFrame = false;
+	// Many pages dirty: full-buffer upload is cheaper than many small UpdateSubresource calls.
+	if (count > PAGE_COUNT / 4) {
+		g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, nullptr,
+			(const void*)CONTIG_BASE, CONTIG_SIZE, 0);
 	} else {
-		// Incremental update: NO_OVERWRITE preserves prior flush data in the same frame.
-		// Coalesce consecutive dirty pages into contiguous runs to minimize memcpy calls
-		// and maximize throughput (large memcpy uses REP MOVSB / AVX at full bandwidth).
+		// Incremental update: one UpdateSubresource per coalesced page run.
 		// GetWriteWatch guarantees ascending address order per MSDN — no sort needed.
+		ULONG_PTR runStart = 0;
+		while (runStart < count) {
+			uintptr_t startAddr = (uintptr_t)s_WriteWatchPages[runStart];
+			ULONG_PTR runEnd = runStart + 1;
 
-		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
-		if (SUCCEEDED(hr)) {
-			uint8_t* pDst = (uint8_t*)mapped.pData;
-
-			// Walk the page list and merge consecutive pages into runs
-			ULONG_PTR runStart = 0;
-			while (runStart < count) {
-				uintptr_t startAddr = (uintptr_t)s_WriteWatchPages[runStart];
-				ULONG_PTR runEnd = runStart + 1;
-
-				// Extend run while next page is contiguous
-				while (runEnd < count &&
-					(uintptr_t)s_WriteWatchPages[runEnd] == startAddr + (runEnd - runStart) * PAGE_SIZE_) {
-					runEnd++;
-				}
-
-				uint32_t offset = (uint32_t)(startAddr - CONTIG_BASE);
-				uint32_t runBytes = (uint32_t)(runEnd - runStart) * PAGE_SIZE_;
-				memcpy(pDst + offset, (const void*)startAddr, runBytes);
-
-				runStart = runEnd;
+			// Extend run while next page is contiguous
+			while (runEnd < count &&
+				(uintptr_t)s_WriteWatchPages[runEnd] == startAddr + (runEnd - runStart) * PAGE_SIZE_) {
+				runEnd++;
 			}
 
-			g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+			uint32_t offset = (uint32_t)(startAddr - CONTIG_BASE);
+			uint32_t runBytes = (uint32_t)(runEnd - runStart) * PAGE_SIZE_;
+			D3D11_BOX box = { offset, 0, 0, offset + runBytes, 1, 1 };
+			g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box,
+				(const void*)startAddr, runBytes, 0);
+
+			runStart = runEnd;
 		}
-		s_bFirstFlushOfFrame = false;
 	}
+	s_bFirstFlushOfFrame = false;
 
 	return (uint32_t)count;
 }
@@ -931,16 +913,12 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 	// bits in the process). That data must still reach the GPU mirror for
 	// the vertex fetch shader to see it. The normal FlushToGPU path skips
 	// mid-frame flushes for performance, so this is the only opportunity.
-	D3D11_MAPPED_SUBRESOURCE mapped = {};
-	HRESULT hr = g_pD3DDeviceContext->Map(s_pMirrorBuf, 0,
-		D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
-	if (SUCCEEDED(hr)) {
-		for (uint32_t p = firstPage; p <= lastPage; p++) {
-			uint32_t offset = p * PAGE_SIZE_;
-			memcpy((uint8_t*)mapped.pData + offset,
-				(void*)(CONTIG_BASE + offset), PAGE_SIZE_);
-		}
-		g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+	{
+		uint32_t offset = firstPage * PAGE_SIZE_;
+		uint32_t uploadSize = (lastPage - firstPage + 1) * PAGE_SIZE_;
+		D3D11_BOX box = { offset, 0, 0, offset + uploadSize, 1, 1 };
+		g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box,
+			(const void*)(CONTIG_BASE + offset), uploadSize, 0);
 	}
 
 	return anyDirty;
@@ -962,6 +940,11 @@ ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_SNORM16x2()
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_UNORM8x4()
 {
 	return s_pMirrorSRV_UNORM8x4;
+}
+
+ID3D11UnorderedAccessView* CxbxPageTrackerGetMirrorUAV()
+{
+	return s_pMirrorUAV;
 }
 
 // ******************************************************************

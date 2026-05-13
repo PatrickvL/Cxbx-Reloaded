@@ -76,8 +76,8 @@ uint32_t CxbxPageTrackerFlushToGPU();
 // Check if any pages are CPU-dirty (quick early-out for draw path).
 bool CxbxPageTrackerHasDirtyPages();
 
-// Notify frame boundary — allows the next flush to use MAP_WRITE_DISCARD
-// for efficient full-buffer upload. Must be called from CxbxPresent().
+// Notify frame boundary — resets the once-per-frame flush gate.
+// Must be called from CxbxPresent().
 void CxbxPageTrackerOnPresent();
 
 // ******************************************************************
@@ -139,6 +139,10 @@ ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV();
 // conversion for attributes whose byte offset is dword-aligned.
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_SNORM16x2(); // R16G16_SNORM (t2)
 ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_UNORM8x4();  // R8G8B8A8_UNORM (t3)
+
+// Get the UAV for the 64 MiB contiguous mirror RWByteAddressBuffer (for CS use).
+struct ID3D11UnorderedAccessView;
+ID3D11UnorderedAccessView* CxbxPageTrackerGetMirrorUAV();
 
 // ******************************************************************
 // * Texture-dirty tracking (dirty-page-gated texture update)

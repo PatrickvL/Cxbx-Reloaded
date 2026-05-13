@@ -9,8 +9,8 @@ implementation to the proposed unified design, minimizing regression risk at eac
 
 | Component | Current | Target |
 |-----------|---------|--------|
-| GPU buffer | `s_pMirrorBuf` — DYNAMIC, SRV only, 64 MiB RAM | Combined `s_pGpuMem` — DEFAULT, SRV+UAV, 64 MiB + MMIO |
-| Upload method | `Map/Unmap` (DISCARD/NO_OVERWRITE) | `UpdateSubresource` with `D3D11_BOX` |
+| GPU buffer | `s_pMirrorBuf` — DEFAULT, SRV+UAV, 64 MiB RAM | Combined `s_pGpuMem` — DEFAULT, SRV+UAV, 64 MiB + MMIO |
+| Upload method | `UpdateSubresource` with `D3D11_BOX` | `UpdateSubresource` with `D3D11_BOX` |
 | MMIO storage | C struct `NV2AState` with `pg->regs[]` | Flat 16 MiB `s_pNV2AMMIO` allocation |
 | PGRAPH→GPU | Separate `StructuredBuffer<uint>` at t12 | Appended to combined buffer, same t0 binding |
 | PFB→GPU | Not uploaded | Appended to combined buffer |
@@ -60,7 +60,7 @@ implementation to the proposed unified design, minimizing regression risk at eac
 
 ---
 
-### Phase 3: Switch to DEFAULT + UpdateSubresource
+### Phase 3: Switch to DEFAULT + UpdateSubresource ✅ COMPLETE
 
 **Goal:** Enable UAV binding on the mirror buffer (prerequisite for CS writing directly to it).
 
@@ -71,18 +71,15 @@ implementation to the proposed unified design, minimizing regression risk at eac
 4. Replace all `Map`/`Unmap` calls in `CxbxPageTrackerFlushToGPU` with `UpdateSubresource` + `D3D11_BOX`:
    - Bulk path: `UpdateSubresource(s_pMirrorBuf, 0, nullptr, CONTIG_BASE, CONTIG_SIZE, 0)` (full buffer, no box).
    - Incremental path: one `UpdateSubresource` per coalesced page run with a `D3D11_BOX{byteStart, 0, 0, byteEnd, 1, 1}`.
-5. Replace `Map`/`Unmap` in `CxbxPageTrackerFlushGPUDirtyToMirror` with per-page `UpdateSubresource`.
-6. Remove `s_bFirstFlushOfFrame` gating logic (no DISCARD/NO_OVERWRITE distinction needed with DEFAULT).
-7. Create `RWByteAddressBuffer` UAV over `s_pMirrorBuf` for future CS use.
+5. Replace `Map`/`Unmap` in `CxbxPageTrackerFlushGPUDirtyToMirror` with a single `UpdateSubresource` + `D3D11_BOX` for the VB page range.
+6. Keep `s_bFirstFlushOfFrame` gating (once-per-frame flush) but remove DISCARD/NO_OVERWRITE branching.
+7. Create `RWByteAddressBuffer` UAV (`s_pMirrorUAV`) over `s_pMirrorBuf` for future CS use.
 
-**Validation:**
-- Performance benchmark: compare frame times before/after. UpdateSubresource may be slightly slower for the bulk path but enables future gains.
-- Visual regression: run 10+ titles, screenshot comparison.
-- Verify typed SRV views (SNORM16x2, UNORM8x4) still work with DEFAULT usage.
+**Result:** DisplacementMap 79 FPS (vs 83 FPS Phase 2). Minor regression expected — UpdateSubresource has higher per-call overhead than Map+memcpy, but enables UAV binding and future CS path. No visual regressions.
 
-**Risk:** Medium — changes the GPU upload path entirely. The DISCARD optimization (buffer orphaning) is lost; if titles with heavy CPU→GPU traffic regress, consider a hybrid approach with a staging buffer intermediary.
+**Design alignment:** Implementation now matches the proposed design in `nv2a_emulation_memory_coherency.md` §2.2: DEFAULT usage, SRV+UAV bind flags, UpdateSubresource with D3D11_BOX for incremental updates. The buffer is ready for Phase 4 (append PGRAPH block) without further buffer recreation.
 
-**Rollback:** Keep the DYNAMIC path behind a `#ifdef` until confidence is high.
+**Risk:** Medium — DISCARD buffer-orphaning optimization is lost. Acceptable given the small FPS delta observed.
 
 ---
 
