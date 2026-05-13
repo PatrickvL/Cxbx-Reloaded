@@ -119,22 +119,19 @@ implementation to the proposed unified design, minimizing regression risk at eac
 
 ---
 
-### Phase 7: Flat MMIO Allocation (Optional, Longer-Term)
+### Phase 7: Flat MMIO Allocation ✅ COMPLETE
 
-**Goal:** Replace `NV2AState` struct with a flat 16 MiB `s_pNV2AMMIO` allocation.
+**Goal:** Replace `NV2AState` struct `regs[]` arrays with pointers into a flat 16 MiB backing allocation.
 
-**Steps:**
-1. Allocate 16 MiB `VirtualAlloc` with `PAGE_READWRITE`.
-2. Redirect all `pg->regs[off >> 2] = val` writes to `*(uint32_t*)(s_pNV2AMMIO + 0x400000 + off) = val`.
-3. Redirect all `d->pfb.regs[off >> 2]` to `*(uint32_t*)(s_pNV2AMMIO + 0x100000 + off)`.
-4. Upload entire blocks via `memcpy` from the flat allocation to the GPU buffer.
-5. Remove the `NV2AState` struct `regs[]` arrays (keep `program_data[]` and `vsh_constants[]` as separate sub-state).
+**Result:** A 16 MiB virtual address range (`g_pNV2AMMIO`) is reserved with `VirtualAlloc(MEM_RESERVE)`. Only pages backing actual register blocks are committed (40 KB total: PMC 4KB, PFIFO 8KB, PVIDEO 4KB, PTIMER 4KB, PFB 4KB, PGRAPH 8KB, PCRTC 4KB, PRAMDAC 4KB). Block offsets mirror the real NV2A MMIO layout (PMC=0x000000, PFIFO=0x002000, PVIDEO=0x008000, PTIMER=0x009000, PFB=0x100000, PGRAPH=0x400000, PCRTC=0x600000, PRAMDAC=0x680000).
 
-**Validation:** Full regression suite — every register read/write must match.
+Each `NV2AState` sub-struct's `uint32_t regs[N]` is changed to `uint32_t* regs`, pointed into the flat buffer at the correct offset. Existing code (`pg->regs[RI(X)]`, `d->pfb.regs[RI(X)]`) works unchanged — array indexing through a pointer is identical. The GPU upload path (`CxbxPageTrackerUploadPGRAPH`) works as before since `pg->regs` still provides a valid `const void*`.
 
-**Risk:** High — touches every NV2A engine handler. Requires extensive testing across many titles. Should be deferred until all other phases are stable.
+**Blocks NOT in the flat allocation:**
+- PRAMIN (0x700000, 1 MiB): Already standalone committed memory at `0xFD700000`. Uses `uint8_t* ramin_ptr`. No `regs[]` array — stores instance memory (DMA objects, RAMHT, RAMFC).
+- USER/UREMAP (0x800000+, 8 MiB): Side-effect-only (PFIFO DMA kick). No GPU upload needed.
 
-**Note:** This phase is optional. The current struct approach works fine with `memcpy(mapped.pData, pg->regs, 8192)`. The flat allocation mainly benefits code simplicity and documentation alignment, not runtime performance.
+**Validated:** Water, CubeMap, Trees — all render correctly with PGRAPH registers read from flat buffer.
 
 ---
 

@@ -277,11 +277,11 @@ void CxbxD3D11UploadRCInterpreterState()
 		static uint32_t s_LastRegsGeneration = ~0u;
 		if (pg->dirty[NV2A_DIRTY_PGRAPH] != s_LastRegsGeneration) {
 			s_LastRegsGeneration = pg->dirty[NV2A_DIRTY_PGRAPH];
-			CxbxPageTrackerUploadPGRAPH(pg->regs, sizeof(pg->regs));
+			CxbxPageTrackerUploadPGRAPH(pg->regs, NV_PGRAPH_REGS_BYTES);
 			// PFB/PVIDEO uploads disabled until shaders actually read them.
 			// NV2AState* d = g_NV2A->GetDeviceState();
-			// CxbxPageTrackerUploadPFB(d->pfb.regs, sizeof(d->pfb.regs));
-			// CxbxPageTrackerUploadPVIDEO(d->pvideo.regs, sizeof(d->pvideo.regs));
+			// CxbxPageTrackerUploadPFB(d->pfb.regs, NV_PFB_REGS_BYTES);
+			// CxbxPageTrackerUploadPVIDEO(d->pvideo.regs, NV_PVIDEO_REGS_BYTES);
 		}
 	}
 	// Bind the raw mirror SRV to PS t12 (skip if already bound — pointer never changes)

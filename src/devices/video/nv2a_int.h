@@ -60,6 +60,31 @@ typedef uint32_t value_t; // Compatibility; Cxbx values are uint32_t (xqemu and 
 #define NV_PCRTC_SIZE               (0x001000 / 4)
 #define NV_PRAMDAC_SIZE             (0x001000 / 4)
 
+// Byte sizes for each register block (used for GPU upload, memcpy, etc.)
+#define NV_PMC_REGS_BYTES           (NV_PMC_SIZE * sizeof(uint32_t))       // 4 KB
+#define NV_PFIFO_REGS_BYTES         (_NV_PFIFO_SIZE * sizeof(uint32_t))    // 8 KB
+#define NV_PVIDEO_REGS_BYTES        (NV_PVIDEO_SIZE * sizeof(uint32_t))    // 4 KB
+#define NV_PTIMER_REGS_BYTES        (NV_PTIMER_SIZE * sizeof(uint32_t))    // 4 KB
+#define NV_PFB_REGS_BYTES           (NV_PFB_SIZE * sizeof(uint32_t))       // 4 KB
+#define NV_PGRAPH_REGS_BYTES        (NV_PGRAPH_SIZE * sizeof(uint32_t))    // 8 KB
+#define NV_PCRTC_REGS_BYTES         (NV_PCRTC_SIZE * sizeof(uint32_t))     // 4 KB
+#define NV_PRAMDAC_REGS_BYTES       (NV_PRAMDAC_SIZE * sizeof(uint32_t))   // 4 KB
+
+// Flat MMIO backing storage: 16 MiB reserved, only engine block pages committed.
+// Block offsets mirror real NV2A MMIO layout (offset from NV2A base 0xFD000000).
+#define NV2A_MMIO_TOTAL_SIZE        0x01000000u  // 16 MiB
+#define NV2A_MMIO_OFF_PMC           0x000000u
+#define NV2A_MMIO_OFF_PFIFO         0x002000u
+#define NV2A_MMIO_OFF_PVIDEO        0x008000u
+#define NV2A_MMIO_OFF_PTIMER        0x009000u
+#define NV2A_MMIO_OFF_PFB           0x100000u
+#define NV2A_MMIO_OFF_PGRAPH        0x400000u
+#define NV2A_MMIO_OFF_PCRTC         0x600000u
+#define NV2A_MMIO_OFF_PRAMDAC       0x680000u
+
+// Global flat MMIO buffer pointer (allocated in CxbxReserveNV2AMemory)
+extern uint8_t* g_pNV2AMMIO;
+
 #define VSH_TOKEN_SIZE 4 // Compatibility; TODO : Move this to nv2a_vsh.h
 #define MAX(a,b) ((a)>(b) ? (a) : (b)) // Compatibility
 #define MIN(a,b) ((a)<(b) ? (a) : (b)) // Compatibility
@@ -356,7 +381,7 @@ typedef struct PGRAPHState {
 
 	bool texture_matrix_enable[NV2A_MAX_TEXTURES]; // NV097_SET_TEXTURE_MATRIX_ENABLE per stage
 
-	uint32_t regs[NV_PGRAPH_SIZE]; // TODO : union
+	uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PGRAPH
 } PGRAPHState;
 
 typedef struct OverlayState {
@@ -414,13 +439,13 @@ typedef struct NV2AState {
     struct {
         uint32_t pending_interrupts;
         uint32_t enabled_interrupts;
-		uint32_t regs[NV_PMC_SIZE]; // Not in xqemu/openxbox? TODO : union
+		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PMC
     } pmc;
 
     struct {
         uint32_t pending_interrupts;
         uint32_t enabled_interrupts;
-		uint32_t regs[_NV_PFIFO_SIZE]; // TODO : union
+		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PFIFO
 		QemuMutex pfifo_lock;
 		std::thread puller_thread;
 		QemuCond puller_cond;
@@ -438,7 +463,7 @@ typedef struct NV2AState {
 		uint32_t enabled_interrupts;
 		//QemuCond interrupt_cond; // pvideo.interrupt_cond not used (yet)
 		OverlayState overlays[2]; // NV2A supports 2 video overlays
-		uint32_t regs[NV_PVIDEO_SIZE]; // TODO : union
+		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PVIDEO
     } pvideo;
 
     struct {
@@ -447,11 +472,11 @@ typedef struct NV2AState {
         uint32_t numerator;
         uint32_t denominator;
         uint32_t alarm_time;
-		uint32_t regs[NV_PTIMER_SIZE]; // Not in xqemu/openxbox? TODO : union
+		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PTIMER
     } ptimer;
 
     struct {
-		uint32_t regs[NV_PFB_SIZE]; // TODO : union
+		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PFB
     } pfb;
 
     struct PGRAPHState pgraph;
@@ -461,7 +486,7 @@ typedef struct NV2AState {
         uint32_t enabled_interrupts;
         hwaddr start;
         uint32_t vblank_count; // Incremented each VBlank; bit 0 determines interlace field (even/odd)
-		uint32_t regs[NV_PCRTC_SIZE]; // Not in xqemu/openxbox? TODO : union
+		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PCRTC
     } pcrtc;
 
     struct {
@@ -469,7 +494,7 @@ typedef struct NV2AState {
         uint64_t core_clock_freq;
         uint32_t memory_clock_coeff;
         uint32_t video_clock_coeff;
-		uint32_t regs[NV_PRAMDAC_SIZE]; // Not in xqemu/openxbox? TODO : union
+		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PRAMDAC
     } pramdac;
 
 	// PRMDIO: VGA DAC palette (gamma LUT)

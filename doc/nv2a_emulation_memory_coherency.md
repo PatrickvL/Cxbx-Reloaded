@@ -67,58 +67,60 @@ uint8_t* s_pXboxRAM = (uint8_t*)VirtualAlloc(
 
 Xbox x86 code runs **directly on the host x86/x64 processor** — Cxbx-Reloaded does not JIT-recompile guest code. The Xbox Pentium III instruction set is a strict subset of x86-64, so native execution is possible once the Xbox address space is mapped into the host process. Guest stores land in this buffer at the appropriate physical offset without any translation layer. It is the ground truth for all CPU-visible memory.
 
-### 2.2 The GPU-Side Mirror — s_pMirrorBuf (Xbox RAM Only)
+### 2.2 The GPU-Side Mirror — s_pMirrorBuf (Combined RAM + MMIO)
 
-**Current implementation:** A single `D3D11_USAGE_DEFAULT` buffer (`s_pMirrorBuf`) on the host GPU holds the 64 MiB Xbox RAM image. It is bound as a raw `ByteAddressBuffer` SRV at t0 for vertex fetch (IA-bypass architecture, §12), and additionally has an `RWByteAddressBuffer` UAV for future compute shader use. Updates from CPU to GPU use `UpdateSubresource` with `D3D11_BOX` for per-page-run granularity. NV2A MMIO register state is uploaded separately (§2.4).
+A single `D3D11_USAGE_DEFAULT` buffer (`s_pMirrorBuf`) on the host GPU holds the 64 MiB Xbox RAM image plus appended NV2A MMIO register blocks. It is bound as a raw `ByteAddressBuffer` SRV at t0 for vertex fetch (IA-bypass architecture, §12), texture deswizzle CS (§10.2), and PGRAPH register reads (§2.4). An `RWByteAddressBuffer` UAV exists for compute shader writes. Updates from CPU to GPU use `UpdateSubresource` with `D3D11_BOX` for per-page-run granularity.
 
 ```cpp
 // Current implementation (Backend_D3D11_PageTracker.cpp)
-static constexpr uint32_t CONTIG_SIZE = 64 * 1024 * 1024; // 64 MiB
+static constexpr uint32_t CONTIG_SIZE     = 64 * 1024 * 1024;         // 64 MiB
+static constexpr uint32_t GPU_PGRAPH_BASE = 0x04000000u;              // PGRAPH offset
+static constexpr uint32_t GPU_PGRAPH_SIZE = 2048 * sizeof(uint32_t);  // 8 KB
+static constexpr uint32_t GPU_PFB_BASE    = 0x04002000u;              // PFB offset
+static constexpr uint32_t GPU_PFB_SIZE    = 1024 * sizeof(uint32_t);  // 4 KB
+static constexpr uint32_t GPU_PVIDEO_BASE = 0x04003000u;              // PVIDEO offset
+static constexpr uint32_t GPU_PVIDEO_SIZE = 1024 * sizeof(uint32_t);  // 4 KB
+static constexpr uint32_t GPU_BUFFER_SIZE = CONTIG_SIZE + GPU_PGRAPH_SIZE + GPU_PFB_SIZE + GPU_PVIDEO_SIZE;
 
 D3D11_BUFFER_DESC desc = {};
-desc.ByteWidth  = CONTIG_SIZE;
+desc.ByteWidth  = GPU_BUFFER_SIZE;
 desc.Usage      = D3D11_USAGE_DEFAULT;
 desc.BindFlags  = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 desc.CPUAccessFlags = 0;
 desc.MiscFlags  = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
 g_pD3DDevice->CreateBuffer(&desc, nullptr, &s_pMirrorBuf);
 
-// Raw ByteAddressBuffer SRV — bound at t0
+// Raw ByteAddressBuffer SRV — bound at VS t0, CS t0, PS t12
 D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 srvDesc.Format               = DXGI_FORMAT_R32_TYPELESS;
 srvDesc.ViewDimension        = D3D11_SRV_DIMENSION_BUFFEREX;
 srvDesc.BufferEx.Flags       = D3D11_BUFFEREX_SRV_FLAG_RAW;
-srvDesc.BufferEx.NumElements = CONTIG_SIZE / 4;
+srvDesc.BufferEx.NumElements = GPU_BUFFER_SIZE / 4;
 g_pD3DDevice->CreateShaderResourceView(s_pMirrorBuf, &srvDesc, &s_pMirrorSRV);
 
-// RWByteAddressBuffer UAV — for future CS use
+// RWByteAddressBuffer UAV — for CS use
 D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 uavDesc.Format               = DXGI_FORMAT_R32_TYPELESS;
 uavDesc.ViewDimension        = D3D11_UAV_DIMENSION_BUFFER;
-uavDesc.Buffer.NumElements   = CONTIG_SIZE / 4;
+uavDesc.Buffer.NumElements   = GPU_BUFFER_SIZE / 4;
 uavDesc.Buffer.Flags         = D3D11_BUFFER_UAV_FLAG_RAW;
 g_pD3DDevice->CreateUnorderedAccessView(s_pMirrorBuf, &uavDesc, &s_pMirrorUAV);
+```
+
+GPU buffer layout:
+
+```
+  [0x00000000 .. 0x03FFFFFF]  Xbox physical RAM          64 MiB
+  [0x04000000 .. 0x04001FFF]  PGRAPH block (appended)    8 KB
+  [0x04002000 .. 0x04002FFF]  PFB block    (appended)    4 KB
+  [0x04003000 .. 0x04003FFF]  PVIDEO block (appended)    4 KB
+  ─────────────────────────────────────────────────────────────
+  Total:                                                ~64 MiB + 16 KB
 ```
 
 Additionally, typed SRV views are created over the same buffer for hardware-accelerated vertex attribute format decode:
 - `R16G16_SNORM` at t2 — for S1 (SNORM16) vertex attributes
 - `R8G8B8A8_UNORM` at t3 — for UB_OGL / UB_D3D vertex attributes
-
-#### Proposed Design: Combined RAM + MMIO Buffer
-
-The long-term goal is to replace `s_pMirrorBuf` with a combined `D3D11_USAGE_DEFAULT` buffer (`s_pGpuMem`) that holds both Xbox RAM and appended NV2A MMIO register blocks. This would give shaders a single SRV binding for all read access (XboxRAM + NV2A state) via offset macros, eliminate the separate PGRAPH StructuredBuffer (currently at t12), and enable UAV writes from compute shaders:
-
-```
-Proposed GPU buffer layout:
-  [0x00000000 .. 0x03FFFFFF]  Xbox physical RAM        64 MiB
-  [0x04000000 .. 0x04000FFF]  PFB block   (appended)   4 KB
-  [0x04001000 .. 0x04002FFF]  PGRAPH block (appended)  8 KB
-  [0x04003000 .. 0x04003FFF]  PVIDEO block (appended)  4 KB
-  ─────────────────────────────────────────────────────────────
-  Total:                                              ~64 MiB + 16 KB
-```
-
-The combined design would use `D3D11_USAGE_DEFAULT` with `D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS` and updates via `UpdateSubresource` with `D3D11_BOX` for per-page granularity.
 
 #### Current: Per-Page Updates via UpdateSubresource
 
@@ -142,102 +144,105 @@ if (count > PAGE_COUNT / 4) {
 For MMIO block updates (triggered after register writes, not on a page-fault schedule):
 
 ```cpp
-// Proposed (not yet implemented):
-void FlushPGRAPHToGPU() {
-    D3D11_BOX box = { GPU_PGRAPH_BASE, 0, 0, GPU_PGRAPH_BASE + 0x2000u, 1, 1 };
-    gD3DCtx->UpdateSubresource(s_pGpuMem, 0, &box,
-                               s_pNV2AMMIO + 0x400000u, 0x2000u, 0);
+// Current implementation (Backend_D3D11_PageTracker.cpp)
+void CxbxPageTrackerUploadPGRAPH(const void* pRegs, uint32_t size) {
+    if (!s_pMirrorBuf || !g_pD3DDeviceContext || !pRegs || size == 0) return;
+    if (size > GPU_PGRAPH_SIZE) size = GPU_PGRAPH_SIZE;
+    D3D11_BOX box = { GPU_PGRAPH_BASE, 0, 0, GPU_PGRAPH_BASE + size, 1, 1 };
+    g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box, pRegs, size, 0);
 }
-void FlushPFBToGPU() {
-    D3D11_BOX box = { GPU_PFB_BASE, 0, 0, GPU_PFB_BASE + 0x1000u, 1, 1 };
-    gD3DCtx->UpdateSubresource(s_pGpuMem, 0, &box,
-                               s_pNV2AMMIO + 0x100000u, 0x1000u, 0);
+void CxbxPageTrackerUploadPFB(const void* pRegs, uint32_t size) {
+    if (!s_pMirrorBuf || !g_pD3DDeviceContext || !pRegs || size == 0) return;
+    if (size > GPU_PFB_SIZE) size = GPU_PFB_SIZE;
+    D3D11_BOX box = { GPU_PFB_BASE, 0, 0, GPU_PFB_BASE + size, 1, 1 };
+    g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box, pRegs, size, 0);
 }
 ```
 
-These are cheap (8 KB and 4 KB respectively) and can be called unconditionally before each draw, or gated on a dirty flag set by the MMIO handler when any PGRAPH or PFB register changes.
+These are cheap (8 KB and 4 KB respectively). PGRAPH upload is gated on a dirty generation counter (`pg->dirty[NV2A_DIRTY_PGRAPH]`), ensuring it runs only when PGRAPH registers actually change. PFB and PVIDEO uploads are implemented but currently commented out at the call site until shaders require them.
 
 #### HLSL Accessor Macros
 
-**Current implementation:** Shaders use two separate bindings:
-- `ByteAddressBuffer g_XboxRAM : register(t0)` — the 64 MiB mirror buffer for vertex/index data
-- `StructuredBuffer<uint> g_PGRegs : register(t12)` — PGRAPH register block (2048 × uint32), accessed via `PG_UINT(offset)` / `PG_FLOAT(offset)` helpers defined in `CxbxPGRAPHRegs.hlsli`
-
-PFB registers are not accessible from shaders in the current implementation.
-
-**Proposed design:** A single `ByteAddressBuffer` binding for all memory reads, with macros that translate documentation offsets to GPU-buffer offsets:
+Shaders use a single `ByteAddressBuffer` SRV at t12 (PS) / t0 (VS/CS) for both Xbox RAM and PGRAPH register access. Helper macros translate documentation offsets to GPU-buffer offsets:
 
 ```hlsl
-// Proposed: t0 — the combined GPU memory buffer
-ByteAddressBuffer g_GpuMem : register(t0);
+// CxbxPGRAPHRegs.hlsli
+ByteAddressBuffer g_PGRegs : register(t12);  // Same underlying buffer as g_XboxRAM at t0
 
-// Xbox physical RAM — identity-mapped within the buffer
-#define GpuRamLoad(physAddr)        g_GpuMem.Load(physAddr)
-#define GpuRamLoad4(physAddr)       g_GpuMem.Load4(physAddr)
+#define GPU_PGRAPH_BASE 0x04000000u
 
-// NV2A PGRAPH registers — offset by GPU_PGRAPH_BASE
-#define PGRAPH_BASE  0x04001000u
-#define PFB_BASE     0x04000000u
-#define PVIDEO_BASE  0x04003000u
-
-#define PGRAPHLoad(reg)    g_GpuMem.Load(PGRAPH_BASE + (reg))
-#define PFBLoad(reg)       g_GpuMem.Load(PFB_BASE    + (reg))
-#define PVIDEOLoad(reg)    g_GpuMem.Load(PVIDEO_BASE + (reg))
+uint PG_UINT(uint byteOff)   { return g_PGRegs.Load(GPU_PGRAPH_BASE + byteOff); }
+float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs.Load(GPU_PGRAPH_BASE + byteOff)); }
 
 // Example usage:
-uint numStages = (PGRAPHLoad(NV_PGRAPH_COMBINECTL) >> 0) & 0xFu;
-uint tile0Base  = PFBLoad(NV_PFB_TILE(0));
-float4 vConst3 = asfloat(GpuRamLoad4(VS_CONSTANTS_BASE + 3 * 16));
+uint numStages = (PG_UINT(NV_PGRAPH_COMBINECTL) >> 0) & 0xFu;
+float fogParam = PG_FLOAT(NV_PGRAPH_FOGPARAM0);
 ```
+
+The VS and deswizzle CS bind the same buffer’s SRV at t0 as `ByteAddressBuffer g_XboxRAM` for RAM access. The PS binds it at t12 for PGRAPH register reads. PFB and PVIDEO buffer regions are reserved but shaders do not yet read from them.
 
 ### 2.3 NV2A MMIO Backing Storage
 
 The NV2A MMIO window spans 16 MiB at 0xFD000000 on Xbox.
 
-**Current implementation:** NV2A state is stored in a C struct hierarchy. `NV2AState` (defined in `nv2a_int.h`) contains per-engine sub-structs, each with a `regs[]` array indexed by block-relative register offset divided by 4. Key structures:
+**Current implementation:** A 16 MiB virtual address range (`g_pNV2AMMIO`) is reserved with `VirtualAlloc(MEM_RESERVE)`. Only pages backing actual register blocks are committed (40 KB total). Each `NV2AState` sub-struct’s `uint32_t* regs` pointer is directed into the flat buffer at the block’s offset. Existing code (`pg->regs[RI(X)]`, `d->pfb.regs[RI(X)]`) works unchanged:
 
 ```cpp
-// Current implementation (nv2a_int.h)
+// Current implementation (nv2a.cpp — CxbxAllocateFlatMMIO)
+uint8_t* g_pNV2AMMIO = (uint8_t*)VirtualAlloc(nullptr, 0x01000000u,
+    MEM_RESERVE, PAGE_NOACCESS);
+
+// Commit only engine block pages:
+// PMC=0x000000(4KB), PFIFO=0x002000(8KB), PVIDEO=0x008000(4KB),
+// PTIMER=0x009000(4KB), PFB=0x100000(4KB), PGRAPH=0x400000(8KB),
+// PCRTC=0x600000(4KB), PRAMDAC=0x680000(4KB)
+VirtualAlloc(g_pNV2AMMIO + offset, size, MEM_COMMIT, PAGE_READWRITE);
+
+// Point struct pointers into the flat buffer:
+d->pgraph.regs  = (uint32_t*)(g_pNV2AMMIO + 0x400000u);
+d->pfb.regs     = (uint32_t*)(g_pNV2AMMIO + 0x100000u);
+d->pvideo.regs  = (uint32_t*)(g_pNV2AMMIO + 0x008000u);
+// ... etc.
+```
+
+```cpp
+// nv2a_int.h — struct definitions
 struct PGRAPHState {
-    uint32_t regs[2048];             // PGRAPH registers indexed by (offset/4)
+    uint32_t* regs;              // Backed by g_pNV2AMMIO + 0x400000
     float    vsh_constants[192][4];  // Transform context RAM (XFCTX)
     uint32_t program_data[136][4];   // Transform program RAM (XFPR)
     // ... vertex attributes, surface state, etc.
 };
 
 struct NV2AState {
-    struct { uint32_t regs[...]; } pmc;
-    struct { uint32_t regs[...]; } pfifo;
-    struct { uint32_t regs[...]; } pfb;
-    PGRAPHState pgraph;
-    struct { uint32_t regs[...]; } pcrtc;
+    struct { uint32_t* regs; } pmc;     // -> g_pNV2AMMIO + 0x000000
+    struct { uint32_t* regs; } pfifo;   // -> g_pNV2AMMIO + 0x002000
+    struct { uint32_t* regs; } pfb;     // -> g_pNV2AMMIO + 0x100000
+    PGRAPHState pgraph;                  // -> g_pNV2AMMIO + 0x400000
+    struct { uint32_t* regs; } pcrtc;   // -> g_pNV2AMMIO + 0x600000
     // ... other engine blocks
 };
 ```
 
-MMIO accesses from guest code trigger an access violation (the 0xFD000000 range has no backing memory). The unified VEH handler catches these faults and dispatches to per-engine read/write handlers that operate on the `NV2AState` struct fields.
+MMIO accesses from guest code trigger an access violation (the 0xFD000000 range has no backing memory at those addresses in the host process). The unified VEH handler catches these faults and dispatches to per-engine read/write handlers that operate on the `NV2AState` struct fields via the flat buffer pointers.
 
-**Proposed design:** Allocate a contiguous 16 MiB flat backing region so that MMIO handlers can operate by direct memory write at `backing + (guestAddr - 0xFD000000)` rather than by dispatching to struct fields. This simplifies register upload (contiguous `memcpy` of a block to the GPU buffer) and makes the memory layout match documentation offsets exactly:
+MMIO read/write handlers receive a block-relative offset and access `d->engine.regs[RI(offset)]` which indexes directly into `g_pNV2AMMIO`:
 
 ```cpp
-// Proposed (not yet implemented):
-static constexpr uint32_t NV2A_MMIO_BASE = 0xFD000000;
-static constexpr uint32_t NV2A_MMIO_SIZE = 0x01000000; // 16 MiB
+// Example: PGRAPH register write (EmuNV2A_PGRAPH.cpp)
+pg->regs[RI(addr)] = value;  // Writes to g_pNV2AMMIO + 0x400000 + addr
 
-uint8_t* s_pNV2AMMIO = (uint8_t*)VirtualAlloc(
-    nullptr,
-    NV2A_MMIO_SIZE,
-    MEM_RESERVE | MEM_COMMIT,
-    PAGE_READWRITE);
+// Example: PFB register read (EmuNV2A_PFB.cpp)
+uint32_t result = d->pfb.regs[RI(addr)];  // Reads from g_pNV2AMMIO + 0x100000 + addr
 ```
 
-The relevant engine blocks and their offsets within this backing region:
+The relevant engine blocks and their offsets within this backing region (all committed in `g_pNV2AMMIO`):
 
 ```
 Block      Offset      Size   Key contents
 ─────────  ──────────  ─────  ──────────────────────────────────────────────
 PMC        0x000000    4 KB   Interrupt routing, engine enables
-PBUS       0x001000    4 KB   Bus control, PCI config mirror
+PBUS       0x001000    4 KB   Bus control, PCI config mirror (not committed)
 PFIFO      0x002000    8 KB   DMA GET/PUT, CACHE1, channel control
 PVIDEO     0x008000    4 KB   Video overlay address, format, position
 PTIMER     0x009000    4 KB   GPU clock counter (TIME_0 / TIME_1)
@@ -245,68 +250,40 @@ PFB        0x100000    4 KB   Tile regions (TILE[0-7], TLIMIT, TSIZE, ZCOMP)
 PGRAPH     0x400000    8 KB   All 3D state: combiners, VS, texture, surface
 PCRTC      0x600000    4 KB   Display scan-out base address, interrupt
 PRAMDAC    0x680000    4 KB   DAC, PLL, cursor
-PRAMIN     0x700000    1 MB   GPU instance memory (RAMHT, RAMFC, DMA objects)
-USER       0x800000    4 MB   PFIFO DMA submission (MMIO kick registers)
-UREMAP     0xC00000    4 MB   Mirror of USER
+PRAMIN     0x700000    1 MB   GPU instance memory — separate allocation (see below)
+USER       0x800000    4 MB   PFIFO DMA submission — not in flat buffer
+UREMAP     0xC00000    4 MB   Mirror of USER — not in flat buffer
 ```
 
-MMIO read/write handlers receive a block-relative offset and a pointer directly into the backing:
+The flat buffer enables direct upload from any engine block to the GPU via `UpdateSubresource`:
 
 ```cpp
-uint32_t* NV2ARegPtr(uint32_t guestAddr) {
-    uint32_t offset = guestAddr - NV2A_MMIO_BASE;
-    assert(offset + 4 <= NV2A_MMIO_SIZE);
-    return reinterpret_cast<uint32_t*>(s_pNV2AMMIO + offset);
-}
-
-// Side-effect-free register write (most PGRAPH state registers):
-void NV2ARegWrite(uint32_t guestAddr, uint32_t value) {
-    *NV2ARegPtr(guestAddr) = value;
-}
-
-// Side-effect-bearing writes (PFIFO kick, PMC interrupt ack, PCRTC scan-out
-// base, PTIMER clock write) still go through the full dispatch table but
-// also commit to the backing store so reads see consistent state:
-void NV2ARegWriteWithSideEffect(uint32_t guestAddr, uint32_t value,
-                                 NV2AState* d) {
-    *NV2ARegPtr(guestAddr) = value;
-    DispatchMMIOSideEffect(guestAddr, value, d);
-}
+// Upload PGRAPH registers to GPU mirror buffer
+CxbxPageTrackerUploadPGRAPH(pg->regs, NV_PGRAPH_REGS_BYTES);
+// pg->regs points to g_pNV2AMMIO + 0x400000, so this uploads the flat buffer
+// region directly — no intermediate copy needed.
 ```
 
-**PRAMIN** (0x700000, 1 MiB) contains the GPU's instance memory: the RAMHT (register hash table for DMA object handles), RAMFC (FIFO context save areas), and the DMA object descriptors the PFIFO puller resolves to find surface base addresses. PRAMIN is backed by a region of Xbox physical RAM (the top of the 64 MiB pool), so reads/writes to the PRAMIN MMIO block alias the same physical storage as the corresponding offset in `s_pXboxRAM`. The emulator can implement this by mapping `s_pNV2AMMIO + 0x700000` as a view over `s_pXboxRAM + PRAMIN_PHYS_BASE` rather than a separate allocation, keeping both in sync without copies.
+**PRAMIN** (0x700000, 1 MiB) contains the GPU's instance memory: the RAMHT (register hash table for DMA object handles), RAMFC (FIFO context save areas), and the DMA object descriptors the PFIFO puller resolves to find surface base addresses. PRAMIN is a standalone committed allocation at `0xFD700000` (separate from `g_pNV2AMMIO`), accessed via `d->pramin.ramin_ptr`. It stores GPU instance objects (DMA contexts, hash tables) — no register array abstraction needed.
 
 **USER / UREMAP** (0x800000–0xFFFFFF, 8 MiB combined) is the DMA submission aperture. Guest writes to USER channel slots (e.g. `NV_USER_DMA_PUT`) kick the PFIFO pusher. These are not general state registers and do not need to be uploaded to the GPU. The backing store records the last written values for read-back consistency; the actual side effect (pusher wake) is dispatched from the MMIO handler.
 
 ### 2.4 Uploading MMIO Backing to the Host GPU
 
-**Current implementation:** PGRAPH registers are uploaded to the host GPU as a separate `StructuredBuffer<uint>` (`g_pD3D11PGRegsBuf`, 2048 × uint32 = 8 KB) bound at slot t12. The upload uses `D3D11_USAGE_DYNAMIC` + `Map/Unmap`, gated by a dirty generation counter that avoids redundant uploads when PGRAPH state is unchanged between draws:
+PGRAPH registers are uploaded to the host GPU as part of the combined mirror buffer (`s_pMirrorBuf`) at offset `GPU_PGRAPH_BASE = 0x04000000`. Upload uses `UpdateSubresource` with a `D3D11_BOX`, gated by a dirty generation counter that avoids redundant uploads when PGRAPH state is unchanged between draws:
 
 ```cpp
 // Current implementation (XbPixelShaderCompiler.cpp — CxbxD3D11UploadRCInterpreterState)
-if (s_lastPGRegsGeneration != pg->regs_generation) {
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    g_pD3DDeviceContext->Map(g_pD3D11PGRegsBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    memcpy(mapped.pData, pg->regs, 2048 * sizeof(uint32_t));
-    g_pD3DDeviceContext->Unmap(g_pD3D11PGRegsBuf, 0);
-    s_lastPGRegsGeneration = pg->regs_generation;
+if (pg->dirty[NV2A_DIRTY_PGRAPH] != s_LastRegsGeneration) {
+    s_LastRegsGeneration = pg->dirty[NV2A_DIRTY_PGRAPH];
+    CxbxPageTrackerUploadPGRAPH(pg->regs, NV_PGRAPH_REGS_BYTES);
 }
-// Bound at t12 — shaders access via g_PGRegs[offset >> 2]
+// Bound at PS t12 — shaders access via PG_UINT(offset) / PG_FLOAT(offset)
 ```
 
-Shaders access PGRAPH state through `StructuredBuffer<uint> g_PGRegs : register(t12)` with helper macros `PG_UINT(reg)` and `PG_FLOAT(reg)` defined in `CxbxPGRAPHRegs.hlsli`.
+Shaders access PGRAPH state through `ByteAddressBuffer g_PGRegs : register(t12)` (the same underlying buffer as t0, but bound at a different PS slot) with helper macros `PG_UINT(reg)` and `PG_FLOAT(reg)` defined in `CxbxPGRAPHRegs.hlsli`. These load from `GPU_PGRAPH_BASE + byteOff`.
 
-**PFB registers are NOT uploaded to the GPU.** Tile region configuration is consumed CPU-side only (for surface invalidation and upload path decisions). Shaders cannot currently read PFB_TILE state.
-
-**Proposed design (combined buffer):** With the combined buffer design (§2.2), MMIO register blocks would become part of `s_pGpuMem` — appended after the 64 MiB RAM region. Per-draw state would be refreshed via `UpdateSubresource` with a `D3D11_BOX` for the PGRAPH (8 KB) and PFB (4 KB) regions. Shaders would access both Xbox RAM and NV2A register state through the single `g_GpuMem` ByteAddressBuffer at t0, eliminating the separate t12 binding.
-
-If the combined design is not used, the current approach (separate `StructuredBuffer<uint>` SRVs) remains:
-
-```cpp
-// Current implementation (separate SRVs for PGRAPH block)
-// g_pD3D11PGRegsBuf at t12, uploaded via Map/Unmap per draw (gated by generation counter)
-// Shaders use: g_PGRegs[NV_PGRAPH_COMBINECTL >> 2]
-```
+**PFB and PVIDEO upload functions exist** (`CxbxPageTrackerUploadPFB`, `CxbxPageTrackerUploadPVIDEO`) but are currently commented out at the call site. Buffer space is reserved at `GPU_PFB_BASE = 0x04002000` and `GPU_PVIDEO_BASE = 0x04003000`. Upload will be enabled when shaders need to read tile configuration or overlay state directly.
 
 ### 2.5 PGRAPH Sub-State — XFPR, XFCTX, and Derived Fields
 
@@ -401,20 +378,22 @@ static uint32_t s_IdentityAllocBitmap[BITMAP_DWORDS];  // physical pages with ac
 ### 4.2 Bit Operations
 
 ```cpp
-// Current implementation uses non-atomic DWORD-granularity operations.
-// Single-threaded access to each bitmap makes atomics unnecessary in practice.
-static inline void SetBit(uint32_t* bitmap, uint32_t index) {
-    bitmap[index >> 5] |= (1u << (index & 31));
+// Current implementation uses atomic DWORD-granularity operations via
+// _InterlockedOr / _InterlockedAnd for thread-safe VEH access.
+static inline void SetBitAtomic(volatile uint32_t* bitmap, uint32_t index) {
+    _InterlockedOr((volatile long*)&bitmap[index >> 5], (long)(1u << (index & 31)));
 }
-static inline void ClearBit(uint32_t* bitmap, uint32_t index) {
-    bitmap[index >> 5] &= ~(1u << (index & 31));
+static inline void ClearBitAtomic(volatile uint32_t* bitmap, uint32_t index) {
+    _InterlockedAnd((volatile long*)&bitmap[index >> 5], (long)~(1u << (index & 31)));
 }
-static inline bool TestBit(const uint32_t* bitmap, uint32_t index) {
+static inline bool TestBit(const volatile uint32_t* bitmap, uint32_t index) {
     return (bitmap[index >> 5] & (1u << (index & 31))) != 0;
 }
 ```
 
-**Proposed improvement:** Cache-line-aligned `uint8_t` bitmaps with `_InterlockedOr8`/`_InterlockedAnd8` for lock-free atomic access from multiple threads. On x86 this emits a single `lock or byte ptr [addr], imm8` — cheaper than a CAS loop for monotone set operations (bits only go 0→1 except during deliberate clear).
+Arrays are `alignas(64) volatile uint32_t[512]`; casts to `volatile long*` are confined to the interlocked intrinsic call sites. `_BitScanForward` calls use explicit `(unsigned long)` casts.
+
+**Future improvement:** AVX2 bulk bitmap scan for large texture ranges.
 
 ### 4.3 Range Scan
 
@@ -488,7 +467,7 @@ for (ULONG_PTR i = 0; i < count; i++) {
 
 ### 5.2 Flushing Dirty Pages to the GPU Mirror
 
-Dirty pages are flushed from `s_pXboxRAM` to the mirror buffer via `Map`/`Unmap`. Adjacent dirty pages are coalesced into contiguous runs for efficient `memcpy`:
+Dirty pages are flushed from `s_pXboxRAM` to the mirror buffer via `UpdateSubresource` with `D3D11_BOX`. Adjacent dirty pages are coalesced into contiguous runs:
 
 ```cpp
 // Current implementation (CxbxPageTrackerFlushToGPU)
@@ -498,22 +477,21 @@ void CxbxPageTrackerFlushToGPU() {
     SyncTiledPagesBack();                         // Tiled→contiguous
     CxbxPageTrackerSyncIdentityToContiguous();    // Identity→contiguous
 
-    // Bulk dirty (>25% of pages): DISCARD + full memcpy
-    if (count > PAGE_COUNT / 4 && s_bFirstFlushOfFrame) {
-        g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-        memcpy(mapped.pData, (void*)CONTIG_BASE, CONTIG_SIZE);
-        g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+    // Bulk dirty (>25% of pages): full 64 MiB upload (no box)
+    if (count > PAGE_COUNT / 4) {
+        g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, nullptr,
+            (const void*)CONTIG_BASE, CONTIG_SIZE, 0);
     } else {
-        // Incremental: NO_OVERWRITE, coalesced contiguous runs
-        g_pD3DDeviceContext->Map(s_pMirrorBuf, 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped);
-        // Walk page list, merge consecutive pages, memcpy per run
-        g_pD3DDeviceContext->Unmap(s_pMirrorBuf, 0);
+        // Incremental: one UpdateSubresource per coalesced page run
+        D3D11_BOX box = { offset, 0, 0, offset + runBytes, 1, 1 };
+        g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box,
+            (const void*)startAddr, runBytes, 0);
     }
     s_bFirstFlushOfFrame = false;
 }
 ```
 
-Because `s_pMirrorBuf` is `D3D11_USAGE_DYNAMIC`, `WRITE_DISCARD` orphans the old allocation (safe for prior draws that are GPU-pipelined against the old buffer instance) and `WRITE_NO_OVERWRITE` promises the driver that only regions not currently in flight are being written.
+Because `s_pMirrorBuf` is `D3D11_USAGE_DEFAULT`, `UpdateSubresource` copies data into the GPU buffer directly. The driver manages internal double-buffering to avoid stalling prior GPU commands.
 
 ---
 
@@ -594,14 +572,12 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite) {
                                        PAGE_SIZE_, PAGE_READWRITE, &old);
                     }
                 }
-                // Staged readback: host RT → staging texture → Map → memcpy
-                // Creates staging texture per readback (not cached)
-                D3D11_TEXTURE2D_DESC stagingDesc = ...;
-                g_pD3DDeviceContext->CopyResource(pStaging, pRT->pTexture);
-                g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &m);
+                // Staged readback: host RT → cached staging texture → Map → memcpy
+                // Staging texture is cached per RegisteredRT (created alongside RT)
+                g_pD3DDeviceContext->CopyResource(pRT->pStagingTex, pRT->pTexture);
+                g_pD3DDeviceContext->Map(pRT->pStagingTex, 0, D3D11_MAP_READ, 0, &m);
                 CopyLinearWithPitch(...); // or swizzle_rect for SWIZZLE surfaces
-                g_pD3DDeviceContext->Unmap(pStaging, 0);
-                pStaging->Release();
+                g_pD3DDeviceContext->Unmap(pRT->pStagingTex, 0);
             }
             LeaveCriticalSection(&s_D3D11ContextLock);
             return true;
@@ -620,7 +596,6 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite) {
 ```
 
 **Key differences from proposed design:**
-- Staging texture is created per-readback rather than cached per-RT (allocation cost per fault).
 - The critical section uses `TryEnterCriticalSection` — on contention, the handler degrades gracefully by returning stale data rather than blocking.
 - CPU writes to GPU-dirty pages restore access and discard GPU data without readback (CPU wins).
 
@@ -632,7 +607,7 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite) {
 
 For vertex and index data (Draw Arrays path), dirty pages are flushed from contiguous memory to `s_pMirrorBuf` in `CxbxPageTrackerFlushToGPU()` at the first draw after Present. The VS then samples data directly from the mirror buffer via its ByteAddressBuffer SRV (t0).
 
-For cases where a vertex buffer aliases GPU-rendered memory, `CxbxPageTrackerFlushGPUDirtyToMirror()` performs an additional targeted readback: it reads back the D3D11 RT into Xbox RAM, then copies the affected pages to the mirror buffer via `MAP_WRITE_NO_OVERWRITE`.
+For cases where a vertex buffer aliases GPU-rendered memory, `CxbxPageTrackerFlushGPUDirtyToMirror()` performs an additional targeted readback: it reads back the D3D11 RT into Xbox RAM, then copies the affected pages to the mirror buffer via `UpdateSubresource`.
 
 For texture data, an additional deswizzle/decode pass is required after the flush — see §10.
 
@@ -852,33 +827,37 @@ The two caches are currently separate structures (a unified cache is a planned i
 
 ### 10.2 Texture Upload — Deswizzle Compute Shader
 
-For swizzled textures, a pre-draw CS dispatched per dirty surface reads raw bytes from a **dedicated staging buffer** (uploaded from Xbox RAM for the texture's address range) and writes decoded linear texels into the pool's `Texture2D UAV`. The Morton decode and channel reorder occur in the same dispatch:
+For swizzled textures, a pre-draw CS dispatched per dirty surface reads raw bytes from the **mirror buffer** (when the source is in contiguous memory) and writes decoded linear texels into the pool's `Texture2D UAV`. The Morton decode and channel reorder occur in the same dispatch:
 
 ```hlsl
 // CxbxUnswizzleCS.hlsl — deswizzle a POT Xbox texture into a host Texture2D pool entry
-ByteAddressBuffer   g_SrcBuffer : register(t0);  // Staging buffer with raw Xbox texture data
+ByteAddressBuffer   g_SrcBuffer : register(t0);  // Mirror buffer SRV (or fallback staging buffer)
 RWTexture2D<uint>   g_DstTexture : register(u0);  // Texture pool entry UAV
 
 cbuffer Params : register(b0) {
-    uint g_Width;
-    uint g_Height;
-    uint g_Depth;
-    uint g_BytesPerPixel;
-    uint g_RowPitch;
-    uint g_SlicePitch;
+    uint maskX;
+    uint maskY;
+    uint texWidth;
+    uint texHeight;
+    uint bpp;
+    uint pad0;
+    uint pad1;
+    uint srcOffset;  // Byte offset into source buffer (0 for staging, physAddr for mirror)
 }
 
 [numthreads(8, 8, 1)]
 void main(uint3 tid : SV_DispatchThreadID) {
-    if (tid.x >= g_Width || tid.y >= g_Height) return;
-    uint swizzledOffset = Swizzle2D(tid.x, tid.y, g_Width, g_Height, g_BytesPerPixel);
-    uint rawData = g_SrcBuffer.Load(swizzledOffset);
-    uint linearOffset = tid.y * g_RowPitch + tid.x * g_BytesPerPixel;
+    if (tid.x >= texWidth || tid.y >= texHeight) return;
+    uint mortonIdx = MortonEncode(tid.x, tid.y, maskX, maskY);
+    uint srcByteOffset = srcOffset + mortonIdx * bpp;
+    uint rawData = g_SrcBuffer.Load(srcByteOffset & ~3u) >> ((srcByteOffset & 3u) * 8u);
     g_DstTexture[tid.xy] = rawData;
 }
 ```
 
-**Key difference from proposed design:** The CS reads from a per-texture staging buffer (`g_SrcBuffer`), NOT from the main mirror buffer (`s_pMirrorBuf`). This is because the texture data must first be uploaded to a staging buffer sized to the texture (from Xbox RAM), then the CS deswizzles into the `Texture2D` UAV.
+When the swizzled source address is within Xbox contiguous memory (0x80000000–0x83FFFFFF), the dispatch function passes the mirror buffer SRV with `srcOffset = addr - CONTIGUOUS_MEMORY_BASE`, eliminating the per-texture staging buffer upload. A fallback path exists for sources outside contiguous memory that uploads to a dynamic staging buffer first.
+
+A BGRA variant (`CxbxUnswizzleBGRA_CS.hlsl`) handles formats requiring typed float4 UAV output with byte-to-float decode (A8R8G8B8, B4G4R4A4, B5G6R5, etc.).
 
 **Fallback:** When the texture format does not support UAV writes (e.g., certain compressed formats), the CPU-side `swizzle_rect()` / `unswizzle_rect()` path is used instead, writing into a staging texture that is then `CopyResource`'d to the final `Texture2D`.
 
@@ -1151,34 +1130,35 @@ Combiner topology (stage count, dot/mux flags, texture modes) is JIT-compiled to
 
 ### 14.1 Swizzled Texture Deswizzle (Compute → Texture2D UAV)
 
-As described in §10.2, the deswizzle CS reads raw bytes from a per-texture staging `ByteAddressBuffer` and writes decoded texels to a `Texture2D` UAV. Before the draw, the UAV binding is released and the texture is rebound as an SRV:
+As described in §10.2, the deswizzle CS reads raw bytes from the mirror buffer SRV (when source is in contiguous memory) or a fallback staging buffer, and writes decoded texels to a `Texture2D` UAV. The `srcOffset` cbuffer parameter provides the byte offset into the source buffer. Before the draw, the UAV binding is released and the texture is rebound as an SRV:
 
 ```hlsl
 // Current implementation (CxbxUnswizzleCS.hlsl)
-ByteAddressBuffer   g_SrcBuffer  : register(t0);  // staging buffer (per-texture upload)
+ByteAddressBuffer   g_SrcBuffer  : register(t0);  // Mirror buffer SRV (or staging fallback)
 RWTexture2D<uint>   g_DstTexture : register(u0);  // texture pool entry UAV
 
 cbuffer UnswizzleParams : register(b0) {
-    uint g_Width;
-    uint g_Height;
-    uint g_Depth;
-    uint g_BytesPerPixel;
-    uint g_RowPitch;
-    uint g_SlicePitch;
+    uint maskX;
+    uint maskY;
+    uint texWidth;
+    uint texHeight;
+    uint bpp;
+    uint pad0;
+    uint pad1;
+    uint srcOffset;  // Byte offset into source (physAddr - CONTIG_BASE for mirror path)
 }
 
 [numthreads(8, 8, 1)]
 void main(uint3 tid : SV_DispatchThreadID) {
-    if (tid.x >= g_Width || tid.y >= g_Height) return;
-    uint swizzledOffset = Swizzle2D(tid.x, tid.y, g_Width, g_Height, g_BytesPerPixel);
-    uint rawData = g_SrcBuffer.Load(swizzledOffset);
+    if (tid.x >= texWidth || tid.y >= texHeight) return;
+    uint mortonIdx = MortonEncode(tid.x, tid.y, maskX, maskY);
+    uint srcByteOffset = srcOffset + mortonIdx * bpp;
+    uint rawData = g_SrcBuffer.Load(srcByteOffset & ~3u) >> ((srcByteOffset & 3u) * 8u);
     g_DstTexture[tid.xy] = rawData;
 }
 ```
 
-A BGRA variant handles A8R8G8B8 textures that need channel reordering during deswizzle. Formats that do not support UAV writes fall back to CPU-side `unswizzle_rect()`.
-
-**Proposed improvement:** Read directly from the combined `g_GpuMem` buffer using a `SurfaceBase` offset, eliminating the per-texture staging upload step and reducing CPU→GPU bandwidth.
+A BGRA variant handles A8R8G8B8 and other typed-decode formats (B4G4R4A4, B5G6R5, etc.) using float4 UAV output with per-format decode logic. Formats that do not support UAV writes fall back to CPU-side `unswizzle_rect()`.
 
 ### 14.2 CMP Vertex Attribute Decode (Inline in VS)
 
@@ -1294,19 +1274,18 @@ Deswizzle CS dispatched for surface  → clear     ─         unchanged    Pool
 
 **Key architectural properties (current implementation):**
 
-- `s_TextureDirtyBitmap` and `s_GpuDirtyBitmap` are separate `uint32_t[512]` arrays. In the current single-threaded access model (flush runs on the same thread as draw), non-atomic operations are sufficient.
-- The flush is gated by `s_bFirstFlushOfFrame`, ensuring only one `GetWriteWatch` + buffer upload per frame. Mid-frame `CxbxPageTrackerFlushGPUDirtyToMirror()` handles the VB-aliases-RT case with targeted NO_OVERWRITE uploads.
-- RT readbacks use `PAGE_NOACCESS` (not `PAGE_GUARD`). Access is restored on the entire RT range before the `CopyResource` + `memcpy` to prevent nested faults. Staging textures are created per-readback (not cached).
+- `s_TextureDirtyBitmap` and `s_GpuDirtyBitmap` are `alignas(64) volatile uint32_t[512]` arrays with `_InterlockedOr`/`_InterlockedAnd` atomic access for thread-safe VEH operation.
+- The flush is gated by `s_bFirstFlushOfFrame`, ensuring only one `GetWriteWatch` + buffer upload per frame. Mid-frame `CxbxPageTrackerFlushGPUDirtyToMirror()` handles the VB-aliases-RT case with targeted `UpdateSubresource` uploads.
+- RT readbacks use `PAGE_NOACCESS` (not `PAGE_GUARD`). Access is restored on the entire RT range before the `CopyResource` + `memcpy` to prevent nested faults. Staging textures are cached per-RT (created alongside RT registration).
 - The RT-as-texture fast path (§7.2) eliminates any CPU round-trip for GPU→GPU surface feedback: shadow maps, reflections, post-process intermediates all stay entirely on the host GPU.
-- Vertex data flush uses `Map(WRITE_DISCARD)` for bulk (>25% pages dirty, first flush) or `Map(WRITE_NO_OVERWRITE)` for incremental. Adjacent dirty pages are coalesced into contiguous runs before `memcpy`.
-- PGRAPH register state is uploaded as a separate `StructuredBuffer<uint>` at t12 via `Map/Unmap`, gated by a generation counter. PFB registers are consumed CPU-side only. VS program instructions (`g_XFPR`) and VS constants (`cbuffer b0`) are uploaded separately.
+- Vertex data flush uses `UpdateSubresource` with `D3D11_BOX` for incremental updates. When >25% of pages are dirty, a full-buffer `UpdateSubresource` (no box) is used. Adjacent dirty pages are coalesced into contiguous runs.
+- PGRAPH register state is appended to the combined mirror buffer at offset `GPU_PGRAPH_BASE = 0x04000000` and uploaded via `UpdateSubresource` with `D3D11_BOX`, gated by a generation counter. PFB (0x04002000) and PVIDEO (0x04003000) buffer space is reserved; upload calls exist but are commented out until shaders need them.
+- NV2A MMIO registers are backed by a flat 16 MiB `VirtualAlloc` region (`g_pNV2AMMIO`) with only engine block pages committed (40 KB total). Each `NV2AState` sub-struct's `uint32_t* regs` points into this flat buffer.
+- The deswizzle CS reads directly from the mirror buffer SRV when the source address is in contiguous memory, eliminating per-texture staging buffer uploads. A fallback staging path remains for non-contiguous sources.
 - Total XboxRAM coherency metadata: 4 × 2048 = 8192 bytes (GpuDirty, TextureDirty, TiledCommitted, IdentityAlloc), fully resident in L1 cache on any modern CPU.
 
-**Proposed improvements (not yet implemented):**
+**Remaining future improvements:**
 
-- Combined `s_pGpuMem` buffer (§2.2) with appended MMIO blocks for single-binding shader access.
-- Flat 16 MiB `s_pNV2AMMIO` allocation replacing `NV2AState` struct (§2.3) for memcpy-based upload.
-- Cache-line-aligned bitmaps with `_InterlockedOr8`/`_InterlockedAnd8` for lock-free multi-threaded access.
 - AVX2 bulk bitmap scan for large texture ranges (§4.3).
-- Per-RT cached staging textures instead of per-readback allocation (§6.2).
-- Deswizzle CS reading directly from the mirror buffer instead of a per-texture staging buffer (§10.2).
+- PFB/PVIDEO shader access — enable upload calls when tiling-aware texture fetch or overlay compositing is implemented.
+- Eliminate PSAuxCBLayout by deriving all fields in-shader from the PGRAPH SRV.

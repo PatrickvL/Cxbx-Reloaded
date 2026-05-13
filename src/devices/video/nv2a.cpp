@@ -335,6 +335,56 @@ void nv2a_vblank_interrupt(void *opaque)
 #define NV_PRAMIN_ADDR   0x00700000
 #define NV_PRAMIN_SIZE              0x100000
 
+// Flat MMIO backing storage — 16 MiB reserved, only engine block pages committed.
+uint8_t* g_pNV2AMMIO = nullptr;
+
+static void CxbxAllocateFlatMMIO(NV2AState *d)
+{
+	// Reserve 16 MiB virtual address space (no physical memory committed yet)
+	g_pNV2AMMIO = (uint8_t*)VirtualAlloc(nullptr, NV2A_MMIO_TOTAL_SIZE,
+		MEM_RESERVE, PAGE_NOACCESS);
+	if (!g_pNV2AMMIO) {
+		CxbxrAbort("VirtualAlloc failed to reserve NV2A flat MMIO buffer (16 MiB). Error 0x%08X", GetLastError());
+	}
+
+	// Commit only the pages where actual register blocks reside
+	struct { uint32_t offset; uint32_t size; } blocks[] = {
+		{ NV2A_MMIO_OFF_PMC,     NV_PMC_REGS_BYTES },      // 4 KB
+		{ NV2A_MMIO_OFF_PFIFO,   NV_PFIFO_REGS_BYTES },    // 8 KB
+		{ NV2A_MMIO_OFF_PVIDEO,  NV_PVIDEO_REGS_BYTES },   // 4 KB
+		{ NV2A_MMIO_OFF_PTIMER,  NV_PTIMER_REGS_BYTES },   // 4 KB
+		{ NV2A_MMIO_OFF_PFB,     NV_PFB_REGS_BYTES },      // 4 KB
+		{ NV2A_MMIO_OFF_PGRAPH,  NV_PGRAPH_REGS_BYTES },   // 8 KB
+		{ NV2A_MMIO_OFF_PCRTC,   NV_PCRTC_REGS_BYTES },    // 4 KB
+		{ NV2A_MMIO_OFF_PRAMDAC, NV_PRAMDAC_REGS_BYTES },  // 4 KB
+	};
+
+	for (auto& blk : blocks) {
+		LPVOID ret = VirtualAlloc(g_pNV2AMMIO + blk.offset, blk.size,
+			MEM_COMMIT, PAGE_READWRITE);
+		if (!ret) {
+			CxbxrAbort("VirtualAlloc failed to commit NV2A MMIO block at offset 0x%06X (size %u). Error 0x%08X",
+				blk.offset, blk.size, GetLastError());
+		}
+	}
+
+	// Point each struct's regs pointer into the flat buffer
+	d->pmc.regs     = (uint32_t*)(g_pNV2AMMIO + NV2A_MMIO_OFF_PMC);
+	d->pfifo.regs   = (uint32_t*)(g_pNV2AMMIO + NV2A_MMIO_OFF_PFIFO);
+	d->pvideo.regs  = (uint32_t*)(g_pNV2AMMIO + NV2A_MMIO_OFF_PVIDEO);
+	d->ptimer.regs  = (uint32_t*)(g_pNV2AMMIO + NV2A_MMIO_OFF_PTIMER);
+	d->pfb.regs     = (uint32_t*)(g_pNV2AMMIO + NV2A_MMIO_OFF_PFB);
+	d->pgraph.regs  = (uint32_t*)(g_pNV2AMMIO + NV2A_MMIO_OFF_PGRAPH);
+	d->pcrtc.regs   = (uint32_t*)(g_pNV2AMMIO + NV2A_MMIO_OFF_PCRTC);
+	d->pramdac.regs = (uint32_t*)(g_pNV2AMMIO + NV2A_MMIO_OFF_PRAMDAC);
+
+	printf("[0x%.4X] INIT: NV2A flat MMIO buffer reserved at %p (16 MiB, %zu KB committed)\n",
+		GetCurrentThreadId(), g_pNV2AMMIO,
+		(NV_PMC_REGS_BYTES + NV_PFIFO_REGS_BYTES + NV_PVIDEO_REGS_BYTES +
+		 NV_PTIMER_REGS_BYTES + NV_PFB_REGS_BYTES + NV_PGRAPH_REGS_BYTES +
+		 NV_PCRTC_REGS_BYTES + NV_PRAMDAC_REGS_BYTES) / 1024);
+}
+
 void CxbxReserveNV2AMemory(NV2AState *d)
 {
 	// The NV2A memory was reserved already by the loader!
@@ -355,6 +405,9 @@ void CxbxReserveNV2AMemory(NV2AState *d)
 
 	printf("[0x%.4X] INIT: Allocated %d MiB of Xbox NV2A PRAMIN memory at 0x%.8x to 0x%.8x\n",
 		GetCurrentThreadId(), d->pramin.ramin_size / ONE_MB, (uintptr_t)d->pramin.ramin_ptr, (uintptr_t)d->pramin.ramin_ptr + d->pramin.ramin_size - 1);
+
+	// Allocate flat MMIO backing buffer and point struct regs pointers into it
+	CxbxAllocateFlatMMIO(d);
 }
 
 /* NV2ADevice */
