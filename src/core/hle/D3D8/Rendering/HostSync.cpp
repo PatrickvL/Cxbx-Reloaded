@@ -31,9 +31,12 @@
 // use format color codes with the LU_IMAGE or LC_IMAGE prefix.
 // These occupy specific ranges in the 8-bit color code field.
 static inline bool IsNV2AColorFormatLinear(uint32_t colorFmt) {
-	// LU_IMAGE range 1: 0x10..0x20
+	// LU_IMAGE range 1: 0x10..0x20, but excluding SZ_A8 (0x19) and SZ_A8Y8 (0x1A)
+	// which are swizzled formats embedded in this range.
 	if (colorFmt >= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A1R5G5B5
-		&& colorFmt <= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8Y8)
+		&& colorFmt <= NV097_SET_TEXTURE_FORMAT_COLOR_LU_IMAGE_A8Y8
+		&& colorFmt != NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8
+		&& colorFmt != NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8Y8)
 		return true;
 	// LC_IMAGE (YUV): 0x24..0x26
 	if (colorFmt >= NV097_SET_TEXTURE_FORMAT_COLOR_LC_IMAGE_CR8YB8CB8YA8
