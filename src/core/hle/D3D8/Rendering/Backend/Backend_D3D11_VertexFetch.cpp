@@ -34,6 +34,7 @@
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // NV2A_get_vertex_attribute_value_pointer
+#include "core\hle\D3D8\Rendering\IndexBufferConvert.h" // CxbxGetClockWiseWindingOrder
 #include "devices\Xbox.h"              // For extern NV2ADevice* g_NV2A
 #include "devices\video\nv2a.h"        // For NV2AState, PGRAPHState, VertexAttribute, nv2a_regs.h
 
@@ -215,22 +216,9 @@ static UINT                      s_LayoutCBGeneration = 0;
 static UINT                      s_LastLayoutCBGeneration = UINT_MAX;
 
 // ******************************************************************
-// * Layout constant buffer structure (must match CxbxVertexLayoutCB in HLSL)
+// * Layout constant buffer structure (shared with HLSL via CxbxVertexFetchLayout.hlsli)
 // ******************************************************************
-struct VertexFetchLayoutCB {
-	// Header: 8 uints (32 bytes, matches HLSL CxbxVertexLayoutCB)
-	UINT PrimType;        // 0=normal, 1=quad, 2=fan, 3=quadstrip, 4=lineloop
-	UINT IndexedDraw;     // 0=non-indexed, 1=indexed 16-bit, 2=indexed 32-bit
-	UINT IndexOffset;     // Byte offset into index data
-	UINT NumAttribs;      // Number of active attributes
-	UINT NumVerts;        // Original Xbox vertex count (for lineloop wrap)
-	UINT VertexOffset;    // Added to each resolved vertex index before VB fetch
-	                      //   Non-indexed: StartVertex
-	                      //   Indexed: BaseVertexIndex
-	UINT Pad6;
-	UINT Pad7;
-	UINT Attribs[16][4];  // Per-attribute: elemOffset, stride, format, streamBase
-};
+#include "core\hle\D3D8\Rendering\Shaders\CxbxVertexFetchLayout.hlsli"
 
 // ******************************************************************
 // * Map NV2A hardware format + count to CXBX_VTXFMT_* constant
@@ -591,6 +579,9 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 		else
 			pCB->VertexOffset = vertexStart;
 
+		// Quad winding: must match NV2A SETUPRASTER front face setting
+		pCB->WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
+
 		// Fill per-attribute descriptors — default all to NONE (use sticky defaults)
 		for (UINT a = 0; a < 16; a++) {
 			pCB->Attribs[a][0] = 0;  // elemOffset
@@ -740,6 +731,9 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 		pCB->NumAttribs = 16;
 		pCB->NumVerts = vertexCount;
 		pCB->VertexOffset = 0;
+
+		// Quad winding: must match NV2A SETUPRASTER front face setting
+		pCB->WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
 
 		for (UINT a = 0; a < 16; a++) {
 			pCB->Attribs[a][0] = a * kAttrSize;       // elemOffset

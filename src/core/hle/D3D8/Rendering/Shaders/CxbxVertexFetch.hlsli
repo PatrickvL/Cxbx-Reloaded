@@ -28,29 +28,9 @@ Buffer<float2> g_VtxSNorm16x2 : register(t2);  // R16G16_SNORM: 2 signed normali
 Buffer<float4> g_VtxUNorm8x4  : register(t3);  // R8G8B8A8_UNORM: 4 unsigned normalized bytes
 
 // ---------------------------------------------------------------
-// Vertex layout constant buffer (b1)
+// Vertex layout constant buffer (b1) — shared with C++
 // ---------------------------------------------------------------
-// Header: general draw state
-// Per-attribute: up to 16 attribute descriptors
-cbuffer CxbxVertexLayoutCB : register(b1)
-{
-    // Header (8 uint = 32 bytes, 2 × uint4 for alignment)
-    uint g_PrimType;        // 0=normal, 1=quad, 2=fan, 3=quadstrip, 4=lineloop
-    uint g_IndexedDraw;     // 0=non-indexed, 1=indexed 16-bit, 2=indexed 32-bit
-    uint g_IndexOffset;     // Byte offset into g_IdxData for the index data start
-    uint g_NumAttribs;      // Number of active vertex attributes (1..16)
-    uint g_NumVerts;        // Original Xbox vertex count (needed for lineloop wrap)
-    uint g_VertexOffset;    // Added to resolved index (StartVertex or BaseVertexIndex)
-    uint g_Pad6;
-    uint g_Pad7;
-
-    // Per-attribute descriptors (16 × uint4 = 256 bytes)
-    // x = byte offset from start of vertex in the stream
-    // y = stride (bytes per vertex for this stream)
-    // z = format (CXBX_VTXFMT_* constant)
-    // w = base byte offset of the stream within g_VtxData
-    uint4 g_Attribs[16];
-};
+#include "CxbxVertexFetchLayout.hlsli"
 
 // ---------------------------------------------------------------
 // Vertex format constants (matches C++ CXBX_VTXFMT_*)
@@ -107,82 +87,114 @@ uint ReadU16(uint byteOff)
 }
 
 // ---------------------------------------------------------------
-// Topology conversion: compute Xbox vertex index from SV_VertexID
+// Topology LUTs (file-scope; avoids per-call static init on some drivers)
 // ---------------------------------------------------------------
+static const uint kQuad[12] = {
+    0u, 1u, 3u, 1u, 2u, 3u,   // [0..5]  CW
+    0u, 3u, 1u, 1u, 3u, 2u,   // [6..11] CCW
+};
 
-// Quad list: each quad [0,1,2,3] becomes two triangles [0,1,2] and [0,2,3]
+static const uint kQuadStrip[6] = { 0u, 1u, 2u, 2u, 1u, 3u };
+
+// ---------------------------------------------------------------
+// QuadVertexIndex
+// Bit ops: /6 and %6 can't be bit-shifted (not powers of two),
+// but /4 and *4 inside can be.
+// ---------------------------------------------------------------
 uint QuadVertexIndex(uint vertId)
 {
+    // 6 is not a power of two — keep the divmod,
+    // but select the LUT once rather than branching inside the index.
     uint quad  = vertId / 6u;
     uint local = vertId % 6u;
-    // LUT: 0,1,2, 0,2,3
-    static const uint lut[6] = { 0u, 1u, 2u, 0u, 2u, 3u };
-    return quad * 4u + lut[local];
+    uint off   = kQuad[local + (WindingCW ? 0u : 6u)];
+    return (quad << 2u) + off;
 }
 
-// Triangle fan: fan apex is vertex 0, each tri uses (0, i+1, i+2)
+// ---------------------------------------------------------------
+// FanVertexIndex  — branchless
+// local==0 → 0,  local==1 → tri+1,  local==2 → tri+2
+// Equivalent: local * (tri + local)  with local==0 zeroing the product
+// ---------------------------------------------------------------
 uint FanVertexIndex(uint vertId)
 {
     uint tri   = vertId / 3u;
     uint local = vertId % 3u;
-    // local 0 → apex (0), local 1 → tri+1, local 2 → tri+2
-    return local == 0u ? 0u : (tri + local);
+    // When local==0: 0 * anything = 0 (apex)
+    // When local >0: local * (tri + local) would be wrong for local==2 tri==0 → 4, not 2.
+    // Correct branchless form:
+    return local ? (tri + local) : 0u;
+    // Note: a cmov/select is generated; ternary on a uint is always predicated in SM5.
 }
 
-// Quad strip: each quad uses vertices [2i, 2i+1, 2i+2, 2i+3]
-// Triangulated as [2i, 2i+1, 2i+2] and [2i+2, 2i+1, 2i+3]
+// ---------------------------------------------------------------
+// QuadStripVertexIndex
+// /6, %6 unavoidable; inner *2 → shift
+// ---------------------------------------------------------------
 uint QuadStripVertexIndex(uint vertId)
 {
     uint quad  = vertId / 6u;
     uint local = vertId % 6u;
-    uint base  = quad * 2u;
-    // LUT: +0,+1,+2, +2,+1,+3
-    static const uint lut[6] = { 0u, 1u, 2u, 2u, 1u, 3u };
-    return base + lut[local];
+    return (quad << 1u) + kQuadStrip[local];   // quad * 2
 }
 
-// Line loop: N vertices → N line segments rendered as LINELIST (2N host vertices)
-// Segment i uses vertices [i, (i+1) % N]
+// ---------------------------------------------------------------
+// LineLoopVertexIndex
+// /2 and %2 → bit ops; modulo numVerts stays as-is (not power of two in general)
+// ---------------------------------------------------------------
 uint LineLoopVertexIndex(uint vertId, uint numVerts)
 {
-    uint seg   = vertId / 2u;
-    uint local = vertId % 2u;
-    // local 0 → seg, local 1 → (seg+1) % numVerts
-    return local == 0u ? seg : ((seg + 1u) % numVerts);
+    uint seg   = vertId >> 1u;           // / 2
+    uint local = vertId &  1u;           // % 2
+    // Branchless: local==0 → seg, local==1 → (seg+1) % numVerts
+    // Use a select to avoid a branch on a uniform-ish value
+    uint next  = (seg + 1u >= numVerts) ? 0u : (seg + 1u);
+    return local ? next : seg;
 }
 
+// ---------------------------------------------------------------
+// ResolveVertexIndex
+//
 // Resolve the Xbox vertex index from the host SV_VertexID, applying
 // topology conversion and optional index buffer indirection.
+// ---------------------------------------------------------------
 uint ResolveVertexIndex(uint hostVertId)
 {
     // Step 1: topology remapping
     uint logicalIdx;
-    if (g_PrimType == CXBX_PRIM_QUAD) {
-        logicalIdx = QuadVertexIndex(hostVertId);
-    } else if (g_PrimType == CXBX_PRIM_FAN) {
-        logicalIdx = FanVertexIndex(hostVertId);
-    } else if (g_PrimType == CXBX_PRIM_QUADSTRIP) {
-        logicalIdx = QuadStripVertexIndex(hostVertId);
-    } else if (g_PrimType == CXBX_PRIM_LINELOOP) {
-        logicalIdx = LineLoopVertexIndex(hostVertId, g_NumVerts);
-    } else {
-        logicalIdx = hostVertId;
+
+    switch (PrimType)
+    {
+        case CXBX_PRIM_QUAD:      logicalIdx = QuadVertexIndex(hostVertId);                 break;
+        case CXBX_PRIM_FAN:       logicalIdx = FanVertexIndex(hostVertId);                  break;
+        case CXBX_PRIM_QUADSTRIP: logicalIdx = QuadStripVertexIndex(hostVertId);            break;
+        case CXBX_PRIM_LINELOOP:  logicalIdx = LineLoopVertexIndex(hostVertId, NumVerts); break;
+        default:                  logicalIdx = hostVertId;                                  break;
     }
 
     // Step 2: index buffer indirection (if indexed draw)
-    if (g_IndexedDraw == 1u) {
-        // 16-bit indices
-        uint byteAddr = g_IndexOffset + logicalIdx * 2u;
-        uint aligned  = byteAddr & ~3u;
-        uint shift    = (byteAddr & 3u) * 8u;
-        uint word     = g_IdxData.Load(aligned);
-        return ((word >> shift) & 0xFFFFu) + g_VertexOffset;
-    } else if (g_IndexedDraw == 2u) {
-        // 32-bit indices
-        return g_IdxData.Load(g_IndexOffset + logicalIdx * 4u) + g_VertexOffset;
+    uint rawIdx;
+
+    switch (IndexedDraw)
+    {
+        case 1u:  // 16-bit indices
+        {
+            uint byteAddr = IndexOffset + (logicalIdx << 1u);
+            uint aligned  = byteAddr & ~3u;
+            uint shift    = (byteAddr & 2u) << 3u;
+            rawIdx = (g_IdxData.Load(aligned) >> shift) & 0xFFFFu;
+            break;
+        }
+        case 2u:  // 32-bit indices
+            rawIdx = g_IdxData.Load(IndexOffset + (logicalIdx << 2u));
+            break;
+
+        default:
+            rawIdx = logicalIdx;
+            break;
     }
 
-    return logicalIdx + g_VertexOffset;
+    return rawIdx + VertexOffset;
 }
 
 // ---------------------------------------------------------------
@@ -380,7 +392,7 @@ void FetchAllAttributes(uint xboxVtxIdx, out float4 v[16])
 {
     [unroll]
     for (uint i = 0u; i < 16u; i++) {
-        v[i] = FetchAttribute(xboxVtxIdx, g_Attribs[i], g_VtxDefaults[i]);
+        v[i] = FetchAttribute(xboxVtxIdx, Attribs[i], g_VtxDefaults[i]);
     }
 }
 
