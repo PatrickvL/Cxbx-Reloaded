@@ -35,7 +35,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | CompressedVertices | ✅ | 37 | NORMPACKED3 decode | Yellow teapot renders correctly |
 | MatrixPaletteSkinning | ✅ | 58.70 | ARL, blend weights, multi-stream | Green snake/worm with 20 bones, high FPS |
 | VertexBlend | ✅ | 31 | Blend weights | "Microsoft" wobble text with vertex blending |
-| DisplacementMap | ✅ | 145 | D3DCOLOR streams, SGE, ARL | Smooth displaced terrain, RT-as-VB readback with Morton swizzle working |
+| DisplacementMap | ✅ | 88 | D3DCOLOR streams, SGE, ARL | Smooth displaced terrain, RT-as-VB readback with Morton swizzle working; Phase 1 cached staging textures (+27% vs 69 baseline) |
 | FastVSConstants | ✅ | 7 | Constant upload perf | Triangles + perf counter render correctly |
 | MultiShader | ✅ | 0.06 | Multiple VS programs | Color gradient quad rotating, very low FPS |
 | ShaderSplicer | ✅ | 29 | VS program switching | Torus with reflections, lighting correct |

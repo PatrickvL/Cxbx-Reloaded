@@ -103,7 +103,8 @@ struct RegisteredRT {
 	uint32_t height;        // Xbox height in pixels
 	uint32_t bpp;           // Bytes per pixel (2 or 4)
 	uint32_t surfaceType;   // NV097_SET_SURFACE_FORMAT_TYPE_PITCH or _SWIZZLE
-	ID3D11Texture2D* pTexture; // Host RT (NOT AddRef'd — owned by g_PgraphRTCache)
+	ID3D11Texture2D* pTexture;    // Host RT (NOT AddRef'd — owned by g_PgraphRTCache)
+	ID3D11Texture2D* pStagingTex; // Cached staging texture (AddRef'd, we own it)
 	bool needsReadback;     // True when RT has been rendered to since last readback
 };
 
@@ -158,6 +159,9 @@ static inline bool TestBit(const uint32_t* bitmap, uint32_t index)
 // * Handle a fault (GPU-dirty pages or tiled redirect)
 // * Called directly from the unified VEH in lleException.
 // ******************************************************************
+
+// Forward declaration (defined after CxbxPageTrackerRegisterRT)
+static ID3D11Texture2D* CreateStagingForRT(ID3D11Texture2D* pTexture);
 
 // Try to handle an access violation in the contiguous or tiled region.
 // Returns true if the fault was handled (page committed/restored).
@@ -228,23 +232,20 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 						}
 					}
 
-					// Now perform the actual GPU→CPU readback via staging texture
-					D3D11_TEXTURE2D_DESC desc = {};
-					pRT->pTexture->GetDesc(&desc);
+					// Now perform the actual GPU→CPU readback via cached staging texture
+					ID3D11Texture2D* pStaging = pRT->pStagingTex;
+					if (!pStaging) {
+						// Fallback: create on the fly if staging was not cached
+						pStaging = CreateStagingForRT(pRT->pTexture);
+					}
+					if (pStaging) {
+						D3D11_TEXTURE2D_DESC desc = {};
+						pRT->pTexture->GetDesc(&desc);
 
-					D3D11_TEXTURE2D_DESC stagingDesc = desc;
-					stagingDesc.Usage = D3D11_USAGE_STAGING;
-					stagingDesc.BindFlags = 0;
-					stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-					stagingDesc.MiscFlags = 0;
-
-					ID3D11Texture2D* pStaging = nullptr;
-					HRESULT hr = g_pD3DDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
-					if (SUCCEEDED(hr)) {
 						g_pD3DDeviceContext->CopyResource(pStaging, pRT->pTexture);
 
 						D3D11_MAPPED_SUBRESOURCE mapped = {};
-						hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
+						HRESULT hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
 						if (SUCCEEDED(hr)) {
 							// Copy from staging to Xbox RAM.
 							// Host RT may have different pitch than Xbox RT.
@@ -270,7 +271,10 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 
 							g_pD3DDeviceContext->Unmap(pStaging, 0);
 						}
-						pStaging->Release();
+						// Only release if it was a fallback allocation
+						if (pStaging != pRT->pStagingTex) {
+							pStaging->Release();
+						}
 					}
 
 					LeaveCriticalSection(&s_D3D11ContextLock);
@@ -488,6 +492,14 @@ void CxbxPageTrackerShutdown()
 		}
 	}
 
+	// Release cached staging textures for all registered RTs
+	for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
+		if (s_RegisteredRTs[i].pStagingTex) {
+			s_RegisteredRTs[i].pStagingTex->Release();
+			s_RegisteredRTs[i].pStagingTex = nullptr;
+		}
+	}
+
 	if (s_pMirrorSRV_UNORM8x4) { s_pMirrorSRV_UNORM8x4->Release(); s_pMirrorSRV_UNORM8x4 = nullptr; }
 	if (s_pMirrorSRV_SNORM16x2) { s_pMirrorSRV_SNORM16x2->Release(); s_pMirrorSRV_SNORM16x2 = nullptr; }
 	if (s_pMirrorSRV) { s_pMirrorSRV->Release(); s_pMirrorSRV = nullptr; }
@@ -686,6 +698,21 @@ void CxbxPageTrackerMarkGPUDirty(uint32_t startOffset, uint32_t size)
 // ******************************************************************
 // * Public: Register an RT for readback (called alongside MarkGPUDirty)
 // ******************************************************************
+// Helper: create a STAGING texture matching the given RT texture dimensions.
+static ID3D11Texture2D* CreateStagingForRT(ID3D11Texture2D* pTexture)
+{
+	if (!pTexture) return nullptr;
+	D3D11_TEXTURE2D_DESC desc = {};
+	pTexture->GetDesc(&desc);
+	desc.Usage = D3D11_USAGE_STAGING;
+	desc.BindFlags = 0;
+	desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	desc.MiscFlags = 0;
+	ID3D11Texture2D* pStaging = nullptr;
+	HRESULT hr = g_pD3DDevice->CreateTexture2D(&desc, nullptr, &pStaging);
+	return SUCCEEDED(hr) ? pStaging : nullptr;
+}
+
 void CxbxPageTrackerRegisterRT(uint32_t startOffset, uint32_t pitch,
 	uint32_t width, uint32_t height, uint32_t bpp,
 	uint32_t surfaceType, ID3D11Texture2D* pTexture)
@@ -693,19 +720,38 @@ void CxbxPageTrackerRegisterRT(uint32_t startOffset, uint32_t pitch,
 	// Check if already registered at this offset — update in place
 	for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
 		if (s_RegisteredRTs[i].offset == startOffset) {
-			s_RegisteredRTs[i] = { startOffset, pitch, width, height, bpp, surfaceType, pTexture, true };
+			// If RT dimensions/texture changed, recreate staging
+			if (s_RegisteredRTs[i].pTexture != pTexture ||
+				s_RegisteredRTs[i].width != width ||
+				s_RegisteredRTs[i].height != height ||
+				s_RegisteredRTs[i].bpp != bpp) {
+				if (s_RegisteredRTs[i].pStagingTex) {
+					s_RegisteredRTs[i].pStagingTex->Release();
+				}
+				s_RegisteredRTs[i] = { startOffset, pitch, width, height, bpp,
+					surfaceType, pTexture, CreateStagingForRT(pTexture), true };
+			} else {
+				s_RegisteredRTs[i].pitch = pitch;
+				s_RegisteredRTs[i].surfaceType = surfaceType;
+				s_RegisteredRTs[i].needsReadback = true;
+			}
 			return;
 		}
 	}
 
 	// Add new entry (evict oldest if full)
 	if (s_NumRegisteredRTs >= MAX_REGISTERED_RTS) {
+		// Release evicted entry's staging texture
+		if (s_RegisteredRTs[0].pStagingTex) {
+			s_RegisteredRTs[0].pStagingTex->Release();
+		}
 		// Shift down (FIFO eviction — oldest RT is least likely to be read back)
 		memmove(&s_RegisteredRTs[0], &s_RegisteredRTs[1],
 			(MAX_REGISTERED_RTS - 1) * sizeof(RegisteredRT));
 		s_NumRegisteredRTs = MAX_REGISTERED_RTS - 1;
 	}
-	s_RegisteredRTs[s_NumRegisteredRTs++] = { startOffset, pitch, width, height, bpp, surfaceType, pTexture, true };
+	s_RegisteredRTs[s_NumRegisteredRTs++] = { startOffset, pitch, width, height, bpp,
+		surfaceType, pTexture, CreateStagingForRT(pTexture), true };
 }
 
 // ******************************************************************
@@ -811,23 +857,20 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 				}
 			}
 
-			// Readback RT from D3D11 → staging → Xbox RAM
-			D3D11_TEXTURE2D_DESC desc = {};
-			rt.pTexture->GetDesc(&desc);
+			// Readback RT from D3D11 → cached staging → Xbox RAM
+			ID3D11Texture2D* pStaging = rt.pStagingTex;
+			if (!pStaging) {
+				// Fallback: create on the fly if staging was not cached
+				pStaging = CreateStagingForRT(rt.pTexture);
+			}
+			if (pStaging) {
+				D3D11_TEXTURE2D_DESC desc = {};
+				rt.pTexture->GetDesc(&desc);
 
-			D3D11_TEXTURE2D_DESC stagingDesc = desc;
-			stagingDesc.Usage = D3D11_USAGE_STAGING;
-			stagingDesc.BindFlags = 0;
-			stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-			stagingDesc.MiscFlags = 0;
-
-			ID3D11Texture2D* pStaging = nullptr;
-			HRESULT hr = g_pD3DDevice->CreateTexture2D(&stagingDesc, nullptr, &pStaging);
-			if (SUCCEEDED(hr)) {
 				g_pD3DDeviceContext->CopyResource(pStaging, rt.pTexture);
 
 				D3D11_MAPPED_SUBRESOURCE mapped = {};
-				hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
+				HRESULT hr = g_pD3DDeviceContext->Map(pStaging, 0, D3D11_MAP_READ, 0, &mapped);
 				if (SUCCEEDED(hr)) {
 					uint8_t* pDst = (uint8_t*)(CONTIG_BASE + rt.offset);
 					uint8_t* pSrc = (uint8_t*)mapped.pData;
@@ -852,7 +895,10 @@ bool CxbxPageTrackerFlushGPUDirtyToMirror(uint32_t startOffset, uint32_t size)
 
 					g_pD3DDeviceContext->Unmap(pStaging, 0);
 				}
-				pStaging->Release();
+				// Only release if it was a fallback allocation
+				if (pStaging != rt.pStagingTex) {
+					pStaging->Release();
+				}
 			}
 
 		}
