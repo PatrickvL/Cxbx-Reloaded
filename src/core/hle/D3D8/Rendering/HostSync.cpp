@@ -292,10 +292,15 @@ static ID3D11Resource* CxbxResolveTextureSource(
 	// For non-RT textures, try the texture side-map first, then HLE texture,
 	// then construct a synthetic Xbox texture from PGRAPH registers.
 	auto pgTex = CxbxLookupTextureByDataAddr(texOffset);
-	if (pgTex != nullptr) {
+	// Only use the side-map texture if its Format matches the current PGRAPH
+	// TEXFMT register. When the game reuses a VRAM address for a texture with
+	// different dimensions/format, the stale side-map entry must be ignored;
+	// the synthetic path below will build a correct descriptor from PGRAPH.
+	if (pgTex != nullptr && pgTex->Format == texFmtReg) {
 		pXboxBaseTexture = pgTex;
 	} else if (pXboxBaseTexture != xbox::zeroptr
-	           && pXboxBaseTexture != &s_SyntheticTextures[stage]) {
+	           && pXboxBaseTexture != &s_SyntheticTextures[stage]
+	           && ((xbox::X_D3DPixelContainer*)pXboxBaseTexture)->Format == texFmtReg) {
 		CxbxRegisterTextureByDataAddr(texOffset, pXboxBaseTexture);
 	} else {
 		// Build synthetic X_D3DBaseTexture from PGRAPH registers
