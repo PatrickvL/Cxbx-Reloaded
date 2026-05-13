@@ -103,21 +103,19 @@ implementation to the proposed unified design, minimizing regression risk at eac
 
 ---
 
-### Phase 6: Deswizzle CS Reads from Combined Buffer
+### Phase 6: Deswizzle CS Reads from Combined Buffer ✅ COMPLETE
 
 **Goal:** Eliminate per-texture staging buffer allocation for deswizzle CS.
 
-**Steps:**
-1. Modify `CxbxUnswizzleCS.hlsl` to accept a `SurfaceBase` cbuffer parameter and read from `g_GpuMem` at `SurfaceBase + swizzledOffset` instead of a separate `g_SrcBuffer`.
-2. Remove the per-texture staging buffer upload path in `HostResourceCreate.cpp`.
-3. The deswizzle CS now reads directly from the mirror buffer's RAM region.
-4. Ensure the mirror buffer is up-to-date before the CS dispatch (it already is, since `FlushToGPU` runs before texture bind).
+**Result:** Both `CxbxUnswizzleCS.hlsl` (raw uint path) and `CxbxUnswizzleBGRA_CS.hlsl` (typed float4 path) now accept a `srcOffset` cbuffer parameter. When the swizzled source address falls within the Xbox contiguous memory range (0x80000000–0x83FFFFFF), the dispatch function reads directly from the mirror buffer SRV at `srcOffset = addr - CONTIGUOUS_MEMORY_BASE`, eliminating the per-texture staging buffer upload. A fallback path remains for sources outside contiguous memory (e.g. tiled memory or system allocations) that still uses the dynamic staging buffer.
 
-**Validation:**
-- Texture correctness: compare deswizzled output texel-by-texel against CPU reference.
-- Performance: one fewer `CreateBuffer`+`UpdateSubresource` per dirty texture.
+**Implementation details:**
+- `CxbxUnswizzleCS.hlsl` cbuffer: `{maskX, maskY, texWidth, texHeight, bpp, pad0, pad1, srcOffset}`
+- `CxbxUnswizzleBGRA_CS.hlsl` cbuffer: `{maskX, maskY, texWidth, texHeight, bpp, fmtDecode, pad0, srcOffset}`
+- `Backend_D3D11_Compute.cpp`: `CxbxD3D11UnswizzleTexture()` checks if source is in contiguous range; if so, uses `CxbxPageTrackerGetMirrorSRV()` with computed byte offset instead of uploading to staging buffer.
+- Mirror buffer data is guaranteed fresh because `CxbxPageTrackerFlushToGPU()` runs before texture bind.
 
-**Risk:** Medium — changes the deswizzle data source. If the mirror buffer's region is stale (race with flush), textures would show corruption. Gate behind a feature flag initially.
+**Validated:** Water, Fur, CubeMap, Tiling, VolumeFog, BumpEarth — all render correctly with no texture corruption.
 
 ---
 

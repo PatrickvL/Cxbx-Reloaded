@@ -6,7 +6,8 @@ RWTexture2D<float4> g_DstTexture : register(u0);
 cbuffer UnswizzleConstants : register(b0) {
     uint maskX; uint maskY; uint texWidth; uint texHeight; uint bpp;
     uint fmtDecode; // 0=BGRA8, 1=B4G4R4A4, 2=B5G6R5, 3=B5G5R5A1, 4=R10G10B10A2
-    uint pad0; uint pad1;
+    uint pad0;
+    uint srcOffset; // byte offset into g_SrcBuffer (0 = staging, nonzero = mirror)
 };
 uint MortonIndex(uint x, uint y) {
     uint mx = maskX; uint my = maskY;
@@ -67,7 +68,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     uint x = dtid.x; uint y = dtid.y;
     if (x >= texWidth || y >= texHeight) return;
     uint mortonIdx = MortonIndex(x, y);
-    uint srcByteOffset = mortonIdx * bpp;
+    uint srcByteOffset = srcOffset + mortonIdx * bpp;
     uint value;
     if (bpp == 4) {
         value = g_SrcBuffer.Load(srcByteOffset);

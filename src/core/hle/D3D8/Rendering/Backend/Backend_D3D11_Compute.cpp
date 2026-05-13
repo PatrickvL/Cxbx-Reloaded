@@ -22,6 +22,8 @@
 // ******************************************************************
 
 #include "Backend_D3D11_Internal.h"
+#include "Backend_D3D11_PageTracker.h"
+#include "common/AddressRanges.h"
 #include "common/util/hasher.h"
 #include <unordered_map>
 
@@ -163,18 +165,31 @@ bool CxbxD3D11UnswizzleTexture(
 		return false;
 
 	UINT dataSize = width * height * bpp;
-	// Round up to DWORD alignment for ByteAddressBuffer
-	UINT bufferSize = (dataSize + 3) & ~3u;
 
-	// Ensure staging buffer is large enough
-	CxbxEnsureUnswizzleStagingBuffer(bufferSize);
-	if (!g_pD3D11UnswizzleStagingBuf || !g_pD3D11UnswizzleSRV)
-		return false;
-
-	// Upload swizzled source data to the staging buffer
-	HRESULT hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleStagingBuf, pSwizzledSrc, dataSize);
-	if (FAILED(hr))
-		return false;
+	// Determine SRV source: mirror buffer (zero-copy) or staging buffer (upload).
+	// If the source address is within contiguous memory, read directly from the
+	// GPU mirror buffer — no staging upload needed.
+	ID3D11ShaderResourceView* pSrcSRV = nullptr;
+	UINT srcOffset = 0;
+	uintptr_t srcAddr = (uintptr_t)pSwizzledSrc;
+	if (srcAddr >= CONTIGUOUS_MEMORY_BASE &&
+		srcAddr + dataSize <= CONTIGUOUS_MEMORY_BASE + XBOX_CONTIGUOUS_MEMORY_SIZE) {
+		// Mirror buffer path — data already uploaded by PageTracker flush
+		pSrcSRV = CxbxPageTrackerGetMirrorSRV();
+		srcOffset = (UINT)(srcAddr - CONTIGUOUS_MEMORY_BASE);
+	}
+	if (!pSrcSRV) {
+		// Fallback: upload to staging buffer
+		UINT bufferSize = (dataSize + 3) & ~3u;
+		CxbxEnsureUnswizzleStagingBuffer(bufferSize);
+		if (!g_pD3D11UnswizzleStagingBuf || !g_pD3D11UnswizzleSRV)
+			return false;
+		HRESULT hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleStagingBuf, pSwizzledSrc, dataSize);
+		if (FAILED(hr))
+			return false;
+		pSrcSRV = g_pD3D11UnswizzleSRV;
+		srcOffset = 0;
+	}
 
 	// Compute Morton masks (same algorithm as EmuUnswizzleBox)
 	UINT maskX = 0, maskY = 0;
@@ -199,15 +214,15 @@ bool CxbxD3D11UnswizzleTexture(
 	ID3D11UnorderedAccessView* pUAV = CxbxGetOrCreateTextureUAV(pTexture, uintFormat);
 	if (pUAV) {
 		// Fast path: raw uint bit-move via the standard unswizzle CS
-		UINT cbData[8] = { maskX, maskY, width, height, bpp, 0, 0, 0 };
-		hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleCB, cbData, sizeof(cbData));
+		UINT cbData[8] = { maskX, maskY, width, height, bpp, 0, 0, srcOffset };
+		HRESULT hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleCB, cbData, sizeof(cbData));
 		if (FAILED(hr))
 			return false;
 
 		UINT groupsX = (width + 7) / 8;
 		UINT groupsY = (height + 7) / 8;
 		CxbxD3D11DispatchCS(g_pD3D11UnswizzleCS, g_pD3D11UnswizzleCB,
-			1, &g_pD3D11UnswizzleSRV, pUAV, groupsX, groupsY, 1);
+			1, &pSrcSRV, pUAV, groupsX, groupsY, 1);
 		return true;
 	}
 
@@ -227,15 +242,15 @@ bool CxbxD3D11UnswizzleTexture(
 		return false;
 	}
 
-	UINT cbData[8] = { maskX, maskY, width, height, bpp, (UINT)fmtDecode, 0, 0 };
-	hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleCB, cbData, sizeof(cbData));
+	UINT cbData[8] = { maskX, maskY, width, height, bpp, (UINT)fmtDecode, 0, srcOffset };
+	HRESULT hr = CxbxD3D11UpdateDynamicBuffer(g_pD3D11UnswizzleCB, cbData, sizeof(cbData));
 	if (FAILED(hr))
 		return false;
 
 	UINT groupsX = (width + 7) / 8;
 	UINT groupsY = (height + 7) / 8;
 	CxbxD3D11DispatchCS(g_pD3D11UnswizzleBGRA_CS, g_pD3D11UnswizzleCB,
-		1, &g_pD3D11UnswizzleSRV, pUAV, groupsX, groupsY, 1);
+		1, &pSrcSRV, pUAV, groupsX, groupsY, 1);
 	return true;
 }
 
