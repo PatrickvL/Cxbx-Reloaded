@@ -83,28 +83,13 @@ implementation to the proposed unified design, minimizing regression risk at eac
 
 ---
 
-### Phase 4: Append PGRAPH Block to Mirror Buffer
+### Phase 4: Append PGRAPH Block to Mirror Buffer ✅ COMPLETE
 
 **Goal:** Eliminate the separate `g_pD3D11PGRegsBuf` (t12) binding.
 
-**Steps:**
-1. Increase `s_pMirrorBuf` size from 64 MiB to 64 MiB + 8 KB (PGRAPH).
-2. Define `GPU_PGRAPH_BASE = 0x04000000u` offset constant.
-3. After each `pg->regs_generation` change, call `UpdateSubresource` with a box at `[GPU_PGRAPH_BASE, GPU_PGRAPH_BASE + 8KB)` to upload `pg->regs[]`.
-4. Create HLSL header `CxbxGpuMemAccess.hlsli` with:
-   ```hlsl
-   ByteAddressBuffer g_GpuMem : register(t0);
-   #define PG_UINT_NEW(reg) g_GpuMem.Load(0x04000000u + (reg))
-   ```
-5. Dual-path shaders: `#ifdef USE_COMBINED_BUFFER` selects between `g_GpuMem.Load(PGRAPH_BASE + reg)` and the old `g_PGRegs[reg >> 2]`. Both paths must produce identical results.
-6. Once validated, remove `g_pD3D11PGRegsBuf`, its SRV, and the t12 binding.
-7. Free the t12 slot.
+**Result:** PGRAPH registers (8 KB) are now appended to the combined mirror buffer at offset `GPU_PGRAPH_BASE = 0x04000000u`. The separate StructuredBuffer and its SRV have been removed. HLSL shaders use `ByteAddressBuffer g_PGRegs : register(t12)` loading from `GPU_PGRAPH_BASE + byteOff`. Upload uses `CxbxPageTrackerUploadPGRAPH()` via `UpdateSubresource` with a D3D11_BOX. PS JIT cache version bumped to v2 to invalidate stale disk-cached shaders compiled against the old StructuredBuffer declaration.
 
-**Validation:**
-- Pixel-perfect comparison: RC interpreter output with old t12 path vs. new combined-buffer path.
-- PS JIT output must be unchanged (it bakes register offsets as constants).
-
-**Risk:** Medium — shader changes touch every draw. The dual-path `#ifdef` provides safe rollback.
+**Validated:** DisplacementMap, Trees, Fur, CubeMap, DolphinClassic, SphereMap — all render correctly.
 
 ---
 

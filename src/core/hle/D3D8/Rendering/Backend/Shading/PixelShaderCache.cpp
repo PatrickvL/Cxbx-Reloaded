@@ -37,7 +37,14 @@ extern PSAuxCBLayout g_LastPSAuxCB;
 // ============================================================
 // State capture — everything that affects generated HLSL
 // ============================================================
+
+// Bump this whenever the JIT HLSL infrastructure changes (e.g. resource
+// binding type changes, new includes, register slot moves). This ensures
+// stale disk-cached .cso files are not reused after incompatible changes.
+static constexpr uint32_t PS_JIT_CACHE_VERSION = 2; // v2: ByteAddressBuffer t12
+
 struct PSJITKey {
+    uint32_t cacheVersion;      // invalidates disk cache on HLSL infra changes
     uint32_t numStages;
     uint32_t combinectl;        // full COMBINECTL (includes flags)
     uint32_t rgbInputs[8];
@@ -1151,6 +1158,7 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     // Capture current state — read directly from PGRAPH registers
     // (no dependency on g_LastPSAuxCB or CxbxD3D11UploadRCInterpreterState)
     PSJITKey key = {};
+    key.cacheVersion = PS_JIT_CACHE_VERSION;
     key.combinectl = pg->regs[0x1940 >> 2];
     key.numStages = key.combinectl & 0xFF;
     if (key.numStages == 0) key.numStages = 1;

@@ -15,16 +15,20 @@
 #define CXBX_PGRAPH_REGS_HLSLI
 
 // ============================================================
-// The raw PGRAPH regs[] buffer — 2048 uint32 elements (8 KB).
-// Bound as a StructuredBuffer<uint> at t12 (avoids t0-t11 texture slots).
-// Shared by both PS (register combiner interpreter) and VS (vertex
-// shader interpreter) stages — the same GPU buffer is bound to both.
+// The combined GPU memory buffer — 64 MiB RAM + appended PGRAPH (8 KB).
+// Bound as a ByteAddressBuffer at t12 for the PS/VS stages that need
+// PGRAPH register access. This is the same physical buffer as t0
+// (g_VtxData) but bound separately so the PS stage can access it
+// without conflicting with texture slots at t0-t3.
 // ============================================================
-StructuredBuffer<uint> g_PGRegs : register(t12);
+ByteAddressBuffer g_PGRegs : register(t12);
 
-// --- Register index helper (byte offset → array index) ---
-uint PG_UINT(uint byteOff)   { return g_PGRegs[byteOff >> 2]; }
-float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs[byteOff >> 2]); }
+// PGRAPH block sits at offset 0x04000000 within the combined buffer
+#define GPU_PGRAPH_BASE 0x04000000u
+
+// --- Register accessor helpers (byte offset → raw load) ---
+uint PG_UINT(uint byteOff)   { return g_PGRegs.Load(GPU_PGRAPH_BASE + byteOff); }
+float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs.Load(GPU_PGRAPH_BASE + byteOff)); }
 
 // ============================================================
 // NV_PGRAPH register byte offsets (from nv2a_regs.h)

@@ -53,6 +53,7 @@ static constexpr float TEXFMTFIXUP_OPAQUEA  = 5.0f; // X8R8G8B8/X1R5G5B5: force 
 #include <cstring> // For std::memcpy
 #include "Rendering\Backend\Backend_D3D11.h"
 #include "Rendering\Backend\Backend_D3D11_Internal.h"
+#include "Rendering\Backend\Backend_D3D11_PageTracker.h"
 #include "Rendering\Backend\Shading\PixelShaderCache.h"
 #include "Rendering\Backend\Backend_D3D11_Profiler.h"
 
@@ -261,29 +262,30 @@ PSAuxCBLayout g_LastPSAuxCB = {};
 // texture, and fog state through PFIFO → PGRAPH before each draw.
 void CxbxD3D11UploadRCInterpreterState()
 {
-	if (!g_pD3D11RCInterpreterAuxCB || !g_pD3D11PGRegsBuf)
+	if (!g_pD3D11RCInterpreterAuxCB)
 		return;
 
 	// PGRAPH source (populated by the puller thread via pushbuffer methods)
 	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
-	// --- Upload raw PGRAPH regs[] to the StructuredBuffer<uint> SRV ---
+	// --- Upload raw PGRAPH regs[] to the combined mirror buffer ---
 	// Only re-upload when regs actually changed (dirty generation bumped
 	// by nv097_dispatch_method on any register write).
 	// NOTE: Both JIT and interpreter shaders read dynamic constants (C0/C1,
-	// fog color, bump matrices) from this SRV at runtime, so upload is required.
+	// fog color, bump matrices) from this buffer at runtime, so upload is required.
 	{
 		static uint32_t s_LastRegsGeneration = ~0u;
 		if (pg->dirty[NV2A_DIRTY_PGRAPH] != s_LastRegsGeneration) {
 			s_LastRegsGeneration = pg->dirty[NV2A_DIRTY_PGRAPH];
-			CxbxD3D11UpdateDynamicBuffer(g_pD3D11PGRegsBuf, pg->regs, sizeof(pg->regs));
+			CxbxPageTrackerUploadPGRAPH(pg->regs, sizeof(pg->regs));
 		}
 	}
-	// Bind the regs SRV to PS t12 (skip if already bound — pointer never changes)
+	// Bind the raw mirror SRV to PS t12 (skip if already bound — pointer never changes)
 	{
 		static bool s_RegsSRVBound = false;
 		if (!s_RegsSRVBound) {
-			g_pD3DDeviceContext->PSSetShaderResources(CXBX_D3D11_PS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
+			ID3D11ShaderResourceView* pSRV = CxbxPageTrackerGetMirrorSRV();
+			g_pD3DDeviceContext->PSSetShaderResources(CXBX_D3D11_PS_PGREGS_SRV_SLOT, 1, &pSRV);
 			s_RegsSRVBound = true;
 		}
 	}

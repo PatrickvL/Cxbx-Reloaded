@@ -65,6 +65,13 @@ static constexpr uint32_t PAGE_SIZE_      = 4096;
 static constexpr uint32_t PAGE_COUNT      = CONTIG_SIZE / PAGE_SIZE_; // 16384
 static constexpr uint32_t BITMAP_DWORDS   = PAGE_COUNT / 32;         // 512
 
+// PGRAPH register block appended after the 64 MiB RAM region.
+// Offset 0x04000000 chosen to sit just past the 64 MiB RAM window.
+static constexpr uint32_t GPU_PGRAPH_BASE = 0x04000000u;
+static constexpr uint32_t GPU_PGRAPH_SIZE = 2048 * sizeof(uint32_t); // 8 KB
+// Total GPU buffer size: 64 MiB (RAM) + 8 KB (PGRAPH)
+static constexpr uint32_t GPU_BUFFER_SIZE = CONTIG_SIZE + GPU_PGRAPH_SIZE;
+
 // ******************************************************************
 // * GPU-dirty bitmap (1 bit per 4 KB page) — set when RT writes here
 // * Uses interlocked 32-bit ops for thread-safe VEH access.
@@ -378,9 +385,9 @@ void CxbxPageTrackerInit()
 		s_D3D11ContextLockInitialized = true;
 	}
 
-	// Create 64 MiB GPU mirror buffer (DEFAULT ByteAddressBuffer with SRV + UAV)
+	// Create GPU mirror buffer: 64 MiB RAM + 8 KB PGRAPH (DEFAULT, SRV + UAV)
 	D3D11_BUFFER_DESC desc = {};
-	desc.ByteWidth = CONTIG_SIZE;
+	desc.ByteWidth = GPU_BUFFER_SIZE;
 	desc.Usage = D3D11_USAGE_DEFAULT;
 	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 	desc.CPUAccessFlags = 0;
@@ -392,12 +399,12 @@ void CxbxPageTrackerInit()
 		return;
 	}
 
-	// Create raw buffer SRV
+	// Create raw buffer SRV (covers full buffer: RAM + PGRAPH)
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Format = DXGI_FORMAT_R32_TYPELESS;
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
 	srvDesc.BufferEx.FirstElement = 0;
-	srvDesc.BufferEx.NumElements = CONTIG_SIZE / 4; // 16M elements of R32
+	srvDesc.BufferEx.NumElements = GPU_BUFFER_SIZE / 4;
 	srvDesc.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
 
 	hr = g_pD3DDevice->CreateShaderResourceView(s_pMirrorBuf, &srvDesc, &s_pMirrorSRV);
@@ -428,13 +435,13 @@ void CxbxPageTrackerInit()
 			EmuLog(LOG_LEVEL::WARNING, "PageTrackerInit: Failed to create UNORM8x4 SRV (hr=0x%08X)", hr);
 	}
 
-	// Create RWByteAddressBuffer UAV (for future compute shader use)
+	// Create RWByteAddressBuffer UAV (covers full buffer: RAM + PGRAPH)
 	{
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 		uavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
 		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uavDesc.Buffer.FirstElement = 0;
-		uavDesc.Buffer.NumElements = CONTIG_SIZE / 4;
+		uavDesc.Buffer.NumElements = GPU_BUFFER_SIZE / 4;
 		uavDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
 		hr = g_pD3DDevice->CreateUnorderedAccessView(s_pMirrorBuf, &uavDesc, &s_pMirrorUAV);
 		if (FAILED(hr))
@@ -945,6 +952,19 @@ ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_UNORM8x4()
 ID3D11UnorderedAccessView* CxbxPageTrackerGetMirrorUAV()
 {
 	return s_pMirrorUAV;
+}
+
+// ******************************************************************
+// * Public: Upload PGRAPH regs[] to the appended region of the mirror buffer
+// ******************************************************************
+void CxbxPageTrackerUploadPGRAPH(const void* pRegs, uint32_t size)
+{
+	if (!s_pMirrorBuf || !g_pD3DDeviceContext || !pRegs || size == 0)
+		return;
+	if (size > GPU_PGRAPH_SIZE)
+		size = GPU_PGRAPH_SIZE;
+	D3D11_BOX box = { GPU_PGRAPH_BASE, 0, 0, GPU_PGRAPH_BASE + size, 1, 1 };
+	g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box, pRegs, size, 0);
 }
 
 // ******************************************************************

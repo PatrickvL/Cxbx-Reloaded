@@ -144,6 +144,11 @@ ID3D11ShaderResourceView* CxbxPageTrackerGetMirrorSRV_UNORM8x4();  // R8G8B8A8_U
 struct ID3D11UnorderedAccessView;
 ID3D11UnorderedAccessView* CxbxPageTrackerGetMirrorUAV();
 
+// Upload PGRAPH register block to the appended region of the mirror buffer.
+// Called when pg->dirty[NV2A_DIRTY_PGRAPH] changes. pRegs points to pg->regs[],
+// size is typically 8192 bytes (2048 × uint32).
+void CxbxPageTrackerUploadPGRAPH(const void* pRegs, uint32_t size);
+
 // ******************************************************************
 // * Texture-dirty tracking (dirty-page-gated texture update)
 // ******************************************************************

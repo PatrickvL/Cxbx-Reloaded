@@ -57,8 +57,8 @@ void CxbxInvalidatePgraphRTBinding();
 static const UINT CXBX_D3D11_VS_CB_SLOT = 0;
 static const UINT CXBX_D3D11_VS_CB_COUNT = 256;
 static const UINT CXBX_D3D11_PS_CB_SLOT = 0;
-static const UINT CXBX_D3D11_PS_PGREGS_SRV_SLOT = 12; // StructuredBuffer<uint> g_PGRegs : register(t12)
-static const UINT CXBX_D3D11_VS_PGREGS_SRV_SLOT = 12; // Same g_PGRegs shared with VS : register(t12)
+static const UINT CXBX_D3D11_PS_PGREGS_SRV_SLOT = 12; // ByteAddressBuffer (mirror SRV) : register(t12) — PGRAPH at offset 0x04000000
+static const UINT CXBX_D3D11_VS_PGREGS_SRV_SLOT = 12; // Same mirror SRV shared with VS : register(t12)
 static const UINT CXBX_D3D11_VS_XFPR_SRV_SLOT = 5;     // StructuredBuffer<uint4> g_XFPR : register(t5) — NV2A XFPR (Transform Program RAM)
 
 // ******************************************************************

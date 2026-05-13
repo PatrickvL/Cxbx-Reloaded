@@ -36,7 +36,8 @@
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A
 #include "core\hle\D3D8\Rendering\NV2A_PGRAPH_Helpers.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
-#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Internal.h" // For g_pD3D11XFPRBuf, g_pD3D11PGRegsSRV
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Internal.h" // For g_pD3D11XFPRBuf, g_pD3D11XFPRSRV
+#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h" // For CxbxPageTrackerGetMirrorSRV
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
 #include "devices\xbox.h"
 #include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST
@@ -107,7 +108,7 @@ ID3D11VertexShader* InitShader(const char* csoName, const char* label, ID3DBlob*
 // active instruction slot and loops until FLD_FINAL.
 void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 {
-	if (!g_pD3D11XFPRBuf || !g_pD3D11PGRegsSRV)
+	if (!g_pD3D11XFPRBuf)
 		return;
 
 	// PGRAPH source: upload the entire program_data[] array (XFPR mirror).
@@ -125,7 +126,8 @@ void CxbxD3D11UploadVSInterpreterState(const xbox::dword_xt* /*pXboxMicrocode*/)
 	// Bind VS interpreter SRVs once - pointers are stable for device lifetime
 	static bool s_VSInterpreterSRVsBound = false;
 	if (!s_VSInterpreterSRVsBound) {
-		g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PGREGS_SRV_SLOT, 1, &g_pD3D11PGRegsSRV);
+		ID3D11ShaderResourceView* pMirrorSRV = CxbxPageTrackerGetMirrorSRV();
+		g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_PGREGS_SRV_SLOT, 1, &pMirrorSRV);
 		g_pD3DDeviceContext->VSSetShaderResources(CXBX_D3D11_VS_XFPR_SRV_SLOT, 1, &g_pD3D11XFPRSRV);
 		s_VSInterpreterSRVsBound = true;
 	}
