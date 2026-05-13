@@ -69,8 +69,19 @@ static constexpr uint32_t BITMAP_DWORDS   = PAGE_COUNT / 32;         // 512
 // Offset 0x04000000 chosen to sit just past the 64 MiB RAM window.
 static constexpr uint32_t GPU_PGRAPH_BASE = 0x04000000u;
 static constexpr uint32_t GPU_PGRAPH_SIZE = 2048 * sizeof(uint32_t); // 8 KB
-// Total GPU buffer size: 64 MiB (RAM) + 8 KB (PGRAPH)
-static constexpr uint32_t GPU_BUFFER_SIZE = CONTIG_SIZE + GPU_PGRAPH_SIZE;
+
+// PFB register block appended after PGRAPH.
+// Offset 0x04002000 = GPU_PGRAPH_BASE + 8 KB (PGRAPH is 8 KB-aligned).
+static constexpr uint32_t GPU_PFB_BASE = 0x04002000u;
+static constexpr uint32_t GPU_PFB_SIZE = 1024 * sizeof(uint32_t); // 4 KB (NV_PFB_SIZE)
+
+// PVIDEO register block appended after PFB.
+// Offset 0x04003000 = GPU_PFB_BASE + 4 KB.
+static constexpr uint32_t GPU_PVIDEO_BASE = 0x04003000u;
+static constexpr uint32_t GPU_PVIDEO_SIZE = 1024 * sizeof(uint32_t); // 4 KB (NV_PVIDEO_SIZE)
+
+// Total GPU buffer size: 64 MiB (RAM) + 8 KB (PGRAPH) + 4 KB (PFB) + 4 KB (PVIDEO)
+static constexpr uint32_t GPU_BUFFER_SIZE = CONTIG_SIZE + GPU_PGRAPH_SIZE + GPU_PFB_SIZE + GPU_PVIDEO_SIZE;
 
 // ******************************************************************
 // * GPU-dirty bitmap (1 bit per 4 KB page) — set when RT writes here
@@ -964,6 +975,32 @@ void CxbxPageTrackerUploadPGRAPH(const void* pRegs, uint32_t size)
 	if (size > GPU_PGRAPH_SIZE)
 		size = GPU_PGRAPH_SIZE;
 	D3D11_BOX box = { GPU_PGRAPH_BASE, 0, 0, GPU_PGRAPH_BASE + size, 1, 1 };
+	g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box, pRegs, size, 0);
+}
+
+// ******************************************************************
+// * Public: Upload PFB regs[] to the appended region of the mirror buffer
+// ******************************************************************
+void CxbxPageTrackerUploadPFB(const void* pRegs, uint32_t size)
+{
+	if (!s_pMirrorBuf || !g_pD3DDeviceContext || !pRegs || size == 0)
+		return;
+	if (size > GPU_PFB_SIZE)
+		size = GPU_PFB_SIZE;
+	D3D11_BOX box = { GPU_PFB_BASE, 0, 0, GPU_PFB_BASE + size, 1, 1 };
+	g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box, pRegs, size, 0);
+}
+
+// ******************************************************************
+// * Public: Upload PVIDEO regs[] to the appended region of the mirror buffer
+// ******************************************************************
+void CxbxPageTrackerUploadPVIDEO(const void* pRegs, uint32_t size)
+{
+	if (!s_pMirrorBuf || !g_pD3DDeviceContext || !pRegs || size == 0)
+		return;
+	if (size > GPU_PVIDEO_SIZE)
+		size = GPU_PVIDEO_SIZE;
+	D3D11_BOX box = { GPU_PVIDEO_BASE, 0, 0, GPU_PVIDEO_BASE + size, 1, 1 };
 	g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box, pRegs, size, 0);
 }
 

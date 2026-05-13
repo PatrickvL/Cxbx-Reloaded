@@ -93,20 +93,13 @@ implementation to the proposed unified design, minimizing regression risk at eac
 
 ---
 
-### Phase 5: Append PFB Block
+### Phase 5: Append PFB and PVIDEO Blocks ✅ COMPLETE
 
-**Goal:** Make tile configuration accessible from shaders.
+**Goal:** Make tile configuration and video overlay state accessible from shaders.
 
-**Steps:**
-1. Increase buffer to 64 MiB + 8 KB (PGRAPH) + 4 KB (PFB).
-2. Define `GPU_PFB_BASE = 0x04002000u`.
-3. Upload `d->pfb.regs[]` on tile register writes.
-4. Add `PFBLoad(reg)` macro to `CxbxGpuMemAccess.hlsli`.
-5. Initially, no shader code reads PFB — this phase just makes it available for future use (e.g., tiling-aware texture fetch, compute-based RT readback with untile).
+**Result:** PFB registers (4 KB) appended at `GPU_PFB_BASE = 0x04002000u`, PVIDEO registers (4 KB) at `GPU_PVIDEO_BASE = 0x04003000u`. Buffer space reserved and upload functions implemented, but upload calls are commented out until shaders actually read these regions. Total buffer: 64 MiB + 8 KB + 4 KB + 4 KB. Purely additive for future use (tiling-aware texture fetch, compute-based RT readback, overlay compositing).
 
-**Validation:** Buffer size increase only; no shader behavior change.
-
-**Risk:** Very low — additive only.
+**Validated:** Trees renders correctly.
 
 ---
 

@@ -149,6 +149,16 @@ ID3D11UnorderedAccessView* CxbxPageTrackerGetMirrorUAV();
 // size is typically 8192 bytes (2048 × uint32).
 void CxbxPageTrackerUploadPGRAPH(const void* pRegs, uint32_t size);
 
+// Upload PFB register block to the appended region of the mirror buffer.
+// Called on PFB tile register writes. pRegs points to d->pfb.regs[],
+// size is typically 4096 bytes (1024 × uint32).
+void CxbxPageTrackerUploadPFB(const void* pRegs, uint32_t size);
+
+// Upload PVIDEO register block to the appended region of the mirror buffer.
+// Called alongside PGRAPH upload. pRegs points to d->pvideo.regs[],
+// size is typically 4096 bytes (1024 × uint32).
+void CxbxPageTrackerUploadPVIDEO(const void* pRegs, uint32_t size);
+
 // ******************************************************************
 // * Texture-dirty tracking (dirty-page-gated texture update)
 // ******************************************************************
