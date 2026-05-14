@@ -140,6 +140,13 @@ static uint32_t s_NumRegisteredRTs = 0;
 static CRITICAL_SECTION s_D3D11ContextLock;
 static bool s_D3D11ContextLockInitialized = false;
 
+// Thread ID that currently owns s_D3D11ContextLock.  Used by the VEH handler
+// to detect same-thread re-entrancy: Windows critical sections are recursive,
+// so TryEnterCriticalSection succeeds even when the *same* thread already holds
+// the lock.  Re-entering D3D11 (CopyResource/Map while inside UpdateSubresource)
+// corrupts driver state and crashes the Intel UMD.
+static volatile DWORD s_D3D11ContextOwnerThread = 0;
+
 // ******************************************************************
 // * GPU mirror buffer (64 MiB ByteAddressBuffer — DEFAULT + SRV + UAV)
 // ******************************************************************
@@ -244,7 +251,9 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 			// On CPU writes, skip readback — the CPU is overwriting the data.
 			if (!isWrite && g_pD3DDeviceContext != nullptr &&
 				s_D3D11ContextLockInitialized &&
+				s_D3D11ContextOwnerThread != GetCurrentThreadId() &&
 				TryEnterCriticalSection(&s_D3D11ContextLock)) {
+				s_D3D11ContextOwnerThread = GetCurrentThreadId();
 				// Find which registered RT covers this page
 				const RegisteredRT* pRT = nullptr;
 				for (uint32_t i = 0; i < s_NumRegisteredRTs; i++) {
@@ -317,10 +326,12 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 						}
 					}
 
+					s_D3D11ContextOwnerThread = 0;
 					LeaveCriticalSection(&s_D3D11ContextLock);
 					return true;
 				}
 
+				s_D3D11ContextOwnerThread = 0;
 				LeaveCriticalSection(&s_D3D11ContextLock);
 			}
 
@@ -665,14 +676,18 @@ void CxbxPageTrackerOnPresent()
 // ******************************************************************
 void CxbxPageTrackerLockD3D11Context()
 {
-	if (s_D3D11ContextLockInitialized)
+	if (s_D3D11ContextLockInitialized) {
 		EnterCriticalSection(&s_D3D11ContextLock);
+		s_D3D11ContextOwnerThread = GetCurrentThreadId();
+	}
 }
 
 void CxbxPageTrackerUnlockD3D11Context()
 {
-	if (s_D3D11ContextLockInitialized)
+	if (s_D3D11ContextLockInitialized) {
+		s_D3D11ContextOwnerThread = 0;
 		LeaveCriticalSection(&s_D3D11ContextLock);
+	}
 }
 
 // ******************************************************************
