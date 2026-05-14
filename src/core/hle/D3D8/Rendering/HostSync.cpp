@@ -832,7 +832,16 @@ void CxbxUpdateHostVertexShaderConstants()
 			CxbxUpdateDirtyVertexShaderConstants(constant_floats, pg->xf.xfctx_dirty);
 		}
 		else {
-			CxbxSetVertexShaderConstantF(0, constant_floats, X_D3DVS_CONSTREG_COUNT);
+			// Mode transition from fixed-function → programmable.
+			// Only do full upload if any constants actually changed.
+			uint32_t anyDirty = pg->xf.xfctx_dirty[0] | pg->xf.xfctx_dirty[1]
+			                  | pg->xf.xfctx_dirty[2] | pg->xf.xfctx_dirty[3]
+			                  | pg->xf.xfctx_dirty[4] | pg->xf.xfctx_dirty[5];
+			if (anyDirty) {
+				CxbxSetVertexShaderConstantF(0, constant_floats, X_D3DVS_CONSTREG_COUNT);
+				// Clear all dirty bits since we just uploaded everything
+				memset(pg->xf.xfctx_dirty, 0, sizeof(pg->xf.xfctx_dirty));
+			}
 		}
 
 		isXboxConstants = true;
