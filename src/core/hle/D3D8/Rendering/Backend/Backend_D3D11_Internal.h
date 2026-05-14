@@ -56,7 +56,8 @@ extern ComPtr<ID3D11BlendState>        g_pD3DBlendState;
 // * Constant buffer shadow arrays
 // ******************************************************************
 extern float g_D3D11VSConstants[CXBX_D3D11_VS_CB_COUNT][4];
-extern bool  g_bD3D11VSConstantsDirty;
+extern UINT  g_D3D11VSConstantsDirtyMin;
+extern UINT  g_D3D11VSConstantsDirtyMax;
 
 // ******************************************************************
 // * Blit shader resources

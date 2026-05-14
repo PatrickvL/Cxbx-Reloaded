@@ -109,7 +109,8 @@ ComPtr<ID3D11BlendState>        g_pD3DBlendState;
 // ******************************************************************
    	   ID3D11Buffer *g_pD3D11VSConstantBuffer = nullptr;
 float         g_D3D11VSConstants[CXBX_D3D11_VS_CB_COUNT][4] = {};
-bool          g_bD3D11VSConstantsDirty = true;
+UINT          g_D3D11VSConstantsDirtyMin = 0;
+UINT          g_D3D11VSConstantsDirtyMax = CXBX_D3D11_VS_CB_COUNT; // full upload on first frame
 
 // ******************************************************************
 // * Blit shader resources (StretchRect replacement)
@@ -342,16 +343,23 @@ void CxbxSetVertexShaderConstantF(UINT startRegister, const float* pConstantData
 
 	UINT count = endRegister - startRegister;
 	memcpy(g_D3D11VSConstants[startRegister], pConstantData, count * sizeof(float) * 4);
-	g_bD3D11VSConstantsDirty = true;
+
+	// Expand dirty range to cover the written registers
+	if (startRegister < g_D3D11VSConstantsDirtyMin)
+		g_D3D11VSConstantsDirtyMin = startRegister;
+	if (endRegister > g_D3D11VSConstantsDirtyMax)
+		g_D3D11VSConstantsDirtyMax = endRegister;
 }
 
 void CxbxD3D11FlushVertexShaderConstants()
 {
-	if (!g_pD3D11VSConstantBuffer || !g_bD3D11VSConstantsDirty)
+	if (!g_pD3D11VSConstantBuffer || g_D3D11VSConstantsDirtyMin >= g_D3D11VSConstantsDirtyMax)
 		return;
 
-	CxbxD3D11UpdateDynamicBuffer(g_pD3D11VSConstantBuffer, g_D3D11VSConstants, sizeof(g_D3D11VSConstants));
-	g_bD3D11VSConstantsDirty = false;
+	g_pD3DDeviceContext->UpdateSubresource(g_pD3D11VSConstantBuffer, 0, nullptr, g_D3D11VSConstants, 0, 0);
+
+	g_D3D11VSConstantsDirtyMin = CXBX_D3D11_VS_CB_COUNT;
+	g_D3D11VSConstantsDirtyMax = 0;
 }
 
 // ******************************************************************
@@ -379,7 +387,7 @@ bool CxbxD3D11InitRCInterpreter()
 	}
 
 	// Create the auxiliary constant buffer (software-computed fields only)
-	hr = CxbxD3D11CreateConstantBuffer(sizeof(PSAuxCBLayout), true, &g_pD3D11RCInterpreterAuxCB);
+	hr = CxbxD3D11CreateConstantBuffer(sizeof(PSAuxCBLayout), false, &g_pD3D11RCInterpreterAuxCB);
 	if (FAILED(hr)) {
 		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter CreateConstantBuffer (aux) failed: 0x%08X", hr);
 		g_pD3D11RCInterpreterPS->Release();
@@ -543,7 +551,7 @@ void CxbxD3D11InitBlit()
 	}
 
 	// Create GS constant buffer (1 float4: inverse viewport dimensions + line width)
-	hr = CxbxD3D11CreateConstantBuffer(16, true, &g_pD3D11GSConstantBuffer);
+	hr = CxbxD3D11CreateConstantBuffer(16, false, &g_pD3D11GSConstantBuffer);
 	if (FAILED(hr)) {
 		EmuLog(LOG_LEVEL::WARNING, "CxbxD3D11InitBlit: Failed to create GS constant buffer");
 	}

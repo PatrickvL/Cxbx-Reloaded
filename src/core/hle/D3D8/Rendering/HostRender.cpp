@@ -384,7 +384,7 @@ void CreateDefaultDevice
 
 	// Create the vertex shader constant buffer for D3D11
 	{
-		HRESULT cbHr = CxbxD3D11CreateConstantBuffer(CXBX_D3D11_VS_CB_COUNT * sizeof(float) * 4, true, &g_pD3D11VSConstantBuffer);
+		HRESULT cbHr = CxbxD3D11CreateConstantBuffer(CXBX_D3D11_VS_CB_COUNT * sizeof(float) * 4, false, &g_pD3D11VSConstantBuffer);
 		DEBUG_D3DRESULT(cbHr, "g_pD3DDevice->CreateBuffer (VS constant buffer)");
 		if (SUCCEEDED(cbHr)) {
 			g_pD3DDeviceContext->VSSetConstantBuffers(CXBX_D3D11_VS_CB_SLOT, 1, &g_pD3D11VSConstantBuffer);

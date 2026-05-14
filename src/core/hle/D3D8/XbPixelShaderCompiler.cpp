@@ -495,7 +495,7 @@ void CxbxD3D11UploadRCInterpreterState()
 	}
 
 	// Upload aux cbuffer and bind to b0 (bind only once — buffer pointer is stable)
-	CxbxD3D11UpdateDynamicBuffer(g_pD3D11RCInterpreterAuxCB, &aux, sizeof(aux));
+	g_pD3DDeviceContext->UpdateSubresource(g_pD3D11RCInterpreterAuxCB, 0, nullptr, &aux, 0, 0);
 	{
 		static bool s_AuxCBBound = false;
 		if (!s_AuxCBBound) {

@@ -280,12 +280,12 @@ void CxbxD3D11VertexFetchInit()
 	HRESULT hr;
 
 	// Layout CB (b1) — 32 + 256 = 288 bytes
-	hr = CxbxD3D11CreateConstantBuffer(sizeof(VertexFetchLayoutCB), true, &s_pLayoutCB);
+	hr = CxbxD3D11CreateConstantBuffer(sizeof(VertexFetchLayoutCB), false, &s_pLayoutCB);
 	if (FAILED(hr))
 		EmuLog(LOG_LEVEL::WARNING, "VertexFetchInit: Failed to create layout CB");
 
 	// Defaults CB (b2) — 16 × float4 = 256 bytes
-	hr = CxbxD3D11CreateConstantBuffer(16 * 4 * sizeof(float), true, &s_pDefaultsCB);
+	hr = CxbxD3D11CreateConstantBuffer(16 * 4 * sizeof(float), false, &s_pDefaultsCB);
 	if (FAILED(hr))
 		EmuLog(LOG_LEVEL::WARNING, "VertexFetchInit: Failed to create defaults CB");
 }
@@ -388,11 +388,7 @@ static void UploadVertexDefaults()
 	if (!changed) return;
 	s_FirstCall = false;
 
-	D3D11_MAPPED_SUBRESOURCE mapped = {};
-	HRESULT hr = g_pD3DDeviceContext->Map(s_pDefaultsCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-	if (FAILED(hr)) return;
-
-	float* pDst = (float*)mapped.pData;
+	float defaults[16 * 4];
 	for (int i = 0; i < 16; i++) {
 		// TODO: NV2A hardware updates inline_value[] with the last vertex's data
 		// after each streamed draw, so a subsequent draw that doesn't stream an
@@ -402,14 +398,14 @@ static void UploadVertexDefaults()
 		// this, after each draw we'd need to read back the last vertex's attribute
 		// values from the CPU-side vertex data and write them to inline_value[].
 		const float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
-		pDst[i * 4 + 0] = pSrc[0];
-		pDst[i * 4 + 1] = pSrc[1];
-		pDst[i * 4 + 2] = pSrc[2];
-		pDst[i * 4 + 3] = pSrc[3];
+		defaults[i * 4 + 0] = pSrc[0];
+		defaults[i * 4 + 1] = pSrc[1];
+		defaults[i * 4 + 2] = pSrc[2];
+		defaults[i * 4 + 3] = pSrc[3];
 		std::memcpy(&s_CachedDefaults[i * 4], pSrc, sizeof(float) * 4);
 	}
 
-	g_pD3DDeviceContext->Unmap(s_pDefaultsCB, 0);
+	g_pD3DDeviceContext->UpdateSubresource(s_pDefaultsCB, 0, nullptr, defaults, 0, 0);
 }
 
 // ******************************************************************
@@ -558,36 +554,31 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 		if (!layoutDirty) goto skip_layout_upload;
 	}
 	{
-		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (FAILED(hr)) return;
+		VertexFetchLayoutCB cb = {};
 
-		VertexFetchLayoutCB* pCB = (VertexFetchLayoutCB*)mapped.pData;
-		memset(pCB, 0, sizeof(VertexFetchLayoutCB));
-
-		pCB->PrimType = primType;
-		pCB->IndexedDraw = indexedDraw;
-		pCB->IndexOffset = indexOffset;
-		pCB->NumAttribs = 16; // Always provide all 16 attribute descriptors
-		pCB->NumVerts = DrawContext.dwVertexCount; // Original vertex count (for lineloop)
+		cb.PrimType = primType;
+		cb.IndexedDraw = indexedDraw;
+		cb.IndexOffset = indexOffset;
+		cb.NumAttribs = 16; // Always provide all 16 attribute descriptors
+		cb.NumVerts = DrawContext.dwVertexCount; // Original vertex count (for lineloop)
 
 		// VertexOffset: adjusts the resolved vertex index before VB fetch.
 		// Non-indexed draws: StartVertex (DrawVertices skips the first N vertices).
 		// Indexed draws: BaseVertexIndex (SetIndices offset added to each index).
 		if (indexedDraw)
-			pCB->VertexOffset = DrawContext.dwBaseVertexIndex;
+			cb.VertexOffset = DrawContext.dwBaseVertexIndex;
 		else
-			pCB->VertexOffset = vertexStart;
+			cb.VertexOffset = vertexStart;
 
 		// Quad winding: must match NV2A SETUPRASTER front face setting
-		pCB->WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
+		cb.WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
 
 		// Fill per-attribute descriptors — default all to NONE (use sticky defaults)
 		for (UINT a = 0; a < 16; a++) {
-			pCB->Attribs[a][0] = 0;  // elemOffset
-			pCB->Attribs[a][1] = 0;  // stride
-			pCB->Attribs[a][2] = CXBX_VTXFMT_NONE; // format — default is "use default value"
-			pCB->Attribs[a][3] = 0;  // streamBase
+			cb.Attribs[a][0] = 0;  // elemOffset
+			cb.Attribs[a][1] = 0;  // stride
+			cb.Attribs[a][2] = CXBX_VTXFMT_NONE; // format — default is "use default value"
+			cb.Attribs[a][3] = 0;  // streamBase
 		}
 
 		// PGRAPH path: reads vertex_attributes[] directly from NV2A state.
@@ -604,10 +595,10 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 				for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
 					const VertexAttribute& attr = pg->vertex_attributes[i];
 				if (attr.count == 0) continue; // count 0 = disabled (format 0 is valid: UB_D3D/D3DCOLOR)
-					pCB->Attribs[i][0] = packedOffset; // elemOffset within packed vertex
-					pCB->Attribs[i][1] = DrawContext.uiXboxVertexStreamZeroStride;
-					pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
-					pCB->Attribs[i][3] = 0; // streamBase = 0 (UP staging buffer)
+					cb.Attribs[i][0] = packedOffset; // elemOffset within packed vertex
+					cb.Attribs[i][1] = DrawContext.uiXboxVertexStreamZeroStride;
+					cb.Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
+					cb.Attribs[i][3] = 0; // streamBase = 0 (UP staging buffer)
 					packedOffset += attr.count * attr.size;
 				}
 			} else {
@@ -616,18 +607,17 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 					const VertexAttribute& attr = pg->vertex_attributes[i];
 					if (attr.count == 0) continue;
 
-					pCB->Attribs[i][0] = 0;           // elemOffset (baked into offset)
-					pCB->Attribs[i][1] = attr.stride;
-					pCB->Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
-					pCB->Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
+					cb.Attribs[i][0] = 0;           // elemOffset (baked into offset)
+					cb.Attribs[i][1] = attr.stride;
+					cb.Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
+					cb.Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
 				}
 			}
 		} else {
-			g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
 			return; // No NV2A state — can't draw
 		}
 
-		g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
+		g_pD3DDeviceContext->UpdateSubresource(s_pLayoutCB, 0, nullptr, &cb, 0, 0);
 	}
 skip_layout_upload:
 

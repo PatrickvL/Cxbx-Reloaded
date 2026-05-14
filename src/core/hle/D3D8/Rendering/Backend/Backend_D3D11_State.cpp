@@ -695,7 +695,7 @@ void CxbxD3D11ApplyDirtyStates()
 			s_LastGSVpHeight = vpH;
 			s_LastGSLineWidth = g_fLineWidth;
 			float gsConstants[4] = { 1.0f / vpW, 1.0f / vpH, g_fLineWidth, 0.0f };
-			CxbxD3D11UpdateDynamicBuffer(g_pD3D11GSConstantBuffer, gsConstants, sizeof(gsConstants));
+			g_pD3DDeviceContext->UpdateSubresource(g_pD3D11GSConstantBuffer, 0, nullptr, gsConstants, 0, 0);
 			g_pD3DDeviceContext->GSSetConstantBuffers(0, 1, &g_pD3D11GSConstantBuffer);
 		}
 	}
