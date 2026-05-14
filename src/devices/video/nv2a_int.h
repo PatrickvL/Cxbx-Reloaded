@@ -253,7 +253,9 @@ enum NV2ADirtyGroup {
 	NV2A_DIRTY_RASTERIZER,       // rasterizer state changed (cull, polygon, etc.)
 	NV2A_DIRTY_DEPTH_STENCIL,    // depth/stencil state changed
 	NV2A_DIRTY_SHADER,           // shader/combiner program changed
-	NV2A_DIRTY_COUNT             // total number of groups (max 7 for 3-bit field in store)
+	// --- Values above here (1–7) fit in the 3-bit dirty_group table field ---
+	NV2A_DIRTY_LIGHTING,         // ltctxa/ltctxb/ltc1/light write (not table-assignable, set in code)
+	NV2A_DIRTY_COUNT
 };
 
 typedef struct KelvinState {

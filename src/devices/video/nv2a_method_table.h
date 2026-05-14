@@ -544,6 +544,7 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 
 	// ---- Direct dispatch: resolve target array base pointer ----
 	uint32_t *base;
+	auto dirty_group = entry.dirty_group;
 	uint32_t *row_dirty = nullptr;
 	switch (target) {
 	default: // NV097_TARGET_PGRAPH (0) — most common path
@@ -555,18 +556,22 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 		break;
 	case NV097_TARGET_LTCTXA:
 		base = (uint32_t*)pg->xf.ltctxa;
+		dirty_group = NV2A_DIRTY_LIGHTING;
 		row_dirty = pg->xf.ltctxa_dirty;
 		break;
 	case NV097_TARGET_LTCTXB:
 		base = (uint32_t*)pg->xf.ltctxb;
+		dirty_group = NV2A_DIRTY_LIGHTING;
 		row_dirty = pg->xf.ltctxb_dirty;
 		break;
 	case NV097_TARGET_LTC1:
 		base = (uint32_t*)pg->xf.ltc1;
+		dirty_group = NV2A_DIRTY_LIGHTING;
 		row_dirty = pg->xf.ltc1_dirty;
 		break;
 	case NV097_TARGET_LIGHT:
 		base = (uint32_t*)pg->light;
+		dirty_group = NV2A_DIRTY_LIGHTING;
 		break;
 	}
 
@@ -594,8 +599,8 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 			unsigned row_idx = entry.reg_index / 4;
 			row_dirty[row_idx / 32] |= (1u << (row_idx % 32));
 		}
-		if (entry.dirty_group)
-			pg->dirty[entry.dirty_group]++;
+		if (dirty_group)
+			pg->dirty[dirty_group]++;
 	}
 
 	return old_val;

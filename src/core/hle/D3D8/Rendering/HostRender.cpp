@@ -986,6 +986,16 @@ static void UpdateFFState_TextureStates(PGRAPHState* pg)
 // material to white to let the shader's (material × light) give the correct pre-multiplied result.
 static void UpdateFFState_Lighting(PGRAPHState* pg, uint32_t csv0c)
 {
+	// Skip if no lighting-related state changed since last call.
+	// NV2A_DIRTY_LIGHTING covers ltctxa/ltctxb/ltc1/light writes;
+	// NV2A_DIRTY_PGRAPH covers CSV0_D (light enable mask) and CSV0_C (specular enable).
+	static uint32_t s_lastLightingGen = 0;
+	static uint32_t s_lastPgraphGen = 0;
+	if (pg->dirty[NV2A_DIRTY_LIGHTING] == s_lastLightingGen && pg->dirty[NV2A_DIRTY_PGRAPH] == s_lastPgraphGen)
+		return;
+	s_lastLightingGen = pg->dirty[NV2A_DIRTY_LIGHTING];
+	s_lastPgraphGen = pg->dirty[NV2A_DIRTY_PGRAPH];
+
 	// Helper to reinterpret uint32_t bit pattern as float
 	auto AsFloat = [](uint32_t u) -> float { float f; std::memcpy(&f, &u, 4); return f; };
 
