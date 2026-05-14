@@ -824,10 +824,8 @@ void CxbxKrnlEmulate(unsigned int reserved_systems, blocks_reserved_t blocks_res
 	char GitVersionEmuShared[GitVersionMaxLength];
 	g_EmuShared->GetGitVersion(GitVersionEmuShared);
 	if (std::strncmp(GitVersionEmuShared, GetGitVersionStr(), GetGitVersionLength()) != 0) {
-		PopupError(nullptr, "Mismatch detected between EmuShared and cxbx.exe/cxbxr-emu.dll, aborting."
+		PopupError(nullptr, "Mismatch detected between EmuShared and cxbx.exe/cxbxr-emu.dll, continue at your own risk!"
 			"\n\nPlease extract all contents from zip file and do not mix with older/newer builds.");
-		CxbxrShutDown();
-		return;
 	}
 
 	std::string tempStr;
