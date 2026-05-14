@@ -117,7 +117,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
 | Fire | ✅ | 15.88 | `Fire.xpu` pixel shader | Fire effect with ground plane, purple sky |
-| Water | ⚠️ | 64 | Bumpenvmap, reflection, aniso=4, fog, `water.xpu` | First frame fully textured (no water), later frames render water but all textures go white |
+| Water | ✅ | 50 | Bumpenvmap, reflection, aniso=4, fog, `water.xpu` | Pirate on dock, water with refraction/reflection, shark fin, ocean floor |
 | Glass | ✅ | 334 | Alpha test, `Glass.xpu` | Glass teapot with refraction + reflection, skybox environment now renders |
 | FocusBlur | ⚠️ | 185 | DPNDNT_AR/GB, 5 pixel shaders | Geometry now visible (robot, cylinders) instead of garbled, but blur effect not applied |
 | MotionBlur | ✅ | 116 | Motion blur with alpha test | Moon over purple horizon with motion blur |
@@ -171,10 +171,10 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | ~~Black teapot~~ | ~~CubeMap~~ | ~~Teapot lacks environment reflection~~ | ~~Fixed: PGRAPH RT cache stored faces as ArraySize=1; composed into cubemap~~ | ~~Fixed~~ |
 | ~~No sphere~~ | ~~SphereMap~~ | ~~Teapot only visible when rotated~~ | ~~Fixed: FF VS constant upload cache skipped re-upload when shared CB was overwritten by VP draws~~ | ~~Fixed~~ |
 | ~~Missing skybox~~ | ~~Glass~~ | ~~Cubemap environment background not rendered~~ | ~~Fixed: skybox now renders~~ | ~~Fixed~~ |
-| White textures | Water | First frame fully textured, then all textures go white once water renders | Texture binding corrupted when water render target is created/used | Medium |
+| ~~White textures~~ | ~~Water~~ | ~~First frame fully textured, then all textures go white once water renders~~ | ~~Fixed: VS JIT oD1/oB1 specular defaults were (1,1,1,1) instead of (0,0,0,1) — white specular saturated V1R0_SUM in final combiner~~ | ~~Fixed~~ |
 | No blur effect | FocusBlur | Geometry visible but blur effect not applied | DPNDNT_AR/GB dependent texture lookup not producing blur | Medium |
 | Blue band | PerPixelLightingVS | Globe renders but has incorrect bright blue band | Unknown VS lighting issue | Medium |
-| ZSprite depth | ZSprite | Teapots render but depth is disregarded | Z-sprite depth handling broken | Medium |
+| ~~ZSprite depth~~ | ~~ZSprite~~ | ~~Teapots render but depth is disregarded~~ | ~~Fixed: PS JIT depth-as-color remapping + DOT_ZW z-sprite depth output~~ | ~~Fixed~~ |
 | Black textures | PixelShader | Robot visible but textures partially black | Texture binding issue in multi-texture PS sample | Medium |
 | ~~No projected texture~~ | ~~ProjectedTexture~~ | ~~Title only, no geometry or projected texture~~ | ~~Fixed: now renders geometry with projected spotlight~~ | ~~Fixed~~ |
 | Paint fades | PaintEffect | Only works when pressing A, then fades back to black | Point sprite paint not persisting | Low |
@@ -215,9 +215,11 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | RT-as-VB scrambled | DisplacementMap | a8827161e | Readback gated on dirty bits (cleared prematurely by VEH); swizzle not applied. Fix: unconditional RT readback with Morton swizzle for VB flush path |
 | ProjectedTexture no geometry | ProjectedTexture | — | Geometry with projected spotlight now renders correctly |
 | Glass missing skybox | Glass | — | Skybox/environment background now renders behind glass teapot |
-| Water whitewashed | Water | — | Water surface with ripples and reflections now renders (was all whitewashed); boat still white |
+| Water whitewashed | Water | a3d0de021 | Water surface with ripples and reflections now renders; all textures correct. Root cause: VS JIT specular output defaults (oD1/oB1) were (1,1,1,1) instead of NV2A-correct (0,0,0,1) |
 | FocusBlur garbled | FocusBlur | — | Geometry now renders correctly instead of garbled/blocky checker patterns |
 | ShadowBuffer crash | ShadowBuffer | aefc3d5dc, d49dbd837, ecb85cce1 | Thread-safety locks on D3D11 context + use-after-free RTV fix + F24S8/F16 float depth clear decode |
+| ZSprite depth broken | ZSprite | 6692c9365 | PS JIT depth-as-color remapping + DOT_ZW z-sprite depth output |
+| VS specular defaults | Water, +others | a3d0de021 | VS JIT/interpreter oD1/oB1 defaulted to (1,1,1,1) — should be (0,0,0,1); white specular saturated final combiner V1R0_SUM |
 
 ---
 
