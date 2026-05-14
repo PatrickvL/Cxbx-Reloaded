@@ -966,13 +966,10 @@ void CxbxUpdateNativeD3DResources()
 
 	// Point sprite texture swap: NV2A uses stage 3 for point sprite textures.
 	// Copy the SRV from slot 3 to slot 0 so the GS-generated UVs on TEXCOORD0
-	// sample the correct texture.
+	// sample the correct texture. Use cached SRV to avoid PSGetShaderResources overhead.
 	extern bool g_bPointSpriteEnabled;
-	if (g_bPointSpriteEnabled) {
-		ID3D11ShaderResourceView* pSRV = nullptr;
-		g_pD3DDeviceContext->PSGetShaderResources(3, 1, &pSRV);
-		g_pD3DDeviceContext->PSSetShaderResources(0, 1, &pSRV);
-		if (pSRV) pSRV->Release();
+	if (g_bPointSpriteEnabled && s_CachedSRV[3]) {
+		g_pD3DDeviceContext->PSSetShaderResources(0, 1, &s_CachedSRV[3]);
 	}
 
 	// If Pixel Shaders are not disabled, process them
