@@ -467,9 +467,16 @@ void CxbxPageTrackerInit()
 	// mirror with no way to detect it later.
 	ResetWriteWatch((PVOID)CONTIG_BASE, CONTIG_SIZE);
 
-	// Initial full upload of contiguous memory to GPU mirror
-	g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, nullptr,
-		(const void*)CONTIG_BASE, CONTIG_SIZE, 0);
+	// Initial full upload of contiguous memory to GPU mirror.
+	// Must use an explicit box — the buffer is larger than CONTIG_SIZE
+	// (appended PGRAPH/PFB/PVIDEO), so a nullptr box would tell the
+	// driver to read ByteWidth bytes from pSrcData, overrunning the
+	// 64 MiB contiguous region.
+	{
+		D3D11_BOX box = { 0, 0, 0, CONTIG_SIZE, 1, 1 };
+		g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box,
+			(const void*)CONTIG_BASE, CONTIG_SIZE, 0);
+	}
 
 	// Detect Wine — GetWriteWatch may not reliably track dirty pages.
 	// When running on Wine, always do a full upload on every flush.
@@ -581,7 +588,8 @@ uint32_t CxbxPageTrackerFlushToGPU()
 	// Wine / broken-write-watch fallback: always do a full upload.
 	if (s_bWineFallback) {
 		memset((void*)s_TextureDirtyBitmap, 0xFF, sizeof(s_TextureDirtyBitmap));
-		g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, nullptr,
+		D3D11_BOX box = { 0, 0, 0, CONTIG_SIZE, 1, 1 };
+		g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box,
 			(const void*)CONTIG_BASE, CONTIG_SIZE, 0);
 		s_bFirstFlushOfFrame = false;
 		return PAGE_COUNT;
@@ -613,7 +621,8 @@ uint32_t CxbxPageTrackerFlushToGPU()
 
 	// Many pages dirty: full-buffer upload is cheaper than many small UpdateSubresource calls.
 	if (count > PAGE_COUNT / 4) {
-		g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, nullptr,
+		D3D11_BOX box = { 0, 0, 0, CONTIG_SIZE, 1, 1 };
+		g_pD3DDeviceContext->UpdateSubresource(s_pMirrorBuf, 0, &box,
 			(const void*)CONTIG_BASE, CONTIG_SIZE, 0);
 	} else {
 		// Incremental update: one UpdateSubresource per coalesced page run.
