@@ -166,6 +166,15 @@ void CxbxUpdateHostVertexShader()
 		// source, written by the PFIFO puller from NV2A_VP_UPLOAD_INST).
 		// The start address comes from CSV0_C CHEOPS_PROGRAM_START, which
 		// the puller sets from NV097_SET_TRANSFORM_PROGRAM_START.
+
+		// Skip JIT cache lookup when program hasn't changed since last draw
+		static uint32_t s_lastProgramGen = UINT32_MAX;
+		static ID3D11VertexShader* s_lastJITVS = nullptr;
+		if (pg->dirty[NV2A_DIRTY_PROGRAM] == s_lastProgramGen && s_lastJITVS) {
+			CxbxSetVertexShader(s_lastJITVS);
+			return;
+		}
+
 		xbox::dword_xt *pTokens = nullptr;
 		uint32_t startAddr = GET_MASK(pg->regs[RI(NV_PGRAPH_CSV0_C)],
 			NV_PGRAPH_CSV0_C_CHEOPS_PROGRAM_START);
@@ -192,9 +201,14 @@ void CxbxUpdateHostVertexShader()
 				HRESULT hRet = CxbxSetVertexShader(pJITVS);
 				DEBUG_D3DRESULT(hRet, "CxbxSetVertexShader(JIT)");
 
+				s_lastProgramGen = pg->dirty[NV2A_DIRTY_PROGRAM];
+				s_lastJITVS = pJITVS;
 				return; // Skip interpreter path
 			}
 		}
+
+		s_lastProgramGen = pg->dirty[NV2A_DIRTY_PROGRAM];
+		s_lastJITVS = nullptr; // interpreter path — don't cache
 
 		if (g_bUseVSInterpreter && CxbxD3D11InitVSInterpreter()) {
 			InterlockedIncrement(&g_ProfileVSInterpreterHits);
