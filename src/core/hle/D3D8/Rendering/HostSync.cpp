@@ -766,15 +766,25 @@ void CxbxUpdateHostTextureScaling()
 }
 
 void CxbxUpdateDirtyVertexShaderConstants(const float* constants, uint32_t* dirty) {
-	// Use bitmap for O(popcount) scan instead of iterating all 192 bools
+	// Use bitmap for O(popcount) scan instead of iterating all 192 bools.
+	// Runs are carried across word boundaries to minimize SetConstantF calls.
+	int batchStart = -1;
+	int batchEnd = -1; // last index in current run
+
 	for (int word = 0; word < 6; word++) {
 		uint32_t bits = dirty[word];
-		if (!bits) continue;
+		if (!bits) {
+			// No bits in this word — flush any pending run (gap detected)
+			if (batchStart != -1) {
+				int count = batchEnd - batchStart + 1;
+				CxbxSetVertexShaderConstantF(batchStart, &constants[batchStart * 4], count);
+				batchStart = -1;
+			}
+			continue;
+		}
 		dirty[word] = 0;
 
 		int base = word * 32;
-		int batchStart = -1;
-
 		while (bits) {
 			unsigned long bit_idx;
 			_BitScanForward(&bit_idx, bits);
@@ -783,21 +793,22 @@ void CxbxUpdateDirtyVertexShaderConstants(const float* constants, uint32_t* dirt
 
 			if (batchStart == -1) {
 				batchStart = i;
-			}
-			// Check if next dirty bit is contiguous
-			int next_i = -1;
-			if (bits) {
-				unsigned long next_bit;
-				_BitScanForward(&next_bit, bits);
-				next_i = base + (int)next_bit;
-			}
-			if (next_i != i + 1) {
-				// End of contiguous run — flush batch
-				int count = i - batchStart + 1;
+				batchEnd = i;
+			} else if (i == batchEnd + 1) {
+				batchEnd = i; // extend contiguous run
+			} else {
+				// Gap — flush previous run, start new one
+				int count = batchEnd - batchStart + 1;
 				CxbxSetVertexShaderConstantF(batchStart, &constants[batchStart * 4], count);
-				batchStart = -1;
+				batchStart = i;
+				batchEnd = i;
 			}
 		}
+	}
+	// Flush final pending run
+	if (batchStart != -1) {
+		int count = batchEnd - batchStart + 1;
+		CxbxSetVertexShaderConstantF(batchStart, &constants[batchStart * 4], count);
 	}
 }
 
