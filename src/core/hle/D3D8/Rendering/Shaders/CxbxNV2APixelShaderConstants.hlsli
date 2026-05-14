@@ -67,6 +67,7 @@ NV2A_CONST PS_INPUTMAPPING_HALFBIAS_NEGATE   = 0xa0;
 NV2A_CONST PS_INPUTMAPPING_SIGNED_IDENTITY   = 0xc0;
 NV2A_CONST PS_INPUTMAPPING_SIGNED_NEGATE     = 0xe0;
 NV2A_CONST PS_INPUTMAPPING_MASK              = 0xe0;
+NV2A_CONST PS_INPUTMAPPING_NEGATE_BIT        = 0x20; // bit 5: negate parity within mapping byte
 
 // ============================================================
 // PS_TEXTUREMODES — 5-bit value per stage
@@ -122,6 +123,16 @@ NV2A_CONST PS_COMBINEROUTPUT_AB_CD_MUX         = 0x04; // 3rd output = MUX(AB,CD
 NV2A_CONST PS_COMBINEROUTPUT_OUTPUTMAPPING_BIAS = 0x08; // subtract 0.5 before scaling
 NV2A_CONST PS_COMBINEROUTPUT_CD_BLUE_TO_ALPHA  = 0x40; // RGB only
 NV2A_CONST PS_COMBINEROUTPUT_AB_BLUE_TO_ALPHA  = 0x80; // RGB only
+NV2A_CONST PS_COMBINEROUTPUT_SCALE_SHIFT       = 4;    // bits [5:4] of flags = scale
+NV2A_CONST PS_COMBINEROUTPUT_SCALE_MASK        = 0x03; // 2-bit scale field
+
+// ============================================================
+// PS_COMBINECTL — packed count + flags word from NV_PGRAPH_COMBINECTL
+//   bits [7:0]  = stage count (1..8)
+//   bits [23:8] = PS_COMBINERCOUNT flags
+// ============================================================
+NV2A_CONST PS_COMBINECTL_COUNT_MASK  = 0xFF;
+NV2A_CONST PS_COMBINECTL_FLAGS_SHIFT = 8;
 
 #endif // NV2A_PS_CONSTANTS_ALREADY_DEFINED
 
@@ -134,6 +145,7 @@ NV2A_CONST PS_COMBINERINPUTS_A_SHIFT = 24;
 NV2A_CONST PS_COMBINERINPUTS_B_SHIFT = 16;
 NV2A_CONST PS_COMBINERINPUTS_C_SHIFT =  8;
 NV2A_CONST PS_COMBINERINPUTS_D_SHIFT =  0;
+NV2A_CONST PS_COMBINERINPUT_MASK     = 0xFF; // 8-bit input byte mask
 
 // ============================================================
 // Packing layout: PS_COMBINEROUTPUTS(ab, cd, mux_sum, flags)

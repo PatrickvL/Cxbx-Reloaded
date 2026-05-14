@@ -127,13 +127,13 @@ float4 fetch_input(uint mux, uint r_idx, uint v_idx, uint const_idx,
                             : s_r[clamp((int)r_idx + GUARD_BIAS, 0, S_R_GUARD_SIZE - 1)];
     }
     else if (mux == VSI_MUX_V) {
-        raw = s_v[v_idx & 0xF];
+        raw = s_v[v_idx & VSI_FLD_V_MASK];
     }
     else {
         // Constant register c0..c191, optionally offset by a0.
         // Read from cbuffer C[] (fast path) with context-write cache overlay.
         // Out-of-range indices return zero.
-        int c_index = (int)(const_idx & 0xFF) + s_a0 * (int)use_a0x;
+        int c_index = (int)(const_idx & VSI_FLD_CONST_MASK) + s_a0 * (int)use_a0x;
         if (c_index >= 0 && c_index < X_D3DVS_CONSTREG_COUNT) {
             // Check context write cache first (most recent writes win)
             raw = C[c_index];
@@ -373,13 +373,13 @@ VS_OUTPUT main(const VS_INPUT xIn)
         uint a_mux = (dw2 >> VSI_FLD_A_MUX_SHIFT) & VSI_FLD_A_MUX_MASK;
         uint a_reg = (dw2 >> VSI_FLD_A_R_SHIFT)   & VSI_FLD_A_R_MASK;
         bool a_neg = ((dw1 >> VSI_FLD_A_NEG_BIT1) & 1) != 0;
-        uint a_swz = dw1 & 0xFF;          // Packed XYZW: [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W
+        uint a_swz = dw1 & VSI_FLD_SWZ_PACKED_MASK;          // Packed XYZW: [7:6]=X [5:4]=Y [3:2]=Z [1:0]=W
 
         // -- Input B (dw2)
         uint b_mux = (dw2 >> VSI_FLD_B_MUX_SHIFT) & VSI_FLD_B_MUX_MASK;
         uint b_reg = (dw2 >> VSI_FLD_B_R_SHIFT)   & VSI_FLD_B_R_MASK;
         bool b_neg = ((dw2 >> VSI_FLD_B_NEG_BIT2) & 1) != 0;
-        uint b_swz = (dw2 >> 17) & 0xFF;  // Packed XYZW from bits [24:17]
+        uint b_swz = (dw2 >> VSI_FLD_B_SWZ_W_SHIFT2) & VSI_FLD_SWZ_PACKED_MASK;  // Packed XYZW from bits [24:17]
 
         // -- Input C (dw2 + dw3)
         uint c_mux   = (dw3 >> VSI_FLD_C_MUX_SHIFT3)    & VSI_FLD_C_MUX_MASK;
@@ -387,7 +387,7 @@ VS_OUTPUT main(const VS_INPUT xIn)
         uint c_r_lo  = (dw3 >> VSI_FLD_C_R_LOW_SHIFT3)  & VSI_FLD_C_R_LOW_MASK;
         uint c_reg   = (c_r_hi << 2) | c_r_lo;
         bool c_neg   = ((dw2 >> VSI_FLD_C_NEG_BIT2) & 1) != 0;
-        uint c_swz   = (dw2 >> 2) & 0xFF; // Packed XYZW from bits [9:2]
+        uint c_swz   = (dw2 >> VSI_FLD_C_SWZ_W_SHIFT2) & VSI_FLD_SWZ_PACKED_MASK; // Packed XYZW from bits [9:2]
 
         // -- Output fields
         uint out_mac_mask = (dw3 >> VSI_FLD_OUT_MAC_MASK_SHIFT) & VSI_FLD_OUT_MAC_MASK_MASK;

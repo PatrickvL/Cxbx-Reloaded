@@ -64,6 +64,7 @@ float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs.Load(GPU_PGRAPH_BASE + by
 #define NV_PGRAPH_CONTROL_0                 0x194C
 #define NV_PGRAPH_CONTROL_0_ALPHAREF        0x000000FF
 #define NV_PGRAPH_CONTROL_0_ALPHAFUNC       0x00000F00
+#define NV_PGRAPH_CONTROL_0_ALPHAFUNC_SHIFT 8
 #define NV_PGRAPH_CONTROL_0_ALPHATESTENABLE 0x00001000
 
 // Fog color (ABGR packed)
@@ -71,8 +72,22 @@ float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs.Load(GPU_PGRAPH_BASE + by
 
 // Shader control registers
 #define NV_PGRAPH_SHADERCLIPMODE            0x1994
+#define NV_PGRAPH_SHADERCLIPMODE_STAGE_BITS 4       // 4 bits (RSTQ) per stage
+#define NV_PGRAPH_SHADERCLIPMODE_STAGE_MASK 0xFu
+
 #define NV_PGRAPH_SHADERCTL                 0x1998
+// PSDotMapping: bits [11:0], 3-bit field per stage (stages 1-3), stride 4 bits
+#define NV_PGRAPH_SHADERCTL_DOTMAP_STRIDE   4
+#define NV_PGRAPH_SHADERCTL_DOTMAP_MASK     0x7u
+// PSInputTexture: bits [12:27], source-stage config per texture stage
+#define NV_PGRAPH_SHADERCTL_PST2_SHIFT      16      // stage 2: 1-bit field
+#define NV_PGRAPH_SHADERCTL_PST2_MASK       0x1u
+#define NV_PGRAPH_SHADERCTL_PST3_SHIFT      20      // stage 3: 2-bit field
+#define NV_PGRAPH_SHADERCTL_PST3_MASK       0x3u
+
 #define NV_PGRAPH_SHADERPROG                0x199C
+// PSTextureModes: 5-bit field per stage, packed sequentially
+#define NV_PGRAPH_SHADERPROG_STAGE_BITS     5
 
 // Shadow mapping control
 #define NV_PGRAPH_SHADOWCTL                 0x19A4

@@ -4,7 +4,7 @@
 // and compute values that were previously uploaded in the PSAuxCBLayout cbuffer.
 // This eliminates per-draw CPU-side computation for these fields.
 //
-// Requires: CxbxPGRAPHRegs.hlsli to be included first (for PG_UINT, GPU_PGRAPH_BASE).
+// Requires: CxbxNV2APixelShaderConstants.hlsli and CxbxPGRAPHRegs.hlsli to be included first.
 
 #ifndef CXBX_PSAUX_FROM_PGRAPH_HLSLI
 #define CXBX_PSAUX_FROM_PGRAPH_HLSLI
@@ -40,8 +40,10 @@
 #define TEXFMT0_CUBEMAPENABLE           0x00000004u
 #define TEXFMT0_DIMENSIONALITY          0x000000C0u
 #define TEXFMT0_COLOR                   0x00007F00u
+#define TEXFMT0_COLOR_SHIFT              8u
 #define CONTROL_3_FOGENABLE             0x00000100u
 #define CONTROL_3_FOG_MODE              0x00070000u
+#define CONTROL_3_FOG_MODE_SHIFT        16u
 #define CSV0_C_SPECULAR_ENABLE          0x00010000u
 #define CSV0_C_TWO_SIDE_ENABLE          0x20000000u
 #define SETUPRASTER_FRONTFACE           0x00800000u
@@ -107,8 +109,8 @@ uint DeriveAdjustedPSTextureModes()
     uint modes = PG_UINT(NV_PGRAPH_SHADERPROG);
 
     [unroll] for (uint i = 0; i < 4; i++) {
-        uint mode = (modes >> (i * 5u)) & 0x1Fu;
-        uint clearMask = ~(0x1Fu << (i * 5u));
+        uint mode = (modes >> (i * NV_PGRAPH_SHADERPROG_STAGE_BITS)) & PS_TEXTUREMODES_MASK;
+        uint clearMask = ~(PS_TEXTUREMODES_MASK << (i * NV_PGRAPH_SHADERPROG_STAGE_BITS));
 
         uint texCtl = PG_TEXCTL0(i);
         if (texCtl & TEXCTL0_ENABLE) {
@@ -116,9 +118,9 @@ uint DeriveAdjustedPSTextureModes()
             bool isCubemap = (texFmt & TEXFMT0_CUBEMAPENABLE) != 0;
             if (isCubemap) {
                 if (mode == PGAUX_TEXMODE_PROJECT2D)
-                    modes = (modes & clearMask) | (PGAUX_TEXMODE_CUBEMAP << (i * 5u));
+                    modes = (modes & clearMask) | (PGAUX_TEXMODE_CUBEMAP << (i * NV_PGRAPH_SHADERPROG_STAGE_BITS));
                 else if (mode == PGAUX_TEXMODE_DOT_STR_3D)
-                    modes = (modes & clearMask) | (PGAUX_TEXMODE_DOT_STR_CUBE << (i * 5u));
+                    modes = (modes & clearMask) | (PGAUX_TEXMODE_DOT_STR_CUBE << (i * NV_PGRAPH_SHADERPROG_STAGE_BITS));
             }
         }
     }
@@ -202,7 +204,7 @@ uint DeriveFogEnable()
 // ============================================================
 uint DeriveFogMode()
 {
-    return (PG_UINT(NV_PGRAPH_CONTROL_3) & CONTROL_3_FOG_MODE) >> 16u;
+    return (PG_UINT(NV_PGRAPH_CONTROL_3) & CONTROL_3_FOG_MODE) >> CONTROL_3_FOG_MODE_SHIFT;
 }
 
 // ============================================================
@@ -236,7 +238,7 @@ float4 DeriveShadowCompare()
         uint texCtl = PG_TEXCTL0(i);
         if (texCtl & TEXCTL0_ENABLE) {
             uint texFmt = PG_TEXFMT(i);
-            uint colorCode = (texFmt & TEXFMT0_COLOR) >> 8u;
+            uint colorCode = (texFmt & TEXFMT0_COLOR) >> TEXFMT0_COLOR_SHIFT;
             if (IsNV2ADepthFormat(colorCode))
                 sc[i] = 1.0f;
         }

@@ -124,6 +124,9 @@ VSI_CONST VSI_FLD_OUT_MUX_BIT3     = 2;   // bit 2 (0=MAC, 1=ILU)
 VSI_CONST VSI_FLD_A0X_BIT3         = 1;   // bit 1
 VSI_CONST VSI_FLD_FINAL_BIT3       = 0;   // bit 0
 
+// Swizzle packed mask: 4 × 2-bit components (XYZW) = 8 bits total
+VSI_CONST VSI_FLD_SWZ_PACKED_MASK  = 0xFF;
+
 // MUX values for input source selection
 VSI_CONST VSI_MUX_R = 1; // Temporary register (matches PARAM_R in hardware encoding)
 VSI_CONST VSI_MUX_V = 2; // Vertex input register (matches PARAM_V)
