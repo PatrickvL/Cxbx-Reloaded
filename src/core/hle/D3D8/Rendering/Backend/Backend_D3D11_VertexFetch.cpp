@@ -660,17 +660,31 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	if (vertexCount == 0) return;
 
 	// ---------------------------------------------------------------
-	// Step 1: Pack inline buffer data into contiguous UP vertex buffer
+	// Step 1: Build active attribute mask and compute compact stride
 	// ---------------------------------------------------------------
-	// All 16 attributes stored as float4 (16 bytes each) = 256 bytes per vertex
-	const UINT kAttrSize = 4 * sizeof(float);  // 16 bytes
-	const UINT kStride = NV2A_VERTEXSHADER_ATTRIBUTES * kAttrSize; // 256 bytes
+	uint32_t activeMask = 0;
+	int activeCount = 0;
+	for (int a = 0; a < NV2A_VERTEXSHADER_ATTRIBUTES; a++) {
+		if (pg->vertex_attributes[a].inline_buffer) {
+			activeMask |= (1u << a);
+			activeCount++;
+		}
+	}
+	// Fallback: if no attributes have inline_buffer, all use inline_value
+	if (activeCount == 0) activeCount = NV2A_VERTEXSHADER_ATTRIBUTES;
+
+	const UINT kAttrSize = 4 * sizeof(float);  // 16 bytes per attribute
+	// Use compact stride when only some attrs are active; full stride otherwise
+	const UINT kStride = (activeMask ? activeCount : NV2A_VERTEXSHADER_ATTRIBUTES) * kAttrSize;
 	UINT totalSize = vertexCount * kStride;
 
 	EnsureUPVtxDataBuffer(totalSize);
 	if (!s_pUPVtxDataBuf || !s_pUPVtxDataSRV)
 		return;
 
+	// ---------------------------------------------------------------
+	// Step 2: Pack only active attributes into compact UP vertex buffer
+	// ---------------------------------------------------------------
 	{
 		D3D11_MAPPED_SUBRESOURCE mapped = {};
 		HRESULT hr = g_pD3DDeviceContext->Map(s_pUPVtxDataBuf, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
@@ -678,16 +692,29 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 
 		float* pDst = (float*)mapped.pData;
 		for (unsigned int v = 0; v < vertexCount; v++) {
-			for (int a = 0; a < NV2A_VERTEXSHADER_ATTRIBUTES; a++) {
-				const VertexAttribute& attr = pg->vertex_attributes[a];
-				const float* pSrc = attr.inline_buffer
-					? &attr.inline_buffer[v * 4]
-					: attr.inline_value;
-				pDst[0] = pSrc[0];
-				pDst[1] = pSrc[1];
-				pDst[2] = pSrc[2];
-				pDst[3] = pSrc[3];
-				pDst += 4;
+			uint32_t mask = activeMask;
+			if (mask) {
+				while (mask) {
+					unsigned long a;
+					_BitScanForward(&a, mask);
+					mask &= mask - 1;
+					const float* pSrc = &pg->vertex_attributes[a].inline_buffer[v * 4];
+					pDst[0] = pSrc[0];
+					pDst[1] = pSrc[1];
+					pDst[2] = pSrc[2];
+					pDst[3] = pSrc[3];
+					pDst += 4;
+				}
+			} else {
+				// No active inline_buffer — pack all inline_value (static per vertex)
+				for (int a = 0; a < NV2A_VERTEXSHADER_ATTRIBUTES; a++) {
+					const float* pSrc = pg->vertex_attributes[a].inline_value;
+					pDst[0] = pSrc[0];
+					pDst[1] = pSrc[1];
+					pDst[2] = pSrc[2];
+					pDst[3] = pSrc[3];
+					pDst += 4;
+				}
 			}
 		}
 
@@ -704,7 +731,7 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 		return; // Unsupported topology
 
 	// ---------------------------------------------------------------
-	// Step 3: Fill layout CB with float4 layout for all 16 attributes
+	// Step 3: Fill layout CB — active attrs use compact stride, inactive use NONE
 	// ---------------------------------------------------------------
 	{
 		VertexFetchLayoutCB cb = {};
@@ -719,11 +746,20 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 		// Quad winding: must match NV2A SETUPRASTER front face setting
 		cb.WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
 
+		UINT compactOffset = 0;
 		for (UINT a = 0; a < 16; a++) {
-			cb.Attribs[a][0] = a * kAttrSize;       // elemOffset
-			cb.Attribs[a][1] = kStride;             // stride
-			cb.Attribs[a][2] = CXBX_VTXFMT_FLOAT4;  // format
-			cb.Attribs[a][3] = 0;                   // streamBase (UP data at offset 0)
+			if (activeMask & (1u << a)) {
+				cb.Attribs[a][0] = compactOffset;       // elemOffset in compact layout
+				cb.Attribs[a][1] = kStride;             // compact stride
+				cb.Attribs[a][2] = CXBX_VTXFMT_FLOAT4;  // format
+				cb.Attribs[a][3] = 0;                   // streamBase
+				compactOffset += kAttrSize;
+			} else {
+				cb.Attribs[a][0] = 0;
+				cb.Attribs[a][1] = 0;
+				cb.Attribs[a][2] = CXBX_VTXFMT_NONE;   // fetch from defaults CB
+				cb.Attribs[a][3] = 0;
+			}
 		}
 
 		g_pD3DDeviceContext->UpdateSubresource(s_pLayoutCB, 0, nullptr, &cb, 0, 0);
