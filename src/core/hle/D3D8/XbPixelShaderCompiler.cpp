@@ -307,144 +307,17 @@ void CxbxD3D11UploadRCInterpreterState()
 	}
 	PSAuxCBLayout aux = {};
 
-	// PSTextureModes: always from PGRAPH SHADERPROG
-	DWORD psTextureModes = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
-
-	// --- AdjustTextureModes: fixup cubemap/volume texture modes ---
-	// PGRAPH is always authoritative — SHADERPROG already contains correctly
-	// adjusted texture modes from the Xbox D3D runtime push buffer.
-	// Texture type is derived from PGRAPH TEXFMT0 (CUBEMAPENABLE +
-	// DIMENSIONALITY) to avoid racing the game thread.
-	{
-		for (int i = 0; i < xbox::X_D3DTS_STAGECOUNT; i++) {
-			uint32_t mode = (psTextureModes >> (i * 5)) & 0x1Fu;
-			uint32_t clearMask = ~(0x1Fu << (i * 5));
-
-			// Derive texture type from PGRAPH registers
-			xbox::X_D3DRESOURCETYPE texType = xbox::X_D3DRTYPE_NONE;
-			{
-				uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
-				if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
-					uint32_t texFmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
-					if (texFmt & NV_PGRAPH_TEXFMT0_CUBEMAPENABLE)
-						texType = xbox::X_D3DRTYPE_CUBETEXTURE;
-					else if (((texFmt & NV_PGRAPH_TEXFMT0_DIMENSIONALITY) >> 6) > 2)
-						texType = xbox::X_D3DRTYPE_VOLUMETEXTURE;
-					else
-						texType = xbox::X_D3DRTYPE_TEXTURE;
-				}
-			}
-
-			if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_PROJECT2D) {
-				psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_CUBEMAP << (i * 5));
-			}
-			else if (texType == xbox::X_D3DRTYPE_CUBETEXTURE && mode == PS_TEXTUREMODES_DOT_STR_3D) {
-				psTextureModes = (psTextureModes & clearMask) | ((uint32_t)PS_TEXTUREMODES_DOT_STR_CUBE << (i * 5));
-			}
-		}
-	}
-	aux.PSTextureModes.value = psTextureModes;
-
-	// --- AdjustFinalCombiner: synthesize final combiner when not explicitly defined ---
-	{
-		uint32_t fcABCD = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)];
-		uint32_t fcEFG  = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)];
-
-		bool hasFinalCombiner = (fcABCD != 0) || (fcEFG != 0);
-		if (!hasFinalCombiner) {
-			bool fogEnable = (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & NV_PGRAPH_CONTROL_3_FOGENABLE) != 0;
-			bool specularEnable = (pg->regs[RI(NV_PGRAPH_CSV0_C)] & NV_PGRAPH_CSV0_C_SPECULAR_ENABLE) != 0;
-
-			uint32_t regA = PS_REGISTER_FOG | PS_CHANNEL_ALPHA;
-			uint32_t regB = PS_REGISTER_R0;
-			uint32_t regC = fogEnable ? PS_REGISTER_FOG : PS_REGISTER_R0;
-			uint32_t regD = specularEnable ? PS_REGISTER_V1 : PS_REGISTER_ZERO;
-			fcABCD = (regA << 24) | (regB << 16) | (regC << 8) | regD;
-
-			uint32_t regE = PS_REGISTER_ZERO;
-			uint32_t regF = PS_REGISTER_ZERO;
-			uint32_t regG = PS_REGISTER_R0 | PS_CHANNEL_ALPHA;
-			fcEFG = (regE << 24) | (regF << 16) | (regG << 8);
-		}
-
-		aux.PSFinalCombinerInputsABCD.value = fcABCD;
-		aux.PSFinalCombinerInputsEFG.value  = fcEFG;
-	}
-
-	// Color sign conversion — per-stage
+	// Color sign conversion — per-stage (requires host DXGI format info)
 	for (int stage = 0; stage < 4; stage++) {
 		D3DXCOLOR cs = CxbxCalcColorSign(stage);
 		aux.ColorSign[stage] = { cs.r, cs.g, cs.b, cs.a };
 	}
 
-	// Texture format channel fixup per stage
+	// Texture format channel fixup per stage (requires host resource cache info)
 	aux.TexFmtFixup = { CxbxGetTexFmtFixup(0), CxbxGetTexFmtFixup(1),
 	                     CxbxGetTexFmtFixup(2), CxbxGetTexFmtFixup(3) };
 
-	// Color key per stage — read from PGRAPH (authoritative, no HLE dependency)
-	for (int i = 0; i < 4; i++) {
-		// COLORKEYOP is stored in TEXCTL0 bits 0-1 (COLORKEYMODE)
-		uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
-		uint32_t colorKeyMode = texCtl & NV_PGRAPH_TEXCTL0_0_COLORKEYMODE;
-		aux.ColorKeyOp[i] = { static_cast<float>(colorKeyMode), 0.0f, 0.0f, 0.0f };
-
-		// COLORKEYCOLOR is stored in NV_PGRAPH_COLORKEYCOLOR0..3
-		D3DXCOLOR ckc(pg->regs[RI(NV_PGRAPH_COLORKEYCOLOR0 + i * 4)]);
-		aux.ColorKeyColor[i] = { ckc.r, ckc.g, ckc.b, ckc.a };
-	}
-
-	// Alpha kill per stage — read from PGRAPH TEXCTL0 ALPHAKILLEN bit
-	aux.AlphaKill = {
-		static_cast<float>((pg->regs[RI(NV_PGRAPH_TEXCTL0_0)] & NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN) ? 1 : 0),
-		static_cast<float>((pg->regs[RI(NV_PGRAPH_TEXCTL0_1)] & NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN) ? 1 : 0),
-		static_cast<float>((pg->regs[RI(NV_PGRAPH_TEXCTL0_2)] & NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN) ? 1 : 0),
-		static_cast<float>((pg->regs[RI(NV_PGRAPH_TEXCTL0_3)] & NV_PGRAPH_TEXCTL0_0_ALPHAKILLEN) ? 1 : 0)
-	};
-
-	// Fog info: x=tableMode (from PGRAPH FOG_MODE), y/z/w unused by RC interpreter.
-	// FogColor is read directly from g_PGRegs[] in the shader.
-	{
-		unsigned int fogMode = GET_MASK(pg->regs[RI(NV_PGRAPH_CONTROL_3)], NV_PGRAPH_CONTROL_3_FOG_MODE);
-		aux.FogInfo = { static_cast<float>(fogMode), 0.0f, 0.0f, 0.0f };
-		aux.FogEnable.value = (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & NV_PGRAPH_CONTROL_3_FOGENABLE) ? 1u : 0u;
-	}
-
-	// Front-face factor for two-sided lighting — sourced from PGRAPH
-	{
-		float ff = 0.0f;
-		uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
-		// NV2A LIGHT_MODEL_TWO_SIDE_ENABLE: bit 29 of CSV0_C
-		bool twoSided = (csv0c & 0x20000000u) != 0;
-		if (twoSided) {
-			// NV_PGRAPH_SETUPRASTER_FRONTFACE: bit 23 — 0=CW, 1=CCW
-			uint32_t setup = pg->regs[RI(NV_PGRAPH_SETUPRASTER)];
-			bool ccwFront = (setup & NV_PGRAPH_SETUPRASTER_FRONTFACE) != 0;
-			ff = ccwFront ? -1.0f : 1.0f;
-		}
-		aux.FrontFaceInfo = { ff, 0.0f, 0.0f, 0.0f };
-	}
-
-	// Shadow compare: per-stage flag indicating a depth texture is bound.
-	// When active, the pixel shader compares the R texcoord against the
-	// sampled depth value using NV_PGRAPH_SHADOWCTL as the comparison function.
-	{
-		float sc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-		for (int i = 0; i < 4; i++) {
-			uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
-			if (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) {
-				uint32_t texFmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
-				xbox::X_D3DFORMAT xboxFmt = GetXboxPixelContainerFormat(texFmt);
-				if (EmuXBFormatIsDepthBuffer(xboxFmt)) {
-					sc[i] = 1.0f;
-				}
-			}
-		}
-		aux.ShadowCompare = { sc[0], sc[1], sc[2], sc[3] };
-	}
-
-	// DepthScale: viewport Z scale, reserved for future DOT_ZW interpreter use.
-	// The JIT path normalizes DOT_ZW depth with saturate() (the ratio is already
-	// in [0,1]), so this field is currently unused by the JIT.
+	// DepthScale: viewport Z scale from xfctx (not in PGRAPH regs[])
 	{
 		float vpscl_z;
 		std::memcpy(&vpscl_z, &pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][2], sizeof(float));
@@ -456,12 +329,7 @@ void CxbxD3D11UploadRCInterpreterState()
 		aux.DepthScale = { vpscl_z, 0.0f, 0.0f, 0.0f };
 	}
 
-	// DepthTexAlias: per-stage depth format code indicating the host texture is
-	// a depth-stencil buffer aliased as a color texture.  The PS JIT's
-	// RemapDepthToColor() uses this to reconstruct the Xbox byte layout:
-	//   0.0 = normal color texture (no remapping)
-	//   1.0 = D24S8 (R24_UNORM_X8_TYPELESS SRV → A8R8G8B8 reinterpretation)
-	//   2.0 = D16   (R16_UNORM SRV             → L16 reinterpretation)
+	// DepthTexAlias: per-stage depth format code (requires host RT lookup)
 	{
 		float dta[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 		for (int i = 0; i < 4; i++) {
@@ -491,7 +359,6 @@ void CxbxD3D11UploadRCInterpreterState()
 			}
 		}
 		aux.DepthTexAlias = { dta[0], dta[1], dta[2], dta[3] };
-		// Test case: ZSprite (binds D24S8 depth buffer as texture on a DOT source stage)
 	}
 
 	// Upload aux cbuffer and bind to b0 (bind only once — buffer pointer is stable)

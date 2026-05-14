@@ -41,7 +41,7 @@ extern PSAuxCBLayout g_LastPSAuxCB;
 // Bump this whenever the JIT HLSL infrastructure changes (e.g. resource
 // binding type changes, new includes, register slot moves). This ensures
 // stale disk-cached .cso files are not reused after incompatible changes.
-static constexpr uint32_t PS_JIT_CACHE_VERSION = 2; // v2: ByteAddressBuffer t12
+static constexpr uint32_t PS_JIT_CACHE_VERSION = 3; // v3: PSAuxCB fields derived from PGRAPH SRV
 
 struct PSJITKey {
     uint32_t cacheVersion;      // invalidates disk cache on HLSL infra changes
@@ -517,12 +517,14 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
 
     // Color key
     if (colorKeyOp != 0.0f) {
-        ss << "    " << tReg << " = PerformColorKeyOp((int)ColorKeyOp[" << stage << "].x, ColorKeyColor[" << stage << "], " << tReg << ");\n";
+        const char* swizzle[] = { "x", "y", "z", "w" };
+        ss << "    " << tReg << " = PerformColorKeyOp((int)DeriveColorKeyOp()." << swizzle[stage] << ", DeriveColorKeyColor(" << stage << "), " << tReg << ");\n";
     }
 
     // Alpha kill
     if (alphaKill != 0.0f) {
-        ss << "    PerformAlphaKill(1, " << tReg << ");\n";
+        const char* swizzle[] = { "x", "y", "z", "w" };
+        ss << "    PerformAlphaKill((int)DeriveAlphaKill()." << swizzle[stage] << ", " << tReg << ");\n";
     }
 }
 
@@ -755,7 +757,8 @@ static std::string GenerateHLSL(const PSJITKey& key)
     // Shared helper functions (nv2a_mul, PerformColorSign, ApplyShadowCompare,
     // ApplyCompareMode, RemapD24S8ToColor, RemapD16ToColor, etc.)
     ss << "#include \"CxbxNV2AMathHelpers.hlsli\"\n";
-    ss << "#include \"CxbxPixelShaderFunctions.hlsli\"\n\n";
+    ss << "#include \"CxbxPixelShaderFunctions.hlsli\"\n";
+    ss << "#include \"CxbxPSAuxFromPGRAPH.hlsli\"\n\n";
 
     // ApplyShadowCompare, ApplyCompareMode, and ApplyDotMapping are all
     // provided by CxbxPixelShaderFunctions.hlsli (included above)
@@ -805,7 +808,7 @@ static std::string GenerateHLSL(const PSJITKey& key)
     ss << "\n    // --- Vertex colors ---\n";
     if (key.frontFaceFactor != 0.0f && (isRead(PS_REGISTER_V0) || isRead(PS_REGISTER_V1))) {
         ss << "    float faceSign = input.iFF ? 1.0 : -1.0;\n";
-        ss << "    bool isFront = (faceSign * FrontFaceInfo.x) >= 0.0;\n";
+        ss << "    bool isFront = (faceSign * DeriveFrontFaceFactor()) >= 0.0;\n";
         if (isRead(PS_REGISTER_V0))
             ss << "    float4 V0 = isFront ? input.iD0 : input.iB0;\n";
         if (isRead(PS_REGISTER_V1))
@@ -1180,24 +1183,63 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     // Read textureModes directly from PGRAPH (NV_PGRAPH_SHADERPROG = 0x199C)
     // to avoid stale g_LastPSAuxCB issues.
     key.textureModes = pg->regs[0x199C >> 2]; // NV_PGRAPH_SHADERPROG
-    key.fcABCD       = aux.PSFinalCombinerInputsABCD.value;
-    key.fcEFG        = aux.PSFinalCombinerInputsEFG.value;
-    key.fogEnable    = aux.FogEnable.value;
-    key.frontFaceFactor = aux.FrontFaceInfo.x;
 
-    for (int i = 0; i < 4; i++) {
-        key.colorKeyOp[i]   = aux.ColorKeyOp[i].x;
-        key.shadowCompare[i]= (&aux.ShadowCompare.x)[i];
-        key.texFmtFixup[i]  = (&aux.TexFmtFixup.x)[i];
-        key.colorSign[i*4+0]= aux.ColorSign[i].x;
-        key.colorSign[i*4+1]= aux.ColorSign[i].y;
-        key.colorSign[i*4+2]= aux.ColorSign[i].z;
-        key.colorSign[i*4+3]= aux.ColorSign[i].w;
+    // Final combiner inputs — derive from PGRAPH (synthesize default if not set)
+    {
+        uint32_t fcABCD = pg->regs[0x1944 >> 2]; // COMBINESPECFOG0
+        uint32_t fcEFG  = pg->regs[0x1948 >> 2]; // COMBINESPECFOG1
+        if (fcABCD == 0 && fcEFG == 0) {
+            bool fogEnable = (pg->regs[0x1958 >> 2] & 0x100) != 0;
+            bool specEnable = (pg->regs[0x0FB8 >> 2] & 0x10000) != 0;
+            // NV2A register encoding: FOG=0x03, R0=0x0C, V1=0x05, ZERO=0x00, ALPHA=0x10
+            uint32_t regA = 0x13; // FOG | CHANNEL_ALPHA
+            uint32_t regB = 0x0C; // R0
+            uint32_t regC = fogEnable ? 0x03u : 0x0Cu; // FOG or R0
+            uint32_t regD = specEnable ? 0x05u : 0x00u; // V1 or ZERO
+            fcABCD = (regA << 24) | (regB << 16) | (regC << 8) | regD;
+            fcEFG = (0x00u << 24) | (0x00u << 16) | (0x1Cu << 8); // ZERO, ZERO, R0|ALPHA
+        }
+        key.fcABCD = fcABCD;
+        key.fcEFG  = fcEFG;
     }
-    key.alphaKill[0] = aux.AlphaKill.x;
-    key.alphaKill[1] = aux.AlphaKill.y;
-    key.alphaKill[2] = aux.AlphaKill.z;
-    key.alphaKill[3] = aux.AlphaKill.w;
+
+    // Fog enable — from PGRAPH CONTROL_3
+    key.fogEnable = (pg->regs[0x1958 >> 2] & 0x100) ? 1u : 0u;
+
+    // Front face factor — from PGRAPH CSV0_C + SETUPRASTER
+    {
+        uint32_t csv0c = pg->regs[0x0FB8 >> 2];
+        bool twoSided = (csv0c & 0x20000000u) != 0;
+        if (twoSided) {
+            bool ccwFront = (pg->regs[0x1990 >> 2] & 0x00800000u) != 0;
+            key.frontFaceFactor = ccwFront ? -1.0f : 1.0f;
+        } else {
+            key.frontFaceFactor = 0.0f;
+        }
+    }
+
+    // Color key, alpha kill, shadow compare — from PGRAPH TEXCTL0/TEXFMT0
+    for (int i = 0; i < 4; i++) {
+        uint32_t texCtl = pg->regs[(0x19CC + i * 4) >> 2];
+        key.colorKeyOp[i]    = (float)(texCtl & 0x03u);
+        key.alphaKill[i]     = (texCtl & 0x04u) ? 1.0f : 0.0f;
+
+        // Shadow compare: check if TEXFMT COLOR field is a depth format
+        float sc = 0.0f;
+        if (texCtl & 0x40000000u) { // ENABLE
+            uint32_t texFmt = pg->regs[(0x1A04 + i * 4) >> 2];
+            uint32_t colorCode = (texFmt >> 8) & 0x7Fu;
+            if ((colorCode >= 0x2A && colorCode <= 0x2D) || (colorCode >= 0x2E && colorCode <= 0x31))
+                sc = 1.0f;
+        }
+        key.shadowCompare[i] = sc;
+
+        key.texFmtFixup[i]   = (&aux.TexFmtFixup.x)[i];
+        key.colorSign[i*4+0] = aux.ColorSign[i].x;
+        key.colorSign[i*4+1] = aux.ColorSign[i].y;
+        key.colorSign[i*4+2] = aux.ColorSign[i].z;
+        key.colorSign[i*4+3] = aux.ColorSign[i].w;
+    }
 
     // Second fast path: if the key matches the last one (combiner state unchanged
     // despite dirty groups bumping from non-combiner register writes),

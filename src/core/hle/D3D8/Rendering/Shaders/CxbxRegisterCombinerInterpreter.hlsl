@@ -89,6 +89,7 @@
 #include "CxbxNV2APixelShaderConstants.hlsli"
 #include "CxbxPGRAPHRegs.hlsli"
 #include "CxbxRegisterCombinerInterpreterState.hlsli"
+#include "CxbxPSAuxFromPGRAPH.hlsli"
 #include "CxbxNV2AMathHelpers.hlsli"
 
 // Shared pure-math pixel shader helpers (ApplyTexFmtFixup, PerformColorSign,
@@ -402,12 +403,18 @@ float4 PostProcessTexel(uint stage, float4 t)
     [branch] if (any(ColorSign[stage] != 0.0f))
         t = PerformColorSign(ColorSign[stage], t);
 
-    // 3. Color key
-    [branch] if (ColorKeyOp[stage].x != 0.0f)
-        t = PerformColorKeyOp((int)ColorKeyOp[stage].x, ColorKeyColor[stage], t);
+    // 3. Color key — derived from PGRAPH TEXCTL0 registers
+    {
+        uint ckMode = PG_TEXCTL0(stage) & TEXCTL0_COLORKEYMODE;
+        [branch] if (ckMode != 0u)
+            t = PerformColorKeyOp((int)ckMode, DeriveColorKeyColor(stage), t);
+    }
 
-    // 4. Alpha kill
-    PerformAlphaKill((int)AlphaKill[stage], t);
+    // 4. Alpha kill — derived from PGRAPH TEXCTL0 ALPHAKILLEN bit
+    {
+        int ak = (int)((PG_TEXCTL0(stage) & TEXCTL0_ALPHAKILLEN) ? 1u : 0u);
+        PerformAlphaKill(ak, t);
+    }
 
     return t;
 }
@@ -462,11 +469,9 @@ float4 SampleCube(uint s, float3 dir)
 
 float4 ApplyShadowCompareForStage(uint stage, float4 sampled, float3 coords)
 {
-    // Per-stage enable from cbuffer
-    float sc = (stage == 0) ? ShadowCompare.x
-             : (stage == 1) ? ShadowCompare.y
-             : (stage == 2) ? ShadowCompare.z
-                            : ShadowCompare.w;
+    // Per-stage enable — derived from PGRAPH TEXFMT0 COLOR field (depth format check)
+    float4 scVec = DeriveShadowCompare();
+    float sc = scVec[stage];
     if (sc == 0.0f) return sampled;
 
     uint shadowFunc = PG_UINT(NV_PGRAPH_SHADOWCTL) & NV_PGRAPH_SHADOWCTL_SHADOW_ZFUNC;
@@ -575,10 +580,8 @@ void FetchTexture(inout float4 Regs[16], uint stage, uint mode, float3 eyeVec, P
         // not the mode.  For 2D depth textures (shadow maps), this means
         // sample 2D at (S/Q, T/Q) with R/Q as the shadow compare reference.
         float3 projected = coords.xyz / coords.w;
-        float sc = (stage == 0) ? ShadowCompare.x
-                 : (stage == 1) ? ShadowCompare.y
-                 : (stage == 2) ? ShadowCompare.z
-                                : ShadowCompare.w;
+        float4 scVec3D = DeriveShadowCompare();
+        float sc = scVec3D[stage];
         if (sc != 0.0f) {
             // Depth texture is always 2D — sample as 2D and apply shadow compare
             float4 sampled = Sample2D(stage, projected.xy);
@@ -852,9 +855,9 @@ void DoCombinerStage(inout float4 Regs[16], uint stage,
 
 float4 DoFinalCombiner(inout float4 Regs[16])
 {
-    // If both ABCD and EFG are zero the final combiner is unused.
-    uint abcd = PSFinalCombinerInputsABCD;
-    uint efg  = PSFinalCombinerInputsEFG;
+    // Derive final combiner inputs from PGRAPH (synthesize default if not set)
+    uint abcd, efg;
+    DeriveFinalCombinerInputs(abcd, efg);
     [branch] if (abcd == 0u && efg == 0u)
         return Regs[PS_REGISTER_R0];
 
@@ -932,13 +935,14 @@ PS_OUTPUT main(PS_INPUT input)
     bool flagUniqueC0 = (ccFlags & PS_COMBINERCOUNT_UNIQUE_C0) != 0u;
     bool flagUniqueC1 = (ccFlags & PS_COMBINERCOUNT_UNIQUE_C1) != 0u;
 
-    // --- Decode PSTextureModes ---
+    // --- Decode PSTextureModes (derived from PGRAPH SRV) ---
     // Four 5-bit fields packed sequentially; stage N occupies bits[N*5+4 : N*5]
+    uint derivedPSTextureModes = DeriveAdjustedPSTextureModes();
     uint4 texMode = uint4(
-        (PSTextureModes      ) & 0x1Fu,
-        (PSTextureModes >>  5) & 0x1Fu,
-        (PSTextureModes >> 10) & 0x1Fu,
-        (PSTextureModes >> 15) & 0x1Fu
+        (derivedPSTextureModes      ) & 0x1Fu,
+        (derivedPSTextureModes >>  5) & 0x1Fu,
+        (derivedPSTextureModes >> 10) & 0x1Fu,
+        (derivedPSTextureModes >> 15) & 0x1Fu
     );
 
     // --- Initialise the register file ---
@@ -991,9 +995,9 @@ PS_OUTPUT main(PS_INPUT input)
     // --- Set vertex-derived registers ---
     // Use FRONTFACE_FACTOR to match compiled PS winding-order correction:
     // 0 = always front, +/-1 = two-sided with CW/CCW convention
-    // When FrontFaceInfo.x == 0 (no two-sided lighting), always use front face.
+    // Derived from PGRAPH CSV0_C + SETUPRASTER
     float faceSign = input.iFF ? 1.0f : -1.0f;
-    bool isFront = (faceSign * FrontFaceInfo.x) >= 0.0f;
+    bool isFront = (faceSign * DeriveFrontFaceFactor()) >= 0.0f;
     float4 diffuse  = isFront ? input.iD0 : input.iB0;
     float4 specular = isFront ? input.iD1 : input.iB1;
     Regs[PS_REGISTER_V0] = diffuse;
@@ -1043,7 +1047,7 @@ PS_OUTPUT main(PS_INPUT input)
     // --- Fog blending ---
     // iFog is already a computed fog factor from the VS (EXP/EXP2/LINEAR/passthrough).
     // NV2A clamps the interpolated fog factor to [0,1] before blending.
-    [branch] if (FogEnable != 0u) {
+    [branch] if (DeriveFogEnable() != 0u) {
         result.rgb = lerp(PG_COLOR_ARGB(NV_PGRAPH_FOGCOLOR).rgb, result.rgb, saturate(input.iFog));
     }
 
