@@ -36,16 +36,6 @@ void CxbxD3DClear(DWORD Count, CONST D3DRECT* pRects, DWORD Flags, D3DCOLOR Colo
 	clearColor[2] = ((Color >>  0) & 0xFF) / 255.0f;
 	clearColor[3] = ((Color >> 24) & 0xFF) / 255.0f;
 
-	// Diagnostic: log clear color (first 3 occurrences only)
-	{
-		static int s_clearDiag = 0;
-		if (s_clearDiag < 3) {
-			s_clearDiag++;
-			EmuLog(LOG_LEVEL::INFO, "Clear diag [%d]: Color=0x%08X -> RGBA(%f,%f,%f,%f) Flags=0x%X",
-				s_clearDiag, Color, clearColor[0], clearColor[1], clearColor[2], clearColor[3], Flags);
-		}
-	}
-
 	if ((Flags & D3DCLEAR_TARGET) && g_pD3DCurrentRTV != nullptr) {
 		if (Count > 0 && pRects != nullptr) {
 			ComPtr<ID3D11DeviceContext1> context1;
