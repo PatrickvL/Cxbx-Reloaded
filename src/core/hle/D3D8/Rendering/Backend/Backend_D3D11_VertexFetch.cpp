@@ -734,35 +734,40 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	// Step 3: Fill layout CB — active attrs use compact stride, inactive use NONE
 	// ---------------------------------------------------------------
 	{
-		VertexFetchLayoutCB cb = {};
+		D3D11_MAPPED_SUBRESOURCE mapped = {};
+		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (FAILED(hr)) return;
 
-		cb.PrimType = primType;
-		cb.IndexedDraw = 0;
-		cb.IndexOffset = 0;
-		cb.NumAttribs = 16;
-		cb.NumVerts = vertexCount;
-		cb.VertexOffset = 0;
+		VertexFetchLayoutCB* pCB = (VertexFetchLayoutCB*)mapped.pData;
+		memset(pCB, 0, sizeof(VertexFetchLayoutCB));
+
+		pCB->PrimType = primType;
+		pCB->IndexedDraw = 0;
+		pCB->IndexOffset = 0;
+		pCB->NumAttribs = 16;
+		pCB->NumVerts = vertexCount;
+		pCB->VertexOffset = 0;
 
 		// Quad winding: must match NV2A SETUPRASTER front face setting
-		cb.WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
+		pCB->WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
 
 		UINT compactOffset = 0;
 		for (UINT a = 0; a < 16; a++) {
 			if (activeMask & (1u << a)) {
-				cb.Attribs[a][0] = compactOffset;       // elemOffset in compact layout
-				cb.Attribs[a][1] = kStride;             // compact stride
-				cb.Attribs[a][2] = CXBX_VTXFMT_FLOAT4;  // format
-				cb.Attribs[a][3] = 0;                   // streamBase
+				pCB->Attribs[a][0] = compactOffset;       // elemOffset in compact layout
+				pCB->Attribs[a][1] = kStride;             // compact stride
+				pCB->Attribs[a][2] = CXBX_VTXFMT_FLOAT4;  // format
+				pCB->Attribs[a][3] = 0;                   // streamBase
 				compactOffset += kAttrSize;
 			} else {
-				cb.Attribs[a][0] = 0;
-				cb.Attribs[a][1] = 0;
-				cb.Attribs[a][2] = CXBX_VTXFMT_NONE;   // fetch from defaults CB
-				cb.Attribs[a][3] = 0;
+				pCB->Attribs[a][0] = 0;
+				pCB->Attribs[a][1] = 0;
+				pCB->Attribs[a][2] = CXBX_VTXFMT_NONE;   // fetch from defaults CB
+				pCB->Attribs[a][3] = 0;
 			}
 		}
 
-		g_pD3DDeviceContext->UpdateSubresource(s_pLayoutCB, 0, nullptr, &cb, 0, 0);
+		g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
 	}
 
 	// Invalidate layout cache so the next regular draw refills the CB
