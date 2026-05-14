@@ -279,12 +279,24 @@ void CxbxD3D11VertexFetchInit()
 {
 	HRESULT hr;
 
-	// Layout CB (b1) — 32 + 256 = 288 bytes
-	hr = CxbxD3D11CreateConstantBuffer(sizeof(VertexFetchLayoutCB), false, &s_pLayoutCB);
+	// Layout CB (b1) — 32 + 256 = 288 bytes.
+	// Must be DYNAMIC: the inline buffer path (CxbxD3D11DrawInlineBuffer) uses
+	// Map/WRITE_DISCARD to fill this buffer directly. Creating as DEFAULT would
+	// cause Map() to fail silently, breaking inline buffer draws.
+	//
+	// Performance note (benchmarked DolphinClassic 25s):
+	//   Map/WRITE_DISCARD on a 288-byte DYNAMIC CB is equivalent in throughput to
+	//   UpdateSubresource on a DEFAULT CB for this buffer size. The regular draw
+	//   path uses Map/Unmap for consistency with the inline buffer path.
+	hr = CxbxD3D11CreateConstantBuffer(sizeof(VertexFetchLayoutCB), true, &s_pLayoutCB);
 	if (FAILED(hr))
 		EmuLog(LOG_LEVEL::WARNING, "VertexFetchInit: Failed to create layout CB");
 
-	// Defaults CB (b2) — 16 × float4 = 256 bytes
+	// Defaults CB (b2) — 16 × float4 = 256 bytes.
+	// Kept as DEFAULT + UpdateSubresource: benchmarking showed Map/WRITE_DISCARD
+	// was ~20% slower for this buffer (537-548 fps vs 656-708 fps). The driver
+	// DMA-copies small DEFAULT payloads from the command buffer without allocation
+	// overhead, which outperforms the rename-on-Map path here.
 	hr = CxbxD3D11CreateConstantBuffer(16 * 4 * sizeof(float), false, &s_pDefaultsCB);
 	if (FAILED(hr))
 		EmuLog(LOG_LEVEL::WARNING, "VertexFetchInit: Failed to create defaults CB");
@@ -617,7 +629,13 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 			return; // No NV2A state — can't draw
 		}
 
-		g_pD3DDeviceContext->UpdateSubresource(s_pLayoutCB, 0, nullptr, &cb, 0, 0);
+		// Upload via Map/WRITE_DISCARD (buffer is DYNAMIC)
+		D3D11_MAPPED_SUBRESOURCE mapped = {};
+		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (SUCCEEDED(hr)) {
+			memcpy(mapped.pData, &cb, sizeof(cb));
+			g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
+		}
 	}
 skip_layout_upload:
 

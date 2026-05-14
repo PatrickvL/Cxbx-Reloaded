@@ -386,7 +386,11 @@ bool CxbxD3D11InitRCInterpreter()
 		return false;
 	}
 
-	// Create the auxiliary constant buffer (software-computed fields only)
+	// Create the auxiliary constant buffer (software-computed fields only).
+	// Kept as DEFAULT + UpdateSubresource: benchmarking showed Map/WRITE_DISCARD
+	// was ~12% slower for this 112-byte buffer (544-616 fps vs 656-708 fps).
+	// Small isolated CB updates are faster via UpdateSubresource (driver can
+	// DMA-copy from the command buffer without allocation overhead).
 	hr = CxbxD3D11CreateConstantBuffer(sizeof(PSAuxCBLayout), false, &g_pD3D11RCInterpreterAuxCB);
 	if (FAILED(hr)) {
 		EmuLog(LOG_LEVEL::WARNING, "RC Interpreter CreateConstantBuffer (aux) failed: 0x%08X", hr);

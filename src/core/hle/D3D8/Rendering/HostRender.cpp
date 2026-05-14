@@ -382,7 +382,11 @@ void CreateDefaultDevice
 	SetupBackBufferAndDepthStencil();
 	InitializeDefaultPipelineState();
 
-	// Create the vertex shader constant buffer for D3D11
+	// Create the vertex shader constant buffer for D3D11.
+	// Kept as DEFAULT + UpdateSubresource: benchmarking showed Map/WRITE_DISCARD
+	// was ~15% slower for this 3072-byte buffer (551-590 fps vs 656-708 fps).
+	// Large DYNAMIC CBs incur allocation churn on rename that outweighs any
+	// sync avoidance benefit.
 	{
 		HRESULT cbHr = CxbxD3D11CreateConstantBuffer(CXBX_D3D11_VS_CB_COUNT * sizeof(float) * 4, false, &g_pD3D11VSConstantBuffer);
 		DEBUG_D3DRESULT(cbHr, "g_pD3DDevice->CreateBuffer (VS constant buffer)");
