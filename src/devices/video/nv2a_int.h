@@ -180,6 +180,7 @@ typedef struct VertexAttribute {
 	unsigned int converted_count;
 
 	float *inline_buffer;
+	float *inline_buffer_pool; // Persistent allocation reused across draws (avoids malloc/free per draw)
 
 	int32_t gl_count;
 	int32_t gl_type;

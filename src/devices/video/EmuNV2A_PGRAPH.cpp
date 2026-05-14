@@ -1990,9 +1990,14 @@ static void pgraph_allocate_inline_buffer_vertices(PGRAPHState *pg,
         return;
     }
 
+    /* Reuse persistent pool allocation to avoid malloc/free per draw */
+    if (!vertex_attribute->inline_buffer_pool) {
+        vertex_attribute->inline_buffer_pool = (float*)g_malloc(NV2A_MAX_BATCH_LENGTH
+                                                      * sizeof(float) * 4);
+    }
+    vertex_attribute->inline_buffer = vertex_attribute->inline_buffer_pool;
+
     /* Now upload the previous vertex_attribute value */
-    vertex_attribute->inline_buffer = (float*)g_malloc(NV2A_MAX_BATCH_LENGTH
-                                                  * sizeof(float) * 4);
     for (i = 0; i < pg->inline_buffer_length; i++) {
         memcpy(&vertex_attribute->inline_buffer[i * 4],
                vertex_attribute->inline_value,

@@ -649,8 +649,7 @@ skip_layout_upload:
 // * in pg->vertex_attributes[i].inline_buffer. This bypasses the
 // * normal vertex declaration/stream layout entirely — all 16
 // * attributes are packed as FLOAT4 at a fixed 256-byte stride.
-// * After drawing, the inline_buffer arrays are freed (same protocol
-// * as xemu's pgraph_draw_inline_buffer).
+// * After drawing, inline_buffer pointers are reset (pool stays allocated).
 // ******************************************************************
 void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 {
@@ -744,11 +743,10 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	BindAndIssueDraw(primType, hostTopology, hostVertexCount, primitiveMode,
 		s_pUPVtxDataSRV, nullptr, s_pUPVtxDataSRV_SNORM16x2, s_pUPVtxDataSRV_UNORM8x4);
 
-	// Free per-attribute inline buffers (same protocol as xemu)
+	// Reset per-attribute inline buffers (pool stays allocated for reuse)
 	for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
 		VertexAttribute& attr = pg->vertex_attributes[i];
 		if (attr.inline_buffer) {
-			free(attr.inline_buffer);
 			attr.inline_buffer = nullptr;
 		}
 	}
