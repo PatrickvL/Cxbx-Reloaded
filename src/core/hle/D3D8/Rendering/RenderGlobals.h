@@ -168,7 +168,6 @@ void    CxbxSetDepthStencilSurface(ID3D11Texture2D* pHostDepthStencil);
 ID3D11Texture2D* CxbxGetCurrentRenderTarget(); // Returns current RT (non-owning pointer)
 HRESULT CxbxGetBackBuffer(ID3D11Texture2D** ppBackBuffer); // Returns back buffer (caller owns ref)
 HRESULT CxbxSetStreamSource(UINT HostStreamNumber, ID3D11Buffer* pHostVertexBuffer, UINT VertexStride);
-void    CxbxRawSetPixelShader(ID3D11PixelShader* pPixelShader);
 void    CxbxInvalidateActivePixelShader(); // Reset PS state tracking after blit/present
 HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader);
 

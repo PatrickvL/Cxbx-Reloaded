@@ -250,7 +250,7 @@ void CxbxSetPixelShader(ID3D11PixelShader* pPixelShader)
 
 	// Switch to the converted pixel shader (if it's any different from our currently active
 	// pixel shader, to avoid many unnecessary state changes on the local side).
-	CxbxRawSetPixelShader(pPixelShader);
+	g_pD3DDeviceContext->PSSetShader(pPixelShader, nullptr, 0);
 	g_pActivePixelShader = pPixelShader;
 }
 

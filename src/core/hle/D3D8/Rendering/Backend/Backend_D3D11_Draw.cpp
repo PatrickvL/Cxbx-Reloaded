@@ -72,11 +72,6 @@ HRESULT CxbxBltSurface(ID3D11Texture2D* pSrc, const RECT* pSrcRect, ID3D11Textur
 	return CxbxD3D11Blt(pSrc, pSrcRect, pDst, pDstRect, Filter);
 }
 
-void CxbxRawSetPixelShader(ID3D11PixelShader* pPixelShader)
-{
-	g_pD3DDeviceContext->PSSetShader(pPixelShader, nullptr, 0);
-}
-
 // ******************************************************************
 // * Dual-backend wrappers — D3D11 implementations
 // ******************************************************************
