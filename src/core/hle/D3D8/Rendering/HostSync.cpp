@@ -828,6 +828,9 @@ void CxbxUpdateHostVertexShaderConstants()
 	else {
 		auto constant_floats = (float*)pg->xf.xfctx;
 
+		// VP constants overwrite the shared cbuffer — invalidate FF state cache
+		InvalidateFixedFunctionStateCache();
+
 		if (isXboxConstants) {
 			CxbxUpdateDirtyVertexShaderConstants(constant_floats, pg->xf.xfctx_dirty);
 		}

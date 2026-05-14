@@ -323,6 +323,7 @@ inline void SetHostCubeTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture
 // HostRender.cpp
 bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, ID3D11Texture2D* pHostRenderTarget = nullptr);
 void UpdateFixedFunctionVertexShaderState();
+void InvalidateFixedFunctionStateCache(); // Call after VP constants overwrite the shared cbuffer
 void CxbxUpdateHostViewPortOffsetAndScaleConstants();
 
 // HostResourceCreate.cpp

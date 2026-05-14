@@ -1117,12 +1117,48 @@ static void UpdateFFState_Lighting(PGRAPHState* pg, uint32_t csv0c)
 	ffShaderState.Materials[1].Power = ReconstructSpecularPower(backParams);
 }
 
+// Tracks whether the last VS constant buffer upload was from the FF path.
+// When VP constants overwrite the shared cbuffer, this must be invalidated.
+static bool s_ffStateUploadValid = false;
+
+void InvalidateFixedFunctionStateCache()
+{
+	s_ffStateUploadValid = false;
+}
+
 // ******************************************************************
 // * UpdateFixedFunctionVertexShaderState
 // ******************************************************************
 void UpdateFixedFunctionVertexShaderState()
 {
 	PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
+
+	// Skip if no relevant state changed since last FF upload.
+	// Tracks: PGRAPH regs (CSV0, CONTROL, SETUPRASTER), lighting arrays,
+	// xfctx (transforms), and vertex attribute format (texcoord counts).
+	// Also re-uploads unconditionally after a VP draw overwrites the shared cbuffer.
+	static uint32_t s_lastPgraphGen = UINT32_MAX;
+	static uint32_t s_lastLightingGen = UINT32_MAX;
+	static uint32_t s_lastXfctxDirtySum = UINT32_MAX;
+	static uint32_t s_lastAttrGen = UINT32_MAX;
+
+	uint32_t xfctxDirtySum = pg->xf.xfctx_dirty[0] | pg->xf.xfctx_dirty[1]
+	                        | pg->xf.xfctx_dirty[2] | pg->xf.xfctx_dirty[3]
+	                        | pg->xf.xfctx_dirty[4] | pg->xf.xfctx_dirty[5];
+
+	if (s_ffStateUploadValid
+		&& pg->dirty[NV2A_DIRTY_PGRAPH] == s_lastPgraphGen
+		&& pg->dirty[NV2A_DIRTY_LIGHTING] == s_lastLightingGen
+		&& xfctxDirtySum == s_lastXfctxDirtySum
+		&& pg->vertex_attributes_generation == s_lastAttrGen)
+		return;
+
+	s_lastPgraphGen = pg->dirty[NV2A_DIRTY_PGRAPH];
+	s_lastLightingGen = pg->dirty[NV2A_DIRTY_LIGHTING];
+	s_lastXfctxDirtySum = xfctxDirtySum;
+	s_lastAttrGen = pg->vertex_attributes_generation;
+	s_ffStateUploadValid = true;
+
 	uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
 	uint32_t csv0d = pg->regs[RI(NV_PGRAPH_CSV0_D)];
 	uint32_t ctl3  = pg->regs[RI(NV_PGRAPH_CONTROL_3)];
@@ -1148,7 +1184,6 @@ void UpdateFixedFunctionVertexShaderState()
 	ffShaderState.Modes.NormalizeNormals = (csv0c & NV_PGRAPH_CSV0_C_NORMALIZATION_ENABLE) ? 1 : 0;
 
 	// Write fixed function state to shader constants.
-	// Must always upload because VP draws between FF draws overwrite the shared constant buffer.
 	const int slotSize = 16;
 	const int fixedFunctionStateSize = (sizeof(FixedFunctionVertexShaderState) + slotSize - 1) / slotSize;
 	CxbxSetVertexShaderConstantF(0, (float*)&ffShaderState, fixedFunctionStateSize);
