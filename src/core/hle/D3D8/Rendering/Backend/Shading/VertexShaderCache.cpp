@@ -286,7 +286,7 @@ static std::string TranslateToHLSL(const uint32_t program_data[][4], uint32_t st
     ss << "    uint _vtxIdx = ResolveVertexIndex(xIn.vertexId);\n";
     for (int i = 0; i < 16; i++) {
         if (usage.usedInputs & (1u << i))
-            ss << "    v[" << i << "] = FetchAttribute(_vtxIdx, g_Attribs[" << i << "], g_VtxDefaults[" << i << "]);\n";
+            ss << "    v[" << i << "] = FetchAttribute(_vtxIdx, Attribs[" << i << "], g_VtxDefaults[" << i << "]);\n";
         else
             ss << "    v[" << i << "] = 0;\n";
     }
