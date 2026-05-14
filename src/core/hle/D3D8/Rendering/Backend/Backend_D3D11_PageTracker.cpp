@@ -344,7 +344,19 @@ bool CxbxPageTrackerHandleFault(void* faultAddress, bool isWrite)
 				PAGE_SIZE_, PAGE_READWRITE, &oldProtect);
 			return true;
 		}
-		return false;
+
+		// Safety net: the page is in the contiguous region but the GPU-dirty
+		// bit is not set.  This can happen due to a race between MarkGPUDirty
+		// (on the puller thread) and the VEH clearing the bit (on a game
+		// thread).  Unconditionally restore PAGE_READWRITE — for committed
+		// contiguous memory, PAGE_NOACCESS is only ever set by MarkGPUDirty,
+		// so restoring access is always the correct recovery action.
+		{
+			DWORD oldProtect;
+			VirtualProtect((void*)(CONTIG_BASE + pageIdx * PAGE_SIZE_),
+				PAGE_SIZE_, PAGE_READWRITE, &oldProtect);
+		}
+		return true;
 	}
 
 	return false;
