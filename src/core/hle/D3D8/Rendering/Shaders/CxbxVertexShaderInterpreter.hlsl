@@ -297,12 +297,12 @@ VS_OUTPUT main(const VS_INPUT xIn)
     s_oRegs[OUTPUT_REG_OPOS] = float4(0, 0, 0, 1);
     s_oRegs[1]               = float4(0, 0, 0, 0); // unused
     s_oRegs[2]               = float4(0, 0, 0, 0); // unused
-    s_oRegs[OUTPUT_REG_OD0]  = float4(1, 1, 1, 1); // NV2A: unwritten diffuse = white
-    s_oRegs[OUTPUT_REG_OD1]  = float4(1, 1, 1, 1); // NV2A: unwritten specular = white
-    s_oRegs[OUTPUT_REG_OFOG] = float4(1, 1, 1, 1);
+    s_oRegs[OUTPUT_REG_OD0]  = float4(1, 1, 1, 1); // TODO: xemu uses (0,0,0,1)
+    s_oRegs[OUTPUT_REG_OD1]  = float4(0, 0, 0, 1); // specular must default black — white saturates V1R0_SUM (Water)
+    s_oRegs[OUTPUT_REG_OFOG] = float4(1, 1, 1, 1); // TODO: xemu uses (0,0,0,1) — (0,0,0,1) turns labels white via fog (Water)
     s_oRegs[OUTPUT_REG_OPTS] = float4(0, 0, 0, 0);
-    s_oRegs[OUTPUT_REG_OB0]  = float4(1, 1, 1, 1); // NV2A: unwritten back diffuse = white
-    s_oRegs[OUTPUT_REG_OB1]  = float4(1, 1, 1, 1); // NV2A: unwritten back specular = white
+    s_oRegs[OUTPUT_REG_OB0]  = float4(1, 1, 1, 1); // TODO: xemu uses (0,0,0,1)
+    s_oRegs[OUTPUT_REG_OB1]  = float4(0, 0, 0, 1); // back-face specular, same reasoning as oD1
     s_oRegs[OUTPUT_REG_OT0]  = float4(0, 0, 0, 1);
     s_oRegs[OUTPUT_REG_OT1]  = float4(0, 0, 0, 1);
     s_oRegs[OUTPUT_REG_OT2]  = float4(0, 0, 0, 1);

@@ -299,14 +299,19 @@ static std::string TranslateToHLSL(const uint32_t program_data[][4], uint32_t st
     }
     if (usage.writtenTemps) ss << "\n";
 
-    // Output registers — must match NV2A hardware defaults:
-    //   oPos/oT0-oT3: W=1 (homogeneous), oD0/oD1/oB0/oB1/oFog: all 1 (white/full)
+    // Output registers — xemu defaults all to vec4(0,0,0,1).
+    // We deviate for some until proper fixed-function fog/diffuse is implemented.
     ss << "    float4 oPos = float4(0,0,0,1);\n";
-    ss << "    float4 oD0 = float4(1,1,1,1), oD1 = float4(1,1,1,1);\n";
-    ss << "    float4 oFog = float4(1,1,1,1), oPts = float4(0,0,0,0);\n";
-    ss << "    float4 oB0 = float4(1,1,1,1), oB1 = float4(1,1,1,1);\n";
-    ss << "    float4 oT0 = float4(0,0,0,1), oT1 = float4(0,0,0,1);\n";
-    ss << "    float4 oT2 = float4(0,0,0,1), oT3 = float4(0,0,0,1);\n";
+    ss << "    float4 oD0  = float4(1,1,1,1);\n";   // TODO: xemu uses (0,0,0,1)
+    ss << "    float4 oD1  = float4(0,0,0,1);\n";   // specular must default black — white saturates V1R0_SUM (Water)
+    ss << "    float4 oB0  = float4(1,1,1,1);\n";   // TODO: xemu uses (0,0,0,1)
+    ss << "    float4 oB1  = float4(0,0,0,1);\n";   // back-face specular, same reasoning as oD1
+    ss << "    float4 oFog = float4(1,1,1,1);\n";   // TODO: xemu uses (0,0,0,1) — (0,0,0,1) turns labels white via fog (Water)
+    ss << "    float4 oPts = float4(0,0,0,0);\n";
+    ss << "    float4 oT0  = float4(0,0,0,1);\n";
+    ss << "    float4 oT1  = float4(0,0,0,1);\n";
+    ss << "    float4 oT2  = float4(0,0,0,1);\n";
+    ss << "    float4 oT3  = float4(0,0,0,1);\n";
     // Address register — only declare if ARL or relative context access is used
     if (usage.usesA0)
         ss << "    int a0 = 0;\n";
