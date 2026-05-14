@@ -209,9 +209,20 @@ d->pvideo.regs  = (uint32_t*)(g_pNV2AMMIO + 0x008000u);
 // nv2a_int.h — struct definitions
 struct PGRAPHState {
     uint32_t* regs;              // Backed by g_pNV2AMMIO + 0x400000
-    float    vsh_constants[192][4];  // Transform context RAM (XFCTX)
-    uint32_t program_data[136][4];   // Transform program RAM (XFPR)
+    CheopsState xf;              // Transform engine sub-state (XFPR, XFCTX, LTCTX, LTC1)
     // ... vertex attributes, surface state, etc.
+};
+
+struct CheopsState {
+    uint32_t xfpr[136][4];       // Transform program RAM (XFPR)
+    uint32_t xfctx[192][4];      // Transform context RAM (XFCTX) — VS constants
+    uint32_t xfctx_dirty[6];     // Bitmap: 192 bits across 6 words
+    uint32_t ltctxa[26][4];      // Lighting Context A
+    uint32_t ltctxa_dirty[1];    // Bitmap: 26 bits in 1 word
+    uint32_t ltctxb[52][4];      // Lighting Context B
+    uint32_t ltctxb_dirty[2];    // Bitmap: 52 bits across 2 words
+    uint32_t ltc1[20][4];        // Lighting Constants 1
+    uint32_t ltc1_dirty[1];      // Bitmap: 20 bits in 1 word
 };
 
 struct NV2AState {
@@ -291,9 +302,17 @@ Three categories of PGRAPH state require special treatment because they are not 
 
 **Transform Program RAM (XFPR)** — stores the VSH instruction stream. `NV097_SET_TRANSFORM_PROGRAM` writes 128-bit instructions to the XFPR starting at the slot selected by `NV_PGRAPH_CHEOPS_OFFSET`. In the current implementation, this is stored as `pg->program_data[136][4]` in the `PGRAPHState` struct. For the VS interpreter path, it is uploaded as `StructuredBuffer<uint4>` at t5 (`g_XFPR`). For the JIT path, it is compiled to HLSL at shader-upload time and cached by instruction-stream hash (rapidhash).
 
-**Transform Context RAM (XFCTX)** — stores the 192 VS constant vectors. Written via `NV097_SET_TRANSFORM_CONSTANT_LOAD` + `NV097_SET_TRANSFORM_CONSTANT`. Maintained as `pg->vsh_constants[192][4]` and uploaded as `cbuffer b0` (192 × float4 = 3072 bytes) every draw.
+**Transform Context RAM (XFCTX)** — stores the 192 VS constant vectors. Written via `NV097_SET_TRANSFORM_CONSTANT_LOAD` + `NV097_SET_TRANSFORM_CONSTANT`. Maintained as `pg->xf.xfctx[192][4]` (uint32_t, reinterpreted as float via `asfloat` at upload). Per-row dirty tracking uses a `uint32_t[6]` bitmap (`pg->xf.xfctx_dirty`); upload to `cbuffer b0` (192 × float4 = 3072 bytes) scans only set bits via `_BitScanForward` and batches contiguous dirty runs into single `SetVertexShaderConstantF` calls. The same bitmap pattern is used for the lighting arrays (`ltctxa_dirty[1]`, `ltctxb_dirty[2]`, `ltc1_dirty[1]`).
 
-**Software-computed fields** — a small set of values that shaders need but that cannot be derived from a single register read: ColorSign (sign-extension flags for per-vertex color inputs), TexFmtFixup (per-stage texture format quirks), AlphaKill threshold, FrontFaceInfo. These are derived by the CPU at draw time from the relevant PGRAPH registers and placed in a small auxiliary cbuffer (`PSAuxCBLayout`). The goal of eliminating this cbuffer by deriving all fields in-shader from the PGRAPH SRV is achievable but deferred.
+**Software-computed fields** — the majority of PS auxiliary state is now derived directly in-shader from the PGRAPH SRV via `CxbxPSAuxFromPGRAPH.hlsli`. Fields moved to in-shader derivation include: PSTextureModes, FinalCombinerInputs, ColorKeyOp, ColorKeyColor, AlphaKill, FogInfo, FogEnable, FrontFaceInfo, and ShadowCompare.
+
+A minimal 112-byte auxiliary cbuffer (`PSAuxCBLayout`, at PS `b0`) remains for 4 host-dependent fields that cannot be derived from NV2A registers alone:
+- **ColorSign** (4 × float4) — sign-extension flags derived from host DXGI texture format signedness
+- **TexFmtFixup** (float4) — per-stage format fixup code from host resource cache (channel swizzle)
+- **DepthScale** (float4) — viewport Z scale from XFCTX (not in PGRAPH regs[])
+- **DepthTexAlias** (float4) — per-stage host RT-as-texture detection (D24S8/D16 alias)
+
+The cbuffer uses `D3D11_USAGE_DEFAULT` with `UpdateSubresource`, gated by a generation counter (sum of 4 sub-generation counters: colorSign, texFmt, depthScale, depthTexAlias). Upload is skipped when the combined generation is unchanged between draws.
 
 ### 2.6 The Staging Buffer
 
@@ -683,7 +702,7 @@ Host Core 0 (pinned)
 │    All NV097 methods write decoded parameters to pg->regs[] (PGRAPH struct).
 │    Side-effect methods additionally update CPU-side mirrors:
 │      pg->program_data[][]   — NV097_SET_TRANSFORM_PROGRAM (XFPR)
-│      pg->vsh_constants[][]  — NV097_SET_TRANSFORM_CONSTANT (XFCTX)
+│      pg->xf.xfctx[][]       — NV097_SET_TRANSFORM_CONSTANT (XFCTX)
 │      pg->vertex_attributes[]— NV097_SET_VERTEX_DATA_ARRAY_*
 │    On NV097_SET_BEGIN_END(0): triggers pgraph_draw() → D3D11_draw callback.
 │    This IS the rendering thread — draws happen directly on the puller.
@@ -938,7 +957,7 @@ On `NV097_SET_BEGIN_END(0)`, the puller thread calls `pgraph_draw()` which dispa
 3. **Page flush** — `CxbxPageTrackerFlushToGPU()` for CPU-written vertex pages (once per frame, gated by `s_bFirstFlushOfFrame`).
 4. **Texture bind** — per stage 0–3: check `TEXCTL0` enable bit OR `SHADERPROG` non-NONE mode (the second condition handles point sprites using stage 3 without TEXCTL0 set). RT-as-texture fast path if TEXOFFSET matches a known RT.
 5. **Shader bind** — VS: JIT-compiled HLSL from `pg->program_data[]`, or interpreter fallback. PS: JIT-compiled combiner HLSL from `pg->regs[]` combiner topology hash, or interpreter fallback.
-6. **Upload state** — `pg->vsh_constants[]` → cbuffer b0; `pg->program_data[]` → `g_XFPR` at t5; `pg->regs[]` → `g_PGRegs` at t12 (gated by generation counter).
+6. **Upload state** — `pg->xf.xfctx[]` → cbuffer b0 (only dirty constants, scanned via `xfctx_dirty[6]` bitmap with `_BitScanForward`); `pg->xf.xfpr[]` → `g_XFPR` at t5; `pg->regs[]` → `g_PGRegs` at t12 (gated by generation counter).
 7. **Pipeline state objects** — blend, depth/stencil, rasterizer decoded from `pg->regs[]` entries for `CONTROL_0/1/2`, `BLEND`, `SETUPRASTER`; looked up from PSO cache keyed on packed state bits. (Most Xbox titles use fewer than 20 distinct PSO combinations per frame.)
 8. **Viewport/scissor** — from `NV2ASurfaceState` clip fields and `ZCLIPMIN`/`ZCLIPMAX`.
 9. **Draw dispatch** — `Draw(hostVertexCount, 0)` with null IA buffers (§12).
@@ -1075,11 +1094,11 @@ The NV2A VSH is a 136-instruction RISC unit. Each 128-bit instruction encodes up
 - **ILU**: RCP, RSQ, LOG, EXP, LIT, SGE, SLT
 - **MAC**: MOV, MUL, ADD, MAD, DP3, DP4, DPH, DST, MIN, MAX, SFL, SGE, SLT, ARL
 
-Register file: 16 input attributes (v[0]–v[15]), **192** constants (c[0]–c[191], from the XFCTX RAM — `pg->vsh_constants`), 12 temporaries (r[0]–r[11]), 2 address registers. Output: 13 registers (oPos, oD0/oD1 diffuse/specular, oT0–oT3 texcoords, oB0/oB1 back-face colors, oFog, oPts).
+Register file: 16 input attributes (v[0]–v[15]), **192** constants (c[0]–c[191], from the XFCTX RAM — `pg->xf.xfctx`), 12 temporaries (r[0]–r[11]), 2 address registers. Output: 13 registers (oPos, oD0/oD1 diffuse/specular, oT0–oT3 texcoords, oB0/oB1 back-face colors, oFog, oPts).
 
 #### Interpreter
 
-Evaluates the instruction stream at draw time via `g_XFPR` (StructuredBuffer<uint4> at t5, uploaded from `pg->program_data[]`) and `cbuffer b0` (192 × float4 constants from `pg->vsh_constants`). Used as a reference and as a fallback for JIT-unsupported patterns.
+Evaluates the instruction stream at draw time via `g_XFPR` (StructuredBuffer<uint4> at t5, uploaded from `pg->xf.xfpr[]`) and `cbuffer b0` (192 × float4 constants from `pg->xf.xfctx`, uploaded only for dirty slots via bitmap scan). Used as a reference and as a fallback for JIT-unsupported patterns.
 
 #### JIT Compiler
 
@@ -1288,4 +1307,25 @@ Deswizzle CS dispatched for surface  → clear     ─         unchanged    Pool
 
 - AVX2 bulk bitmap scan for large texture ranges (§4.3).
 - PFB/PVIDEO shader access — enable upload calls when tiling-aware texture fetch or overlay compositing is implemented.
-- Eliminate PSAuxCBLayout by deriving all fields in-shader from the PGRAPH SRV.
+- Draw batching — coalescing consecutive draws with identical pipeline state into a single `Draw()` call. An initial implementation was attempted but caused regressions (clear operations and label/text rendering were suppressed). Further investigation needed to identify why batched draws skip clear-only draw calls.
+
+**Completed optimizations (summary):**
+
+| Phase | Optimization | Impact |
+|-------|-------------|--------|
+| Mirror buffer | `D3D11_USAGE_DEFAULT` + `UpdateSubresource` with page-run coalescing | Eliminates Map/Unmap overhead; enables UAV binding |
+| PGRAPH SRV | Register state appended to mirror buffer; PS reads via `ByteAddressBuffer` at t12 | Eliminates per-draw register unpacking on CPU |
+| PSAuxCB reduction | 8 fields moved to in-shader derivation from PGRAPH SRV (368B → 112B) | ~70% fewer cbuffer bytes uploaded per draw |
+| CB strategy | All constant buffers use `D3D11_USAGE_DEFAULT` + `UpdateSubresource` | Avoids driver-side buffer renaming (allocation per Map) |
+| SRV binding dedup | `s_pLastBound*` pointers skip redundant `VSSetShaderResources` / `VSSetConstantBuffers` | Eliminates ~50% of per-draw API calls on typical scenes |
+| Layout CB caching | Generation counter + `drawLocalKey` hash skips `UpdateSubresource` when layout unchanged | Saves CB upload on consecutive same-layout draws |
+| IA null-binding | `s_IAAlreadyNull` flag skips IA teardown on consecutive vertex-fetch draws | Eliminates 3 API calls per draw after first |
+| Vertex defaults caching | `memcmp` against cached defaults skips upload when sticky values unchanged | Saves CB upload on most draws (defaults rarely change) |
+| Topology caching | Skip `IASetPrimitiveTopology` when topology unchanged between draws | 1 fewer API call per draw (common case) |
+
+**Performance results:**
+
+DolphinClassic XDK sample — measured FPS in emulator title bar:
+- Pre-optimization baseline (vertex-fetch architecture, before page tracker phases): ~8.8 FPS
+- Current (all optimizations, commit 0507c6fca): 700+ FPS
+- Improvement: ~80× throughput increase
