@@ -535,10 +535,25 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 {
 	if (!pg) return;
 
-	// Note: No change-detection fast path here. The viewport/scissor must be
-	// recalculated on every draw because multiple external paths (flip/present,
-	// RT-as-texture invalidation, depth-only unbind) can desync tracked state.
-	// The calculation is cheap (a few floats + two D3D11 calls).
+	// Change-detection: viewport/scissor is deterministic from PGRAPH + surface state.
+	// Skip recalculation when PGRAPH regs, surface config, and xfctx are unchanged.
+	static uint32_t s_lastPgraphGen = UINT32_MAX;
+	static uint32_t s_lastSurfaceGen = UINT32_MAX;
+	static uint32_t s_lastXfctxVpscl[2] = { UINT32_MAX, UINT32_MAX };
+
+	uint32_t vpscl0 = pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][0];
+	uint32_t vpscl1 = pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][1];
+
+	if (pg->dirty[NV2A_DIRTY_PGRAPH] == s_lastPgraphGen
+		&& pg->dirty[NV2A_DIRTY_SURFACE] == s_lastSurfaceGen
+		&& vpscl0 == s_lastXfctxVpscl[0]
+		&& vpscl1 == s_lastXfctxVpscl[1])
+		return;
+
+	s_lastPgraphGen = pg->dirty[NV2A_DIRTY_PGRAPH];
+	s_lastSurfaceGen = pg->dirty[NV2A_DIRTY_SURFACE];
+	s_lastXfctxVpscl[0] = vpscl0;
+	s_lastXfctxVpscl[1] = vpscl1;
 
 	// Read viewport offset and scale from XFCTX constants
 	float vpscl[2];
