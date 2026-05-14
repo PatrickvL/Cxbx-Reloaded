@@ -26,6 +26,7 @@
 #include "Backend\Backend_D3D11.h"
 #include "Backend\Backend_D3D11_Profiler.h"
 #include <algorithm> // std::min
+#include <intrin.h>  // _BitScanForward64
 
 // NV2A-native linear format check.  On NV2A, linear (pitch-based) textures
 // use format color codes with the LU_IMAGE or LC_IMAGE prefix.
@@ -764,29 +765,39 @@ void CxbxUpdateHostTextureScaling()
 	}
 }
 
-void CxbxUpdateDirtyVertexShaderConstants(const float* constants, bool* dirty) {
-	// Reduce the number of calls by updating contiguous "batches" of dirty states
-	int batchStartIndex = -1; // -1 means we aren't in a batch
+void CxbxUpdateDirtyVertexShaderConstants(const float* constants, uint32_t* dirty) {
+	// Use bitmap for O(popcount) scan instead of iterating all 192 bools
+	for (int word = 0; word < 6; word++) {
+		uint32_t bits = dirty[word];
+		if (!bits) continue;
+		dirty[word] = 0;
 
-	for (int i = 0; i < X_D3DVS_CONSTREG_COUNT; i++) {
-		if (batchStartIndex == -1 && dirty[i]) {
-			batchStartIndex = i; // Start a batch
+		int base = word * 32;
+		int batchStart = -1;
+
+		while (bits) {
+			unsigned long bit_idx;
+			_BitScanForward(&bit_idx, bits);
+			int i = base + (int)bit_idx;
+			bits &= bits - 1; // Clear lowest set bit
+
+			if (batchStart == -1) {
+				batchStart = i;
+			}
+			// Check if next dirty bit is contiguous
+			int next_i = -1;
+			if (bits) {
+				unsigned long next_bit;
+				_BitScanForward(&next_bit, bits);
+				next_i = base + (int)next_bit;
+			}
+			if (next_i != i + 1) {
+				// End of contiguous run — flush batch
+				int count = i - batchStart + 1;
+				CxbxSetVertexShaderConstantF(batchStart, &constants[batchStart * 4], count);
+				batchStart = -1;
+			}
 		}
-		else if (batchStartIndex != -1 && !dirty[i]) {
-			// Finish the batch
-			int count = i - batchStartIndex;
-			CxbxSetVertexShaderConstantF(batchStartIndex, &constants[batchStartIndex * 4], count);
-			batchStartIndex = -1;
-		}
-
-		// Constant is no longer dirty
-		dirty[i] = false;
-	}
-
-	// Send the final batch
-	if (batchStartIndex != -1) {
-		int count = X_D3DVS_CONSTREG_COUNT - batchStartIndex;
-		CxbxSetVertexShaderConstantF(batchStartIndex, &constants[batchStartIndex * 4], count);
 	}
 }
 

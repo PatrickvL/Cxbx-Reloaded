@@ -524,7 +524,7 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 		if (slot != old_val) {
 			// Per-constant dirty tracking for xfctx; global dirty flag for xfpr
 			if (target == NV097_TARGET_XFCTX_INDIRECT)
-				pg->xf.xfctx_dirty[load_ptr] = true;
+				pg->xf.xfctx_dirty[load_ptr / 32] |= (1u << (load_ptr % 32));
 			if (entry.dirty_group)
 				pg->dirty[entry.dirty_group]++;
 		}
@@ -544,7 +544,7 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 
 	// ---- Direct dispatch: resolve target array base pointer ----
 	uint32_t *base;
-	bool *row_dirty = nullptr;
+	uint32_t *row_dirty = nullptr;
 	switch (target) {
 	default: // NV097_TARGET_PGRAPH (0) — most common path
 		base = pg->regs;
@@ -590,8 +590,10 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 	if (reg != old_val) {
 		if (target == NV097_TARGET_PGRAPH)
 			pg->dirty[NV2A_DIRTY_PGRAPH]++;
-		if (row_dirty)
-			row_dirty[entry.reg_index / 4] = true;
+		if (row_dirty) {
+			unsigned row_idx = entry.reg_index / 4;
+			row_dirty[row_idx / 32] |= (1u << (row_idx % 32));
+		}
 		if (entry.dirty_group)
 			pg->dirty[entry.dirty_group]++;
 	}

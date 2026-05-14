@@ -233,9 +233,14 @@ static void pgraph_rdi_write(PGRAPHState *pg,
     case RDI_INDEX_VTX_CONSTANTS1:
         assert(false); /* Untested */
         assert((address / 4) < NV2A_VERTEXSHADER_CONSTANTS);
-        pg->xf.xfctx_dirty[address / 4] |=
-            (val != pg->xf.xfctx[address / 4][3 - address % 4]);
-        pg->xf.xfctx[address / 4][3 - address % 4] = val;
+        {
+            unsigned idx = address / 4;
+			unsigned slot = 3 - address % 4;
+            if (pg->xf.xfctx[idx][slot] != val) {
+                pg->xf.xfctx[idx][slot] = val;
+                pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+            }
+        }
         break;
     default:
         NV2A_DPRINTF("unknown rdi write select 0x%x, address 0x%x, val 0x%08x\n",

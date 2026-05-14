@@ -292,7 +292,35 @@ void D3D11_launch_transform_program(NV2AState *d, unsigned int program_start)
 	memcpy(state_linkage.input_regs, pg->xf.vertex_state_shader_v0,
 		sizeof(pg->xf.vertex_state_shader_v0));
 
-	nv2a_vsh_emu_execute_track_context_writes(&state, &program, pg->xf.xfctx_dirty);
-	// Note: Above emulation's primary purpose is to update pg->xf.xfctx and pg->xf.xfctx_dirty
+	// Local execute-and-track loop: same as nv2a_vsh_emu_execute_track_context_writes
+	// but writes directly to the uint32_t bitmap instead of a bool array.
+	{
+		Nv2aVshStep *step = program.steps;
+		while (true) {
+			nv2a_vsh_emu_apply(&state, step);
+			// Track context register writes from MAC unit
+			if (step->mac.opcode) {
+				if (step->mac.outputs[0].type == NV2ART_CONTEXT) {
+					unsigned idx = step->mac.outputs[0].index;
+					pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+				} else if (step->mac.outputs[1].type == NV2ART_CONTEXT) {
+					unsigned idx = step->mac.outputs[1].index;
+					pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+				}
+			}
+			// Track context register writes from ILU unit
+			if (step->ilu.opcode) {
+				if (step->ilu.outputs[0].type == NV2ART_CONTEXT) {
+					unsigned idx = step->ilu.outputs[0].index;
+					pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+				} else if (step->ilu.outputs[1].type == NV2ART_CONTEXT) {
+					unsigned idx = step->ilu.outputs[1].index;
+					pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+				}
+			}
+			if (step->is_final) break;
+			++step;
+		}
+	}
 	// Do NOT call nv2a_vsh_program_destroy here - program.steps is a borrowed pointer
 }

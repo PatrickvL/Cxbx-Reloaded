@@ -270,20 +270,20 @@ typedef struct CheopsState {
 	// XFCTX: Transform Context RAM (192 × float4) — vertex shader constants,
 	// matrices, viewport params, eye position, etc.
 	uint32_t xfctx[NV2A_VERTEXSHADER_CONSTANTS][4];
-	bool     xfctx_dirty[NV2A_VERTEXSHADER_CONSTANTS];
+	uint32_t xfctx_dirty[6]; // Bitmap: 192 bits across 6 words
 
 	// LTCTXA: Lighting Context A (26 × float4) — fog, ambient, material color,
 	// per-light attenuation/spot params
 	uint32_t ltctxa[NV2A_LTCTXA_COUNT][4];
-	bool     ltctxa_dirty[NV2A_LTCTXA_COUNT];
+	uint32_t ltctxa_dirty[1]; // Bitmap: 26 bits in 1 word
 
 	// LTCTXB: Lighting Context B (52 × float4) — per-light diffuse/specular/ambient colors
 	uint32_t ltctxb[NV2A_LTCTXB_COUNT][4];
-	bool     ltctxb_dirty[NV2A_LTCTXB_COUNT];
+	uint32_t ltctxb_dirty[2]; // Bitmap: 52 bits across 2 words
 
 	// LTC1: Lighting Constants 1 (20 × float4) — light range, material power params
 	uint32_t ltc1[NV2A_LTC1_COUNT][4];
-	bool     ltc1_dirty[NV2A_LTC1_COUNT];
+	uint32_t ltc1_dirty[1]; // Bitmap: 20 bits in 1 word
 
 	// SET_TRANSFORM_DATA (0x1E80): input v0 register for LAUNCH_TRANSFORM_PROGRAM
 	uint32_t vertex_state_shader_v0[4];
