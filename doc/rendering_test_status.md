@@ -51,7 +51,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | TwoSidedLighting | ✅ | 8.50 | Two-sided lighting, back material alpha | Cylinder with front/back colors |
 | Strip | ✅ | ~1 | `Power=16`, specular, reflection texgen, aniso | Robot mesh with perf stats |
 | Fur | ✅ | 15.87 | `Power=40`, specular, alpha test | Bears with fur shells now rendering |
-| Lensflare | ⚠️ | 32 | `SPECULARMATERIALSOURCE`, point light | Trees/grass visible, no sun/corona rendered but occlusion detection works |
+| Lensflare | ✅ | 32 | `SPECULARMATERIALSOURCE`, point light | Trees/grass + sun/corona/lensflare all render correctly |
 | Minnaert | ✅ | 47 | Custom lighting model via PS, RECT-DOT skip | Female model with Minnaert lighting |
 | PerPixelLighting | ✅ | 9.35 | Per-pixel lighting | Earth globe with per-pixel lighting, crosshair cursor |
 | PerPixelLightingVS | ⚠️ | 24 | Per-pixel lighting via VS | Globe renders but incorrect bright blue band around it |
@@ -117,7 +117,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | Sample | Status | FPS | Key Features | Notes |
 |--------|--------|-----|-------------|-------|
 | Fire | ✅ | 15.88 | `Fire.xpu` pixel shader | Fire effect with ground plane, purple sky |
-| Water | ⚠️ | 64 | Bumpenvmap, reflection, aniso=4, fog, `water.xpu` | Water surface with ripples and reflections now renders, but boat model is solid white (missing texture) |
+| Water | ⚠️ | 64 | Bumpenvmap, reflection, aniso=4, fog, `water.xpu` | First frame fully textured (no water), later frames render water but all textures go white |
 | Glass | ✅ | 334 | Alpha test, `Glass.xpu` | Glass teapot with refraction + reflection, skybox environment now renders |
 | FocusBlur | ⚠️ | 185 | DPNDNT_AR/GB, 5 pixel shaders | Geometry now visible (robot, cylinders) instead of garbled, but blur effect not applied |
 | MotionBlur | ✅ | 116 | Motion blur with alpha test | Moon over purple horizon with motion blur |
@@ -171,7 +171,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | ~~Black teapot~~ | ~~CubeMap~~ | ~~Teapot lacks environment reflection~~ | ~~Fixed: PGRAPH RT cache stored faces as ArraySize=1; composed into cubemap~~ | ~~Fixed~~ |
 | ~~No sphere~~ | ~~SphereMap~~ | ~~Teapot only visible when rotated~~ | ~~Fixed: FF VS constant upload cache skipped re-upload when shared CB was overwritten by VP draws~~ | ~~Fixed~~ |
 | ~~Missing skybox~~ | ~~Glass~~ | ~~Cubemap environment background not rendered~~ | ~~Fixed: skybox now renders~~ | ~~Fixed~~ |
-| White boat model | Water | Boat model renders solid white, water surface itself now works | Unknown — boat texture not bound correctly | Medium |
+| White textures | Water | First frame fully textured, then all textures go white once water renders | Texture binding corrupted when water render target is created/used | Medium |
 | No blur effect | FocusBlur | Geometry visible but blur effect not applied | DPNDNT_AR/GB dependent texture lookup not producing blur | Medium |
 | Blue band | PerPixelLightingVS | Globe renders but has incorrect bright blue band | Unknown VS lighting issue | Medium |
 | ZSprite depth | ZSprite | Teapots render but depth is disregarded | Z-sprite depth handling broken | Medium |
