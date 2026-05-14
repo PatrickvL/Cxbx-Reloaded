@@ -708,31 +708,26 @@ void CxbxD3D11DrawInlineBuffer(PGRAPHState* pg)
 	// Step 3: Fill layout CB with float4 layout for all 16 attributes
 	// ---------------------------------------------------------------
 	{
-		D3D11_MAPPED_SUBRESOURCE mapped = {};
-		HRESULT hr = g_pD3DDeviceContext->Map(s_pLayoutCB, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (FAILED(hr)) return;
+		VertexFetchLayoutCB cb = {};
 
-		VertexFetchLayoutCB* pCB = (VertexFetchLayoutCB*)mapped.pData;
-		memset(pCB, 0, sizeof(VertexFetchLayoutCB));
-
-		pCB->PrimType = primType;
-		pCB->IndexedDraw = 0;
-		pCB->IndexOffset = 0;
-		pCB->NumAttribs = 16;
-		pCB->NumVerts = vertexCount;
-		pCB->VertexOffset = 0;
+		cb.PrimType = primType;
+		cb.IndexedDraw = 0;
+		cb.IndexOffset = 0;
+		cb.NumAttribs = 16;
+		cb.NumVerts = vertexCount;
+		cb.VertexOffset = 0;
 
 		// Quad winding: must match NV2A SETUPRASTER front face setting
-		pCB->WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
+		cb.WindingCW = CxbxGetClockWiseWindingOrder() ? 1 : 0;
 
 		for (UINT a = 0; a < 16; a++) {
-			pCB->Attribs[a][0] = a * kAttrSize;       // elemOffset
-			pCB->Attribs[a][1] = kStride;             // stride
-			pCB->Attribs[a][2] = CXBX_VTXFMT_FLOAT4;  // format
-			pCB->Attribs[a][3] = 0;                   // streamBase (UP data at offset 0)
+			cb.Attribs[a][0] = a * kAttrSize;       // elemOffset
+			cb.Attribs[a][1] = kStride;             // stride
+			cb.Attribs[a][2] = CXBX_VTXFMT_FLOAT4;  // format
+			cb.Attribs[a][3] = 0;                   // streamBase (UP data at offset 0)
 		}
 
-		g_pD3DDeviceContext->Unmap(s_pLayoutCB, 0);
+		g_pD3DDeviceContext->UpdateSubresource(s_pLayoutCB, 0, nullptr, &cb, 0, 0);
 	}
 
 	// Invalidate layout cache so the next regular draw refills the CB
