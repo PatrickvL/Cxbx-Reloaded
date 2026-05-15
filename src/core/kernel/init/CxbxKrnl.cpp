@@ -1372,6 +1372,8 @@ static void CxbxrKrnlInitHacks()
 					// a valid interrupt source when it reads PMC_INTR_0.
 					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
 					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
+				} else {
+					// VBlank pending but ISR not connected yet
 				}
 			} else if (HalSystemInterrupts[3].IsPending() &&
 			           EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
