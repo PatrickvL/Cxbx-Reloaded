@@ -94,10 +94,9 @@ void DSStream_Packet_Clear(
     if (Xb_lpfnCallback != xbox::zeroptr) {
         Xb_lpfnCallback(Xb_lpvContext, unionEventContext, status);
     } else if (unionEventContext != 0) {
-        BOOL checkHandle = SetEvent(unionEventContext);
-        if (checkHandle == 0) {
-            DWORD error = GetLastError();
-            EmuLog(LOG_LEVEL::WARNING, "Unable to set event on packet's hCompletionEvent. %8X | error = %8X", unionEventContext, error);
+        xbox::ntstatus_xt status_set = xbox::NtSetEvent(unionEventContext, xbox::zeroptr);
+        if (!X_NT_SUCCESS(status_set)) {
+            EmuLog(LOG_LEVEL::WARNING, "Unable to set event on packet's hCompletionEvent. %8X | status = %08X", unionEventContext, status_set);
         }
     }
 }
