@@ -27,6 +27,7 @@
 #pragma once
 
 #include <mutex>
+#include <shared_mutex>
 
 // ReactOS uses a size of 512, but disassembling the kernel reveals it to be 32 instead
 #define TIMER_TABLE_SIZE 32
@@ -245,6 +246,15 @@ namespace xbox
 		IN PKTHREAD Thread
 	);
 };
+
+// Per-thread host wake event infrastructure.
+// Each Xbox thread gets a Win32 auto-reset event that is signaled by
+// KiUnwaitThread / KiInsertQueueApc to instantly wake the thread from
+// its dispatcher wait instead of relying on SleepEx polling.
+void CxbxRegisterThreadWakeEvent(xbox::PKTHREAD Thread);
+void CxbxUnregisterThreadWakeEvent(xbox::PKTHREAD Thread);
+void* CxbxGetThreadWakeEvent(xbox::PKTHREAD Thread);
+void CxbxSignalThreadWakeEvent(xbox::PKTHREAD Thread);
 
 extern xbox::KPROCESS KiUniqueProcess;
 extern const xbox::ulong_xt CLOCK_TIME_INCREMENT;

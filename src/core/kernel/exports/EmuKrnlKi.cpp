@@ -87,6 +87,7 @@ the said software).
 #include "EmuKrnl.h" // for the list support functions
 #include "EmuKrnlKi.h"
 #include "EmuKrnlKe.h"
+#include <unordered_map>
 
 #define MAX_TIMER_DPCS   16
 
@@ -98,6 +99,44 @@ const xbox::ulong_xt CLOCK_TIME_INCREMENT = 0x2710;
 xbox::KDPC KiTimerExpireDpc;
 xbox::KI_TIMER_LOCK KiTimerMtx;
 xbox::KI_WAIT_LIST_LOCK KiWaitListMtx;
+
+// Per-thread host wake event map.  Keyed by PKTHREAD, value is an
+// auto-reset Win32 event.  Signaled by KiUnwaitThread / KiInsertQueueApc
+// to replace the old SleepEx(1) polling with instant wakeups.
+static std::shared_mutex g_WakeEventMtx;
+static std::unordered_map<xbox::PKTHREAD, HANDLE> g_ThreadWakeEvents;
+
+void CxbxRegisterThreadWakeEvent(xbox::PKTHREAD Thread)
+{
+	HANDLE hEvent = CreateEventW(NULL, FALSE /*auto-reset*/, FALSE, NULL);
+	std::unique_lock lck(g_WakeEventMtx);
+	g_ThreadWakeEvents[Thread] = hEvent;
+}
+
+void CxbxUnregisterThreadWakeEvent(xbox::PKTHREAD Thread)
+{
+	std::unique_lock lck(g_WakeEventMtx);
+	auto it = g_ThreadWakeEvents.find(Thread);
+	if (it != g_ThreadWakeEvents.end()) {
+		CloseHandle(it->second);
+		g_ThreadWakeEvents.erase(it);
+	}
+}
+
+void* CxbxGetThreadWakeEvent(xbox::PKTHREAD Thread)
+{
+	std::shared_lock lck(g_WakeEventMtx);
+	auto it = g_ThreadWakeEvents.find(Thread);
+	return (it != g_ThreadWakeEvents.end()) ? it->second : nullptr;
+}
+
+void CxbxSignalThreadWakeEvent(xbox::PKTHREAD Thread)
+{
+	HANDLE hEvent = CxbxGetThreadWakeEvent(Thread);
+	if (hEvent) {
+		SetEvent(hEvent);
+	}
+}
 xbox::KTIMER_TABLE_ENTRY KiTimerTableListHead[TIMER_TABLE_SIZE];
 xbox::LIST_ENTRY KiWaitInListHead;
 std::mutex xbox::KiApcListMtx;
@@ -1102,6 +1141,8 @@ xbox::boolean_xt xbox::KiInsertQueueApc
 		if (kThread == KeGetCurrentThread()) {
 			KiExecuteKernelApc();
 		}
+		// Wake the target thread so it can process the APC
+		CxbxSignalThreadWakeEvent(kThread);
 	}
 	else if ((kThread->WaitMode == UserMode) && (kThread->Alertable)) { // user apc
 		kThread->ApcState.UserApcPending = TRUE;
@@ -1109,6 +1150,8 @@ xbox::boolean_xt xbox::KiInsertQueueApc
 		if (kThread == KeGetCurrentThread()) {
 			KiExecuteUserApc();
 		}
+		// Wake the target thread so it can process the APC
+		CxbxSignalThreadWakeEvent(kThread);
 	}
 
 	return TRUE;
@@ -1219,6 +1262,9 @@ xbox::void_xt xbox::KiUnwaitThread
 
 	// We cannot schedule the thread, so we'll just set its state to Ready
 	Thread->State = Ready;
+
+	// Signal the thread's host wake event so WaitApc unblocks immediately
+	CxbxSignalThreadWakeEvent(Thread);
 }
 
 xbox::void_xt xbox::KiUnwaitThreadAndLock

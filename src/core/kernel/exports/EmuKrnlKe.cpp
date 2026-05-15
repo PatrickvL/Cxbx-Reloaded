@@ -2248,6 +2248,7 @@ XBSYSAPI EXPORTNUM(146) xbox::void_xt NTAPI xbox::KeSetEventBoostPriority
 		LOG_FUNC_ARG(Event)
 		LOG_FUNC_ARG(Thread)
 		LOG_FUNC_END;
+
 	KIRQL OldIrql;
 	KiLockDispatcherDatabase(&OldIrql);
 

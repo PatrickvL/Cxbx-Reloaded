@@ -30,6 +30,7 @@
 #include "core\kernel\support\EmuFS.h"
 #include "EmuKrnlKi.h"
 #include <future>
+#include <cstdio>
 
 // CONTAINING_RECORD macro
 // Gets the value of structure member (field - num1),given the type(MYSTRUCT, in this code) and the List_Entry head(temp, in this code)
@@ -146,20 +147,26 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 	xbox::ntstatus_xt status;
 	if (Timeout == nullptr) {
 		// No timout specified, so this is an infinite wait until an alert, a user apc or the object(s) become(s) signalled
+		HANDLE hWake = CxbxGetThreadWakeEvent(kThread);
 		while (true) {
 			if (const auto ret = SatisfyWait(Lambda, kThread, Alertable, WaitMode)) {
 				status = *ret;
 				break;
 			}
 
-			// Always use SleepEx with alertable=TRUE so that host I/O completion APCs
-			// (queued by NtDll::NtReadFile etc.) can be delivered. Without this,
-			// CxbxIoEventApcDispatcher never fires for threads in non-alertable waits
-			// and async I/O hangs forever. The Xbox Alertable flag controls Xbox-level
-			// APCs (handled by SatisfyWait), not host-level I/O completion APCs.
-			// Use timeout=1 (not 0) to avoid burning CPU with millions of syscalls/sec;
-			// the OS wakes the thread immediately when an APC is queued regardless.
-			SleepEx(1, TRUE);
+			// Block on the per-thread wake event instead of polling.
+			// The event is signaled by KiUnwaitThread (when the waited
+			// object becomes signaled or a timeout fires) and by
+			// KiInsertQueueApc (when an APC is queued to this thread).
+			// Use alertable wait so host I/O completion APCs still work.
+			// Use a timeout instead of INFINITE to handle the case where
+			// game code directly writes to Header.SignalState (bypassing
+			// KeSetEvent), which would not trigger KiWaitTest/KiUnwaitThread.
+			if (hWake) {
+				WaitForSingleObjectEx(hWake, 10, TRUE);
+			} else {
+				SleepEx(1, TRUE);
+			}
 		}
 	}
 	else if (Timeout->QuadPart == 0) {
@@ -176,7 +183,10 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 		}
 	}
 	else {
-		// A non-zero timeout means we have to check the conditions until we reach the requested time
+		// A non-zero timeout means we have to check the conditions until we reach the requested time.
+		// The kernel timer (set up by the caller) will fire KiTimerExpiration → KiUnwaitThread
+		// which signals our wake event, so we can block efficiently here.
+		HANDLE hWake = CxbxGetThreadWakeEvent(kThread);
 		while (true) {
 			if (const auto ret = SatisfyWait(Lambda, kThread, Alertable, WaitMode)) {
 				status = *ret;
@@ -188,7 +198,11 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 				break;
 			}
 
-			SleepEx(1, TRUE);
+			if (hWake) {
+				WaitForSingleObjectEx(hWake, 10, TRUE);
+			} else {
+				SleepEx(1, TRUE);
+			}
 		}
 	}
 

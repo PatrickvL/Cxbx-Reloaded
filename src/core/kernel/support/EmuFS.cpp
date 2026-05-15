@@ -799,6 +799,9 @@ void EmuGenerateFS(xbox::PETHREAD Ethread, unsigned Host2XbStackBaseReserved, un
 		Prcb->CurrentThread = (xbox::PKTHREAD)Ethread;
 	}
 
+	// Create a host wake event for this thread's dispatcher waits
+	CxbxRegisterThreadWakeEvent((xbox::PKTHREAD)Ethread);
+
 	// Make the KPCR struct available to EmuKeGetPcr()
 	EmuKeSetPcr(NewPcr);
 

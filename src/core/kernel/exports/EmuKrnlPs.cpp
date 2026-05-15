@@ -539,6 +539,9 @@ XBSYSAPI EXPORTNUM(258) xbox::void_xt NTAPI xbox::PsTerminateSystemThread
 	// Therefore is run from another thread.
 	KeInsertQueueDpc(&PsReaperDpc, NULL, NULL);
 
+	// Clean up the host wake event before freeing the KPCR
+	CxbxUnregisterThreadWakeEvent(&eThread->Tcb);
+
 	EmuKeFreePcr();
 
 	_endthreadex(ExitStatus);
