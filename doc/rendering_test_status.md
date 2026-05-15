@@ -144,7 +144,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | SwapCallback | ✅ | ~7 | Swap chain callbacks | VBlank timing info display |
 | AntiAlias | ✅ | — | MSAA, `CarOpaque.xpu`, `CarTransparent.xpu` | Renders correctly, may crash on mode switch |
 | FieldRender | ✅ | 18 | Interlaced rendering, Dolphin scene, fog, specular | Dolphin scene correct, stutters |
-| Patch | ⚠️ | 13 | N-patches / higher-order surfaces | Draws only when rotated, missing triangles (tessellation bug) |
+| Patch | ⚠️ | 9.6 | N-patches / higher-order surfaces | Tessellated teapot renders immediately; geometry solid (transition strips + guard curves fix inter-patch gaps); unlit/dark (position-only, no normals/texcoords yet) |
 | PerfTest | ✅ | 52.22 | Performance benchmarking | Stonehenge scene rendered, purple sky |
 | BenchMark | ✅ | 4.58 | Benchmark suite | Repeating colored parallelogram pattern |
 | VisibilityTest | ✅ | 4.69 | Occlusion queries (zpass) | Red textured quad with "Sphere not rendered" text |
@@ -178,7 +178,7 @@ Last updated: May 2026 (dx11 branch, commit c12572573)
 | Black textures | PixelShader | Robot visible but textures partially black | Texture binding issue in multi-texture PS sample | Medium |
 | ~~No projected texture~~ | ~~ProjectedTexture~~ | ~~Title only, no geometry or projected texture~~ | ~~Fixed: now renders geometry with projected spotlight~~ | ~~Fixed~~ |
 | Paint fades | PaintEffect | Only works when pressing A, then fades back to black | Point sprite paint not persisting | Low |
-| Missing triangles | Patch | Draws only when rotated, missing triangles | Tessellation bug in N-patch implementation | Low |
+| Missing triangles | Patch | ~~Draws only when rotated, missing triangles~~ | ~~Fixed: transition-only swatches (IT+OT curves, reversed pairing) now draw connecting strips between patches; guard curves applied for watertight edge stitching~~ | ~~Fixed~~ |
 | Help screen overlay | All XDK samples | Duke image overlay doesn't render, pause when opening | Unknown HLE/overlay issue | Low |
 | ~~Crash~~ | ~~ShadowBuffer~~ | ~~Sample crashes during init~~ | ~~Fixed: thread-safety + use-after-free in draw/clear/flip paths~~ | ~~Fixed~~ |
 | Shadow too broad | ShadowVolume | Shadow darkens entire mountain width instead of projected cone below biplane | Stencil volume intersection not clipped correctly — shadow extends beyond volume bounds | Medium |
