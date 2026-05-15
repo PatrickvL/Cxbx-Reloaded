@@ -455,6 +455,11 @@ void NV2ADevice::Init()
 	// the ISR can see pending interrupts from the start.
 	d->pmc.enabled_interrupts = NV_PMC_INTR_EN_0_HARDWARE;
 	d->pcrtc.enabled_interrupts = NV_PCRTC_INTR_0_VBLANK;
+	// Enable all PGRAPH interrupt sources - LoadEngines writes 0xFFFFFFFF to
+	// NV_PGRAPH_INTR_EN during D3D init, but the MMIO write may arrive after
+	// the first pushbuffer commands. Pre-enable so NV097_NO_OPERATION's
+	// interrupt handshake works from the first Swap.
+	d->pgraph.enabled_interrupts = 0xFFFFFFFF;
 
 	d->vram_ptr = (uint8_t*)PHYSICAL_MAP_BASE;
 	d->vram_size = g_SystemMaxMemory;

@@ -311,6 +311,15 @@ DEVICE_WRITE32(PGRAPH)
 				% GET_MASK(pg->regs[RI(NV_PGRAPH_SURFACE)],
 					NV_PGRAPH_SURFACE_MODULO_3D));
 			qemu_cond_broadcast(&pg->flip_3d);
+
+			// For MMIO-only games (no pushbuffer FLIP_STALL), mark surface dirty
+			// and wake the puller thread so its auto-present fires. We can't call
+			// pgraph_flip_stall directly here because this runs on the DPC/system_events
+			// thread, not the puller thread that owns the D3D11 context.
+			if (!g_pgraph_explicit_flip_stall_seen) {
+				d->pgraph.surface_color.draw_dirty = true;
+				qemu_cond_broadcast(&d->pfifo.puller_cond);
+			}
 		}
 		break;
     case NV_PGRAPH_RDI_DATA: {
