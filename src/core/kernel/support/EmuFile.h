@@ -294,6 +294,22 @@ void NTAPI CxbxIoApcDispatcher
 	xbox::ulong_xt         Reserved
 );
 
+// Context for I/O operations that need to signal an Xbox event on completion.
+// Used when the game passes an Event handle to NtReadFile/NtWriteFile.
+struct CxbxIoEventContext {
+	xbox::PKEVENT          Event;           // Xbox event to signal on completion
+	xbox::PIO_STATUS_BLOCK IoStatusBlock;   // Original IoStatusBlock
+	xbox::PIO_APC_ROUTINE  OriginalApc;     // Original game APC (may be nullptr)
+	PVOID                  OriginalContext;  // Original game APC context
+};
+
+void NTAPI CxbxIoEventApcDispatcher
+(
+	PVOID                  ApcContext,
+	xbox::PIO_STATUS_BLOCK IoStatusBlock,
+	xbox::ulong_xt         Reserved
+);
+
 void CxbxLaunchNewXbe(const std::string& XbePath);
 
 #endif

@@ -1929,8 +1929,29 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		RETURN(X_STATUS_INVALID_PARAMETER);
 	}
 
+	// Resolve Xbox Event handle to the emulated KEVENT object.
+	// After the dispatcher migration, Xbox event handles are no longer valid host handles,
+	// so we must not pass them to the host NtDll. Instead, we signal the Xbox event
+	// ourselves when the I/O completes.
+	PKEVENT XboxEvent = nullptr;
+	if (Event != nullptr) {
+		PVOID EventObject;
+		ntstatus_xt evResult = ObReferenceObjectByHandle(Event, nullptr, &EventObject);
+		if (X_NT_SUCCESS(evResult)) {
+			XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
+		}
+		// If handle resolution fails, proceed without event (matches NT behavior
+		// where invalid event handle doesn't necessarily fail the I/O)
+	}
+
+	CxbxIoEventContext* eventContext = nullptr;
 	CxbxIoDispatcherContext* cxbxContext = nullptr;
-	if (ApcRoutine != nullptr) {
+	if (XboxEvent != nullptr) {
+		// Use event-aware APC dispatcher that signals the Xbox event on completion
+		eventContext = new CxbxIoEventContext{ XboxEvent, IoStatusBlock, ApcRoutine, ApcContext };
+		ApcRoutine = CxbxIoEventApcDispatcher;
+		ApcContext = eventContext;
+	} else if (ApcRoutine != nullptr) {
 		// Pack the original parameters to a wrapped context for a custom APC routine
 		cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
 		ApcRoutine = CxbxIoApcDispatcher;
@@ -1942,7 +1963,7 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
 		result = NtDll::NtReadFile(
 			*nFileHandle,
-			Event,
+			NULL, // Never pass Xbox event handle to host — we signal it ourselves
 			ApcRoutine,
 			ApcContext,
 			IoStatusBlock,
@@ -1959,10 +1980,32 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// If the I/O failed synchronously, the APC will never fire — free the context
-	if (cxbxContext && !X_NT_SUCCESS(result)) {
+	// If the I/O completed synchronously, signal the Xbox event now
+	if (XboxEvent && result != X_STATUS_PENDING) {
+		KeSetEvent(XboxEvent, /*Increment=*/1, /*Wait=*/FALSE);
+		// Call original APC if provided (for sync completion, host won't fire our APC)
+		if (eventContext && eventContext->OriginalApc) {
+			eventContext->OriginalApc(eventContext->OriginalContext, IoStatusBlock, 0);
+		}
+		delete eventContext;
+		eventContext = nullptr;
+		ApcContext = nullptr;
+	}
+	// If the I/O failed synchronously without event, free the context
+	else if (cxbxContext && !X_NT_SUCCESS(result)) {
 		delete cxbxContext;
 		ApcContext = nullptr;
+	}
+	// If I/O failed synchronously with event context, clean up
+	else if (eventContext && !X_NT_SUCCESS(result) && result != X_STATUS_PENDING) {
+		delete eventContext;
+		eventContext = nullptr;
+		ApcContext = nullptr;
+	}
+
+	// Dereference the Xbox event object (our signaling added a reference)
+	if (XboxEvent) {
+		ObfDereferenceObject(XboxEvent);
 	}
 
 	// Post IO completion packet if the file has an associated completion port.
@@ -2670,6 +2713,17 @@ XBSYSAPI EXPORTNUM(230) xbox::ntstatus_xt NTAPI xbox::NtSignalAndWaitForSingleOb
 		RETURN(result);
 	}
 
+	// Extract waitable dispatcher object from FILE_OBJECTs
+	PVOID ActualWaitObject;
+	{
+		POBJECT_HEADER waitObjHdr = OBJECT_TO_OBJECT_HEADER(WaitObject);
+		if (waitObjHdr->Type == &IoFileObjectType) {
+			ActualWaitObject = &(reinterpret_cast<PFILE_OBJECT>(WaitObject))->Event;
+		} else {
+			ActualWaitObject = WaitObject;
+		}
+	}
+
 	// Signal based on dispatcher object type.  Pass Wait=TRUE so the
 	// dispatcher lock is kept held (via Thread->WaitNext) across the
 	// signal and the subsequent KeWaitForSingleObject — this matches
@@ -2695,7 +2749,7 @@ XBSYSAPI EXPORTNUM(230) xbox::ntstatus_xt NTAPI xbox::NtSignalAndWaitForSingleOb
 	ObfDereferenceObject(SignalObject);
 
 	// Wait on the wait object
-	result = KeWaitForSingleObject(WaitObject, UserRequest, WaitMode, Alertable, Timeout);
+	result = KeWaitForSingleObject(ActualWaitObject, UserRequest, WaitMode, Alertable, Timeout);
 	ObfDereferenceObject(WaitObject);
 
 	RETURN(result);
@@ -2847,6 +2901,7 @@ XBSYSAPI EXPORTNUM(235) xbox::ntstatus_xt NTAPI xbox::NtWaitForMultipleObjectsEx
 
 	// Resolve all handles to dispatcher objects via Ob
 	PVOID Objects[X_MAXIMUM_WAIT_OBJECTS];
+	PVOID WaitObjects[X_MAXIMUM_WAIT_OBJECTS];
 	for (ulong_xt i = 0; i < Count; ++i) {
 		ntstatus_xt refResult = ObReferenceObjectByHandle(Handles[i], nullptr, &Objects[i]);
 		if (!X_NT_SUCCESS(refResult)) {
@@ -2856,15 +2911,23 @@ XBSYSAPI EXPORTNUM(235) xbox::ntstatus_xt NTAPI xbox::NtWaitForMultipleObjectsEx
 			}
 			RETURN(refResult);
 		}
+		// Extract the waitable dispatcher object. FILE_OBJECTs don't have a
+		// DISPATCHER_HEADER at offset 0; the kernel waits on their embedded Event.
+		POBJECT_HEADER objHdr = OBJECT_TO_OBJECT_HEADER(Objects[i]);
+		if (objHdr->Type == &IoFileObjectType) {
+			WaitObjects[i] = &(reinterpret_cast<PFILE_OBJECT>(Objects[i]))->Event;
+		} else {
+			WaitObjects[i] = Objects[i];
+		}
 	}
 
 	KWAIT_BLOCK WaitBlockArray[X_MAXIMUM_WAIT_OBJECTS];
 	ntstatus_xt ret;
 	if (Count == 1) {
-		ret = KeWaitForSingleObject(Objects[0], UserRequest, WaitMode, Alertable, Timeout);
+		ret = KeWaitForSingleObject(WaitObjects[0], UserRequest, WaitMode, Alertable, Timeout);
 	}
 	else {
-		ret = KeWaitForMultipleObjects(Count, Objects, WaitType, UserRequest, WaitMode, Alertable, Timeout, WaitBlockArray);
+		ret = KeWaitForMultipleObjects(Count, WaitObjects, WaitType, UserRequest, WaitMode, Alertable, Timeout, WaitBlockArray);
 	}
 
 	for (ulong_xt i = 0; i < Count; ++i) {
@@ -2948,8 +3011,23 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		RETURN(X_STATUS_INVALID_PARAMETER);
 	}
 
+	// Resolve Xbox Event handle (see NtReadFile for rationale)
+	PKEVENT XboxEvent = nullptr;
+	if (Event != nullptr) {
+		PVOID EventObject;
+		ntstatus_xt evResult = ObReferenceObjectByHandle(Event, nullptr, &EventObject);
+		if (X_NT_SUCCESS(evResult)) {
+			XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
+		}
+	}
+
+	CxbxIoEventContext* eventContext = nullptr;
 	CxbxIoDispatcherContext* cxbxContext = nullptr;
-	if (ApcRoutine != nullptr) {
+	if (XboxEvent != nullptr) {
+		eventContext = new CxbxIoEventContext{ XboxEvent, IoStatusBlock, ApcRoutine, ApcContext };
+		ApcRoutine = CxbxIoEventApcDispatcher;
+		ApcContext = eventContext;
+	} else if (ApcRoutine != nullptr) {
 		// Pack the original parameters to a wrapped context for a custom APC routine
 		cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
 		ApcRoutine = CxbxIoApcDispatcher;
@@ -2961,7 +3039,7 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
 		result = NtDll::NtWriteFile(
 			*nFileHandle,
-			Event,
+			NULL, // Never pass Xbox event handle to host
 			ApcRoutine,
 			ApcContext,
 			IoStatusBlock,
@@ -2977,10 +3055,28 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// If the I/O failed synchronously, the APC will never fire — free the context
-	if (cxbxContext && !X_NT_SUCCESS(result)) {
+	// If the I/O completed synchronously, signal the Xbox event now
+	if (XboxEvent && result != X_STATUS_PENDING) {
+		KeSetEvent(XboxEvent, /*Increment=*/1, /*Wait=*/FALSE);
+		if (eventContext && eventContext->OriginalApc) {
+			eventContext->OriginalApc(eventContext->OriginalContext, IoStatusBlock, 0);
+		}
+		delete eventContext;
+		eventContext = nullptr;
+		ApcContext = nullptr;
+	}
+	else if (cxbxContext && !X_NT_SUCCESS(result)) {
 		delete cxbxContext;
 		ApcContext = nullptr;
+	}
+	else if (eventContext && !X_NT_SUCCESS(result) && result != X_STATUS_PENDING) {
+		delete eventContext;
+		eventContext = nullptr;
+		ApcContext = nullptr;
+	}
+
+	if (XboxEvent) {
+		ObfDereferenceObject(XboxEvent);
 	}
 
 	// Post IO completion packet if the file has an associated completion port.

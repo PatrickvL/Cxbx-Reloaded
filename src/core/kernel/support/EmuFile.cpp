@@ -268,6 +268,21 @@ void NTAPI CxbxIoApcDispatcher(PVOID ApcContext, xbox::PIO_STATUS_BLOCK /*IoStat
 	delete cxbxContext;
 }
 
+void NTAPI CxbxIoEventApcDispatcher(PVOID ApcContext, xbox::PIO_STATUS_BLOCK IoStatusBlock, xbox::ulong_xt Reserved)
+{
+	CxbxIoEventContext* ctx = reinterpret_cast<CxbxIoEventContext*>(ApcContext);
+
+	// Signal the Xbox event to wake any thread waiting on it
+	xbox::KeSetEvent(ctx->Event, /*Increment=*/1, /*Wait=*/FALSE);
+
+	// If the game also provided an APC routine, call it
+	if (ctx->OriginalApc) {
+		ctx->OriginalApc(ctx->OriginalContext, ctx->IoStatusBlock, Reserved);
+	}
+
+	delete ctx;
+}
+
 const std::string PartitionPrefix = "Partition";
 const std::string MediaBoardRomFile = "fpr21042_m29w160et.bin";
 const std::string MediaBoardSegaBoot0 = PartitionPrefix + "2.bin";
