@@ -1930,9 +1930,11 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	}
 
 	// Resolve Xbox Event handle to the emulated KEVENT object.
-	// After the dispatcher migration, Xbox event handles are no longer valid host handles,
-	// so we must not pass them to the host NtDll. Instead, we signal the Xbox event
-	// ourselves when the I/O completes.
+	// Xbox event handles are not valid host handles, so we never pass them to
+	// NtDll. Instead, we force the host I/O to complete synchronously (using a
+	// temporary Windows event to wait on if STATUS_PENDING), then signal the
+	// Xbox event ourselves. This eliminates the fragile dependency on Windows
+	// APC delivery that previously caused missed-signal hangs.
 	PKEVENT XboxEvent = nullptr;
 	if (Event != nullptr) {
 		PVOID EventObject;
@@ -1940,37 +1942,40 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		if (X_NT_SUCCESS(evResult)) {
 			XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
 		}
-		// If handle resolution fails, proceed without event (matches NT behavior
-		// where invalid event handle doesn't necessarily fail the I/O)
 	}
 
-	CxbxIoEventContext* eventContext = nullptr;
-	CxbxIoDispatcherContext* cxbxContext = nullptr;
-	if (XboxEvent != nullptr) {
-		// Use event-aware APC dispatcher that signals the Xbox event on completion
-		eventContext = new CxbxIoEventContext{ XboxEvent, IoStatusBlock, ApcRoutine, ApcContext };
-		ApcRoutine = CxbxIoEventApcDispatcher;
-		ApcContext = eventContext;
-	} else if (ApcRoutine != nullptr) {
-		// Pack the original parameters to a wrapped context for a custom APC routine
-		cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
-		ApcRoutine = CxbxIoApcDispatcher;
-		ApcContext = cxbxContext;
-	}
-
-	// TODO: Start irp work here...
+	// Save the original APC routine/context before we potentially clear them
+	PIO_APC_ROUTINE OriginalApcRoutine = ApcRoutine;
+	PVOID OriginalApcContext = ApcContext;
 
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
+		// When an Xbox event or APC is requested, use a temporary Windows event
+		// to synchronize host I/O completion instead of relying on Windows APCs.
+		HANDLE hHostEvent = NULL;
+		if (XboxEvent != nullptr || ApcRoutine != nullptr) {
+			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
+		}
+
 		result = NtDll::NtReadFile(
 			*nFileHandle,
-			NULL, // Never pass Xbox event handle to host — we signal it ourselves
-			ApcRoutine,
-			ApcContext,
+			hHostEvent,  // Temp Windows event (or NULL if no Xbox event/APC)
+			NULL,        // No APC — we handle completion ourselves
+			NULL,        // No APC context
 			IoStatusBlock,
 			Buffer,
 			Length,
 			(NtDll::LARGE_INTEGER*)ByteOffset,
 			/*Key=*/nullptr);
+
+		// If the host returned STATUS_PENDING, wait for the I/O to complete
+		if (result == X_STATUS_PENDING && hHostEvent != NULL) {
+			WaitForSingleObject(hHostEvent, INFINITE);
+			result = IoStatusBlock->Status;
+		}
+
+		if (hHostEvent != NULL) {
+			CloseHandle(hHostEvent);
+		}
 
 		if (FAILED(result)) {
 			EmuLog(LOG_LEVEL::WARNING, "NtReadFile Failed! (0x%.08X)", result);
@@ -1980,45 +1985,29 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// If the I/O completed synchronously, signal the Xbox event now
-	if (XboxEvent && result != X_STATUS_PENDING) {
+	// Signal the Xbox event now that I/O is complete
+	if (XboxEvent) {
 		KeSetEvent(XboxEvent, /*Increment=*/1, /*Wait=*/FALSE);
-		// Call original APC if provided (for sync completion, host won't fire our APC)
-		if (eventContext && eventContext->OriginalApc) {
-			eventContext->OriginalApc(eventContext->OriginalContext, IoStatusBlock, 0);
-		}
-		delete eventContext;
-		eventContext = nullptr;
-		ApcContext = nullptr;
-	}
-	// If the I/O failed synchronously without event, free the context
-	else if (cxbxContext && !X_NT_SUCCESS(result)) {
-		delete cxbxContext;
-		ApcContext = nullptr;
-	}
-	// If I/O failed synchronously with event context, clean up
-	else if (eventContext && !X_NT_SUCCESS(result) && result != X_STATUS_PENDING) {
-		delete eventContext;
-		eventContext = nullptr;
-		ApcContext = nullptr;
 	}
 
-	// Dereference the Xbox event object (our signaling added a reference)
+	// Call the game's APC routine directly (we're on the requesting thread)
+	if (OriginalApcRoutine && X_NT_SUCCESS(result)) {
+		OriginalApcRoutine(OriginalApcContext, IoStatusBlock, 0);
+	}
+
+	// Dereference the Xbox event object
 	if (XboxEvent) {
 		ObfDereferenceObject(XboxEvent);
 	}
 
 	// Post IO completion packet if the file has an associated completion port.
-	// Post for all completed statuses (including errors), only skip STATUS_PENDING.
-	if (CompletionContext && result != X_STATUS_PENDING) {
-		// On error paths IoStatusBlock may not have been filled by the host,
-		// so use result directly as the status and 0 for information.
+	if (CompletionContext) {
 		ntstatus_xt ioStatus = X_NT_SUCCESS(result) ? IoStatusBlock->Status : result;
 		ulong_xt ioInfo = X_NT_SUCCESS(result) ? static_cast<ulong_xt>(IoStatusBlock->Information) : 0;
 		IoSetIoCompletion(
 			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
 			CompletionContext->Key,
-			ApcContext,
+			OriginalApcContext,
 			ioStatus,
 			ioInfo);
 	}
@@ -3021,32 +3010,38 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		}
 	}
 
-	CxbxIoEventContext* eventContext = nullptr;
-	CxbxIoDispatcherContext* cxbxContext = nullptr;
-	if (XboxEvent != nullptr) {
-		eventContext = new CxbxIoEventContext{ XboxEvent, IoStatusBlock, ApcRoutine, ApcContext };
-		ApcRoutine = CxbxIoEventApcDispatcher;
-		ApcContext = eventContext;
-	} else if (ApcRoutine != nullptr) {
-		// Pack the original parameters to a wrapped context for a custom APC routine
-		cxbxContext = new CxbxIoDispatcherContext(IoStatusBlock, ApcRoutine, ApcContext);
-		ApcRoutine = CxbxIoApcDispatcher;
-		ApcContext = cxbxContext;
-	}
-
-	// TODO: Do irp work here...
+	// Save the original APC routine/context
+	PIO_APC_ROUTINE OriginalApcRoutine = ApcRoutine;
+	PVOID OriginalApcContext = ApcContext;
 
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
+		// When an Xbox event or APC is requested, use a temporary Windows event
+		// to synchronize host I/O completion instead of relying on Windows APCs.
+		HANDLE hHostEvent = NULL;
+		if (XboxEvent != nullptr || ApcRoutine != nullptr) {
+			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
+		}
+
 		result = NtDll::NtWriteFile(
 			*nFileHandle,
-			NULL, // Never pass Xbox event handle to host
-			ApcRoutine,
-			ApcContext,
+			hHostEvent,  // Temp Windows event (or NULL if no Xbox event/APC)
+			NULL,        // No APC — we handle completion ourselves
+			NULL,        // No APC context
 			IoStatusBlock,
 			Buffer,
 			Length,
 			(NtDll::LARGE_INTEGER*)ByteOffset,
 			/*Key=*/nullptr);
+
+		// If the host returned STATUS_PENDING, wait for the I/O to complete
+		if (result == X_STATUS_PENDING && hHostEvent != NULL) {
+			WaitForSingleObject(hHostEvent, INFINITE);
+			result = IoStatusBlock->Status;
+		}
+
+		if (hHostEvent != NULL) {
+			CloseHandle(hHostEvent);
+		}
 
 		if (FAILED(result))
 			EmuLog(LOG_LEVEL::WARNING, "NtWriteFile Failed! (0x%.08X)", result);
@@ -3055,24 +3050,14 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// If the I/O completed synchronously, signal the Xbox event now
-	if (XboxEvent && result != X_STATUS_PENDING) {
+	// Signal the Xbox event now that I/O is complete
+	if (XboxEvent) {
 		KeSetEvent(XboxEvent, /*Increment=*/1, /*Wait=*/FALSE);
-		if (eventContext && eventContext->OriginalApc) {
-			eventContext->OriginalApc(eventContext->OriginalContext, IoStatusBlock, 0);
-		}
-		delete eventContext;
-		eventContext = nullptr;
-		ApcContext = nullptr;
 	}
-	else if (cxbxContext && !X_NT_SUCCESS(result)) {
-		delete cxbxContext;
-		ApcContext = nullptr;
-	}
-	else if (eventContext && !X_NT_SUCCESS(result) && result != X_STATUS_PENDING) {
-		delete eventContext;
-		eventContext = nullptr;
-		ApcContext = nullptr;
+
+	// Call the game's APC routine directly (we're on the requesting thread)
+	if (OriginalApcRoutine && X_NT_SUCCESS(result)) {
+		OriginalApcRoutine(OriginalApcContext, IoStatusBlock, 0);
 	}
 
 	if (XboxEvent) {
@@ -3080,16 +3065,13 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	}
 
 	// Post IO completion packet if the file has an associated completion port.
-	// Post for all completed statuses (including errors), only skip STATUS_PENDING.
-	if (CompletionContext && result != X_STATUS_PENDING) {
-		// On error paths IoStatusBlock may not have been filled by the host,
-		// so use result directly as the status and 0 for information.
+	if (CompletionContext) {
 		ntstatus_xt ioStatus = X_NT_SUCCESS(result) ? IoStatusBlock->Status : result;
 		ulong_xt ioInfo = X_NT_SUCCESS(result) ? static_cast<ulong_xt>(IoStatusBlock->Information) : 0;
 		IoSetIoCompletion(
 			reinterpret_cast<PKQUEUE>(CompletionContext->Port),
 			CompletionContext->Key,
-			ApcContext,
+			OriginalApcContext,
 			ioStatus,
 			ioInfo);
 	}

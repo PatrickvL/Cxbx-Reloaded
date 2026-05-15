@@ -33,6 +33,7 @@
 #include <string>
 #include <sstream>
 #include <fstream>
+#include <atomic>
 #include <cassert>
 #include <Shlobj.h>
 #include <Shlwapi.h>
