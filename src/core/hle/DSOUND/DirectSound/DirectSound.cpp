@@ -450,11 +450,13 @@ void StreamBufferAudio(xbox::XbHybridDSBuffer* pHybridBuffer, float msToCopy) {
 
 void dsound_async_worker()
 {
-    DSoundMutexGuardLock;
-
-    xbox::LARGE_INTEGER getTime;
-    xbox::KeQuerySystemTime(&getTime);
-    DirectSoundDoWork_Stream(getTime);
+    // Do NOT process stream packets from the system_events timer thread.
+    // DirectSoundDoWork_Stream → DSStream_Packet_Process → Xb_lpfnCallback
+    // invokes game callbacks that may block in KeWaitForSingleObject, which
+    // stalls VBlank delivery and starves the DPC thread — causing deadlock.
+    // Stream packet processing is handled by the game's own DirectSoundDoWork
+    // calls on its own thread where blocking is safe.
+    return;
 }
 
 void dsound_worker()
@@ -462,8 +464,12 @@ void dsound_worker()
     // Testcase: Gauntlet Dark Legacy, if Sleep(1) then intro videos start to starved often
     // unless console is open with logging enabled. This is the cause of stopping intro videos often.
 
-    // Enforce mutex guard lock only occur inside below bracket for proper compile build.
-    DSoundMutexGuardLock;
+    // Use try_lock to avoid blocking the system_events thread.
+    // If a game thread holds g_DSoundMutex (e.g. inside a stream completion
+    // callback that calls KeWaitForSingleObject), blocking here would stall
+    // VBlank delivery and starve the DPC thread — causing deadlock.
+    std::unique_lock<std::recursive_mutex> guard(g_DSoundMutex, std::try_to_lock);
+    if (!guard.owns_lock()) return;
 
 	// Stream sound buffer audio
 	// because the title may change the content of sound buffers at any time
