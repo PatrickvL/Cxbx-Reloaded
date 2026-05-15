@@ -296,9 +296,6 @@ DEVICE_WRITE32(PGRAPH)
 
 	switch (addr) {
 	case NV_PGRAPH_INTR:
-		if (value & NV_PGRAPH_INTR_ERROR) {
-			EmuLog(LOG_LEVEL::INFO, "NV_PGRAPH_INTR: ISR clearing INTR_ERROR (pending was 0x%08X)", pg->pending_interrupts);
-		}
 		pg->pending_interrupts &= ~value;
 		qemu_cond_broadcast(&pg->interrupt_cond);
 		break;
@@ -592,8 +589,6 @@ void pgraph_handle_method(NV2AState *d,
 			if (parameter != 0) {
 				assert(!(pg->pending_interrupts & NV_PGRAPH_INTR_ERROR));
 
-				EmuLog(LOG_LEVEL::INFO, "NV097_NO_OPERATION: param=0x%08X, raising PGRAPH INTR_ERROR (waiting for ISR to clear)", parameter);
-
 				SET_MASK(pg->regs[RI(NV_PGRAPH_TRAPPED_ADDR)],
 					NV_PGRAPH_TRAPPED_ADDR_CHID, channel_id);
 				SET_MASK(pg->regs[RI(NV_PGRAPH_TRAPPED_ADDR)],
@@ -611,9 +606,16 @@ void pgraph_handle_method(NV2AState *d,
 				qemu_mutex_unlock_iothread();
 
 				while (pg->pending_interrupts & NV_PGRAPH_INTR_ERROR) {
-					qemu_cond_wait(&pg->interrupt_cond, &pg->pgraph_lock);
+					// Use timed wait as a safety net: if the DPC signal was lost
+					// (due to any unforeseen race), we re-signal after 50ms rather
+					// than hanging indefinitely. Normal path returns in <1ms.
+					if (qemu_cond_timedwait(&pg->interrupt_cond, &pg->pgraph_lock, 50)) {
+						// Timed out — re-signal DPC thread in case the original was lost
+						qemu_mutex_unlock(&pg->pgraph_lock);
+						update_irq(d);
+						qemu_mutex_lock(&pg->pgraph_lock);
+					}
 				}
-				EmuLog(LOG_LEVEL::INFO, "NV097_NO_OPERATION: ISR cleared PGRAPH INTR_ERROR, continuing");
 			}
 			break;
 

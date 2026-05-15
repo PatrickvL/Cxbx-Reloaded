@@ -60,6 +60,7 @@ void qemu_cond_destroy(QemuCond *cond);
 void qemu_cond_signal(QemuCond *cond);
 void qemu_cond_broadcast(QemuCond *cond);
 void qemu_cond_wait(QemuCond *cond, QemuMutex *mutex);
+bool qemu_cond_timedwait(QemuCond *cond, QemuMutex *mutex, unsigned int ms);
 
 void qemu_sem_init(QemuSemaphore *sem, int init);
 void qemu_sem_post(QemuSemaphore *sem);
