@@ -43,6 +43,7 @@
 
 #include <cmath>
 #include <cassert>
+#include <cstring>
 
 using namespace xbox;
 
@@ -60,11 +61,53 @@ struct Float3 { float x, y, z; };
 
 static Float3 MakeFloat3(const float *p) { return { p[0], p[1], p[2] }; }
 
+static Float3 Float3Sub(Float3 a, Float3 b) {
+	return { a.x - b.x, a.y - b.y, a.z - b.z };
+}
+
+static Float3 Float3Cross(Float3 a, Float3 b) {
+	return { a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x };
+}
+
+static Float3 Float3Normalize(Float3 v) {
+	float len = sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
+	if (len > 1e-8f) { float inv = 1.0f / len; return { v.x*inv, v.y*inv, v.z*inv }; }
+	return { 0.0f, 0.0f, 1.0f };
+}
+
+// Compute per-vertex normals from a position grid using finite differences.
+// Grid is rows × cols. Output normals array must be at least rows*cols.
+static void ComputeGridNormals(const Float3 *grid, Float3 *normals, int rows, int cols) {
+	for (int y = 0; y < rows; y++) {
+		for (int x = 0; x < cols; x++) {
+			// Tangent in U (column) direction
+			Float3 dU;
+			if (x > 0 && x < cols - 1)
+				dU = Float3Sub(grid[y*cols + x+1], grid[y*cols + x-1]);
+			else if (x < cols - 1)
+				dU = Float3Sub(grid[y*cols + x+1], grid[y*cols + x]);
+			else
+				dU = Float3Sub(grid[y*cols + x], grid[y*cols + x-1]);
+
+			// Tangent in V (row) direction
+			Float3 dV;
+			if (y > 0 && y < rows - 1)
+				dV = Float3Sub(grid[(y+1)*cols + x], grid[(y-1)*cols + x]);
+			else if (y < rows - 1)
+				dV = Float3Sub(grid[(y+1)*cols + x], grid[y*cols + x]);
+			else
+				dV = Float3Sub(grid[y*cols + x], grid[(y-1)*cols + x]);
+
+			normals[y*cols + x] = Float3Normalize(Float3Cross(dU, dV));
+		}
+	}
+}
+
 // ---------------------------------------------------------------
 // Forward-difference curve: load coefficients from float4 buffer
 // ---------------------------------------------------------------
-struct FDCurve3 {
-	float c[MAX_FD_ORDER][3];
+struct FDCurve4 {
+	float c[MAX_FD_ORDER][4];
 	int   order;
 
 	void Load(const float *float4Base, int attrOffset, int fdOrder) {
@@ -74,33 +117,67 @@ struct FDCurve3 {
 			c[k][0] = float4Base[idx + 0];
 			c[k][1] = float4Base[idx + 1];
 			c[k][2] = float4Base[idx + 2];
+			c[k][3] = float4Base[idx + 3];
 		}
 	}
 
-	// Single FD step: c[i] += c[i+1] for i = 0..order-2
 	void Step() {
 		for (int i = 0; i < order - 1; i++) {
 			c[i][0] += c[i + 1][0];
 			c[i][1] += c[i + 1][1];
 			c[i][2] += c[i + 1][2];
+			c[i][3] += c[i + 1][3];
 		}
 	}
 
-	Float3 Value() const { return { c[0][0], c[0][1], c[0][2] }; }
+	void Value(float *out) const {
+		out[0] = c[0][0]; out[1] = c[0][1]; out[2] = c[0][2]; out[3] = c[0][3];
+	}
 
-	// Exact endpoint after n steps via binomial sum (eliminates FD drift)
-	Float3 ExactEndpoint(int n) const {
+	void ExactEndpoint(int n, float *out) const {
 		double binom = 1.0;
-		double ex = 0, ey = 0, ez = 0;
+		double r[4] = { 0, 0, 0, 0 };
 		for (int k = 0; k < order; k++) {
-			ex += binom * c[k][0];
-			ey += binom * c[k][1];
-			ez += binom * c[k][2];
+			for (int j = 0; j < 4; j++) r[j] += binom * c[k][j];
 			binom = binom * (double)(n - k) / (double)(k + 1);
 		}
-		return { (float)ex, (float)ey, (float)ez };
+		for (int j = 0; j < 4; j++) out[j] = (float)r[j];
+	}
+
+	// Convenience: extract xyz as Float3
+	Float3 Value3() const { return { c[0][0], c[0][1], c[0][2] }; }
+
+	Float3 ExactEndpoint3(int n) const {
+		float tmp[4];
+		ExactEndpoint(n, tmp);
+		return { tmp[0], tmp[1], tmp[2] };
 	}
 };
+
+// ---------------------------------------------------------------
+// Multi-attribute tessellation support
+// ---------------------------------------------------------------
+
+// Describes one tessellated vertex attribute
+struct TessAttr {
+	int hwIndex;        // NV2A attribute index (0-15)
+	int uOrder;         // FD order in U direction (0 for auto attrs)
+	int coeffOffset;    // float4 offset within strip row (for FD attrs)
+	int outByteOffset;  // byte offset in packed output vertex
+	int components;     // number of output float components (2, 3, or 4)
+	bool isFD;          // true = evaluate from FD data
+	bool isAutoNormal;  // true = derived from position cross product
+};
+
+static constexpr int MAX_TESS_ATTRS = 16;
+
+// Per-attribute grid storage for non-position FD attributes (4 floats per grid point).
+// Indexed by TessAttr array index; position uses its own Float3 grid.
+static float s_fdGrids[MAX_TESS_ATTRS][MAX_GRID_DIM * MAX_GRID_DIM * 4];
+
+// Output triangle list buffer (static to avoid stack overflow with large vertex strides)
+static constexpr int MAX_TRI_BUF_BYTES = 512 * 1024;
+static uint8_t s_triListBuf[MAX_TRI_BUF_BYTES];
 
 // ---------------------------------------------------------------
 // Patch register decode helpers (BEGIN_PATCH0-3 layout)
@@ -177,23 +254,75 @@ void D3D11_draw_patch(NV2AState *d)
 
 	// --- Decode patch registers ---
 
-	// Find position attribute (first enabled hw attr) and its U-order
-	int posUOrder = 0;
-	int posAttrOffset = 0; // float4 offset within a strip row
-	for (int a = 0; a < 16; a++) {
-		int order = DecodeAttrUOrder(patch.patch0, patch.patch1, a);
-		if (order >= 2) {
-			posUOrder = order;
-			break;
-		}
-		if (order > 0) posAttrOffset += order; // skip lower-order attrs before position
-	}
-	if (posUOrder < 2)
-		return;
-
 	int posVOrder       = DecodePosVOrder(patch.patch3);
 	int numCoeffsPerRow = DecodeNumCoeffsPerRow(patch.patch3);
 	bool hasNormal      = DecodeHasNormal(patch.patch3);
+
+	// Scan all 16 HW attributes for active tessellation targets.
+	// Attributes with non-zero U-order in patch0/patch1 are FD-tessellated.
+	// Attr 2 (normal) is auto-generated from position cross product when
+	// hasNormal is set but attr 2 has no FD data of its own.
+	TessAttr tessAttrs[MAX_TESS_ATTRS];
+	int numTessAttrs = 0;
+	int posIdx = -1;        // index into tessAttrs[] for position
+	int normalIdx = -1;     // index into tessAttrs[] for auto-normal
+	int posUOrder = 0;
+	int posAttrOffset = 0;  // float4 offset of position within strip row
+
+	{
+		int coeffOff = 0;
+		int byteOff = 0;
+		for (int a = 0; a < 16; a++) {
+			int order = DecodeAttrUOrder(patch.patch0, patch.patch1, a);
+			if (order > 0) {
+				// FD-tessellated attribute
+				TessAttr &ta = tessAttrs[numTessAttrs];
+				ta.hwIndex = a;
+				ta.uOrder = order;
+				ta.coeffOffset = coeffOff;
+				ta.isFD = true;
+				ta.isAutoNormal = false;
+
+				if (posIdx < 0 && order >= 2) {
+					// First attr with order >= 2 is position
+					posIdx = numTessAttrs;
+					posUOrder = order;
+					posAttrOffset = coeffOff;
+					ta.components = 3; // Position = xyz
+				} else if (a == 2) {
+					// Normal from FD data (driver-computed via TESSNORMAL)
+					ta.components = 3;
+				} else {
+					ta.components = 4; // General attr = full float4
+				}
+
+				ta.outByteOffset = byteOff;
+				byteOff += ta.components * (int)sizeof(float);
+				coeffOff += order;
+				numTessAttrs++;
+			} else if (a == 2 && hasNormal) {
+				// Auto-normal: derived from position cross product
+				TessAttr &ta = tessAttrs[numTessAttrs];
+				ta.hwIndex = 2;
+				ta.uOrder = 0;
+				ta.coeffOffset = 0;
+				ta.components = 3;
+				ta.isFD = false;
+				ta.isAutoNormal = true;
+				ta.outByteOffset = byteOff;
+				byteOff += 3 * (int)sizeof(float);
+				normalIdx = numTessAttrs;
+				numTessAttrs++;
+			}
+		}
+	}
+
+	if (posIdx < 0 || posUOrder < 2)
+		return;
+
+	int outVertexStride = 0;
+	for (int i = 0; i < numTessAttrs; i++)
+		outVertexStride += tessAttrs[i].components * (int)sizeof(float);
 
 	PatchGeometry geo = DecodePatch2(patch.patch2);
 	int numStepsU = (geo.nSwatchU == 0) ? geo.partialWidth : geo.maxSwatch;
@@ -241,28 +370,36 @@ void D3D11_draw_patch(NV2AState *d)
 		{
 			PatchCurve &tc = patch.curves[curveA];
 			const float *coeffs = &patch.coefficients[tc.coeffStart * 4];
-			FDCurve3 fd;
+			FDCurve4 fd;
 			fd.Load(coeffs, 0, posVOrder);
-			edgeA[0] = fd.Value();
+			edgeA[0] = fd.Value3();
 			for (int s = 1; s < numPointsV; s++) {
 				fd.Step();
-				edgeA[s] = fd.Value();
+				edgeA[s] = fd.Value3();
 			}
 		}
 		{
 			PatchCurve &tc = patch.curves[curveB];
 			const float *coeffs = &patch.coefficients[tc.coeffStart * 4];
-			FDCurve3 fd;
+			FDCurve4 fd;
 			fd.Load(coeffs, 0, posVOrder);
-			edgeB[0] = fd.Value();
+			edgeB[0] = fd.Value3();
 			for (int s = 1; s < numPointsV; s++) {
 				fd.Step();
-				edgeB[s] = fd.Value();
+				edgeB[s] = fd.Value3();
 			}
 		}
 
-		// Build triangle list: pair edgeA[k] with edgeB[N-k] (reversed)
-		Float3 triList[MAX_GRID_DIM * 6];
+		// Transition strips always output position + auto-normal (cross product)
+		int transStride = 6 * (int)sizeof(float); // pos(3) + normal(3)
+		int transNormalOff = 3 * (int)sizeof(float);
+
+		int maxTransVerts = (numPointsV - 1) * 6;
+		int transBytes = maxTransVerts * transStride;
+		assert(transBytes <= MAX_TRI_BUF_BYTES);
+		if (transBytes > MAX_TRI_BUF_BYTES)
+			return;
+
 		int triCount = 0;
 
 		for (int k = 0; k < numPointsV - 1; k++) {
@@ -274,23 +411,48 @@ void D3D11_draw_patch(NV2AState *d)
 			Float3 b0 = edgeB[rk];
 			Float3 b1 = edgeB[rk1];
 
-			triList[triCount++] = a0;
-			triList[triCount++] = b0;
-			triList[triCount++] = a1;
-			triList[triCount++] = b0;
-			triList[triCount++] = b1;
-			triList[triCount++] = a1;
+			// Compute face normal for this quad (both triangles share it)
+			Float3 e1 = Float3Sub(b0, a0);
+			Float3 e2 = Float3Sub(a1, a0);
+			Float3 n = Float3Normalize(Float3Cross(e1, e2));
+
+			Float3 verts[6] = { a0, b0, a1, b0, b1, a1 };
+			for (int v = 0; v < 6; v++) {
+				uint8_t *dst = &s_triListBuf[triCount * transStride];
+				float *posDst = (float *)dst;
+				posDst[0] = verts[v].x;
+				posDst[1] = verts[v].y;
+				posDst[2] = verts[v].z;
+				float *nrmDst = (float *)(dst + transNormalOff);
+				nrmDst[0] = n.x;
+				nrmDst[1] = n.y;
+				nrmDst[2] = n.z;
+				triCount++;
+			}
 		}
 
 		if (triCount == 0)
 			return;
 
-		// Draw transition strip
-		VertexAttribute savedAttr0 = pg->vertex_attributes[0];
-		pg->vertex_attributes[0].format = 2;
-		pg->vertex_attributes[0].count = 3;
-		pg->vertex_attributes[0].stride = sizeof(Float3);
-		pg->vertex_attributes[0].offset = 0;
+		// Draw transition strip: save ALL 16 attributes, disable unused ones
+		int posHw = tessAttrs[posIdx].hwIndex;
+		VertexAttribute savedTransAttrs[16];
+		for (int i = 0; i < 16; i++) {
+			savedTransAttrs[i] = pg->vertex_attributes[i];
+			pg->vertex_attributes[i].count = 0; // disable
+		}
+
+		pg->vertex_attributes[posHw].format = 2;
+		pg->vertex_attributes[posHw].size = 4;
+		pg->vertex_attributes[posHw].count = 3;
+		pg->vertex_attributes[posHw].stride = transStride;
+		pg->vertex_attributes[posHw].offset = 0;
+
+		pg->vertex_attributes[2].format = 2;
+		pg->vertex_attributes[2].size = 4;
+		pg->vertex_attributes[2].count = 3;
+		pg->vertex_attributes[2].stride = transStride;
+		pg->vertex_attributes[2].offset = 0;
 
 		CxbxUpdateNativeD3DResources();
 
@@ -300,13 +462,14 @@ void D3D11_draw_patch(NV2AState *d)
 		DrawContext.dwStartVertex = 0;
 		DrawContext.pXboxIndexData = nullptr;
 		DrawContext.dwBaseVertexIndex = 0;
-		DrawContext.pXboxVertexStreamZeroData = triList;
-		DrawContext.uiXboxVertexStreamZeroStride = sizeof(Float3);
+		DrawContext.pXboxVertexStreamZeroData = s_triListBuf;
+		DrawContext.uiXboxVertexStreamZeroStride = transStride;
 		DrawContext.bNV2AInlineData = true;
 
 		CxbxD3D11VertexFetchDraw(DrawContext);
 
-		pg->vertex_attributes[0] = savedAttr0;
+		for (int i = 0; i < 16; i++)
+			pg->vertex_attributes[i] = savedTransAttrs[i];
 		return;
 	}
 
@@ -314,10 +477,38 @@ void D3D11_draw_patch(NV2AState *d)
 
 	int numOutU = numStepsU + 1;
 
-	// Detect missing boundary row: when we receive fewer strips than expected
-	// for this swatch, the V=0 row was omitted (shared with an adjacent patch).
-	// The guard curves span the FULL V-range including the omitted row.
-	bool hasMissingFirstRow = (numRows < geo.partialHeight + 1) && (leftGuard >= 0) && (rightGuard >= 0);
+	// Detect missing boundary row: when the driver omits the V=0 row (shared
+	// with an adjacent swatch), the guard curve spans more V-rows than we
+	// received strips.  We detect this using the guard's own data: the stored
+	// endpoint is the exact position at the last grid row, and the FD curve
+	// reconstructs it via ExactEndpoint(N) where N = totalRows - 1.
+	// If ExactEndpoint(numRows - 1) matches the endpoint, the guard spans
+	// exactly numRows (no missing row).  If it doesn't, the guard spans
+	// numRows + 1 and the first row was omitted.
+	bool hasMissingFirstRow = false;
+	if (leftGuard >= 0 && numRows > 0) {
+		PatchCurve &gc = patch.curves[leftGuard];
+		const float *data = &patch.coefficients[gc.coeffStart * 4];
+		int off = hasNormal ? 1 : 0;      // skip normal endpoint
+		Float3 endpoint = MakeFloat3(&data[off * 4]);
+		off++;                             // skip position endpoint
+		FDCurve4 guardFD;
+		guardFD.Load(data, off, posVOrder);
+
+		Float3 ep = guardFD.ExactEndpoint3(numRows - 1);
+		float dx = ep.x - endpoint.x;
+		float dy = ep.y - endpoint.y;
+		float dz = ep.z - endpoint.z;
+		float distSq_nm1 = dx*dx + dy*dy + dz*dz;
+
+		Float3 ep2 = guardFD.ExactEndpoint3(numRows);
+		float dx2 = ep2.x - endpoint.x;
+		float dy2 = ep2.y - endpoint.y;
+		float dz2 = ep2.z - endpoint.z;
+		float distSq_n = dx2*dx2 + dy2*dy2 + dz2*dz2;
+
+		hasMissingFirstRow = (distSq_nm1 > 1e-3f);
+	}
 	int totalRows = hasMissingFirstRow ? (numRows + 1) : numRows;
 
 	bool hasExtraCol = (transitionU >= 0) && (numOutU < totalRows);
@@ -339,16 +530,16 @@ void D3D11_draw_patch(NV2AState *d)
 		PatchCurve &curve = patch.curves[stripIndices[row]];
 		const float *coeffs = &patch.coefficients[curve.coeffStart * 4];
 
-		FDCurve3 fd;
+		FDCurve4 fd;
 		fd.Load(coeffs, posAttrOffset, posUOrder);
 
-		Float3 exact = fd.ExactEndpoint(numStepsU);
+		Float3 exact = fd.ExactEndpoint3(numStepsU);
 		Float3 *out = &grid[(row + rowOffset) * finalU];
 
-		out[0] = fd.Value();
+		out[0] = fd.Value3();
 		for (int step = 1; step < numOutU; step++) {
 			fd.Step();
-			out[step] = fd.Value();
+			out[step] = fd.Value3();
 		}
 		out[numStepsU] = exact; // replace last with drift-free value
 	}
@@ -410,12 +601,12 @@ void D3D11_draw_patch(NV2AState *d)
 			Float3 endpoint = MakeFloat3(&data[offset * 4]);
 			offset++;
 			// Position FD curve (BOTTOM of column = first row, step per row)
-			FDCurve3 guardFD;
+			FDCurve4 guardFD;
 			guardFD.Load(data, offset, posVOrder);
 
 			// Apply guard values to each row except the last
 			for (int row = 0; row < totalRows - 1; row++) {
-				grid[row * finalU + col] = guardFD.Value();
+				grid[row * finalU + col] = guardFD.Value3();
 				guardFD.Step();
 			}
 			// Last row: use exact endpoint (eliminates FD drift)
@@ -435,13 +626,13 @@ void D3D11_draw_patch(NV2AState *d)
 		const float *coeffs = &patch.coefficients[tc.coeffStart * 4];
 		int tOffset = (tc.coeffCount == numCoeffsPerRow) ? posAttrOffset : 0;
 
-		FDCurve3 fd;
+		FDCurve4 fd;
 		fd.Load(coeffs, tOffset, posVOrder);
 
-		grid[0 * finalU + col] = fd.Value();
+		grid[0 * finalU + col] = fd.Value3();
 		for (int row = 1; row < totalRows; row++) {
 			fd.Step();
-			grid[row * finalU + col] = fd.Value();
+			grid[row * finalU + col] = fd.Value3();
 		}
 	};
 
@@ -450,13 +641,13 @@ void D3D11_draw_patch(NV2AState *d)
 		const float *coeffs = &patch.coefficients[tc.coeffStart * 4];
 		int tOffset = (tc.coeffCount == numCoeffsPerRow) ? posAttrOffset : 0;
 
-		FDCurve3 fd;
+		FDCurve4 fd;
 		fd.Load(coeffs, tOffset, posUOrder);
 
-		grid[row * finalU + 0] = fd.Value();
+		grid[row * finalU + 0] = fd.Value3();
 		for (int step = 1; step < numOutU; step++) {
 			fd.Step();
-			grid[row * finalU + step] = fd.Value();
+			grid[row * finalU + step] = fd.Value3();
 		}
 	};
 
@@ -472,45 +663,136 @@ void D3D11_draw_patch(NV2AState *d)
 			const float *coeffs = &patch.coefficients[tc.coeffStart * 4];
 			int tOffset = (tc.coeffCount == numCoeffsPerRow) ? posAttrOffset : 0;
 
-			FDCurve3 fd;
+			FDCurve4 fd;
 			fd.Load(coeffs, tOffset, posVOrder);
 			for (int s = 0; s < totalRows; s++)
 				fd.Step();
-			grid[totalRows * finalU + numOutU] = fd.Value();
+			grid[totalRows * finalU + numOutU] = fd.Value3();
 		}
 	}
 
-	// --- Build triangle list and draw ---
+	// --- Evaluate extra FD attribute grids from strip curves ---
+	// Position uses its own Float3 grid (already evaluated above with guards/transitions).
+	// Other FD attributes are evaluated here from strip row data only.
 
-	Float3 triList[MAX_GRID_DIM * MAX_GRID_DIM * 6];
+	for (int ai = 0; ai < numTessAttrs; ai++) {
+		TessAttr &ta = tessAttrs[ai];
+		if (ai == posIdx || !ta.isFD)
+			continue;
+
+		for (int row = 0; row < numRows; row++) {
+			PatchCurve &curve = patch.curves[stripIndices[row]];
+			const float *coeffs = &patch.coefficients[curve.coeffStart * 4];
+
+			FDCurve4 fd;
+			fd.Load(coeffs, ta.coeffOffset, ta.uOrder);
+
+			float exact[4];
+			fd.ExactEndpoint(numStepsU, exact);
+
+			float *out = &s_fdGrids[ai][(row + rowOffset) * finalU * 4];
+			fd.Value(&out[0]);
+			for (int step = 1; step < numOutU; step++) {
+				fd.Step();
+				fd.Value(&out[step * 4]);
+			}
+			memcpy(&out[numStepsU * 4], exact, 4 * sizeof(float));
+		}
+
+		// Handle missing first row: copy from first available strip row
+		if (hasMissingFirstRow) {
+			memcpy(&s_fdGrids[ai][0], &s_fdGrids[ai][1 * finalU * 4],
+				finalU * 4 * sizeof(float));
+		}
+
+		// Fill transition columns/rows with nearest interior value
+		if (hasExtraCol) {
+			for (int y = 0; y < totalRows; y++)
+				memcpy(&s_fdGrids[ai][(y * finalU + numOutU) * 4],
+					&s_fdGrids[ai][(y * finalU + numOutU - 1) * 4], 4 * sizeof(float));
+		}
+		if (hasExtraRow) {
+			memcpy(&s_fdGrids[ai][totalRows * finalU * 4],
+				&s_fdGrids[ai][(totalRows - 1) * finalU * 4],
+				finalU * 4 * sizeof(float));
+		}
+	}
+
+	// --- Compute auto-normals from position grid (if needed) ---
+
+	Float3 normals[MAX_GRID_DIM * MAX_GRID_DIM];
+	if (normalIdx >= 0) {
+		ComputeGridNormals(grid, normals, finalV, finalU);
+	}
+
+	// --- Build packed triangle list with all active attributes ---
+
+	int maxVertices = (finalV - 1) * (finalU - 1) * 6;
+	int bytesNeeded = maxVertices * outVertexStride;
+	assert(bytesNeeded <= MAX_TRI_BUF_BYTES);
+	if (bytesNeeded > MAX_TRI_BUF_BYTES)
+		return;
+
 	int triCount = 0;
 
 	for (int y = 0; y < finalV - 1; y++) {
 		for (int x = 0; x < finalU - 1; x++) {
-			const Float3 &p00 = grid[y * finalU + x];
-			const Float3 &p10 = grid[y * finalU + x + 1];
-			const Float3 &p01 = grid[(y + 1) * finalU + x];
-			const Float3 &p11 = grid[(y + 1) * finalU + x + 1];
+			int gi[4] = {
+				y * finalU + x,
+				y * finalU + x + 1,
+				(y + 1) * finalU + x,
+				(y + 1) * finalU + x + 1
+			};
+			// Two triangles: (00, 10, 01), (10, 11, 01)
+			int triVerts[6] = { gi[0], gi[1], gi[2], gi[1], gi[3], gi[2] };
 
-			triList[triCount++] = p00;
-			triList[triCount++] = p10;
-			triList[triCount++] = p01;
-			triList[triCount++] = p10;
-			triList[triCount++] = p11;
-			triList[triCount++] = p01;
+			for (int v = 0; v < 6; v++) {
+				uint8_t *dst = &s_triListBuf[triCount * outVertexStride];
+				int gidx = triVerts[v];
+
+				for (int ai = 0; ai < numTessAttrs; ai++) {
+					TessAttr &ta = tessAttrs[ai];
+					float *attrDst = (float *)(dst + ta.outByteOffset);
+
+					if (ai == posIdx) {
+						attrDst[0] = grid[gidx].x;
+						attrDst[1] = grid[gidx].y;
+						attrDst[2] = grid[gidx].z;
+					} else if (ta.isAutoNormal) {
+						attrDst[0] = normals[gidx].x;
+						attrDst[1] = normals[gidx].y;
+						attrDst[2] = normals[gidx].z;
+					} else if (ta.isFD) {
+						const float *src = &s_fdGrids[ai][gidx * 4];
+						for (int c = 0; c < ta.components; c++)
+							attrDst[c] = src[c];
+					}
+				}
+				triCount++;
+			}
 		}
 	}
 
 	if (triCount == 0)
 		return;
 
-	// Route through VertexFetch as a UP (user-pointer) draw
-	VertexAttribute savedAttr0 = pg->vertex_attributes[0];
+	// --- Set up vertex attributes for all active tessellation outputs ---
 
-	pg->vertex_attributes[0].format = 2; // NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F
-	pg->vertex_attributes[0].count = 3;
-	pg->vertex_attributes[0].stride = sizeof(Float3);
-	pg->vertex_attributes[0].offset = 0;
+	// Save ALL 16 attributes and disable unused ones so the inline_array
+	// packer doesn't include stale attributes from the game's prior draws.
+	VertexAttribute savedAttrs[16];
+	for (int i = 0; i < 16; i++) {
+		savedAttrs[i] = pg->vertex_attributes[i];
+		pg->vertex_attributes[i].count = 0; // disable
+	}
+	for (int ai = 0; ai < numTessAttrs; ai++) {
+		int hw = tessAttrs[ai].hwIndex;
+		pg->vertex_attributes[hw].format = 2; // NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F
+		pg->vertex_attributes[hw].size = 4;   // sizeof(float)
+		pg->vertex_attributes[hw].count = tessAttrs[ai].components;
+		pg->vertex_attributes[hw].stride = outVertexStride;
+		pg->vertex_attributes[hw].offset = 0;
+	}
 
 	CxbxUpdateNativeD3DResources();
 
@@ -520,11 +802,12 @@ void D3D11_draw_patch(NV2AState *d)
 	DrawContext.dwStartVertex = 0;
 	DrawContext.pXboxIndexData = nullptr;
 	DrawContext.dwBaseVertexIndex = 0;
-	DrawContext.pXboxVertexStreamZeroData = triList;
-	DrawContext.uiXboxVertexStreamZeroStride = sizeof(Float3);
+	DrawContext.pXboxVertexStreamZeroData = s_triListBuf;
+	DrawContext.uiXboxVertexStreamZeroStride = outVertexStride;
 	DrawContext.bNV2AInlineData = true;
 
 	CxbxD3D11VertexFetchDraw(DrawContext);
 
-	pg->vertex_attributes[0] = savedAttr0;
+	for (int i = 0; i < 16; i++)
+		pg->vertex_attributes[i] = savedAttrs[i];
 }
