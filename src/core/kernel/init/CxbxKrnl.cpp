@@ -1358,32 +1358,81 @@ static void CxbxrKrnlInitHacks()
 	while (true) {
 		xbox::KeWaitForDpc();
 
+		// Clear the pending flag immediately after waking. Any new signal
+		// (KeSignalVBlankPending / KeInsertQueueDpc) that arrives while we
+		// process the current batch will re-set the flag, ensuring we loop
+		// back without blocking. Clearing here (instead of at the end of
+		// ExecuteDpcQueue) prevents lost-wake races.
+		extern void KeClearDpcPending();
+		KeClearDpcPending();
+
 		// Dispatch GPU hardware interrupt (IRQ 3) on this thread BEFORE running DPCs.
-		// This ensures ISR and DPC execute sequentially (never concurrently), matching
-		// real Xbox behavior where both run on the same CPU at non-preemptible IRQLs.
-		if (g_bEnableAllInterrupts && g_NV2A) {
-			NV2AState* d = g_NV2A->GetDeviceState();
-			bool vblank_occurred = d->vblank_pending.test();
-			if (vblank_occurred) {
-				d->vblank_pending.clear();
+		// Check NV2A hardware state DIRECTLY instead of HalSystemInterrupt::IsPending()
+		// to avoid races from non-atomic boolean members accessed by multiple threads.
+		// Use a do-while to re-check after processing: if new interrupts arrived during
+		// ISR/DPC execution, handle them immediately instead of risking a lost wakeup.
+		bool more_work;
+		do {
+			more_work = false;
 
-				if (EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
-					// Fire the miniport ISR. Set pcrtc pending so the ISR sees
-					// a valid interrupt source when it reads PMC_INTR_0.
+			if (g_bEnableAllInterrupts && g_NV2A) {
+				NV2AState* d = g_NV2A->GetDeviceState();
+
+				// Latch VBlank into pcrtc.pending_interrupts (like real hardware would)
+				if (d->vblank_pending.test()) {
+					d->vblank_pending.clear();
 					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
-					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
-				} else {
-					// VBlank pending but ISR not connected yet
-				}
-			} else if (HalSystemInterrupts[3].IsPending() &&
-			           EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
-				// Non-VBlank GPU interrupt (e.g. PGRAPH INTR_ERROR from
-				// D3DDevice_InsertCallback). Fire the ISR so it can ack.
-				HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
-			}
-		}
 
-		ExecuteDpcQueue();
+					// Generate PVIDEO buffer completion interrupts for active overlay buffers.
+					// On real hardware, when the overlay is active, at each VBlank the PVIDEO
+					// engine fires an interrupt for the buffer that was just scanned out, allowing
+					// the game to know the buffer is free to rewrite with the next decoded frame.
+					if (d->enable_overlay) {
+						uint32_t pvideo_buffer = d->pvideo.regs[NV_PVIDEO_BUFFER / 4];
+						if (pvideo_buffer & NV_PVIDEO_BUFFER_0_USE)
+							d->pvideo.pending_interrupts |= NV_PVIDEO_INTR_BUFFER_0;
+						if (pvideo_buffer & NV_PVIDEO_BUFFER_1_USE)
+							d->pvideo.pending_interrupts |= NV_PVIDEO_INTR_BUFFER_1;
+					}
+				}
+
+				// Check if any NV2A sub-unit has a pending interrupt that should
+				// fire the ISR. This mirrors the PMC_INTR_0 live computation.
+				// Only fire when pmc.enabled_interrupts != 0 (ISR checks this and
+				// returns without queuing a DPC if the master enable is off).
+				bool nv2a_irq_pending = d->pmc.enabled_interrupts &&
+					((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
+					 (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
+					 (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
+					 (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
+					 (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts));
+
+				if (nv2a_irq_pending &&
+				    EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
+					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
+				}
+			}
+
+			ExecuteDpcQueue();
+
+			// Re-check: if NV2A interrupts are still pending after ISR+DPC processing,
+			// loop back immediately. This catches cases where:
+			// - A new NV097_NO_OPERATION fired while the DPC was running
+			// - The DPC re-enabled PMC and update_irq found more pending work
+			// - A VBlank arrived during processing
+			if (g_bEnableAllInterrupts && g_NV2A) {
+				NV2AState* d = g_NV2A->GetDeviceState();
+				if (d->vblank_pending.test() ||
+				    (d->pmc.enabled_interrupts &&
+				     ((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
+				      (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
+				      (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
+				      (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
+				      (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts)))) {
+					more_work = true;
+				}
+			}
+		} while (more_work);
 	}
 }
 

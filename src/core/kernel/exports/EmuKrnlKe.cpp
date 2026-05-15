@@ -161,6 +161,13 @@ xbox::void_xt xbox::KeWaitForDpc()
 	g_DpcData.IsDpcPending.wait(false);
 }
 
+// Clear the DPC pending flag. Called at the START of each DPC loop iteration
+// so that signals arriving during processing re-set the flag for the next pass.
+void KeClearDpcPending()
+{
+	g_DpcData.IsDpcPending.clear();
+}
+
 // Wake the main DPC thread to dispatch a hardware interrupt (called from system_events thread)
 void KeSignalVBlankPending()
 {
@@ -511,7 +518,8 @@ void ExecuteDpcQueue()
 		g_DpcData.IsDpcActive.clear();
 	}
 
-	g_DpcData.IsDpcPending.clear();
+	// NOTE: IsDpcPending is now cleared at the start of the DPC loop iteration
+	// (in CxbxKrnlMain) to prevent lost-wake races. Do NOT clear it here.
 
 //    Assert(g_DpcData._dwThreadId == GetCurrentThreadId());
 //    Assert(g_DpcData._dwDpcThreadId == g_DpcData._dwThreadId);
