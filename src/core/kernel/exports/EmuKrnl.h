@@ -155,8 +155,10 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 			// When the Xbox wait is alertable, use SleepEx with alertable=TRUE so that
 			// host I/O completion APCs (queued by NtDll::NtReadFile etc.) can be delivered.
 			// Without this, CxbxIoApcDispatcher never fires and async I/O hangs forever.
+			// Use timeout=1 (not 0) to avoid burning CPU with millions of syscalls/sec;
+			// the OS wakes the thread immediately when an APC is queued regardless.
 			if (Alertable) {
-				SleepEx(0, TRUE);
+				SleepEx(1, TRUE);
 			} else {
 				std::this_thread::yield();
 			}
@@ -189,7 +191,7 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 			}
 
 			if (Alertable) {
-				SleepEx(0, TRUE);
+				SleepEx(1, TRUE);
 			} else {
 				std::this_thread::yield();
 			}
