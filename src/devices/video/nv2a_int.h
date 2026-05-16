@@ -505,6 +505,15 @@ typedef struct NV2AState {
 		uint8_t cr_index;
 		uint8_t cr[256]; /* CRT registers */
 	} prmcio; // Not in xqemu/openxbox?
+
+	// PRMVIO: VGA Sequencer and Graphics Controller
+	struct {
+		uint8_t seq_index;
+		uint8_t seq[256];   /* Sequencer registers (VGA_SEQ_C used) */
+		uint8_t gfx_index;
+		uint8_t gfx[256];   /* Graphics Controller registers (VGA_GFX_C used) */
+		uint8_t misc_output; /* Misc Output Register */
+	} prmvio;
 } NV2AState;
 
 typedef value_t(*read_func)(NV2AState *d, hwaddr addr); //, unsigned int size);

@@ -39,10 +39,25 @@
 
 DEVICE_READ32(PRMVIO)
 {
-	// vga_ioport_read
+	// VGA sequencer and graphics controller indexed I/O
 	DEVICE_READ32_SWITCH() {
+	case VGA_SEQ_I:
+		result = d->prmvio.seq_index;
+		break;
+	case VGA_SEQ_D:
+		result = d->prmvio.seq[d->prmvio.seq_index];
+		break;
+	case VGA_GFX_I:
+		result = d->prmvio.gfx_index;
+		break;
+	case VGA_GFX_D:
+		result = d->prmvio.gfx[d->prmvio.gfx_index];
+		break;
+	case VGA_MIS_R:
+		result = d->prmvio.misc_output;
+		break;
 	default:
-		DEBUG_READ32_UNHANDLED(PRMVIO); // TODO : DEVICE_READ32_REG(prmvio);
+		DEBUG_READ32_UNHANDLED(PRMVIO);
 		break;
 	}
 
@@ -55,10 +70,25 @@ DEVICE_READ32(PRMVIO)
 #pragma warning(disable: 4065)
 DEVICE_WRITE32(PRMVIO)
 {
-	// vga_ioport_write
+	// VGA sequencer and graphics controller indexed I/O
 	switch (addr) {
+	case VGA_SEQ_I:
+		d->prmvio.seq_index = value & 0xFF;
+		break;
+	case VGA_SEQ_D:
+		d->prmvio.seq[d->prmvio.seq_index] = value & 0xFF;
+		break;
+	case VGA_GFX_I:
+		d->prmvio.gfx_index = value & 0xFF;
+		break;
+	case VGA_GFX_D:
+		d->prmvio.gfx[d->prmvio.gfx_index] = value & 0xFF;
+		break;
+	case VGA_MIS_W:
+		d->prmvio.misc_output = value & 0xFF;
+		break;
 	default:
-		DEBUG_WRITE32_UNHANDLED(PRMVIO); // TODO : DEVICE_WRITE32_REG(prmvio);
+		DEBUG_WRITE32_UNHANDLED(PRMVIO);
 		break;
 	}
 
