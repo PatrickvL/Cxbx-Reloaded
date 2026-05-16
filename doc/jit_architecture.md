@@ -4,7 +4,7 @@
 
 - Translates NV2A transform program microcode → straight-line HLSL → D3DCompile (vs_5_0, O3)
 - Cache key: rapidhash of program tokens
-- Entry: `g_VertexShaderCache.GetShader()` called from XbVertexShader.cpp
+- Entry: `g_VertexShaderCache.GetShader()` called from Backend_D3D11_VertexShader.cpp
 - Fallback: VS interpreter when JIT misses or fails
 - Source: `src/core/hle/D3D8/Rendering/Backend/Shading/VertexShaderCache.cpp`
 
@@ -14,7 +14,7 @@
 - Bakes: input routing, output destinations, texture modes, final combiner structure
 - Dynamic (still from g_PGRegs): C0/C1 constants, FogColor, bump matrices
 - Cache key: rapidhash of PSJITKey struct (topology state)
-- Entry: `g_PixelShaderCache.GetShader()` called from `CxbxUpdateActivePixelShader()` in XbPixelShaderCompiler.cpp
+- Entry: `g_PixelShaderCache.GetShader()` called from `CxbxUpdateActivePixelShader()` in Backend_D3D11_PixelShader.cpp
 - Bindings: g_PGRegs (t12), PSAuxCBLayout (b0), textures (t0-t11), samplers (s0-s3)
 - Fallback: RC interpreter ubershader (g_pD3D11RCInterpreterPS)
 - Source: `src/core/hle/D3D8/Rendering/Backend/Shading/PixelShaderCache.cpp`

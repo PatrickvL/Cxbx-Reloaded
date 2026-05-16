@@ -324,19 +324,19 @@ PSAuxCBLayout holds software-computed fields only.
 **File:** `src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_VertexShader.cpp` *(moved from XbVertexShader.cpp)*
 **Function:** `CxbxD3D11UploadVSInterpreterState()`
 
-Reads `pg->program_data[startSlot+i][0..3]` using CHEOPS_PROGRAM_START from
+Reads `pg->xf.xfpr[startSlot+i][0..3]` using CHEOPS_PROGRAM_START from
 `NV_PGRAPH_CSV0_C`. Committed as 55c680c3.
 
 ### 4.2 — Switch VS constants source to PGRAPH  ✅ ALREADY DONE
 
-`CxbxUpdateHostVertexShaderConstants()` already reads `pg->vsh_constants[]`
+`CxbxUpdateHostVertexShaderConstants()` already reads `pg->xf.xfctx[]`
 with dirty tracking. No migration needed.
 
 ### 4.3 — Replace VSInterpreterCBLayout with raw PGRAPH buffers  ✅ DONE
 
 **Architectural change:** Eliminate the `VSInterpreterCBLayout` struct entirely.
 Instead of C++ code packing `program_data[]` into `Instructions[136]` + `InstructionCount`,
-upload `pg->program_data[]` directly as a structured buffer.
+upload `pg->xf.xfpr[]` directly as a structured buffer.
 
 **Hardware background (XFPR RAM):**
 On real NV2A, vertex shader microcode lives in the **XFPR (Transform Program RAM)**
@@ -346,11 +346,11 @@ This is not VRAM or MMIO-visible; the CPU reaches it through the
 `NV_PGRAPH_CHEOPS_OFFSET.PROG_LD_PTR` as the auto-incrementing write pointer.
 `NV097_SET_TRANSFORM_PROGRAM_LOAD` resets the write pointer.
 The RDI (Register Direct Interface) is used separately for context save/restore.
-`pg->program_data[136][4]` in `PGRAPHState` is the software mirror of XFPR.
+`pg->xf.xfpr[136][4]` in `PGRAPHState` is the software mirror of XFPR.
 
 **D3D11 implementation:**
 ```hlsl
-// XFPR SRV (Transform Program RAM — pg->program_data[] mirror):
+// XFPR SRV (Transform Program RAM — pg->xf.xfpr[] mirror):
 StructuredBuffer<uint4> g_XFPR : register(t5);
 
 // Program start from regs[]:
@@ -498,18 +498,18 @@ has data (draw_arrays, inline_buffer, inline_array, inline_elements).
 
 **File:** `src/core/hle/D3D8/XbPushBuffer.cpp`
 
-Global draw function pointers (declared in `EmuNV2A_PGRAPH.cpp`):
+Global draw function pointers (declared in `nv2a_pgraph_backend.h`):
 ```cpp
 void D3D11_init_pgraph_plugins() {
-    pgraph_draw              = D3D11_draw;
-    pgraph_draw_state_update = D3D11_draw_state_update;
-    pgraph_draw_clear        = D3D11_draw_clear;
-    pgraph_draw_patch        = D3D11_draw_patch;
-    pgraph_flip_stall        = D3D11_flip_stall;
-    pgraph_zpass_begin       = D3D11_zpass_begin;
-    pgraph_zpass_end         = D3D11_zpass_end;
-    pgraph_zpass_collect     = D3D11_zpass_collect;
-    pgraph_launch_transform_program = D3D11_launch_transform_program;
+    g_pgraph_backend.draw              = D3D11_draw;
+    g_pgraph_backend.draw_state_update = D3D11_draw_state_update;
+    g_pgraph_backend.draw_clear        = D3D11_draw_clear;
+    g_pgraph_backend.draw_patch        = D3D11_draw_patch;
+    g_pgraph_backend.flip_stall        = D3D11_flip_stall;
+    g_pgraph_backend.zpass_begin       = D3D11_zpass_begin;
+    g_pgraph_backend.zpass_end         = D3D11_zpass_end;
+    g_pgraph_backend.zpass_collect     = D3D11_zpass_collect;
+    g_pgraph_backend.launch_transform_program = D3D11_launch_transform_program;
 }
 ```
 
@@ -637,7 +637,7 @@ state (Xbox types, resource keys, format arrays, window globals, trampolines).
 Verified:
 - `RCInterpreterCBLayout` eliminated — `pg->regs[]` uploaded as raw
   `StructuredBuffer<uint>` SRV; shader indexes with `NV_PGRAPH_*` offsets
-- `VSInterpreterCBLayout` eliminated — `pg->program_data[]` uploaded as
+- `VSInterpreterCBLayout` eliminated — `pg->xf.xfpr[]` uploaded as
   `StructuredBuffer<uint4>` SRV (`g_XFPR` at t5)
 - No references to `XboxRenderStates` in render path (deleted)
 - `VertexFetchLayoutCB` remains for per-draw params (PrimType, IndexedDraw,

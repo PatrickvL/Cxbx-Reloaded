@@ -284,7 +284,7 @@ CxbxPageTrackerUploadPGRAPH(pg->regs, NV_PGRAPH_REGS_BYTES);
 PGRAPH registers are uploaded to the host GPU as part of the combined mirror buffer (`s_pMirrorBuf`) at offset `GPU_PGRAPH_BASE = 0x04000000`. Upload uses `UpdateSubresource` with a `D3D11_BOX`, gated by a dirty generation counter that avoids redundant uploads when PGRAPH state is unchanged between draws:
 
 ```cpp
-// Current implementation (XbPixelShaderCompiler.cpp — CxbxD3D11UploadRCInterpreterState)
+// Current implementation (Backend_D3D11_PixelShader.cpp — CxbxD3D11UploadRCInterpreterState)
 if (pg->dirty[NV2A_DIRTY_PGRAPH] != s_LastRegsGeneration) {
     s_LastRegsGeneration = pg->dirty[NV2A_DIRTY_PGRAPH];
     CxbxPageTrackerUploadPGRAPH(pg->regs, NV_PGRAPH_REGS_BYTES);
@@ -300,7 +300,7 @@ Shaders access PGRAPH state through `ByteAddressBuffer g_PGRegs : register(t12)`
 
 Three categories of PGRAPH state require special treatment because they are not directly addressable as single register reads:
 
-**Transform Program RAM (XFPR)** — stores the VSH instruction stream. `NV097_SET_TRANSFORM_PROGRAM` writes 128-bit instructions to the XFPR starting at the slot selected by `NV_PGRAPH_CHEOPS_OFFSET`. In the current implementation, this is stored as `pg->program_data[136][4]` in the `PGRAPHState` struct. For the VS interpreter path, it is uploaded as `StructuredBuffer<uint4>` at t5 (`g_XFPR`). For the JIT path, it is compiled to HLSL at shader-upload time and cached by instruction-stream hash (rapidhash).
+**Transform Program RAM (XFPR)** — stores the VSH instruction stream. `NV097_SET_TRANSFORM_PROGRAM` writes 128-bit instructions to the XFPR starting at the slot selected by `NV_PGRAPH_CHEOPS_OFFSET`. In the current implementation, this is stored as `pg->xf.xfpr[136][4]` in the `CheopsState` sub-struct. For the VS interpreter path, it is uploaded as `StructuredBuffer<uint4>` at t5 (`g_XFPR`). For the JIT path, it is compiled to HLSL at shader-upload time and cached by instruction-stream hash (rapidhash).
 
 **Transform Context RAM (XFCTX)** — stores the 192 VS constant vectors. Written via `NV097_SET_TRANSFORM_CONSTANT_LOAD` + `NV097_SET_TRANSFORM_CONSTANT`. Maintained as `pg->xf.xfctx[192][4]` (uint32_t, reinterpreted as float via `asfloat` at upload). Per-row dirty tracking uses a `uint32_t[6]` bitmap (`pg->xf.xfctx_dirty`); upload to `cbuffer b0` (192 × float4 = 3072 bytes) scans only set bits via `_BitScanForward` and batches contiguous dirty runs into single `SetVertexShaderConstantF` calls. The same bitmap pattern is used for the lighting arrays (`ltctxa_dirty[1]`, `ltctxb_dirty[2]`, `ltc1_dirty[1]`).
 
@@ -701,7 +701,7 @@ Host Core 0 (pinned)
 │    Dequeues from CACHE1, dispatches to pgraph_handle_method().
 │    All NV097 methods write decoded parameters to pg->regs[] (PGRAPH struct).
 │    Side-effect methods additionally update CPU-side mirrors:
-│      pg->program_data[][]   — NV097_SET_TRANSFORM_PROGRAM (XFPR)
+│      pg->xf.xfpr[][]        — NV097_SET_TRANSFORM_PROGRAM (XFPR)
 │      pg->xf.xfctx[][]       — NV097_SET_TRANSFORM_CONSTANT (XFCTX)
 │      pg->vertex_attributes[]— NV097_SET_VERTEX_DATA_ARRAY_*
 │    On NV097_SET_BEGIN_END(0): triggers pgraph_draw() → D3D11_draw callback.
@@ -956,7 +956,7 @@ On `NV097_SET_BEGIN_END(0)`, the puller thread calls `pgraph_draw()` which dispa
 2. **Surface update** — bind/create host RTs from `pg->surface_color.offset` and `pg->surface_zeta.offset`.
 3. **Page flush** — `CxbxPageTrackerFlushToGPU()` for CPU-written vertex pages (once per frame, gated by `s_bFirstFlushOfFrame`).
 4. **Texture bind** — per stage 0–3: check `TEXCTL0` enable bit OR `SHADERPROG` non-NONE mode (the second condition handles point sprites using stage 3 without TEXCTL0 set). RT-as-texture fast path if TEXOFFSET matches a known RT.
-5. **Shader bind** — VS: JIT-compiled HLSL from `pg->program_data[]`, or interpreter fallback. PS: JIT-compiled combiner HLSL from `pg->regs[]` combiner topology hash, or interpreter fallback.
+5. **Shader bind** — VS: JIT-compiled HLSL from `pg->xf.xfpr[]`, or interpreter fallback. PS: JIT-compiled combiner HLSL from `pg->regs[]` combiner topology hash, or interpreter fallback.
 6. **Upload state** — `pg->xf.xfctx[]` → cbuffer b0 (only dirty constants, scanned via `xfctx_dirty[6]` bitmap with `_BitScanForward`); `pg->xf.xfpr[]` → `g_XFPR` at t5; `pg->regs[]` → `g_PGRegs` at t12 (gated by generation counter).
 7. **Pipeline state objects** — blend, depth/stencil, rasterizer decoded from `pg->regs[]` entries for `CONTROL_0/1/2`, `BLEND`, `SETUPRASTER`; looked up from PSO cache keyed on packed state bits. (Most Xbox titles use fewer than 20 distinct PSO combinations per frame.)
 8. **Viewport/scissor** — from `NV2ASurfaceState` clip fields and `ZCLIPMIN`/`ZCLIPMAX`.

@@ -1,6 +1,6 @@
 # PGRAPH Migration Status
 
-*Last updated: May 8, 2026*
+*Last updated: May 16, 2026*
 
 ---
 
@@ -14,8 +14,8 @@
 ### Pixel Shader Path
 - RC interpreter ubershader is the only pixel shader path (unconditional, no recompiler fallback)
 - Deleted: PixelShader.cpp/h, CxbxPixelShaderTemplate.hlsl, XbPixelShader.cpp (recompiler)
-- Retained: XbPixelShader.h (PS state enums), XbPixelShaderCompiler.cpp (compiler utilities, texture format fixup)
-- PS selection: PGRAPH COMBINECTL != 0 → RC interpreter; COMBINECTL == 0 → fixed-function PS
+- Retained: XbPixelShader.h (PS state enums), Backend_D3D11_PixelShader.cpp (compiler utilities, texture format fixup)
+- PS selection: always RC interpreter/JIT — PGRAPH combiners are authoritative regardless of COMBINECTL
 - PS JIT cache accelerates common combiner topologies — see [jit_architecture.md](jit_architecture.md) for details
 
 ### State Authority
@@ -82,7 +82,8 @@ and PGRAPHState fields. No HLE patch is needed for rendering to function.
 - `TEXCOORDINDEX` — FF/passthrough texcoord remapping
 
 These are software-only concepts with no NV2A register backing; they remain in a small
-auxiliary cbuffer (PSAuxCBLayout) uploaded alongside the PGRAPH register SRV.
+auxiliary cbuffer (PSAuxCBLayout, 112 bytes) uploaded alongside the PGRAPH register SRV.
+PSAuxCBLayout also contains `DepthScale` and `DepthTexAlias` for depth texture handling.
 
 ---
 
@@ -95,13 +96,14 @@ known issues, fixed issues, key commits, and game compatibility tracking.
 
 ## PGRAPH Callback Architecture
 
-Draw callbacks registered in XbPushBuffer.cpp `CxbxInitD3D11Renderer()`:
-- `pgraph_draw` — Main draw dispatch (BEGIN_END with END)
-- `pgraph_draw_state_update` — Pre-draw state sync (BEGIN_END with BEGIN)
-- `pgraph_draw_clear` — NV097_CLEAR_SURFACE handler
-- `pgraph_draw_patch` — Hardware tessellation (NV097_SET_BEGIN_PATCH)
-- `pgraph_launch_transform_program` — Vertex state shader execution
-- `pgraph_zpass_begin/end/collect` — Visibility test (occlusion query)
+Draw callbacks registered in XbPushBuffer.cpp `D3D11_init_pgraph_plugins()`:
+- `draw` — Main draw dispatch (BEGIN_END with END)
+- `draw_state_update` — Pre-draw state sync (BEGIN_END with BEGIN)
+- `draw_clear` — NV097_CLEAR_SURFACE handler
+- `draw_patch` — Hardware tessellation (NV097_SET_BEGIN_PATCH)
+- `flip_stall` — PCRTC flip synchronization
+- `launch_transform_program` — Vertex state shader execution
+- `zpass_begin/end/collect` — Visibility test (occlusion query)
 
 ## FF Lighting from PGRAPH
 
