@@ -96,10 +96,14 @@ static void D3D11_draw_inline_array(NV2AState *d)
 	// Compute per-vertex stride from NV2A vertex attribute format registers.
 	// Inline array data packs all enabled attributes contiguously per vertex,
 	// unlike array-based draws which use the stride field from the format register.
+	// Push buffer data is DWORD-granular, so each attribute is padded to the next
+	// 4-byte boundary. This matters for formats whose count*size is not a multiple
+	// of 4 (e.g. SHORT3=6, PBYTE3=3, NORMSHORT3=6).
 	unsigned int nv2a_stride = 0;
 	for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
 		if (pg->vertex_attributes[i].count != 0) { // count 0 = disabled (format 0 is valid: UB_D3D/D3DCOLOR)
 			nv2a_stride += pg->vertex_attributes[i].count * pg->vertex_attributes[i].size;
+			nv2a_stride = (nv2a_stride + 3) & ~3u; // pad to DWORD boundary
 		}
 	}
 

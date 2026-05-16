@@ -603,15 +603,18 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 				// NV2A inline_array path: data is packed contiguously per vertex
 				// with enabled attributes in register order. Compute element offsets
 				// from attribute sizes rather than using physical addresses.
+				// Push buffer data is DWORD-granular, so each attribute is padded
+				// to the next 4-byte boundary (matters for SHORT3, PBYTE3, etc.).
 				UINT packedOffset = 0;
 				for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
 					const VertexAttribute& attr = pg->vertex_attributes[i];
-				if (attr.count == 0) continue; // count 0 = disabled (format 0 is valid: UB_D3D/D3DCOLOR)
+					if (attr.count == 0) continue; // count 0 = disabled (format 0 is valid: UB_D3D/D3DCOLOR)
 					cb.Attribs[i][0] = packedOffset; // elemOffset within packed vertex
 					cb.Attribs[i][1] = DrawContext.uiXboxVertexStreamZeroStride;
 					cb.Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
 					cb.Attribs[i][3] = 0; // streamBase = 0 (UP staging buffer)
 					packedOffset += attr.count * attr.size;
+					packedOffset = (packedOffset + 3) & ~3u; // pad to DWORD boundary
 				}
 			} else {
 				// VB draw path: slot index = register index, offset = physical address
