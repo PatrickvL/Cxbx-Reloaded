@@ -930,32 +930,6 @@ xbox::LPVOID WINAPI xbox::EMUPATCH(ConvertThreadToFiber)
 
 
 // ******************************************************************
-// * patch: RaiseException
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(RaiseException)
-(
-	dword_xt			dwExceptionCode,       // exception code
-	dword_xt			dwExceptionFlags,      // continuable exception flag
-	dword_xt			nNumberOfArguments,    // number of arguments
-	CONST ulong_ptr_xt *lpArguments		   // array of arguments
-)
-{
-
-
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(dwExceptionCode)
-		LOG_FUNC_ARG(dwExceptionFlags)
-		LOG_FUNC_ARG(nNumberOfArguments)
-		LOG_FUNC_ARG(lpArguments)
-		LOG_FUNC_END;
-
-	// TODO: Implement or not?
-//	RaiseException(dwExceptionCode, dwExceptionFlags, nNumberOfArguments, (*(ULONG_PTR**) &lpArguments));
-
-	LOG_UNIMPLEMENTED();
-}
-
-// ******************************************************************
 // patch: XMountMUA
 // ******************************************************************
 xbox::dword_xt WINAPI xbox::EMUPATCH(XMountMUA)

@@ -57,7 +57,7 @@ All PATCH_ENTRY lines are commented out in `Patches.cpp`. Puller populates PGRAP
 - `SetStreamSource` (L254), `SetViewport` (L296), `SetPixelShader` (L232)
 - `SetVertexShaderConstant`, `SetTransform`, `SetScissors` — all disabled
 
-**Remaining cleanup:** Move dead implementations to unused/dead code file (per project principle).
+**Remaining cleanup:** ~~Move dead implementations to unused/dead code file (per project principle).~~ ✅ DONE — `RaiseException` moved to `Xapi.cpp.unused-patches`; `XAudioCreateAdpcmFormat` already `#if 0` guarded.
 
 ### 2.2 Batch 2 — Resource Management Patches
 **Status:** Needs verification per-patch (some may already be disabled).
@@ -158,7 +158,6 @@ Full CPU-side FD (forward differencing) tessellation in `PatchDraw.cpp` — mult
 
 1. **§6.1 Gauntlet correctness** — active debugging
 2. **§1.1 Draw batching** — highest perf gain remaining
-3. **§2.1 Dead code cleanup** — move disabled EMUPATCH impls to dead code file
-4. **§1.3 RT cache eviction** — correctness for long-running titles
-5. **§4.1 PCRTC scan-out** — use `pcrtc.start` instead of last-RT assumption
-6. **§5 GPU tessellation CS** — performance (CPU path works)
+3. ~~**§2.1 Dead code cleanup**~~ ✅ DONE
+4. **§1.4 Unified resource cache** — simplifies RT-as-texture lookup
+5. **§5 GPU tessellation CS** — performance (CPU path works)
