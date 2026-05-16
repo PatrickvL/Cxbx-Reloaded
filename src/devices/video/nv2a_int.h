@@ -480,6 +480,7 @@ typedef struct NV2AState {
         uint32_t enabled_interrupts;
         hwaddr start;
         uint32_t vblank_count; // Incremented each VBlank; bit 0 determines interlace field (even/odd)
+        uint32_t last_present_vblank; // VBlank count at last present (prevents double-present)
 		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PCRTC
     } pcrtc;
 

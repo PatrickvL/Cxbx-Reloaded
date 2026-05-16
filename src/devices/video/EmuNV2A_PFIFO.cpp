@@ -203,9 +203,8 @@ static void pfifo_run_puller(NV2AState *d)
 // so CxbxUpdateNativeD3DResources skips pfifo_flush (prevents deadlock).
 extern void CxbxSetPullerContext(bool active);
 
-// Forward declaration: auto-present on VBlank for games without explicit FLIP_STALL
+// Forward declaration
 #include "nv2a_pgraph_backend.h"
-extern bool g_pgraph_explicit_flip_stall_seen;
 
 int pfifo_puller_thread(NV2AState *d)
 {
@@ -217,22 +216,16 @@ int pfifo_puller_thread(NV2AState *d)
     while (!d->exiting) {
         pfifo_run_puller(d);
 
-        // Present logic — at most one present per wake-up cycle.
-        // The two paths are mutually exclusive (else-if) to prevent
-        // double-presenting when both auto-present and overlay are relevant.
+        // VBlank-driven PCRTC scan-out: present whatever NV_PCRTC_START points
+        // to, with the PVIDEO overlay composited on top (just like the real
+        // RAMDAC).  This replaces the old auto-present and overlay-present
+        // heuristics.  The NV097_FLIP_STALL handler also presents (for correct
+        // frame timing) and updates last_present_vblank to prevent double-
+        // presenting in the same VBlank period.
         if (g_pgraph_backend.flip_stall) {
-            if (!g_pgraph_explicit_flip_stall_seen
-                && d->pgraph.surface_color.draw_dirty) {
-                // Auto-present fallback for raw pushbuffer games that never
-                // issue NV097_FLIP_STALL.
-                d->pgraph.surface_color.draw_dirty = false;
-                g_pgraph_backend.flip_stall(d);
-            } else if (d->enable_overlay
-                       && !d->pgraph.surface_color.draw_dirty) {
-                // PVIDEO overlay present: during FMV playback, no PGRAPH
-                // draws or FLIP_STALL commands occur. The VBlank handler
-                // wakes us when the overlay is active so video frames are
-                // composited and displayed at frame rate.
+            uint32_t current_vblank = d->pcrtc.vblank_count;
+            if (current_vblank != d->pcrtc.last_present_vblank) {
+                d->pcrtc.last_present_vblank = current_vblank;
                 g_pgraph_backend.flip_stall(d);
             }
         }
