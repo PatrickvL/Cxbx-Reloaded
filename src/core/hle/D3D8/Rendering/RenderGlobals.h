@@ -230,7 +230,7 @@ extern xbox::X_D3DBaseTexture *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT];
 
 // Cross-file function declarations (defined in various Host*.cpp files)
 
-// Swap present forward marker (used in EmuPatches_Surface.cpp, EmuPatches_Misc.cpp)
+// Swap present forward marker
 #define CXBX_SWAP_PRESENT_FORWARD (256 + X_D3DSWAP_FINISH + X_D3DSWAP_COPY) // = CxbxPresentForwardMarker + D3DSWAP_FINISH + D3DSWAP_COPY
 
 // Resource cache types (defined in HostResource.cpp)
@@ -341,8 +341,7 @@ const char *CxbxGetErrorDescription(HRESULT hResult);
 // CxbxrImpl_GetBackBuffer2 — removed (only used by disabled GetBackBuffer patches).
 // xbox::X_D3DSurface* CxbxrImpl_GetBackBuffer2(xbox::int_xt BackBuffer);
 
-// Xbox function trampolines -- defined in RenderGlobals.cpp, used across
-// multiple EmuPatches_*.cpp translation units.
+// Xbox function trampolines -- defined in RenderGlobals.cpp.
 // XB_TRAMPOLINES lists all D3D8 trampolines; we invoke it here with an
 // "extern" generator so every TU that includes this header sees the
 // declarations.  The actual definitions live in RenderGlobals.cpp.
@@ -425,14 +424,5 @@ const char *CxbxGetErrorDescription(HRESULT hResult);
 XB_TRAMPOLINES(XB_trampoline_extern);
 #undef XB_trampoline_extern
 
-
-// EMUPATCH declarations split into topic-specific headers:
-#include "Patches/EmuPatches_Device.h"
-#include "Patches/EmuPatches_Draw.h"
-#include "Patches/EmuPatches_Misc.h"
-#include "Patches/EmuPatches_Shader.h"
-#include "Patches/EmuPatches_State.h"
-#include "Patches/EmuPatches_Surface.h"
-// EmuPatches_Unused.h intentionally not included - it's a documentation-only dustbin
 
 #endif // RENDERGLOBALS_H
