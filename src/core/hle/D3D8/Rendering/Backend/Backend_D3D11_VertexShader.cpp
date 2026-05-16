@@ -27,17 +27,15 @@
 // ******************************************************************
 #define LOG_PREFIX CXBXR_MODULE::VTXSH
 
-#include "core\kernel\init\CxbxKrnl.h"
-#include "core\kernel\support\Emu.h"
-#include "core\hle\D3D8\Rendering\RenderGlobals.h"
-#include "core\hle\D3D8\Rendering\Backend\Shading\Shader.h" // For LoadPrecompiledCSO
+#include "Backend_D3D11_Internal.h"
+#include "Backend_D3D11_PageTracker.h" // For CxbxPageTrackerGetMirrorSRV
+#include "Backend_D3D11_Profiler.h"
+#include "Shading\Shader.h" // For LoadPrecompiledCSO
+#include "Shading\VertexShaderCache.h"
 
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbPushBuffer.h" // For g_NV2A
 #include "core\hle\D3D8\Rendering\NV2A_PGRAPH_Helpers.h"
-#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h"
-#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Internal.h" // For g_pD3D11XFPRBuf, g_pD3D11XFPRSRV
-#include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h" // For CxbxPageTrackerGetMirrorSRV
 #include "core\hle\D3D8\XbD3D8Logging.h" // For DEBUG_D3DRESULT
 #include "devices\xbox.h"
 #include "core\hle\D3D8\XbConvert.h" // For NV2A_VP_UPLOAD_INST
@@ -46,8 +44,6 @@
 #include "common\Settings.hpp" // for g_LibVersion_D3D8
 
 #include "nv2a_vsh_emulator.h"
-#include "Rendering/Backend/Shading/VertexShaderCache.h"
-#include "Rendering/Backend/Backend_D3D11_Profiler.h"
 
 // Retained bytecode for FixedFunction vertex shader (needed for input layout creation)
 static ID3DBlob* g_pD3D11FixedFunctionBytecode = nullptr;

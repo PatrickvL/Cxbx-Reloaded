@@ -36,6 +36,10 @@ HWND                         g_hEmuWindow   = NULL; // rendering window
 bool                         g_bClipCursor  = false; // indicates that the mouse cursor should be confined inside the rendering window
 ID3D11Device                *g_pD3DDevice   = nullptr; // Direct3D Device
 
+DXGI_FORMAT                  g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT]; // Updated by CxbxUpdateHostTextures(), read by CxbxCalcColorSign
+xbox::X_D3DBaseTexture      *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by our D3DDevice_SetTexture and D3DDevice_SwitchTexture patches
+EmuD3D8CreateDeviceProxyData g_EmuCDPD;
+
 // Shared Variable(s)
 bool                         g_bSupportsFormatSurface[xbox::X_D3DFMT_LAST + 1]; // Does device support surface format?
 bool                         g_bSupportsFormatSurfaceRenderTarget[xbox::X_D3DFMT_LAST + 1]; // Does device support surface format?
@@ -76,11 +80,6 @@ xbox::X_D3DBaseTexture* CxbxLookupTextureByDataAddr(xbox::addr_xt dataAddr)
 	auto it = g_TexturesByDataAddr.find(dataAddr);
 	return (it != g_TexturesByDataAddr.end()) ? it->second : nullptr;
 }
-
-DXGI_FORMAT               g_HostTextureFormats[xbox::X_D3DTS_STAGECOUNT]; // Updated by CxbxUpdateHostTextures(), read by CxbxCalcColorSign
-xbox::X_D3DBaseTexture       *g_pXbox_SetTexture[xbox::X_D3DTS_STAGECOUNT] = {0,0,0,0}; // Set by our D3DDevice_SetTexture and D3DDevice_SwitchTexture patches
-
-EmuD3D8CreateDeviceProxyData g_EmuCDPD;
 
 // Define trampolines (XB_TRAMPOLINES macro is defined in RenderGlobals.h)
 // Non-static so they are accessible from other translation units.

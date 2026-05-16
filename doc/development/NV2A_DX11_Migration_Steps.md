@@ -200,7 +200,7 @@ Add a diagnostic dump if needed to confirm.
 
 ### 3.1 — Switch core combiner registers to PGRAPH source ✅ DONE
 
-**File:** `src/core/hle/D3D8/XbPixelShaderCompiler.cpp`
+**File:** `src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_PixelShader.cpp` *(moved from XbPixelShaderCompiler.cpp)*
 **Function:** `CxbxD3D11UploadRCInterpreterState()`
 
 Replace PSDef reads with PGRAPH `regs[]` reads for these fields:
@@ -321,7 +321,7 @@ PSAuxCBLayout holds software-computed fields only.
 
 ### 4.1 — Switch VS microcode source to PGRAPH  ✅ DONE
 
-**File:** `src/core/hle/D3D8/XbVertexShader.cpp`
+**File:** `src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_VertexShader.cpp` *(moved from XbVertexShader.cpp)*
 **Function:** `CxbxD3D11UploadVSInterpreterState()`
 
 Reads `pg->program_data[startSlot+i][0..3]` using CHEOPS_PROGRAM_START from
@@ -588,7 +588,7 @@ Removed:
 
 Still active (cannot remove yet):
 - `g_pXbox_SetTexture[]` — used as texture side-map fallback in HostSync.cpp
-  and XbPixelShaderCompiler.cpp
+  and Backend_D3D11_PixelShader.cpp
 
 ### 10.2 — Remove EMUPATCH infrastructure for removed patches  ✅ DONE
 

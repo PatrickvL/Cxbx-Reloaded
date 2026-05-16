@@ -27,14 +27,14 @@
 // ******************************************************************
 #define LOG_PREFIX CXBXR_MODULE::D3D8
 
-#include "core\kernel\support\Emu.h"
-#include "core\hle\D3D8\Rendering\RenderGlobals.h"
-#include "core\hle\D3D8\Rendering\Backend\Shading\Shader.h"
 #include "core\hle\D3D8\XbPixelShader.h"
+#include "Backend_D3D11_Internal.h"
+#include "Backend_D3D11_PageTracker.h"
+#include "Backend_D3D11_Profiler.h"
+#include "Shading\PixelShaderCache.h"
 #include "core\hle\D3D8\XbVertexShader.h"
 #include "core\hle\D3D8\XbD3D8Logging.h"
 #include "core\hle\D3D8\XbConvert.h"
-#include "core\kernel\init\CxbxKrnl.h"
 // Texture format fixup constants (must match ApplyTexFmtFixup() in CxbxPixelShaderFunctions.hlsli)
 static constexpr float TEXFMTFIXUP_IDENTITY = 0.0f;
 static constexpr float TEXFMTFIXUP_GBAR     = 1.0f; // B8G8R8A8 uploaded as R8G8B8A8
@@ -46,14 +46,7 @@ static constexpr float TEXFMTFIXUP_OPAQUEA  = 5.0f; // X8R8G8B8/X1R5G5B5: force 
 #include "devices\video\nv2a.h"        // For NV2ADevice::GetDeviceState(), NV2AState, PGRAPHState, nv2a_regs.h
 #include <assert.h>
 #include <process.h>
-#include <unordered_map>
-#include <wrl/client.h>
 #include <cstring> // For std::memcpy
-#include "Rendering\Backend\Backend_D3D11.h"
-#include "Rendering\Backend\Backend_D3D11_Internal.h"
-#include "Rendering\Backend\Backend_D3D11_PageTracker.h"
-#include "Rendering\Backend\Shading\PixelShaderCache.h"
-#include "Rendering\Backend\Backend_D3D11_Profiler.h"
 
 float AsFloat(uint32_t value)
 {
