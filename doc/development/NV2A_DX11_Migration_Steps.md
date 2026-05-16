@@ -607,26 +607,14 @@ Committed as bfead6028. All GL fields (`needs_conversion`, `converted_buffer`,
 
 ## Step 11: Prepare for Vulkan Backend (No Vulkan Code)
 
-### 11.1 — Abstract the rendering backend interface
+### 11.1 — Abstract the rendering backend interface  ✅ DONE
 
-Create a `RenderBackend` interface (pure virtual class or function table):
-
-```cpp
-struct RenderBackend {
-    void (*DrawArrays)(PGRAPHState *pg);
-    void (*DrawInlineBuffer)(PGRAPHState *pg);
-    void (*DrawInlineArray)(PGRAPHState *pg);
-    void (*DrawInlineElements)(PGRAPHState *pg);
-    void (*UpdateState)(PGRAPHState *pg);
-    void (*Clear)(PGRAPHState *pg);
-    void (*Present)(PGRAPHState *pg);
-    void (*Init)(HWND hwnd);
-    void (*Shutdown)();
-};
-```
-
-This maps directly to the existing `pgraph_draw_*` function pointers but is
-more formally structured. The D3D11 backend implements this interface.
+Introduced `PgraphBackend` struct in `src/devices/video/nv2a_pgraph_backend.h`
+with function pointers for draw, draw_state_update, draw_clear, draw_patch,
+flip_stall, zpass_begin/end/collect, and launch_transform_program. Replaced
+the scattered `pgraph_draw_*` global function pointers with a single
+`g_pgraph_backend` instance. D3D11 backend populates it in
+`D3D11_init_pgraph_plugins()`.
 
 ### 11.2 — Isolate D3D11 code into backend module
 

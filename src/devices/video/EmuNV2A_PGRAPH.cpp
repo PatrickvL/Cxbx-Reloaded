@@ -161,15 +161,9 @@ void pgraph_trace_close()
 }
 // ---- End trace infrastructure ----
 
-void (*pgraph_draw)(NV2AState *d);
-void (*pgraph_draw_state_update)(NV2AState *d);
-void (*pgraph_draw_clear)(NV2AState *d);
-void (*pgraph_draw_patch)(NV2AState *d);  // Hardware tessellation callback
-void (*pgraph_flip_stall)(NV2AState *d);  // Host present on FLIP_STALL
-void (*pgraph_zpass_begin)(NV2AState *d); // Begin occlusion query for zpass counting
-void (*pgraph_zpass_end)(NV2AState *d);   // End occlusion query, accumulate result
-void (*pgraph_zpass_collect)(NV2AState *d); // Collect pending query result (blocking)
-void (*pgraph_launch_transform_program)(NV2AState *d, unsigned int program_start); // Vertex state shader execution
+#include "nv2a_pgraph_backend.h"
+
+PgraphBackend g_pgraph_backend = {};
 
 // Set true the first time the title issues an explicit NV097_FLIP_STALL.
 // Once observed, the puller's auto-present fallback (intended for raw push
@@ -201,11 +195,11 @@ static void pgraph_flush_draw_arrays_squash(NV2AState *d)
     if (!pg->draw_arrays_squash_pending) return;
     pg->draw_arrays_squash_pending = false;
     if (pg->draw_arrays_length) {
-        if (pgraph_draw != nullptr) {
-            pgraph_draw(d);
+        if (g_pgraph_backend.draw != nullptr) {
+            g_pgraph_backend.draw(d);
         }
-        if (pgraph_zpass_end != nullptr) {
-            pgraph_zpass_end(d);
+        if (g_pgraph_backend.zpass_end != nullptr) {
+            g_pgraph_backend.zpass_end(d);
         }
         uint32_t control_0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
         uint32_t control_1 = pg->regs[RI(NV_PGRAPH_CONTROL_1)];
@@ -329,7 +323,7 @@ DEVICE_WRITE32(PGRAPH)
 
 			// For MMIO-only games (no pushbuffer FLIP_STALL), mark surface dirty
 			// and wake the puller thread so its auto-present fires. We can't call
-			// pgraph_flip_stall directly here because this runs on the DPC/system_events
+			// g_pgraph_backend.flip_stall directly here because this runs on the DPC/system_events
 			// thread, not the puller thread that owns the D3D11 context.
 			if (!g_pgraph_explicit_flip_stall_seen) {
 				d->pgraph.surface_color.draw_dirty = true;
@@ -692,11 +686,11 @@ void pgraph_handle_method(NV2AState *d,
 			g_pgraph_explicit_flip_stall_seen = true;
 
 			// Trigger host present via the flip_stall plugin callback
-			if (pgraph_flip_stall != nullptr) {
+			if (g_pgraph_backend.flip_stall != nullptr) {
 				// Clear draw_dirty so the auto-present in the puller loop
 				// doesn't fire again after this explicit FLIP_STALL present.
 				d->pgraph.surface_color.draw_dirty = false;
-				pgraph_flip_stall(d);
+				g_pgraph_backend.flip_stall(d);
 			}
 
 			// VBlank-gated frame pacing: wait until the next VBlank deadline.
@@ -1352,8 +1346,8 @@ void pgraph_handle_method(NV2AState *d,
 			 *        approaches could be better
 			 */
 			// Collect any pending occlusion query result before reading
-			if (pgraph_zpass_collect != nullptr)
-				pgraph_zpass_collect(d);
+			if (g_pgraph_backend.zpass_collect != nullptr)
+				g_pgraph_backend.zpass_collect(d);
 
 			uint8_t type = GET_MASK(parameter, NV097_GET_REPORT_TYPE);
 			assert(type == NV097_GET_REPORT_TYPE_ZPASS_PIXEL_CNT);
@@ -1417,13 +1411,13 @@ void pgraph_handle_method(NV2AState *d,
 					assert(false);
 				}
 
-				if (pgraph_draw != nullptr) {
-					pgraph_draw(d);
+				if (g_pgraph_backend.draw != nullptr) {
+					g_pgraph_backend.draw(d);
 				}
 
 				// End occlusion query and accumulate zpass pixel count
-				if (pgraph_zpass_end != nullptr) {
-					pgraph_zpass_end(d);
+				if (g_pgraph_backend.zpass_end != nullptr) {
+					g_pgraph_backend.zpass_end(d);
 				}
 			} else {
 
@@ -1431,13 +1425,13 @@ void pgraph_handle_method(NV2AState *d,
 
 				pg->primitive_mode = parameter;
 
-				if (pgraph_draw_state_update != nullptr) {
-					pgraph_draw_state_update(d);
+				if (g_pgraph_backend.draw_state_update != nullptr) {
+					g_pgraph_backend.draw_state_update(d);
 				}
 
 				// Begin occlusion query for zpass pixel counting
-				if (pg->zpass_pixel_count_enable && pgraph_zpass_begin != nullptr) {
-					pgraph_zpass_begin(d);
+				if (pg->zpass_pixel_count_enable && g_pgraph_backend.zpass_begin != nullptr) {
+					g_pgraph_backend.zpass_begin(d);
 				}
 
 				pg->inline_elements_length = 0;
@@ -1642,8 +1636,8 @@ void pgraph_handle_method(NV2AState *d,
 		}
 		case NV097_CLEAR_SURFACE: {
 			pg->clear_surface_flags = parameter;
-			if (pgraph_draw_clear != nullptr) {
-				pgraph_draw_clear(d);
+			if (g_pgraph_backend.draw_clear != nullptr) {
+				g_pgraph_backend.draw_clear(d);
 			}
 			break;
 		}
@@ -1687,8 +1681,8 @@ void pgraph_handle_method(NV2AState *d,
 			// vsh_constants (transform context RAM) in-place.
 			unsigned int program_start = parameter;
 			assert(program_start < NV2A_MAX_TRANSFORM_PROGRAM_LENGTH);
-			if (pgraph_launch_transform_program != nullptr) {
-				pgraph_launch_transform_program(d, program_start);
+			if (g_pgraph_backend.launch_transform_program != nullptr) {
+				g_pgraph_backend.launch_transform_program(d, program_start);
 			}
 			break;
 		}
@@ -1803,11 +1797,11 @@ void pgraph_handle_method(NV2AState *d,
 		case NV097_SET_ZPASS_PIXEL_COUNT_ENABLE:
 		    pg->zpass_pixel_count_enable = parameter;
 		    if (parameter) {
-		        if (pgraph_zpass_begin != nullptr)
-		            pgraph_zpass_begin(d);
+		        if (g_pgraph_backend.zpass_begin != nullptr)
+		            g_pgraph_backend.zpass_begin(d);
 		    } else {
-		        if (pgraph_zpass_end != nullptr)
-		            pgraph_zpass_end(d);
+		        if (g_pgraph_backend.zpass_end != nullptr)
+		            g_pgraph_backend.zpass_end(d);
 		    }
 		    break;
 		//
@@ -1848,8 +1842,8 @@ void pgraph_handle_method(NV2AState *d,
 				pg->patch.swatch = parameter; // Store begin format
 			} else {
 				// End swatch - draw the accumulated curves and reset for next swatch
-				if (pgraph_draw_patch != nullptr && pg->patch.active && pg->patch.curveCount > 0) {
-					pgraph_draw_patch(d);
+				if (g_pgraph_backend.draw_patch != nullptr && pg->patch.active && pg->patch.curveCount > 0) {
+					g_pgraph_backend.draw_patch(d);
 				}
 				// Reset curves for next swatch (keep patch0-3 and active)
 				pg->patch.curveCount = 0;
@@ -1903,8 +1897,8 @@ void pgraph_handle_method(NV2AState *d,
 				pg->patch.currentCurveAttr = -1;
 			}
 			// Dispatch tessellation for any remaining curves (if swatch didn't already draw them)
-			if (pgraph_draw_patch != nullptr && pg->patch.active && pg->patch.curveCount > 0) {
-				pgraph_draw_patch(d);
+			if (g_pgraph_backend.draw_patch != nullptr && pg->patch.active && pg->patch.curveCount > 0) {
+				g_pgraph_backend.draw_patch(d);
 			}
 			pg->patch.active = false;
 			break;

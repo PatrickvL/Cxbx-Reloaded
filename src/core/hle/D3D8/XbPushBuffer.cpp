@@ -379,16 +379,7 @@ void D3D11_draw_clear(NV2AState *d)
 	CxbxPageTrackerUnlockD3D11Context();
 }
 
-// Import pgraph_draw_* variables, declared in EmuNV2A_PGRAPH.cpp :
-extern void(*pgraph_draw)(NV2AState *d);
-extern void(*pgraph_draw_state_update)(NV2AState *d);
-extern void(*pgraph_draw_clear)(NV2AState *d);
-extern void(*pgraph_draw_patch)(NV2AState *d);
-extern void(*pgraph_flip_stall)(NV2AState *d);
-extern void(*pgraph_zpass_begin)(NV2AState *d);
-extern void(*pgraph_zpass_end)(NV2AState *d);
-extern void(*pgraph_zpass_collect)(NV2AState *d);
-extern void(*pgraph_launch_transform_program)(NV2AState *d, unsigned int program_start);
+#include "devices/video/nv2a_pgraph_backend.h"
 
 extern void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget);
 
@@ -581,15 +572,15 @@ static void D3D11_flip_stall(NV2AState *d)
 void D3D11_init_pgraph_plugins()
 {
 	/* attach HLE Direct3D render plugins */
-	pgraph_draw = D3D11_draw;
-	pgraph_draw_state_update = D3D11_draw_state_update;
-	pgraph_draw_clear = D3D11_draw_clear;
-	pgraph_draw_patch = D3D11_draw_patch;
-	pgraph_flip_stall = D3D11_flip_stall;
-	pgraph_zpass_begin = D3D11_zpass_begin;
-	pgraph_zpass_end = D3D11_zpass_end;
-	pgraph_zpass_collect = D3D11_zpass_collect;
-	pgraph_launch_transform_program = D3D11_launch_transform_program;
+	g_pgraph_backend.draw = D3D11_draw;
+	g_pgraph_backend.draw_state_update = D3D11_draw_state_update;
+	g_pgraph_backend.draw_clear = D3D11_draw_clear;
+	g_pgraph_backend.draw_patch = D3D11_draw_patch;
+	g_pgraph_backend.flip_stall = D3D11_flip_stall;
+	g_pgraph_backend.zpass_begin = D3D11_zpass_begin;
+	g_pgraph_backend.zpass_end = D3D11_zpass_end;
+	g_pgraph_backend.zpass_collect = D3D11_zpass_collect;
+	g_pgraph_backend.launch_transform_program = D3D11_launch_transform_program;
 }
 
 extern void pgraph_handle_method(
