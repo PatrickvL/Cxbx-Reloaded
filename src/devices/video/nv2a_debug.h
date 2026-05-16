@@ -31,12 +31,9 @@
 # define NV2A_DPRINTF(format, ...)       do { } while (0)
 #endif
 
-// GL debug was removed – stubs only
-# define NV2A_GL_DPRINTF(cc, format, ...)          do { \
+// Conditional NV2A debug print
+# define NV2A_DPRINTF_IF(cc, format, ...)          do { \
         if (cc) NV2A_DPRINTF(format "\n", ##__VA_ARGS__ ); \
     } while (0)
-# define NV2A_GL_DGROUP_BEGIN(format, ...)         do { } while (0)
-# define NV2A_GL_DGROUP_END()                      do { } while (0)
-# define NV2A_GL_DLABEL(target, name, format, ...) do { } while (0)
 
 #endif

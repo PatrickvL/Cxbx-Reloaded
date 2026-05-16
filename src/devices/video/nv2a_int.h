@@ -40,7 +40,7 @@
 
 #include "swizzle.h"
 
-#include "nv2a_debug.h" // For HWADDR_PRIx, NV2A_DPRINTF, NV2A_GL_DPRINTF, etc.
+#include "nv2a_debug.h" // For HWADDR_PRIx, NV2A_DPRINTF, NV2A_DPRINTF_IF, etc.
 #include "nv2a_regs.h" // For NV2A_MAX_TEXTURES, etc
 #include "core\\hle\\D3D8\\Rendering\\NV2A_PGRAPH_Helpers.h" // For NV2ASurfaceState
 
@@ -173,18 +173,8 @@ typedef struct VertexAttribute {
 	unsigned int count; /* number of components */
 	uint32_t stride;
 
-	bool needs_conversion;
-	uint8_t *converted_buffer;
-	unsigned int converted_elements;
-	unsigned int converted_size;
-	unsigned int converted_count;
-
 	float *inline_buffer;
 	float *inline_buffer_pool; // Persistent allocation reused across draws (avoids malloc/free per draw)
-
-	int32_t gl_count;
-	int32_t gl_type;
-	int32_t gl_normalize;
 } VertexAttribute;
 
 typedef struct Surface {
@@ -376,8 +366,8 @@ typedef struct PGRAPHState {
 	unsigned int draw_arrays_max_count;
 
 	/* FIXME: Unknown size, possibly endless, 1000 will do for now */
-	int32_t gl_draw_arrays_start[1000];
-	int32_t gl_draw_arrays_count[1000];
+	int32_t draw_arrays_start[1000];
+	int32_t draw_arrays_count[1000];
 
 	// Hardware tessellation state
 	PatchState patch;

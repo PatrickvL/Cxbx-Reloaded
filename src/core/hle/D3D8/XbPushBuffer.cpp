@@ -72,8 +72,8 @@ static void D3D11_draw_arrays(NV2AState *d)
 		CxbxDrawContext DrawContext = {};
 
 		DrawContext.XboxPrimitiveType = (xbox::X_D3DPRIMITIVETYPE)pg->primitive_mode;
-		DrawContext.dwStartVertex = pg->gl_draw_arrays_start[i];
-		DrawContext.dwVertexCount = pg->gl_draw_arrays_count[i];
+		DrawContext.dwStartVertex = pg->draw_arrays_start[i];
+		DrawContext.dwVertexCount = pg->draw_arrays_count[i];
 
 		CxbxD3D11VertexFetchDraw(DrawContext);
 	}

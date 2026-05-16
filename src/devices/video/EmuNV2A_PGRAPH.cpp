@@ -43,16 +43,6 @@
 #define TARGET_PAGE_MASK ~(TARGET_PAGE_SIZE - 1)
 #define TARGET_PAGE_ALIGN(addr) (((addr) + TARGET_PAGE_SIZE - 1) & TARGET_PAGE_MASK)
 
-// GL constant stubs (kept for NV2A vertex attribute state machine)
-#ifndef GL_UNSIGNED_BYTE
-#define GL_UNSIGNED_BYTE  0x1401
-#define GL_SHORT          0x1402
-#define GL_FLOAT          0x1406
-#define GL_TRUE           1
-#define GL_FALSE          0
-#define GL_BGRA           0x80E1
-#endif
-
 // ---- NV097 method trace infrastructure ----
 // Scans push buffer commands written by Xbox D3D API trampolines.
 // pgraph_trace_begin/end bracket a trampoline call; pgraph_trace_log_pushbuffer
@@ -392,7 +382,6 @@ void pgraph_handle_method(NV2AState *d,
 							unsigned int method,
 							uint32_t parameter)
 {
-	unsigned int i;
 	unsigned int slot;
 
     PGRAPHState *pg = &d->pgraph;
@@ -514,7 +503,7 @@ void pgraph_handle_method(NV2AState *d,
 			/* I guess this kicks it off? */
 			if (image_blit->operation == NV09F_SET_OPERATION_SRCCOPY) {
 
-				NV2A_GL_DPRINTF(true, "NV09F_SET_OPERATION_SRCCOPY");
+				NV2A_DPRINTF_IF(true, "NV09F_SET_OPERATION_SRCCOPY");
 
 				ContextSurfaces2DState *context_surfaces = context_surfaces_2d;
 				assert(context_surfaces->object_instance
@@ -1255,64 +1244,31 @@ void pgraph_handle_method(NV2AState *d,
 				vertex_attribute->count,
 				vertex_attribute->stride);
 
-			vertex_attribute->gl_count = vertex_attribute->count;
-
 			switch (vertex_attribute->format) {
 			case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_D3D:
-				vertex_attribute->gl_type = GL_UNSIGNED_BYTE;
-				vertex_attribute->gl_normalize = GL_TRUE;
 				vertex_attribute->size = 1;
 				assert(vertex_attribute->count == 4);
-				// https://www.opengl.org/registry/specs/ARB/vertex_array_bgra.txt
-				vertex_attribute->gl_count = GL_BGRA;
-				vertex_attribute->needs_conversion = false;
 				break;
 			case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_UB_OGL:
-				vertex_attribute->gl_type = GL_UNSIGNED_BYTE;
-				vertex_attribute->gl_normalize = GL_TRUE;
 				vertex_attribute->size = 1;
-				vertex_attribute->needs_conversion = false;
 				break;
 			case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S1:
-				vertex_attribute->gl_type = GL_SHORT;
-				vertex_attribute->gl_normalize = GL_TRUE;
 				vertex_attribute->size = 2;
-				vertex_attribute->needs_conversion = false;
 				break;
 			case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F:
-				vertex_attribute->gl_type = GL_FLOAT;
-				vertex_attribute->gl_normalize = GL_FALSE;
 				vertex_attribute->size = 4;
-				vertex_attribute->needs_conversion = false;
 				break;
 			case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_S32K:
-				vertex_attribute->gl_type = GL_SHORT;
-				vertex_attribute->gl_normalize = GL_FALSE;
 				vertex_attribute->size = 2;
-				vertex_attribute->needs_conversion = false;
 				break;
 			case NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_CMP:
 				/* 3 signed, normalized components packed in 32-bits. (11,11,10) */
 				vertex_attribute->size = 4;
-				vertex_attribute->gl_type = GL_FLOAT;
-				vertex_attribute->gl_normalize = GL_FALSE;
-				vertex_attribute->needs_conversion = true;
-				vertex_attribute->converted_size = sizeof(float);
-				vertex_attribute->converted_count = 3 * vertex_attribute->count;
 				break;
 			default:
 				fprintf(stderr, "Unknown vertex type: 0x%x\n", vertex_attribute->format);
 				assert(false);
 				break;
-			}
-
-			if (vertex_attribute->needs_conversion) {
-				vertex_attribute->converted_elements = 0;
-			} else {
-				if (vertex_attribute->converted_buffer) {
-					g_free(vertex_attribute->converted_buffer);
-					vertex_attribute->converted_buffer = NULL;
-				}
 			}
 
 			break;
@@ -1327,7 +1283,6 @@ void pgraph_handle_method(NV2AState *d,
 			pg->vertex_attributes[slot].offset =
 				parameter & 0x7fffffff;
 
-			pg->vertex_attributes[slot].converted_elements = 0;
 			pg->vertex_attributes_generation++;
 
 			break;
@@ -1384,27 +1339,27 @@ void pgraph_handle_method(NV2AState *d,
 			if (parameter == NV097_SET_BEGIN_END_OP_END) {
 
 				if (pg->draw_arrays_length) {
-					NV2A_GL_DPRINTF(false, "Draw Arrays");
+					NV2A_DPRINTF_IF(false, "Draw Arrays");
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_array_length == 0);
 					assert(pg->inline_elements_length == 0);
 				} else if (pg->inline_buffer_length) {
-					NV2A_GL_DPRINTF(false, "Inline Buffer");
+					NV2A_DPRINTF_IF(false, "Inline Buffer");
 					assert(pg->draw_arrays_length == 0);
 					assert(pg->inline_array_length == 0);
 					assert(pg->inline_elements_length == 0);
 				} else if (pg->inline_array_length) {
-					NV2A_GL_DPRINTF(false, "Inline Array");
+					NV2A_DPRINTF_IF(false, "Inline Array");
 					assert(pg->draw_arrays_length == 0);
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_elements_length == 0);
 				} else if (pg->inline_elements_length) {
-					NV2A_GL_DPRINTF(false, "Inline Elements");
+					NV2A_DPRINTF_IF(false, "Inline Elements");
 					assert(pg->draw_arrays_length == 0);
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_array_length == 0);
 				} else {
-					NV2A_GL_DPRINTF(true, "EMPTY NV097_SET_BEGIN_END");
+					NV2A_DPRINTF_IF(true, "EMPTY NV097_SET_BEGIN_END");
 					assert(false);
 				}
 
@@ -1511,22 +1466,22 @@ void pgraph_handle_method(NV2AState *d,
 
 			pg->draw_arrays_max_count = MAX(pg->draw_arrays_max_count, start + count);
 
-			assert(pg->draw_arrays_length < ARRAY_SIZE(pg->gl_draw_arrays_start));
+			assert(pg->draw_arrays_length < ARRAY_SIZE(pg->draw_arrays_start));
 
 			/* Attempt to connect primitives */
 			if (pg->draw_arrays_length > 0) {
 				unsigned int last_start =
-					pg->gl_draw_arrays_start[pg->draw_arrays_length - 1];
+					pg->draw_arrays_start[pg->draw_arrays_length - 1];
 				int32_t* last_count =
-					&pg->gl_draw_arrays_count[pg->draw_arrays_length - 1];
+					&pg->draw_arrays_count[pg->draw_arrays_length - 1];
 				if (start == (last_start + *last_count)) {
 					*last_count += count;
 					break;
 				}
 			}
 
-			pg->gl_draw_arrays_start[pg->draw_arrays_length] = start;
-			pg->gl_draw_arrays_count[pg->draw_arrays_length] = count;
+			pg->draw_arrays_start[pg->draw_arrays_length] = start;
+			pg->draw_arrays_count[pg->draw_arrays_length] = count;
 			pg->draw_arrays_length++;
 			break;
 		}
@@ -1900,7 +1855,7 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 
 		default:
-			NV2A_GL_DPRINTF(true, "    unhandled  (0x%02x 0x%08x)",
+			NV2A_DPRINTF_IF(true, "    unhandled  (0x%02x 0x%08x)",
 					graphics_class, method);
 			break;
 		}
@@ -1908,7 +1863,7 @@ void pgraph_handle_method(NV2AState *d,
 	}
 
 	default:
-		NV2A_GL_DPRINTF(true, "Unknown Graphics Class/Method 0x%08X/0x%08X",
+		NV2A_DPRINTF_IF(true, "Unknown Graphics Class/Method 0x%08X/0x%08X",
 						graphics_class, method);
 		break;
 	}
@@ -1963,7 +1918,7 @@ static void pgraph_log_method(unsigned int subchannel,
 
 	if (last == 0x1800 && method != last) {
 		const char* method_name = NV2AMethodToString(last); // = 'NV2A_VB_ELEMENT_U16'
-		NV2A_GL_DPRINTF(true, "d->pgraph method (%d) 0x%08X %s * %d",
+		NV2A_DPRINTF_IF(true, "d->pgraph method (%d) 0x%08X %s * %d",
 						subchannel, last, method_name, count);
 	}
 	if (method != 0x1800) {
