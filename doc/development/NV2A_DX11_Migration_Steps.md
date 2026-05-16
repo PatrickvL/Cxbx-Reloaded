@@ -522,19 +522,14 @@ void D3D11_init_pgraph_plugins() {
 Each path reads state from `PGRAPHState`, uploads constant buffers, binds
 textures/render targets/pipeline state, and calls D3D11 Draw/DrawIndexed.
 
-### 8.2 — Handle threading: puller thread → D3D11 device context
+### 8.2 — Handle threading: puller thread → D3D11 device context  ✅ DONE
 
-The puller thread runs on a separate thread from the D3D11 device creation thread.
-D3D11 device contexts are single-threaded. Options:
+Resolved via implicit D3D11 runtime MT protection: device created without
+`D3D11_CREATE_DEVICE_SINGLETHREADED` flag, so the runtime provides internal
+thread safety for the immediate context. Puller thread calls D3D11 directly.
 
-**Option A (recommended):** Create a deferred context on the puller thread.
-Record command lists, execute on the immediate context from the render thread.
-
-**Option B:** Use `ID3D11Multithread` to enable MT access. Simpler but may have
-driver-specific performance implications.
-
-**Option C:** Queue draw commands from the puller to the render thread via a
-lock-free ring buffer. The render thread drains the queue each frame.
+Future optimization: deferred context (Option A) or explicit `ID3D11Multithread`
+(Option B) if profiling shows the runtime lock is a bottleneck.
 
 ### 8.3 — Puller context flag (partial)  ✅ DONE
 
@@ -549,50 +544,35 @@ HLE patch runs). Watch for tearing / out-of-order issues.
 
 ---
 
-## Step 9: Remove HLE EMUPATCH Draw Functions
+## Step 9: Remove HLE EMUPATCH Draw Functions  ✅ DONE
 
-With puller-driven draws working, EMUPATCH draw functions are redundant.
-Remove them in dependency order.
+All D3D EMUPATCH entries disabled in `Patches.cpp`. Xbox native D3D code runs
+unpatched; all state/draw/present/sync operations flow through the push buffer
+into PFIFO → PGRAPH → D3D11 backend.
 
-### 9.1 — Remove state-setting patches
+### 9.1 — Remove state-setting patches  ✅ DONE
 
-These patches mirror Xbox state into HLE structures. Once all state comes from
-PGRAPH, the original Xbox D3D code handles this via pushbuffer:
+All disabled. Xbox code writes D3D__RenderState[] then calls SetRenderState_Simple
+which pushes NV2A methods through the push buffer. PGRAPH regs[] populated natively.
 
-**Batch 1 — Pure state:**
-- `D3DDevice_SetRenderState_Simple` and all `SetRenderState_*` variants
-- `D3DDevice_SetVertexShaderConstant` / `NotInline` / `1` / `4`
-- `D3DDevice_SetPixelShader`
-- `D3DDevice_SetTexture`
-- `D3DDevice_SetTransform` / `MultiplyTransform`
-- `D3DDevice_SetStreamSource` / `SetIndices`
-- `D3DDevice_SetVertexShader` / `SelectVertexShader`
-- `D3DDevice_SetViewport` / `SetScissors`
+### 9.2 — Remove draw call patches  ✅ DONE
 
-**Batch 2 — Resource management:**
-- `D3DDevice_SetPalette`
-- `D3DDevice_SetVertexData*`
-- `D3DDevice_LoadVertexShader` / `DeleteVertexShader`
+All disabled. Xbox DrawVertices/DrawIndexedVertices/Begin/End push NV097 methods
+into the push buffer; PGRAPH `SET_BEGIN_END(END)` triggers `pgraph_draw()`.
 
-### 9.2 — Remove draw call patches
+### 9.3 — Remove presentation patches  ✅ DONE
 
-- `D3DDevice_DrawVertices` / `DrawVerticesUP`
-- `D3DDevice_DrawIndexedVertices` / `DrawIndexedVerticesUP`
-- `D3DDevice_Begin` / `End`
+Disabled. Native Swap pushes `NV097_FLIP_INCREMENT_WRITE` + `NV097_FLIP_STALL`;
+PGRAPH FLIP_STALL handler calls `pgraph_flip_stall` → `D3D11_flip_stall` which
+blits the PGRAPH backbuffer to the host swap chain.
 
-### 9.3 — Remove presentation patches
+### 9.4 — Remove sync patches  ✅ DONE
 
-- `D3DDevice_Present` / `Swap`
-- Replace with PCRTC/PVIDEO handling: read framebuffer from VRAM at vblank
+Disabled. Fences use NV2A reference counter natively. Visibility tests handled
+via `pgraph_zpass_begin/end/collect` → `D3D11_zpass_*` (D3D11 occlusion queries).
 
-### 9.4 — Remove sync patches (requires NV2A fence emulation)
-
-- `D3DDevice_BlockOnFence` / `InsertFence` / `IsFencePending`
-- `D3DDevice_BeginVisibilityTest` / `EndVisibilityTest` / `GetVisibilityTestResult`
-- Implement `NV097_SET_SEMAPHORE_OFFSET` + `NV097_BACK_END_WRITE_SEMAPHORE_RELEASE`
-  in pgraph_handle_method
-
-**Test each batch independently.** After each batch, run the full XDK sample suite.
+**Remaining cleanup:** Dead implementation code in `Direct3D9.cpp.unused-patches`
+and commented-out PATCH_ENTRY lines can be deleted (Step 10.2).
 
 ---
 
@@ -613,15 +593,11 @@ Once no code reads from them:
 - Remove symbol scan entries for deleted patches
 - Remove trampoline slots
 
-### 10.3 — Remove remaining GL fields from VertexAttribute
+### 10.3 — Remove remaining GL fields from VertexAttribute  ✅ DONE
 
-**File:** `src/devices/video/nv2a_int.h`
-
-Remove `needs_conversion`, `converted_buffer`, `converted_elements`,
-`converted_size`, `converted_count` — these were for the OpenGL path's
-format conversion. The D3D11 vertex fetch handles format decode in shader.
-
-**Test:** Full suite.
+Committed as bfead6028. All GL fields (`needs_conversion`, `converted_buffer`,
+`converted_elements`, `converted_size`, `converted_count`, `gl_count`, `gl_type`,
+`gl_normalize`, etc.) removed from `VertexAttribute` and `PGRAPHState`.
 
 ---
 
