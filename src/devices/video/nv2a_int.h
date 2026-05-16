@@ -364,10 +364,11 @@ typedef struct PGRAPHState {
 
 	unsigned int draw_arrays_length;
 	unsigned int draw_arrays_max_count;
+	bool draw_arrays_squash_pending;   // END with draw_arrays was deferred for cross-bracket merging
+	bool draw_arrays_prevent_connect;  // Don't merge adjacent entries across bracket boundaries
 
-	/* FIXME: Unknown size, possibly endless, 1000 will do for now */
-	int32_t draw_arrays_start[1000];
-	int32_t draw_arrays_count[1000];
+	int32_t draw_arrays_start[1250];
+	int32_t draw_arrays_count[1250];
 
 	// Hardware tessellation state
 	PatchState patch;

@@ -195,6 +195,7 @@ static void pfifo_run_puller(NV2AState *d)
 
     }
 
+    pgraph_flush_draw_arrays_squash(d);
     qemu_mutex_unlock(&d->pgraph.pgraph_lock);
 }
 
@@ -365,6 +366,7 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
     }
 
 done:
+    pgraph_flush_draw_arrays_squash(d);
     qemu_mutex_unlock(&d->pgraph.pgraph_lock);
     CxbxSetPullerContext(false);
 }
@@ -627,6 +629,9 @@ static void pfifo_run_pusher(NV2AState *d)
             break;
         }
     }
+
+    // Flush any deferred draw_arrays squash before releasing pgraph_lock.
+    pgraph_flush_draw_arrays_squash(d);
 
     // Release the batched pgraph_lock acquired before the loop.
     qemu_mutex_unlock(&d->pgraph.pgraph_lock);
