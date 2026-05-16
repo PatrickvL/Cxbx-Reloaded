@@ -9,6 +9,9 @@
 // In HLSL this header is included via:
 //   #include "CxbxNV2APixelShaderConstants.hlsli"
 
+#ifndef CXBX_NV2A_PIXEL_SHADER_CONSTANTS_HLSLI
+#define CXBX_NV2A_PIXEL_SHADER_CONSTANTS_HLSLI
+
 #ifdef __cplusplus
 #pragma once
 #include <cstdint>
@@ -158,3 +161,5 @@ NV2A_CONST PS_COMBINEROUTPUTS_MUX_SUM_SHIFT =  8;
 NV2A_CONST PS_COMBINEROUTPUTS_FLAGS_SHIFT   = 12;
 
 #undef NV2A_CONST
+
+#endif // CXBX_NV2A_PIXEL_SHADER_CONSTANTS_HLSLI
