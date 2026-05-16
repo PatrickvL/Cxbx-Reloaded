@@ -478,7 +478,7 @@ LRESULT WINAPI EmuMsgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
    	   	   	   	   	g_iWireframe = 0;
    	   	   	   	}
 
-   	   	   	   	XboxRenderStates.SetWireFrameMode(g_iWireframe);
+   	   	   	   	// TODO: implement debug wireframe via PGRAPH register override
    	   	   	}
    	   	   	else
    	   	   	{

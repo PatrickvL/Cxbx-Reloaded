@@ -35,7 +35,6 @@
 #include "core\hle\D3D8\XbD3D8Logging.h"
 #include "core\hle\D3D8\XbConvert.h"
 #include "core\hle\D3D8\XbVertexShader.h"
-#include "../TextureStates.h"
 #include "core\hle\D3D8\Rendering\Backend\Shading\Shader.h"
 
 #include <cstring>

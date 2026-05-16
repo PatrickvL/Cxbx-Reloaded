@@ -74,12 +74,9 @@ INDEX16* CxbxCreateTriFanToTriangleListIndexData(INDEX16* pFanIndexData, unsigne
 bool CxbxGetClockWiseWindingOrder()
 {
 	extern NV2ADevice* g_NV2A;
-	if (g_NV2A) {
-		PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
-		uint32_t setupraster = pg->regs[NV_PGRAPH_SETUPRASTER / 4];
-		return (setupraster & NV_PGRAPH_SETUPRASTER_FRONTFACE) == 0; // 0 = CW
-	}
-	return XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_FRONTFACE) == 0x900;
+	PGRAPHState* pg = &g_NV2A->GetDeviceState()->pgraph;
+	uint32_t setupraster = pg->regs[NV_PGRAPH_SETUPRASTER / 4];
+	return (setupraster & NV_PGRAPH_SETUPRASTER_FRONTFACE) == 0; // 0 = CW
 }
 
 UINT QuadToTriangleVertexCount(UINT NrOfQuadVertices)

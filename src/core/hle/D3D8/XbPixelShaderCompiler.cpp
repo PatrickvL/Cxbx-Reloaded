@@ -47,8 +47,6 @@ static constexpr float TEXFMTFIXUP_OPAQUEA  = 5.0f; // X8R8G8B8/X1R5G5B5: force 
 #include <assert.h>
 #include <process.h>
 #include <unordered_map>
-#include "Rendering\RenderStates.h"
-#include "Rendering\TextureStates.h"
 #include <wrl/client.h>
 #include <cstring> // For std::memcpy
 #include "Rendering\Backend\Backend_D3D11.h"
@@ -176,14 +174,7 @@ D3DXCOLOR CxbxCalcColorSign(int stage_nr)
 			XboxColorSign |= xbox::X_D3DTSIGN_GSIGNED | xbox::X_D3DTSIGN_BSIGNED;
 	}
 
-#if 0 // When this block is enabled, XDK samples BumpEarth and BumpLens turn red-ish, so keep this off for now...
-	// Check if the pixel shader specifies bump mapping for this stage (TODO : How to handle this with the fixed function shader?)
-	DWORD PSTextureModes = XboxRenderStates.GetXboxRenderState(xbox::X_D3DRS_PSTEXTUREMODES);
-	PS_TEXTUREMODES StageTextureMode = (PS_TEXTUREMODES)((PSTextureModes >> (stage_nr * 5)) & PS_TEXTUREMODES_MASK);
-	if (StageTextureMode == PS_TEXTUREMODES_BUMPENVMAP || StageTextureMode == PS_TEXTUREMODES_BUMPENVMAP_LUM)
-		XboxColorSign |= xbox::X_D3DTSIGN_GSIGNED | xbox::X_D3DTSIGN_BSIGNED;
 
-#endif
 	// Host D3DFMT's with one or more signed components : D3DFMT_V8U8, D3DFMT_Q8W8V8U8, D3DFMT_V16U16, D3DFMT_Q16W16V16U16, D3DFMT_CxV8U8
 	DXGI_FORMAT H/*ostTextureFormat*/ = g_HostTextureFormats[stage_nr];
 	// Guard: if the host format is unknown (stage not yet populated), skip all signed checks.

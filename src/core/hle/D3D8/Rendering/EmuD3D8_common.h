@@ -63,8 +63,6 @@
 #include "core\hle\Intercept.hpp"
 #include "devices\video\nv2a.h"
 #include "gui/resource/ResCxbx.h"
-#include "RenderStates.h"
-#include "TextureStates.h"
 #include "WalkIndexBuffer.h"
 #include "core\kernel\common\strings.hpp"
 #include "common\input\SdlJoystick.h"

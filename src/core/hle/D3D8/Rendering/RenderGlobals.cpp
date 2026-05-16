@@ -26,8 +26,6 @@
 // ******************************************************************
 #include "EmuD3D8_common.h"
 
-XboxRenderStateConverter XboxRenderStates;
-
 FixedFunctionVertexShaderState ffShaderState = {}; // TODO find a home for this and associated code
 
 // Allow use of time duration literals (making 16ms, etc possible)

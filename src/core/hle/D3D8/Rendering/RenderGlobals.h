@@ -43,10 +43,6 @@
 
 extern ID3D11Device *g_pD3DDevice;
 
-// Xbox state globals (defined in RenderGlobals.cpp)
-class XboxRenderStateConverter;
-extern XboxRenderStateConverter  XboxRenderStates;
-
 #define CXBX_D3DCOMMON_IDENTIFYING_MASK (X_D3DCOMMON_TYPE_MASK | X_D3DCOMMON_D3DCREATED)
 
 typedef struct resource_key_hash {

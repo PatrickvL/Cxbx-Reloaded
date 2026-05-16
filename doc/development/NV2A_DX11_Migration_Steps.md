@@ -578,11 +578,13 @@ and commented-out PATCH_ENTRY lines can be deleted (Step 10.2).
 
 ## Step 10: Clean Up HLE State Infrastructure
 
-### 10.1 — Remove HLE state globals
+### 10.1 — Remove HLE state globals (partial)  ✅ IN PROGRESS
 
-Once no code reads from them:
-- `XboxRenderStates` / `XboxTextureStates` — render/texture state mirrors
-- `g_pXbox_SetTexture[]` — per-stage texture pointers
+Removed:
+- `XboxRenderStates` / `XboxTextureStates` — render/texture state mirrors (deleted classes)
+
+Remaining:
+- `g_pXbox_SetTexture[]` — still used as texture side-map fallback
 - `g_Xbox_SetStreamSource[]` — per-stream VB bindings
 - `g_pXbox_RenderTarget` / `g_pXbox_DepthStencil`
 - `g_Xbox_VertexShader_Handle` / `g_Xbox_VertexShader_FunctionSlots_StartAddress`
