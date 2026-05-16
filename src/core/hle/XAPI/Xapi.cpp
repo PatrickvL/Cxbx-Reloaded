@@ -751,6 +751,7 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(XInputSetState)
         if (pFeedback->Header.hEvent != NULL &&
             ObReferenceObjectByHandle(pFeedback->Header.hEvent, &xbox::ExEventObjectType, (PVOID*)&pFeedback->Header.IoCompletedEvent) == ERROR_SUCCESS) {
             KeSetEvent((xbox::PKEVENT)pFeedback->Header.IoCompletedEvent, NULL, FALSE);
+            ObfDereferenceObject(pFeedback->Header.IoCompletedEvent);
         }
     }
     else {
