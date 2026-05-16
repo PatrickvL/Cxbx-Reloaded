@@ -55,7 +55,7 @@ DEVICE_READ32(PRAMDAC)
 		break;
 
 	default: 
-		//DEVICE_READ32_REG(pramdac); // Was : DEBUG_READ32_UNHANDLED(PRAMDAC);
+		DEVICE_READ32_REG(pramdac);
 		break;
 	}
 
