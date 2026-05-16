@@ -13,11 +13,9 @@
 **Problem:** Consecutive draws with identical pipeline state should be coalesced into a single `Draw()` call, but the initial implementation suppressed clear-only draw calls.  
 **Next step:** Investigate why batched draws skip clears. Likely the NOP-check (no color write + no depth test + no stencil test) incorrectly classifies clear operations when batched.
 
-### 1.2 AVX2 Bulk Bitmap Scan
-**Status:** Not started.  
-**Problem:** `CxbxPageTrackerIsTextureDirty()` scans bitmaps at DWORD granularity. For large textures spanning many pages, this is suboptimal.  
-**Gain:** AVX2 tests 256 pages (1 MiB) per instruction.  
-**File:** `Backend_D3D11_PageTracker.cpp`
+### ~~1.2 AVX2 Bulk Bitmap Scan~~
+**Status:** ✅ DONE.  
+`CxbxPageTrackerIsTextureDirty()` now uses AVX2 `_mm256_testz_si256` to test 256 pages (1 MiB) per iteration when the CPU supports it. Runtime CPUID detection falls back to the scalar DWORD loop on older hardware. Bitmap is `alignas(64)` so aligned 256-bit loads are safe.
 
 ### ~~1.3 RT Cache Eviction~~
 **Status:** ✅ DONE.  
