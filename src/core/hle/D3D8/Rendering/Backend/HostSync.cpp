@@ -22,9 +22,9 @@
 // *  All rights reserved
 // *
 // ******************************************************************
-#include "EmuD3D8_common.h"
-#include "Backend\Backend_D3D11.h"
-#include "Backend\Backend_D3D11_Profiler.h"
+#include "../EmuD3D8_common.h"
+#include "Backend_D3D11.h"
+#include "Backend_D3D11_Profiler.h"
 #include <algorithm> // std::min
 #include <intrin.h>  // _BitScanForward64
 

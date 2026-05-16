@@ -22,8 +22,8 @@
 // *  All rights reserved
 // *
 // ******************************************************************
-#include "EmuD3D8_common.h"
-#include "Backend/Backend_D3D11_PageTracker.h"
+#include "../EmuD3D8_common.h"
+#include "Backend_D3D11_PageTracker.h"
 #include <vector>
 
 

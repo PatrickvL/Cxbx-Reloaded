@@ -616,13 +616,19 @@ the scattered `pgraph_draw_*` global function pointers with a single
 `g_pgraph_backend` instance. D3D11 backend populates it in
 `D3D11_init_pgraph_plugins()`.
 
-### 11.2 — Isolate D3D11 code into backend module
+### 11.2 — Isolate D3D11 code into backend module  ✅ DONE (partial)
 
-Move all D3D11-specific code into `src/core/hle/D3D8/Rendering/Backend/`:
-- Ensure no D3D11 types leak outside the Backend directory
-- All PGRAPH → backend communication goes through the `RenderBackend` interface
-- The HLSL shaders are backend-specific (a Vulkan backend would use SPIR-V or
-  cross-compiled HLSL)
+Moved all D3D11-specific implementation files into `Backend/`:
+- `HostDevice.cpp`, `HostImGui.cpp`, `HostRender.cpp`, `HostResource.cpp`,
+  `HostResourceCreate.cpp`, `HostResourceUpload.cpp`, `HostSync.cpp`,
+  `HostWindow.cpp`, `PatchDraw.cpp/.h`
+
+Backend-agnostic files remain in `Rendering/`:
+- `RenderGlobals.cpp/.h`, `NV2A_PGRAPH_Helpers.cpp/.h`,
+  `IndexBufferConvert.cpp/.h`, `WalkIndexBuffer.cpp/.h`, `EmuD3D8_common.h`
+
+Remaining: `RenderGlobals.h` still exposes D3D11 types (device pointers, query
+helpers) — a future split would move those into a backend-specific header.
 
 ### 11.3 — Make PGRAPH state the single source of truth
 

@@ -22,7 +22,7 @@
 // *  All rights reserved
 // *
 // ******************************************************************
-#include "EmuD3D8_common.h"
+#include "../EmuD3D8_common.h"
 
 // Variables only used in HostDevice.cpp
 static HBRUSH g_hBgBrush = NULL; // Background Brush

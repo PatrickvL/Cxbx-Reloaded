@@ -1,4 +1,4 @@
-ï»¿// This is an open source non-commercial project. Dear PVS-Studio, please check it.
+// This is an open source non-commercial project. Dear PVS-Studio, please check it.
 // PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 // ******************************************************************
 // *
@@ -35,8 +35,8 @@
 
 #define LOG_PREFIX CXBXR_MODULE::D3D8
 
-#include "RenderGlobals.h"
-#include "Backend\Backend_D3D11.h" // CxbxD3D11VertexFetchDraw, CxbxUpdateNativeD3DResources
+#include "../RenderGlobals.h"
+#include "Backend_D3D11.h" // CxbxD3D11VertexFetchDraw, CxbxUpdateNativeD3DResources
 #include "core/hle/D3D8/XbVertexBuffer.h" // For CxbxDrawContext
 #include "core/kernel/support/Emu.h"
 #include "devices/video/nv2a_int.h" // For PGRAPHState, PatchState
@@ -48,7 +48,7 @@
 using namespace xbox;
 
 // ---------------------------------------------------------------
-// Patch grid limits â€” NV2A supports up to order 10 (9 FD terms)
+// Patch grid limits — NV2A supports up to order 10 (9 FD terms)
 // and maxSwatch <= 17, giving at most 18 output points per axis.
 // ---------------------------------------------------------------
 static constexpr int MAX_FD_ORDER = 16;
@@ -76,7 +76,7 @@ static Float3 Float3Normalize(Float3 v) {
 }
 
 // Compute per-vertex normals from a position grid using finite differences.
-// Grid is rows Ã— cols. Output normals array must be at least rows*cols.
+// Grid is rows × cols. Output normals array must be at least rows*cols.
 static void ComputeGridNormals(const Float3 *grid, Float3 *normals, int rows, int cols) {
 	for (int y = 0; y < rows; y++) {
 		for (int x = 0; x < cols; x++) {

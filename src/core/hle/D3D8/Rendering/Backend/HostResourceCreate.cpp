@@ -22,8 +22,8 @@
 // *  All rights reserved
 // *
 // ******************************************************************
-#include "EmuD3D8_common.h"
-#include "Backend\Backend_D3D11.h"
+#include "../EmuD3D8_common.h"
+#include "Backend_D3D11.h"
 
 
 // Forward declaration (defined in HostResourceUpload.cpp)

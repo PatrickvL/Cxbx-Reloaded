@@ -22,9 +22,9 @@
 // *  All rights reserved
 // *
 // ******************************************************************
-#include "EmuD3D8_common.h"
+#include "../EmuD3D8_common.h"
 #include <dxgi1_5.h> // IDXGIFactory5, DXGI_FEATURE_PRESENT_ALLOW_TEARING
-#include "Backend/Backend_D3D11_PageTracker.h"
+#include "Backend_D3D11_PageTracker.h"
 #include "devices\video\nv2a.h" // NV2AState
 
 

@@ -22,7 +22,7 @@
 // *  All rights reserved
 // *
 // ******************************************************************
-#include "EmuD3D8_common.h"
+#include "../EmuD3D8_common.h"
 
 
 void CxbxImGui_RenderD3D(ImGuiUI* m_imgui, ID3D11Texture2D* renderTarget)

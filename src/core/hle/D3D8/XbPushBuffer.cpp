@@ -39,7 +39,7 @@
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11.h" // For CxbxD3D11VertexFetchDraw
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
-#include "core\hle\D3D8\Rendering\PatchDraw.h" // For D3D11_draw_patch
+#include "core\hle\D3D8\Rendering\Backend\PatchDraw.h" // For D3D11_draw_patch
 #include "core\hle\D3D8\XbVertexShader.h" // For D3D11_launch_transform_program
 #include "common/AddressRanges.h" // For CONTIGUOUS_MEMORY_BASE
 #include "core/common/video/RenderBase.hpp" // For g_renderbase
