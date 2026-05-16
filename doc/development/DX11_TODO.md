@@ -68,14 +68,14 @@ All PATCH_ENTRY lines are commented out in `Patches.cpp`. Puller populates PGRAP
 | `D3DDevice_LoadVertexShader` / `DeleteVertexShader` | XFPR from puller |
 | `D3DDevice_SetGammaRamp` | DAC state |
 
-### ~~2.3 Batch 3 — Sync Patches~~ ✅ UNBLOCKED (fence support done)
-Fence/semaphore support is implemented (§3.1 ✅). These patches can now be disabled:
+### ~~2.3 Batch 3 — Sync Patches~~ ✅ DONE
+All sync patches disabled AND implementations removed. Confirmed in `d3d-unpatch-report.md`:
 | Patch | Status |
 |-------|--------|
-| `D3DDevice_BlockOnFence` / `InsertFence` / `IsFencePending` | Ready to disable |
-| `D3DDevice_BlockOnTime` | Ready to disable |
-| `D3DDevice_BeginVisibilityTest` / `EndVisibilityTest` / `GetVisibilityTestResult` | Ready to disable |
-| `D3DResource_BlockUntilNotBusy` | Ready to disable |
+| `D3DDevice_BlockOnFence` / `InsertFence` / `IsFencePending` | ✅ Disabled + removed |
+| `D3DDevice_BlockOnTime` | ✅ Disabled + removed (native semaphore works) |
+| `D3DDevice_BeginVisibilityTest` / `EndVisibilityTest` / `GetVisibilityTestResult` | ✅ Disabled + removed (PGRAPH handles NV097) |
+| `D3DResource_BlockUntilNotBusy` | ✅ Disabled + removed |
 
 ### ~~2.4 Batch 4 — Presentation Patches~~ ✅ DISABLED
 | Patch | Status |
@@ -159,5 +159,6 @@ Full CPU-side FD (forward differencing) tessellation in `PatchDraw.cpp` — mult
 1. **§6.1 Gauntlet correctness** — active debugging
 2. **§1.1 Draw batching** — highest perf gain remaining
 3. **§2.1 Dead code cleanup** — move disabled EMUPATCH impls to dead code file
-4. **§2.3 Disable sync patches** — now unblocked (fence ✅)
-5. **§5 GPU tessellation CS** — performance (CPU path works)
+4. **§1.3 RT cache eviction** — correctness for long-running titles
+5. **§4.1 PCRTC scan-out** — use `pcrtc.start` instead of last-RT assumption
+6. **§5 GPU tessellation CS** — performance (CPU path works)
