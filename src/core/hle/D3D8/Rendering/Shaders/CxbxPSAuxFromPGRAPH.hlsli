@@ -4,10 +4,13 @@
 // and compute values that were previously uploaded in the PSAuxCBLayout cbuffer.
 // This eliminates per-draw CPU-side computation for these fields.
 //
-// Requires: CxbxNV2APixelShaderConstants.hlsli and CxbxPGRAPHRegs.hlsli to be included first.
+// Depends on CxbxNV2APixelShaderConstants.hlsli and CxbxPGRAPHRegs.hlsli.
 
 #ifndef CXBX_PSAUX_FROM_PGRAPH_HLSLI
 #define CXBX_PSAUX_FROM_PGRAPH_HLSLI
+
+#include "CxbxNV2APixelShaderConstants.hlsli"
+#include "CxbxPGRAPHRegs.hlsli"
 
 // ============================================================
 // Additional PGRAPH register offsets needed by these helpers
