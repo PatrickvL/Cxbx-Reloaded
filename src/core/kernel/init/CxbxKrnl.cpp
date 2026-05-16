@@ -1393,6 +1393,11 @@ static void CxbxrKrnlInitHacks()
 							d->pvideo.pending_interrupts |= NV_PVIDEO_INTR_BUFFER_0;
 						if (pvideo_buffer & NV_PVIDEO_BUFFER_1_USE)
 							d->pvideo.pending_interrupts |= NV_PVIDEO_INTR_BUFFER_1;
+
+						// Wake the puller thread so it can composite and present the
+						// overlay. During FMV, no pushbuffer activity occurs, so the
+						// puller stays asleep and the overlay is never displayed.
+						qemu_cond_broadcast(&d->pfifo.puller_cond);
 					}
 				}
 

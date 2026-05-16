@@ -214,34 +214,40 @@ int pfifo_puller_thread(NV2AState *d)
     CxbxSetPullerContext(true);
 
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
-    while (true) {
+    while (!d->exiting) {
         pfifo_run_puller(d);
 
-        // Auto-present fallback: only for raw push buffer games that never issue
-        // an explicit NV097_FLIP_STALL. Once we've seen one, the title is driving
-        // its own flips and any auto-present here would cause mid-frame flicker.
-        if (g_pgraph_backend.flip_stall && !g_pgraph_explicit_flip_stall_seen
-            && d->pgraph.surface_color.draw_dirty) {
-            d->pgraph.surface_color.draw_dirty = false;
-            g_pgraph_backend.flip_stall(d);
+        // Present logic — at most one present per wake-up cycle.
+        // The two paths are mutually exclusive (else-if) to prevent
+        // double-presenting when both auto-present and overlay are relevant.
+        if (g_pgraph_backend.flip_stall) {
+            if (!g_pgraph_explicit_flip_stall_seen
+                && d->pgraph.surface_color.draw_dirty) {
+                // Auto-present fallback for raw pushbuffer games that never
+                // issue NV097_FLIP_STALL.
+                d->pgraph.surface_color.draw_dirty = false;
+                g_pgraph_backend.flip_stall(d);
+            } else if (d->enable_overlay
+                       && !d->pgraph.surface_color.draw_dirty) {
+                // PVIDEO overlay present: during FMV playback, no PGRAPH
+                // draws or FLIP_STALL commands occur. The VBlank handler
+                // wakes us when the overlay is active so video frames are
+                // composited and displayed at frame rate.
+                g_pgraph_backend.flip_stall(d);
+            }
         }
 
         // If the HLE thread is waiting for a PFIFO flush, signal it now
-        // that CACHE1 has been drained.  The waiter will re-check whether
-        // the DMA pusher also needs another cycle.
+        // that CACHE1 has been drained.
         if (d->pfifo.flush_requested) {
             qemu_cond_signal(&d->pfifo.flush_complete_cond);
         }
 
         qemu_cond_wait(&d->pfifo.puller_cond, &d->pfifo.pfifo_lock);
-
-        if (d->exiting) {
-            break;
-        }
     }
     qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 
-	return NULL;
+	return 0;
 }
 
 // ---------------------------------------------------------------------------
