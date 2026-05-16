@@ -232,6 +232,33 @@ void PrunePaletizedTexturesCache()
 	}
 }
 
+void PruneResourceCache()
+{
+	constexpr size_t CACHE_HIGH_WATERMARK = 2048;
+	constexpr size_t CACHE_LOW_WATERMARK  = 1024;
+
+	if (g_Cxbx_Cached_Direct3DResources.size() < CACHE_HIGH_WATERMARK)
+		return;
+
+	size_t evictCount = g_Cxbx_Cached_Direct3DResources.size() - CACHE_LOW_WATERMARK;
+
+	std::vector<uint32_t> accessTimes;
+	accessTimes.reserve(g_Cxbx_Cached_Direct3DResources.size());
+	for (auto& entry : g_Cxbx_Cached_Direct3DResources) {
+		accessTimes.push_back(entry.second.lastAccessFrame);
+	}
+	std::nth_element(accessTimes.begin(), accessTimes.begin() + evictCount, accessTimes.end());
+	uint32_t threshold = accessTimes[evictCount];
+
+	for (auto it = g_Cxbx_Cached_Direct3DResources.begin(); it != g_Cxbx_Cached_Direct3DResources.end(); ) {
+		if (it->second.lastAccessFrame <= threshold) {
+			it = g_Cxbx_Cached_Direct3DResources.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
 // Forward declaration (defined later in this file)
 static void EmuVerifyResourceIsRegistered(xbox::X_D3DResource *pResource, DWORD D3DUsage, int iTextureStage, DWORD dwSize);
 

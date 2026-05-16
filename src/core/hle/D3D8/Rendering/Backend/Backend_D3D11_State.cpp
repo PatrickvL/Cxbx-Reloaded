@@ -786,35 +786,26 @@ static DXGI_FORMAT NV097ZetaFormatToDXGI(unsigned int zetaFormat)
 	}
 }
 
-// Cache key for PGRAPH-created render targets / depth stencils
-struct PgraphRTKey {
-	xbox::addr_xt offset;
+// Unified resource cache: keyed by physical VRAM offset for O(1) lookup.
+// Stores render targets, depth stencils, and textures.
+// Multiple entries may exist per offset (different format/dimensions).
+// Replaces the old RT cache that required O(n) linear scan for offset lookup.
+struct ResourceCacheEntry {
+	Microsoft::WRL::ComPtr<ID3D11Texture2D> pTexture;
 	DXGI_FORMAT format;
 	UINT width;
 	UINT height;
+	uint64_t lastAccessFrame;
+	bool isDepthStencil;
+};
+// Each offset maps to a small vector of entries (typically 1–2).
+static std::unordered_map<xbox::addr_xt, std::vector<ResourceCacheEntry>> g_ResourceCache;
+static uint64_t g_ResourceCacheFrameCount = 0;
+static size_t g_ResourceCacheTotalEntries = 0;
 
-	bool operator==(const PgraphRTKey& other) const {
-		return offset == other.offset && format == other.format
-			&& width == other.width && height == other.height;
-	}
-};
-struct PgraphRTKeyHash {
-	size_t operator()(const PgraphRTKey& k) const {
-		return static_cast<size_t>(ComputeHash(&k, sizeof(k)));
-	}
-};
-// RT cache entry: texture + LRU frame stamp for eviction
-struct PgraphRTEntry {
-	Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
-	uint64_t lastUsedFrame;
-};
-static std::unordered_map<PgraphRTKey, PgraphRTEntry, PgraphRTKeyHash> g_PgraphRTCache;
-static uint64_t g_RTCacheFrameCount = 0;
-
-// Elastic eviction: only evict when cache exceeds high watermark,
-// then remove oldest entries until at or below low watermark.
-static constexpr size_t RT_CACHE_HIGH_WATERMARK = 64;
-static constexpr size_t RT_CACHE_LOW_WATERMARK = 32;
+// Elastic eviction watermarks — sized for combined RT + texture population.
+static constexpr size_t RESOURCE_CACHE_HIGH_WATERMARK = 256;
+static constexpr size_t RESOURCE_CACHE_LOW_WATERMARK = 128;
 
 void CxbxResetPgraphSurfaceTracking()
 {
@@ -823,45 +814,76 @@ void CxbxResetPgraphSurfaceTracking()
 	g_pHostPgraphBackBuffer = nullptr;
 	g_PgraphBackBufferWidth = 0;
 	g_PgraphBackBufferHeight = 0;
-	g_PgraphRTCache.clear();
+	g_ResourceCache.clear();
+	g_ResourceCacheTotalEntries = 0;
 }
 
 ID3D11Texture2D* CxbxLookupPgraphRTByOffset(xbox::addr_xt offset)
 {
-	for (auto& entry : g_PgraphRTCache) {
-		if (entry.first.offset == offset) {
-			entry.second.lastUsedFrame = g_RTCacheFrameCount;
-			return entry.second.texture.Get();
+	auto it = g_ResourceCache.find(offset);
+	if (it != g_ResourceCache.end() && !it->second.empty()) {
+		// Return the most recently accessed entry at this offset
+		auto& entries = it->second;
+		auto* best = &entries[0];
+		for (size_t i = 1; i < entries.size(); i++) {
+			if (entries[i].lastAccessFrame > best->lastAccessFrame)
+				best = &entries[i];
 		}
+		best->lastAccessFrame = g_ResourceCacheFrameCount;
+		return best->pTexture.Get();
 	}
 	return nullptr;
 }
 
 void CxbxPgraphRTCacheEvict()
 {
-	g_RTCacheFrameCount++;
+	g_ResourceCacheFrameCount++;
 
-	if (g_PgraphRTCache.size() <= RT_CACHE_HIGH_WATERMARK)
+	if (g_ResourceCacheTotalEntries <= RESOURCE_CACHE_HIGH_WATERMARK)
 		return;
 
-	// Collect eviction candidates (exclude pinned backbuffer)
-	std::vector<std::unordered_map<PgraphRTKey, PgraphRTEntry, PgraphRTKeyHash>::iterator> candidates;
-	candidates.reserve(g_PgraphRTCache.size());
-	for (auto it = g_PgraphRTCache.begin(); it != g_PgraphRTCache.end(); ++it) {
-		if (it->second.texture.Get() != g_pHostPgraphBackBuffer)
-			candidates.push_back(it);
+	// Collect all entries as eviction candidates (exclude pinned backbuffer)
+	struct EvictCandidate {
+		xbox::addr_xt offset;
+		size_t index;
+		uint64_t lastAccessFrame;
+	};
+	std::vector<EvictCandidate> candidates;
+	candidates.reserve(g_ResourceCacheTotalEntries);
+	for (auto& [offset, entries] : g_ResourceCache) {
+		for (size_t i = 0; i < entries.size(); i++) {
+			if (entries[i].pTexture.Get() != g_pHostPgraphBackBuffer)
+				candidates.push_back({ offset, i, entries[i].lastAccessFrame });
+		}
 	}
 
-	// Sort by lastUsedFrame ascending (oldest first)
+	// Sort by lastAccessFrame ascending (oldest first)
 	std::sort(candidates.begin(), candidates.end(),
-		[](const auto& a, const auto& b) {
-			return a->second.lastUsedFrame < b->second.lastUsedFrame;
+		[](const EvictCandidate& a, const EvictCandidate& b) {
+			return a.lastAccessFrame < b.lastAccessFrame;
 		});
 
 	// Evict oldest entries until at or below low watermark
-	size_t toEvict = g_PgraphRTCache.size() - RT_CACHE_LOW_WATERMARK;
-	for (size_t i = 0; i < toEvict && i < candidates.size(); i++) {
-		g_PgraphRTCache.erase(candidates[i]);
+	size_t toEvict = g_ResourceCacheTotalEntries - RESOURCE_CACHE_LOW_WATERMARK;
+	size_t evicted = 0;
+	for (size_t i = 0; i < candidates.size() && evicted < toEvict; i++) {
+		auto mapIt = g_ResourceCache.find(candidates[i].offset);
+		if (mapIt == g_ResourceCache.end())
+			continue;
+		auto& entries = mapIt->second;
+		// Find and remove the entry (by matching texture pointer, since indices shift)
+		for (auto vecIt = entries.begin(); vecIt != entries.end(); ++vecIt) {
+			if (vecIt->lastAccessFrame == candidates[i].lastAccessFrame
+				&& vecIt->pTexture.Get() != g_pHostPgraphBackBuffer) {
+				entries.erase(vecIt);
+				g_ResourceCacheTotalEntries--;
+				evicted++;
+				break;
+			}
+		}
+		// Remove the offset key if no entries remain
+		if (entries.empty())
+			g_ResourceCache.erase(mapIt);
 	}
 }
 
@@ -883,11 +905,18 @@ static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 	UINT hostWidth = width * g_RenderUpscaleFactor;
 	UINT hostHeight = height * g_RenderUpscaleFactor;
 
-	PgraphRTKey key = { offset, format, hostWidth, hostHeight };
-	auto it = g_PgraphRTCache.find(key);
-	if (it != g_PgraphRTCache.end()) {
-		it->second.lastUsedFrame = g_RTCacheFrameCount;
-		return it->second.texture.Get();
+	// Check unified resource cache — reuse if same offset has matching params
+	auto it = g_ResourceCache.find(offset);
+	if (it != g_ResourceCache.end()) {
+		for (auto& entry : it->second) {
+			if (entry.format == format
+				&& entry.width == hostWidth
+				&& entry.height == hostHeight
+				&& entry.isDepthStencil == isDepthStencil) {
+				entry.lastAccessFrame = g_ResourceCacheFrameCount;
+				return entry.pTexture.Get();
+			}
+		}
 	}
 
 	D3D11_TEXTURE2D_DESC desc = {};
@@ -918,7 +947,9 @@ static ID3D11Texture2D* CreateHostSurfaceFromPGRAPH(
 	}
 
 	auto* pResult = pTexture.Get();
-	g_PgraphRTCache[key] = { std::move(pTexture), g_RTCacheFrameCount };
+	g_ResourceCache[offset].push_back({ std::move(pTexture), format, hostWidth, hostHeight,
+		g_ResourceCacheFrameCount, isDepthStencil });
+	g_ResourceCacheTotalEntries++;
 
 	// Clear newly created depth stencil surfaces to 1.0 (far plane).
 	// On real NV2A hardware, newly allocated depth memory contains

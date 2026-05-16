@@ -216,6 +216,7 @@ unsigned int CxbxGetPixelContainerMipMapLevels(xbox::X_D3DPixelContainer *pPixel
 void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D3DBaseTexture* pTexture, UINT& Level, int& Face);
 void GetSurfaceFaceAndLevelWithinTexture(xbox::X_D3DSurface* pSurface, xbox::X_D3DBaseTexture* pBaseTexture, UINT& Level);
 void PrunePaletizedTexturesCache();
+void PruneResourceCache();
 void CxbxGetPixelContainerMeasures(xbox::X_D3DPixelContainer *pPixelContainer, DWORD dwMipMapLevel, UINT *pWidth, UINT *pHeight, UINT *pDepth, UINT *pRowPitch, UINT *pSlicePitch);
 void CreateHostResource(xbox::X_D3DResource *pResource, DWORD D3DUsage, int iTextureStage, DWORD dwSize);
 int XboxD3DPaletteSizeToBytes(const xbox::X_D3DPALETTESIZE Size);

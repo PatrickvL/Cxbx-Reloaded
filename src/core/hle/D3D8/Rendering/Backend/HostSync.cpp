@@ -910,8 +910,9 @@ void CxbxUpdateNativeD3DResources()
 	// Single pg pointer for the entire per-draw state update sequence.
 	PGRAPHState *pg = &g_NV2A->GetDeviceState()->pgraph;
 
-	// Before we start, make sure our resource cache stays limited in size
-	PrunePaletizedTexturesCache(); // TODO : Could we move this to Swap instead?
+	// Before we start, make sure our resource caches stay limited in size
+	PrunePaletizedTexturesCache();
+	PruneResourceCache();
 
 	// NOTE: Vertex shader must be updated before vertex declaration,
 	// because D3D11 input layout creation depends on compiled VS bytecode
