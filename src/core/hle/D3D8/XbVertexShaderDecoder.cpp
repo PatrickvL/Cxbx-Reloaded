@@ -32,7 +32,7 @@
 #include "common\util\hasher.h" // For ComputeHash
 #include "core\kernel\init\CxbxKrnl.h"
 #include "core\kernel\support\Emu.h"
-#include "core\hle\D3D8\Rendering\RenderGlobals.h" // For g_Xbox_VertexShader_Handle
+#include "core\hle\D3D8\Rendering\RenderGlobals.h"
 
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbVertexShader.h"

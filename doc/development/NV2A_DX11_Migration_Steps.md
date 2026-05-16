@@ -578,22 +578,24 @@ and commented-out PATCH_ENTRY lines can be deleted (Step 10.2).
 
 ## Step 10: Clean Up HLE State Infrastructure
 
-### 10.1 — Remove HLE state globals (partial)  ✅ IN PROGRESS
+### 10.1 — Remove HLE state globals (partial)  ✅ DONE
 
 Removed:
 - `XboxRenderStates` / `XboxTextureStates` — render/texture state mirrors (deleted classes)
+- `g_Xbox_SetStreamSource[]` — already dead (no references)
+- `g_pXbox_RenderTarget` / `g_pXbox_DepthStencil` — already dead (no references)
+- `g_Xbox_VertexShader_Handle` / `g_Xbox_VertexShader_FunctionSlots_StartAddress` — already dead
 
-Remaining:
-- `g_pXbox_SetTexture[]` — still used as texture side-map fallback
-- `g_Xbox_SetStreamSource[]` — per-stream VB bindings
-- `g_pXbox_RenderTarget` / `g_pXbox_DepthStencil`
-- `g_Xbox_VertexShader_Handle` / `g_Xbox_VertexShader_FunctionSlots_StartAddress`
+Still active (cannot remove yet):
+- `g_pXbox_SetTexture[]` — used as texture side-map fallback in HostSync.cpp
+  and XbPixelShaderCompiler.cpp
 
-### 10.2 — Remove EMUPATCH infrastructure for removed patches
+### 10.2 — Remove EMUPATCH infrastructure for removed patches  ✅ DONE
 
-- Clean up `EmuPatches_*.cpp` files
-- Remove symbol scan entries for deleted patches
-- Remove trampoline slots
+Deleted all `EmuPatches_*.cpp`, `EmuPatches_*.h`, `EmuPatches_Unused.h`, and
+`Direct3D9.cpp.unused-patches`. Removed entries from CMakeLists.txt and
+`#include` directives from RenderGlobals.h. Trampoline infrastructure kept
+(still used by active HLE patches in XAPI).
 
 ### 10.3 — Remove remaining GL fields from VertexAttribute  ✅ DONE
 
