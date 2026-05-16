@@ -98,10 +98,8 @@ Fence/semaphore support is implemented (§3.1 ✅). These patches can now be dis
 
 ## 4. Display Path (PCRTC/PVIDEO)
 
-### 4.1 PCRTC Scan-Out
-**Status:** PARTIALLY DONE.  
-`NV_PCRTC_START` register is read/written in `EmuNV2A_PCRTC.cpp`. However, `D3D11_flip_stall` currently uses `g_pHostPgraphBackBuffer` (the last PGRAPH RT) for presentation, NOT `d->pcrtc.start` to resolve the actual framebuffer address.  
-**Remaining:** Read `d->pcrtc.start` and resolve the corresponding RT from `g_PgraphRTCache` (or mirror buffer) instead of assuming the last-rendered RT is the display surface.
+### ~~4.1 PCRTC Scan-Out~~ ✅ DONE
+`D3D11_flip_stall` reads `d->pcrtc.start` and resolves the corresponding host RT via `CxbxLookupPgraphRTByOffset()`. Falls back to `g_pHostPgraphBackBuffer` when `pcrtc.start` is zero or not yet in the cache (early boot). Overlay scaling derives Xbox framebuffer dimensions from the resolved display surface.
 
 ### ~~4.2 PVIDEO Overlay~~ ✅ DONE
 `D3D11_flip_stall` reads PVIDEO registers (`NV_PVIDEO_OFFSET`, `NV_PVIDEO_FORMAT`, etc.) directly and composites the overlay. `EnableOverlay`/`UpdateOverlay` patches are disabled.
@@ -164,5 +162,4 @@ Full CPU-side FD (forward differencing) tessellation in `PatchDraw.cpp` — mult
 3. **§2.1 Dead code cleanup** — move disabled EMUPATCH impls to dead code file
 4. **§2.3 Disable sync patches** — now unblocked (fence ✅)
 5. **§1.3 RT cache eviction** — correctness for long-running titles
-6. **§4.1 PCRTC scan-out** — use `pcrtc.start` instead of last-RT assumption
-7. **§5 GPU tessellation CS** — performance (CPU path works)
+6. **§5 GPU tessellation CS** — performance (CPU path works)
