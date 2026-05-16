@@ -627,8 +627,10 @@ Backend-agnostic files remain in `Rendering/`:
 - `RenderGlobals.cpp/.h`, `NV2A_PGRAPH_Helpers.cpp/.h`,
   `IndexBufferConvert.cpp/.h`, `WalkIndexBuffer.cpp/.h`, `EmuD3D8_common.h`
 
-Remaining: `RenderGlobals.h` still exposes D3D11 types (device pointers, query
-helpers) — a future split would move those into a backend-specific header.
+`RenderGlobals.h` split complete: D3D11-typed declarations (device pointers,
+query helpers, resource cache types, SetHost*/GetHost* functions) moved to
+`Backend/Backend_D3D11.h`.  `RenderGlobals.h` now contains only backend-agnostic
+state (Xbox types, resource keys, format arrays, window globals, trampolines).
 
 ### 11.3 — Make PGRAPH state the single source of truth  ✅ DONE
 

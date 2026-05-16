@@ -24,7 +24,10 @@
 #define BACKEND_D3D11_H
 
 #include "core\hle\D3D8\XbD3D8Types.h"
+#include "../RenderGlobals.h" // resource_key_t, resource_key_hash
 #include <vector>
+#include <unordered_map>
+#include <wrl/client.h>
 
 struct _CxbxVertexDeclaration;
 typedef struct _CxbxVertexDeclaration CxbxVertexDeclaration;
@@ -32,6 +35,7 @@ typedef struct _CxbxVertexDeclaration CxbxVertexDeclaration;
 // ******************************************************************
 // * D3D11 device globals
 // ******************************************************************
+extern ID3D11Device                *g_pD3DDevice;
 extern IDXGISwapChain              *g_pSwapChain;
 extern bool                         g_bTearingSupported;
 extern ID3D11DeviceContext         *g_pD3DDeviceContext;
@@ -47,6 +51,8 @@ extern ID3D11Texture2D             *g_pD3DCurrentHostRenderTarget;
 extern ID3D11Texture2D             *g_pHostPgraphBackBuffer;
 extern UINT                         g_PgraphBackBufferWidth;
 extern UINT                         g_PgraphBackBufferHeight;
+extern D3D11_TEXTURE2D_DESC         g_HostBackBufferDesc;
+extern ID3D11Query                 *g_pHostQueryWaitForIdle;
 void CxbxResetPgraphSurfaceTracking();
 ID3D11Texture2D* CxbxLookupPgraphRTByOffset(xbox::addr_xt offset);
 void CxbxInvalidatePgraphRTBinding();
@@ -337,5 +343,115 @@ void CxbxD3D11CreateVertexDefaultsBuffer();
 // created) and bind it via IASetInputLayout.  Encapsulates all device access
 // so callers outside the Rendering folder never touch g_pD3DDevice directly.
 void CxbxD3D11SetVertexDeclaration(CxbxVertexDeclaration* pCxbxVertexDeclaration);
+
+// ******************************************************************
+// * Device creation data (uses DXGI/D3D11 types)
+// ******************************************************************
+
+// information passed to the create device proxy thread
+struct EmuD3D8CreateDeviceProxyData
+{
+	IDXGIAdapter*  Adapter;
+	D3D_DRIVER_TYPE   DeviceType;
+	struct {
+		UINT BackBufferWidth;
+		UINT BackBufferHeight;
+		UINT FullScreen_RefreshRateInHz;
+		BOOL Windowed;
+	} HostPresentationParameters;
+};
+
+extern EmuD3D8CreateDeviceProxyData  g_EmuCDPD;
+
+// ******************************************************************
+// * Rendering helpers (implemented in Backend_D3D11*.cpp)
+// ******************************************************************
+HRESULT CxbxSetRenderTarget(ID3D11Texture2D* pHostRenderTarget, UINT mipSlice = 0, UINT arraySlice = 0);
+void    CxbxSetViewport(D3D11_VIEWPORT *pHostViewport);
+HRESULT CxbxBltSurface(ID3D11Texture2D* pSrc, const RECT* pSrcRect, ID3D11Texture2D* pDst, const RECT* pDstRect, D3DTEXTUREFILTERTYPE Filter);
+void    CxbxSetDepthStencilSurface(ID3D11Texture2D* pHostDepthStencil);
+ID3D11Texture2D* CxbxGetCurrentRenderTarget(); // Returns current RT (non-owning pointer)
+HRESULT CxbxGetBackBuffer(ID3D11Texture2D** ppBackBuffer); // Returns back buffer (caller owns ref)
+HRESULT CxbxSetStreamSource(UINT HostStreamNumber, ID3D11Buffer* pHostVertexBuffer, UINT VertexStride);
+HRESULT CxbxSetVertexShader(ID3D11VertexShader* pHostVertexShader);
+
+// ******************************************************************
+// * Query helpers
+// ******************************************************************
+inline void CxbxQueryIssueBegin(ID3D11Query* pQuery)
+{
+	g_pD3DDeviceContext->Begin(pQuery);
+}
+
+inline void CxbxQueryIssueEnd(ID3D11Query* pQuery)
+{
+	g_pD3DDeviceContext->End(pQuery);
+}
+
+inline HRESULT CxbxQueryGetData(ID3D11Query* pQuery, void* pData, DWORD dwSize, DWORD dwGetDataFlags)
+{
+	return g_pD3DDeviceContext->GetData(pQuery, pData, dwSize, dwGetDataFlags);
+}
+
+// ******************************************************************
+// * Resource cache types (defined in HostResource.cpp)
+// ******************************************************************
+constexpr DWORD D3DUSAGE_INVALID = 0xFFFFFFFF;
+
+typedef struct _resource_info_t {
+	Microsoft::WRL::ComPtr<ID3D11Resource> pHostResource;
+	DXGI_FORMAT HostFormat = EMUFMT_UNKNOWN;
+	DWORD HostUsage = D3DUSAGE_INVALID;
+	DWORD dwXboxResourceType = 0;
+	void* pXboxData = xbox::zeroptr;
+	size_t szXboxDataSize = 0;
+	uint32_t lastAccessFrame = 0; // Frame counter for LRU eviction
+} resource_info_t;
+
+typedef std::unordered_map<resource_key_t, resource_info_t, resource_key_hash> resource_cache_t;
+
+// HostDevice.cpp
+void UpdateDepthStencilFlags(ID3D11Texture2D *pDepthStencilSurface);
+
+// HostResource.cpp
+void SetHostResource(xbox::X_D3DResource* pXboxResource, ID3D11Resource* pHostResource, int iTextureStage = -1, DWORD D3DUsage = 0xFFFFFFFFu, DXGI_FORMAT PCFormat = EMUFMT_UNKNOWN);
+void FreeHostResource(resource_key_t key);
+ID3D11Texture2D* GetHostSurface(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage = 0);
+ID3D11Resource* GetHostBaseTexture(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage = 0, int iTextureStage = 0);
+ID3D11Resource* GetHostBaseTextureWithFormat(xbox::X_D3DResource* pXboxResource, DWORD D3DUsage, int iTextureStage, DXGI_FORMAT* pOutHostFormat);
+ID3D11Texture3D* GetHostVolumeTexture(xbox::X_D3DResource* pXboxResource, int iTextureStage = 0);
+resource_cache_t& GetResourceCache(resource_key_t& key);
+
+// Inline resource setters
+inline void SetHostSurface(xbox::X_D3DResource* pXboxResource, ID3D11Texture2D* pHostSurface, int iTextureStage = -1)
+{
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostSurface, iTextureStage);
+}
+
+inline void SetHostVolume(xbox::X_D3DResource* pXboxResource, ID3D11Texture3D* pHostVolume, int iTextureStage = -1)
+{
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostVolume, iTextureStage);
+}
+
+inline void SetHostTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture2D* pHostTexture, int iTextureStage = -1)
+{
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostTexture, iTextureStage);
+}
+
+inline void SetHostVolumeTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture3D* pHostVolumeTexture, int iTextureStage = -1)
+{
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostVolumeTexture, iTextureStage);
+}
+
+inline void SetHostCubeTexture(xbox::X_D3DResource* pXboxResource, ID3D11Texture2D* pHostCubeTexture, int iTextureStage = -1)
+{
+	SetHostResource(pXboxResource, (ID3D11Resource*)pHostCubeTexture, iTextureStage);
+}
+
+// HostRender.cpp
+bool GetHostRenderTargetDimensions(DWORD *pHostWidth, DWORD *pHostHeight, ID3D11Texture2D* pHostRenderTarget = nullptr);
+
+// HostSync.cpp
+void CxbxD3D11InvalidateCachedSRVForTexture(ID3D11Resource* pTexture);
 
 #endif // BACKEND_D3D11_H

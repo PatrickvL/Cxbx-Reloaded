@@ -138,7 +138,7 @@ bool IsResourceAPixelContainer(xbox::X_D3DResource* pXboxResource)
 	return IsResourceAPixelContainer(pXboxResource->Common);
 }
 
-// resource_info_t and resource_cache_t are defined in RenderGlobals.h
+// resource_info_t and resource_cache_t are defined in Backend_D3D11.h
 resource_cache_t g_Cxbx_Cached_Direct3DResources;
 resource_cache_t g_Cxbx_Cached_PaletizedTextures;
 
