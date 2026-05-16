@@ -927,76 +927,7 @@ xbox::LPVOID WINAPI xbox::EMUPATCH(ConvertThreadToFiber)
 	RETURN(pRet);
 }
 
-// ******************************************************************
-// * patch: SignalObjectAndWait
-// ******************************************************************
-xbox::dword_xt WINAPI xbox::EMUPATCH(SignalObjectAndWait)
-(
-	HANDLE	hObjectToSignal,
-	HANDLE	hObjectToWaitOn,
-	dword_xt	dwMilliseconds,
-	bool_xt	bAlertable
-)
-{
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG(hObjectToSignal)
-		LOG_FUNC_ARG(hObjectToWaitOn)
-		LOG_FUNC_ARG(dwMilliseconds)
-		LOG_FUNC_ARG(bAlertable)
-		LOG_FUNC_END;
 
-	// Because user APCs from NtQueueApcThread are now handled by the kernel, we need to wait for them ourselves
-	LARGE_INTEGER NewTime;
-	PLARGE_INTEGER Timeout;
-	if (dwMilliseconds == INFINITE) {
-		Timeout = nullptr;
-	}
-	else if (dwMilliseconds == 0) {
-		Timeout = &NewTime;
-		NewTime.QuadPart = 0;
-	}
-	else {
-		Timeout = &NewTime;
-		NewTime.QuadPart = xbox::KeQueryInterruptTime();
-		NewTime.QuadPart += (static_cast<xbox::ulonglong_xt>(dwMilliseconds) * CLOCK_TIME_INCREMENT);
-	}
-
-	PKTHREAD kThread = KeGetCurrentThread();
-	kThread->WaitStatus = X_STATUS_SUCCESS;
-	if (!AddWaitObject(kThread, Timeout)) {
-		RETURN(WAIT_TIMEOUT);
-	}
-
-	xbox::ntstatus_xt status = WaitApc<true>([hObjectToSignal, hObjectToWaitOn, bAlertable](xbox::PKTHREAD kThread) -> std::optional<DWORD> {
-		DWORD dwRet = SignalObjectAndWait(hObjectToSignal, hObjectToWaitOn, 0, bAlertable);
-		if (dwRet == WAIT_TIMEOUT) {
-			return std::nullopt;
-		}
-		// If the wait was satisfied with the host, then also unwait the thread on the guest side, to be sure to remove WaitBlocks that might have been added
-		// to the thread
-		xbox::ntstatus_xt Status;
-		switch (dwRet)
-		{
-		case WAIT_ABANDONED: Status = X_STATUS_ABANDONED; break;
-		case WAIT_IO_COMPLETION: Status = X_STATUS_USER_APC; break;
-		case WAIT_OBJECT_0: Status = X_STATUS_SUCCESS; break;
-		default: Status = X_STATUS_INVALID_HANDLE;
-		}
-		xbox::KiUnwaitThreadAndLock(kThread, Status, 0);
-		return std::make_optional<ntstatus_xt>(kThread->WaitStatus);
-		}, Timeout, bAlertable, UserMode, kThread);
-
-	xbox::dword_xt ret;
-	switch (status)
-	{
-	case X_STATUS_ABANDONED: ret = WAIT_ABANDONED; break;
-	case X_STATUS_USER_APC: ret = WAIT_IO_COMPLETION; break;
-	case X_STATUS_SUCCESS: ret = WAIT_OBJECT_0; break;
-	case X_STATUS_TIMEOUT: ret = WAIT_TIMEOUT; break;
-	default: ret = WAIT_FAILED;
-	}
-	RETURN(ret);
-}
 
 // ******************************************************************
 // * patch: RaiseException
@@ -1251,17 +1182,6 @@ xbox::dword_xt WINAPI xbox::EMUPATCH(XReadMUMetaData)
 	RETURN(RtlNtStatusToDosError(status));
 }
 
-// ******************************************************************
-// * patch: OutputDebugStringA
-// ******************************************************************
-xbox::void_xt WINAPI xbox::EMUPATCH(OutputDebugStringA)
-(
-	IN LPCSTR lpOutputString
-)
-{
 
-	LOG_FUNC_ONE_ARG(lpOutputString);
-	printf("OutputDebugStringA: %s\n", lpOutputString);
-}
 
 #endif

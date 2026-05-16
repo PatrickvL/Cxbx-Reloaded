@@ -676,6 +676,7 @@ xbox::void_xt WINAPI EMUPATCH(XSetProcessQuantumLength)
     dword_xt dwMilliseconds
 );
 
+#if 0 // Unpatched: game's original code calls NtSignalAndWaitForSingleObjectEx which is fully implemented
 // ******************************************************************
 // * patch: SignalObjectAndWait
 // ******************************************************************
@@ -686,6 +687,7 @@ xbox::dword_xt WINAPI EMUPATCH(SignalObjectAndWait)
 	dword_xt	dwMilliseconds,
 	bool_xt	bAlertable
 );
+#endif
 
 // ******************************************************************
 // * patch: timeSetEvent
@@ -821,6 +823,7 @@ xbox::bool_xt WINAPI EMUPATCH(WriteFileEx)
 	LPOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine // completion routine
 );
 
+#if 0 // Unpatched: game's original code calls DbgPrint which is fully implemented
 // ******************************************************************
 // * patch: OutputDebugStringA
 // ******************************************************************
@@ -828,6 +831,7 @@ xbox::void_xt WINAPI EMUPATCH(OutputDebugStringA)
 (
 	IN LPCSTR lpOutputString
 );
+#endif
 
 // s+
 /* not necessary?
