@@ -504,6 +504,9 @@ typedef struct NV2AState {
 	struct {
 		uint8_t cr_index;
 		uint8_t cr[256]; /* CRT registers */
+		uint8_t ar_index;
+		uint8_t ar[0x15]; /* Attribute Controller registers (VGA_ATT_C) */
+		bool    ar_flip_flop;  /* false=index, true=data */
 	} prmcio; // Not in xqemu/openxbox?
 
 	// PRMVIO: VGA Sequencer and Graphics Controller

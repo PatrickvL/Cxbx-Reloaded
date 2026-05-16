@@ -47,6 +47,15 @@ DEVICE_READ32(PRMCIO)
 	
 		printf("vga: read CR%x = 0x%02x\n", d->prmcio.cr_index, result);
 		break;
+	case VGA_ATT_R:
+		result = d->prmcio.ar[d->prmcio.ar_index];
+		break;
+	case VGA_IS1_RC:
+	case VGA_IS1_RM:
+		// Reading Input Status 1 resets the attribute controller flip-flop
+		d->prmcio.ar_flip_flop = false;
+		result = 0;
+		break;
 	default:
 		DEBUG_READ32_UNHANDLED(PRMCIO);
 		printf("vga: UNHANDLED ADDR %x\n", addr);
@@ -59,18 +68,24 @@ DEVICE_READ32(PRMCIO)
 DEVICE_WRITE32(PRMCIO)
 {
 	switch (addr) {
-#if 0 // TODO : Enable
     case VGA_ATT_W:
         /* Cromwell sets attrs without enabling VGA_AR_ENABLE_DISPLAY
          * (which should result in a blank screen).
          * Either nvidia's hardware is lenient or it is set through
          * something else. The former seems more likely.
          */
-        if (d->vga.ar_flip_flop == 0) {
+        if (!d->prmcio.ar_flip_flop) {
+            // Index write — force VGA_AR_ENABLE_DISPLAY on
+            d->prmcio.ar_index = (value & 0x1F);
             value |= VGA_AR_ENABLE_DISPLAY;
+        } else {
+            // Data write
+            if (d->prmcio.ar_index < VGA_ATT_C) {
+                d->prmcio.ar[d->prmcio.ar_index] = value & 0xFF;
+            }
         }
+        d->prmcio.ar_flip_flop = !d->prmcio.ar_flip_flop;
         break;
-#endif
 	// vga_ioport_write :
 	case VGA_CRT_IM:
 	case VGA_CRT_IC:
