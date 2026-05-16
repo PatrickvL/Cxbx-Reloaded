@@ -86,8 +86,12 @@ DEVICE_WRITE32(PVIDEO)
 		pvideo_vga_invalidate(d);
 		break;
 	case NV_PVIDEO_STOP:
-		d->pvideo.regs[RI(NV_PVIDEO_BUFFER)] = 0;
-		d->enable_overlay = false;
+		// PVIDEO_STOP may be written many times during video playback
+		// but the overlay is only torn down if bit 0 is set.
+		if (value & 1) {
+			d->pvideo.regs[RI(NV_PVIDEO_BUFFER)] = 0;
+			d->enable_overlay = false;
+		}
 		pvideo_vga_invalidate(d);
 		break;
 	default:
