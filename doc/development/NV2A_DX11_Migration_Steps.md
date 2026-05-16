@@ -20,11 +20,12 @@ the validation corpus.
 | RC interpreter reads from | **PGRAPH `regs[]` raw SRV** (Steps 3.1–3.4 done, CBLayout eliminated) |
 | VS interpreter reads from | **PGRAPH `program_data[]` via XFPR SRV** (Steps 4.1–4.3 done, CBLayout eliminated) |
 | VS constants reads from | **PGRAPH `vsh_constants[]` (XFCTX RAM mirror)** (already PGRAPH-sourced) |
-| Vertex fetch reads from | **PGRAPH `vertex_attributes[]`** (Step 5.1 done, HLE fallback for UP draws) |
+| Vertex fetch reads from | **PGRAPH `vertex_attributes[]`** (Steps 5.1–5.2 done, inline_value direct) |
 | Surface/RT state from | **PGRAPH `surface_color/zeta.offset`** via side-map (Step 6.1 done) |
 | Pipeline state from | **PGRAPH `regs[]`** — blend/depth/stencil/rasterizer/viewport (Steps 6.2–6.3 done) |
 | Texture state from | **PGRAPH `TEXOFFSET` regs** via side-map (Steps 7.1–7.2 done, m_Textures removed) |
-| Draw trigger | **HLE EMUPATCH** + puller-driven `HLE_draw_arrays` (Step 8.1 done) |
+| Draw trigger | **Puller-driven** `pgraph_draw(d)` from `SET_BEGIN_END(END)` (Step 8.1 done) |
+| Draw batching | **Cross-bracket squash** — consecutive BEGIN/DRAW_ARRAYS/END merged into single batch |
 | OpenGL LLE path | **Removed** (Step 1 complete) |
 | OpenGL types in structs | **Removed** from `PGRAPHState`, `VertexAttribute` |
 | GLSL shader translators | **Removed** |
@@ -401,10 +402,11 @@ for (int i = 0; i < 16; i++) {
 The DMA address resolution converts the NV2A DMA context + offset into a physical
 Xbox memory address that indexes into the 64MB SRV.
 
-### 5.2 — Read inline/sticky vertex attributes from PGRAPH
+### 5.2 — Read inline/sticky vertex attributes from PGRAPH  ✅ DONE
 
 `VertexAttribute.inline_value[4]` provides the NV2A "sticky" per-attribute defaults.
-Replace `NV2A_get_vertex_attribute_value_pointer()` with direct PGRAPH read.
+Removed `NV2A_get_vertex_attribute_value_pointer()` wrapper; `UploadVertexDefaults()`
+now reads `pg->vertex_attributes[i].inline_value` directly.
 
 **Test:** Fur, SphereMap (multiple vertex streams).
 
@@ -489,32 +491,36 @@ D3D11 draws, the PFIFO puller triggers draws when it processes `NV097_SET_BEGIN_
 
 ### 8.1 — Register D3D11 draw backend as PGRAPH draw functions  ✅ DONE
 
-Committed as a816390d. `HLE_draw_arrays` calls `CxbxD3D11VertexFetchDraw()`.
-`HLE_init_pgraph_plugins()` sets function pointers. Puller context flag prevents
-`pfifo_flush` deadlock.
+Committed as a816390d. `D3D11_init_pgraph_plugins()` in `XbPushBuffer.cpp` sets
+global function pointers. PGRAPH calls `pgraph_draw(d)` from `SET_BEGIN_END(END)`
+for all draw types; the backend internally dispatches by checking which buffer
+has data (draw_arrays, inline_buffer, inline_array, inline_elements).
 
-**File:** `src/devices/video/EmuNV2A_PGRAPH.cpp`
+**File:** `src/core/hle/D3D8/XbPushBuffer.cpp`
 
-Set the draw function pointers to D3D11 backend functions:
+Global draw function pointers (declared in `EmuNV2A_PGRAPH.cpp`):
 ```cpp
-void pgraph_init_D3D11(PGRAPHState *pg) {
-    pg->pgraph_draw_arrays         = D3D11_draw_arrays;
-    pg->pgraph_draw_inline_buffer  = D3D11_draw_inline_buffer;
-    pg->pgraph_draw_inline_array   = D3D11_draw_inline_array;
-    pg->pgraph_draw_inline_elements = D3D11_draw_inline_elements;
-    pg->pgraph_draw_state_update   = D3D11_draw_state_update;
-    pg->pgraph_draw_clear          = D3D11_draw_clear;
+void D3D11_init_pgraph_plugins() {
+    pgraph_draw              = D3D11_draw;
+    pgraph_draw_state_update = D3D11_draw_state_update;
+    pgraph_draw_clear        = D3D11_draw_clear;
+    pgraph_draw_patch        = D3D11_draw_patch;
+    pgraph_flip_stall        = D3D11_flip_stall;
+    pgraph_zpass_begin       = D3D11_zpass_begin;
+    pgraph_zpass_end         = D3D11_zpass_end;
+    pgraph_zpass_collect     = D3D11_zpass_collect;
+    pgraph_launch_transform_program = D3D11_launch_transform_program;
 }
 ```
 
-Each `D3D11_draw_*` function:
-1. Reads all state from `PGRAPHState` (combiner, VS, vertex arrays, textures, pipeline)
-2. Uploads constant buffers (RC interpreter CB, VS interpreter CB, layout CB)
-3. Binds textures, render targets, pipeline state objects
-4. Calls `g_pD3DDeviceContext->Draw(hostVertexCount, 0)`
+`D3D11_draw()` dispatches internally:
+1. If `draw_arrays_length > 0` → `D3D11_draw_arrays()` (multi-batch Draw calls)
+2. If `inline_elements_length > 0` → `D3D11_draw_inline_elements()` (DrawIndexed)
+3. If `inline_array_length > 0` → `D3D11_draw_inline_array()` (UP-style draw)
+4. If `inline_buffer_length > 0` → `D3D11_draw_inline_buffer()` (Begin/End)
 
-This reuses all existing D3D11 infrastructure — the change is just the trigger
-point and state source.
+Each path reads state from `PGRAPHState`, uploads constant buffers, binds
+textures/render targets/pipeline state, and calls D3D11 Draw/DrawIndexed.
 
 ### 8.2 — Handle threading: puller thread → D3D11 device context
 

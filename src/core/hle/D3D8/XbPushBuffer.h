@@ -30,6 +30,5 @@
 class NV2ADevice;
 extern NV2ADevice* g_NV2A;
 extern uint32_t NV2A_read_pgraph_register(const int reg);
-extern float* NV2A_get_vertex_attribute_value_pointer(unsigned VertexSlot);
 
 #endif

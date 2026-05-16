@@ -33,7 +33,7 @@
 #include "common/AddressRanges.h"
 #include "core\hle\D3D8\XbVertexBuffer.h"
 #include "core\hle\D3D8\XbConvert.h"
-#include "core\hle\D3D8\XbPushBuffer.h" // NV2A_get_vertex_attribute_value_pointer
+#include "core\hle\D3D8\XbPushBuffer.h" // CxbxDrawContext (via XbVertexBuffer.h)
 #include "core\hle\D3D8\Rendering\IndexBufferConvert.h" // CxbxGetClockWiseWindingOrder
 #include "devices\Xbox.h"              // For extern NV2ADevice* g_NV2A
 #include "devices\video\nv2a.h"        // For NV2AState, PGRAPHState, VertexAttribute, nv2a_regs.h
@@ -390,10 +390,13 @@ static void UploadVertexDefaults()
 
 	// Compare actual attribute values to skip Map/Unmap when nothing changed
 	static float s_CachedDefaults[16 * 4] = {};
+	PGRAPHState* pg = (g_NV2A != nullptr) ? &g_NV2A->GetDeviceState()->pgraph : nullptr;
+	if (!pg) return;
+
 	static bool s_FirstCall = true;
 	bool changed = s_FirstCall;
 	for (int i = 0; i < 16 && !changed; i++) {
-		const float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
+		const float* pSrc = pg->vertex_attributes[i].inline_value;
 		if (std::memcmp(pSrc, &s_CachedDefaults[i * 4], sizeof(float) * 4) != 0)
 			changed = true;
 	}
@@ -409,7 +412,7 @@ static void UploadVertexDefaults()
 		// (NV097_SET_VERTEX_DATA4F etc.), not by the streamed vertex path.  To fix
 		// this, after each draw we'd need to read back the last vertex's attribute
 		// values from the CPU-side vertex data and write them to inline_value[].
-		const float* pSrc = NV2A_get_vertex_attribute_value_pointer(i);
+		const float* pSrc = pg->vertex_attributes[i].inline_value;
 		defaults[i * 4 + 0] = pSrc[0];
 		defaults[i * 4 + 1] = pSrc[1];
 		defaults[i * 4 + 2] = pSrc[2];

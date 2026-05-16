@@ -605,16 +605,6 @@ uint32_t NV2A_read_pgraph_register(const int reg)
 	return pg->regs[RI(reg)];
 }
 
-float *NV2A_get_vertex_attribute_value_pointer(unsigned slot)
-{
-	NV2AState* dev = g_NV2A->GetDeviceState();
-	PGRAPHState *pg = &(dev->pgraph);
-
-	// See CASE_16(NV097_SET_VERTEX_DATA4UB, 4) in LLE pgraph_handle_method()
-	VertexAttribute *vertex_attribute = &pg->vertex_attributes[slot];
-	return vertex_attribute->inline_value;
-}
-
 const char *NV2AMethodToString(DWORD dwMethod)
 {
 	switch (dwMethod) {
