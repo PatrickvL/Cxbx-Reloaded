@@ -21,14 +21,15 @@
 **Status:** ✅ DONE.  
 Elastic LRU eviction in `CxbxPgraphRTCacheEvict()` — called each frame from `D3D11_flip_stall`. Cache grows freely up to 64 entries (high watermark); when exceeded, the oldest entries by last-access frame are evicted down to 32 (low watermark). Current backbuffer is pinned from eviction.
 
-### 1.4 Unified Resource Cache
-**Status:** Not started.  
-**Problem:** RT cache and texture pool are separate structures. Merging simplifies RT-as-texture lookup and shared eviction policy.
+### ~~1.4 RT Cache + HLE Resource Eviction~~
+**Status:** ✅ DONE.  
+RT cache: replaced O(n) linear scan with offset-keyed hash map, multi-entry per offset (format/size variants), elastic LRU eviction (256/128 watermarks).  
+HLE cache: added PruneResourceCache() with watermark-based LRU (2048/1024) — previously grew unbounded.  
+Note: the two caches remain separate structures (incompatible key domains: VRAM offset vs Xbox D3DResource pointer). Original "merge" aspiration was impractical.
 
-### 1.5 Mip Tail Packing
-**Status:** Known incorrect.  
-**Problem:** Lowest mip levels use NV2A-specific tail packing. Current upload uses naive `offset += mipSlicePitch` advancement — produces incorrect data for mip levels smaller than one block.  
-**Impact:** Low (lowest mips rarely sampled at visible size).
+### ~~1.5 Mip Tail Packing~~
+**Status:** ✅ NOT A BUG — verified correct against xemu.  
+The `dwMipRowPitch` clamp to `blockSize` minimum ensures sub-4x4 compressed mips advance by exactly one block per level (matching xemu's `physical_width/4 * physical_height/4 * block_size`). `numRows = (h+3)/4` correctly gives 1 for heights ≤ 4. D3D11 `UpdateSubresource` receives the correct `RowPitch = blockSize` for BC minimum subresources.
 
 ### 1.6 Tiled RT Readback Correctness
 **Status:** Known limitation.  
@@ -157,5 +158,5 @@ Full CPU-side FD (forward differencing) tessellation in `PatchDraw.cpp` — mult
 1. **§6.1 Gauntlet correctness** — active debugging
 2. **§1.1 Draw batching** — highest perf gain remaining
 3. ~~**§2.1 Dead code cleanup**~~ ✅ DONE
-4. **§1.4 Unified resource cache** — simplifies RT-as-texture lookup
+4. ~~**§1.4 RT cache + HLE resource eviction**~~ ✅ DONE
 5. **§5 GPU tessellation CS** — performance (CPU path works)
