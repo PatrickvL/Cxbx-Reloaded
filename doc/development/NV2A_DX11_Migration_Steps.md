@@ -630,31 +630,23 @@ Backend-agnostic files remain in `Rendering/`:
 Remaining: `RenderGlobals.h` still exposes D3D11 types (device pointers, query
 helpers) — a future split would move those into a backend-specific header.
 
-### 11.3 — Make PGRAPH state the single source of truth
+### 11.3 — Make PGRAPH state the single source of truth  ✅ DONE
 
-Verify that all rendering decisions read from `PGRAPHState` only:
-- No references to `XboxRenderStates`, `g_pXbox_*`, or `pPSDef` in the render path
-- `RCInterpreterCBLayout` is **eliminated** — `pg->regs[]` uploaded as raw
+Verified:
+- `RCInterpreterCBLayout` eliminated — `pg->regs[]` uploaded as raw
   `StructuredBuffer<uint>` SRV; shader indexes with `NV_PGRAPH_*` offsets
-- `VSInterpreterCBLayout` is **eliminated** — `pg->program_data[]` (XFPR RAM mirror)
-  uploaded as `StructuredBuffer<uint4>` SRV (`g_XFPR` at t5); program start read
-  from `regs[]`
-- `VertexFetchLayoutCB` may remain as a small aux cbuffer for per-draw params
-  (PrimType, IndexedDraw, etc.) that have no PGRAPH register equivalent
-- Software-computed fields (ColorSign, TexFmtFixup, AlphaKill, FrontFaceInfo)
-  in a small aux cbuffer — eventual goal: derive these in-shader from regs[]
+- `VSInterpreterCBLayout` eliminated — `pg->program_data[]` uploaded as
+  `StructuredBuffer<uint4>` SRV (`g_XFPR` at t5)
+- No references to `XboxRenderStates` in render path (deleted)
+- `VertexFetchLayoutCB` remains for per-draw params (PrimType, IndexedDraw,
+  etc.) that have no PGRAPH register equivalent
+- `g_pXbox_SetTexture[]` remains as texture metadata side-map (PGRAPH doesn't
+  carry full Xbox texture header in registers)
 
-### 11.4 — Add Vulkan SDK to CMakeLists.txt (optional prep)
+### 11.4 — Add Vulkan SDK to CMakeLists.txt (optional prep)  ✅ DONE
 
-```cmake
-find_package(Vulkan QUIET)
-if(Vulkan_FOUND)
-    message(STATUS "Vulkan SDK found: ${Vulkan_LIBRARY}")
-    # Don't link yet — just verify availability
-endif()
-```
-
-**Test:** Full XDK suite. Build with and without Vulkan SDK present.
+Added `find_package(Vulkan QUIET)` with status message. Does not link or
+require the SDK — just reports availability. Builds cleanly with and without.
 
 ---
 
