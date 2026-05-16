@@ -49,10 +49,23 @@
 #include "devices/video/swizzle.h"
 
 #include <cstring>
+#include <immintrin.h>
+#include <intrin.h>
 
 // Wine may not reliably support MEM_WRITE_WATCH / GetWriteWatch.
 // When running on Wine, always do a full memcpy instead.
 static bool s_bWineFallback = false;
+
+// AVX2 runtime detection — enables 256-bit bulk bitmap scan
+static bool s_bHasAVX2 = [] {
+	int cpuInfo[4] = {};
+	__cpuid(cpuInfo, 0);
+	if (cpuInfo[0] >= 7) {
+		__cpuidex(cpuInfo, 7, 0);
+		return (cpuInfo[1] & (1 << 5)) != 0; // EBX bit 5 = AVX2
+	}
+	return false;
+}();
 
 // ******************************************************************
 // * Constants
@@ -1073,8 +1086,29 @@ bool CxbxPageTrackerIsTextureDirty(uint32_t offset, uint32_t size)
 			return true;
 	}
 
-	// Check full DWORDs in the middle
-	for (uint32_t dw = firstDW + 1; dw < lastDW; dw++) {
+	// Check full DWORDs in the middle — AVX2 path tests 256 pages (1 MiB) per iteration
+	uint32_t midStart = firstDW + 1;
+	uint32_t midEnd = lastDW;
+
+	if (s_bHasAVX2 && midEnd - midStart >= 8) {
+		// Advance to 8-DWORD (32-byte) alignment within the bitmap
+		while (midStart < midEnd && (midStart & 7)) {
+			if (s_TextureDirtyBitmap[midStart] != 0)
+				return true;
+			midStart++;
+		}
+		// Bulk AVX2 scan: 8 DWORDs (256 bits = 256 pages = 1 MiB) per test
+		const uint32_t* base = const_cast<const uint32_t*>(s_TextureDirtyBitmap);
+		while (midStart + 8 <= midEnd) {
+			__m256i chunk = _mm256_load_si256((const __m256i*)&base[midStart]);
+			if (!_mm256_testz_si256(chunk, chunk))
+				return true;
+			midStart += 8;
+		}
+	}
+
+	// Scalar tail (or full scalar path when AVX2 unavailable)
+	for (uint32_t dw = midStart; dw < midEnd; dw++) {
 		if (s_TextureDirtyBitmap[dw] != 0)
 			return true;
 	}
