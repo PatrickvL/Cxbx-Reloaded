@@ -55,6 +55,7 @@ extern D3D11_TEXTURE2D_DESC         g_HostBackBufferDesc;
 extern ID3D11Query                 *g_pHostQueryWaitForIdle;
 void CxbxResetPgraphSurfaceTracking();
 ID3D11Texture2D* CxbxLookupPgraphRTByOffset(xbox::addr_xt offset);
+void CxbxPgraphRTCacheEvict();
 void CxbxInvalidatePgraphRTBinding();
 
 // ******************************************************************

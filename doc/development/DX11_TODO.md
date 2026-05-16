@@ -19,10 +19,9 @@
 **Gain:** AVX2 tests 256 pages (1 MiB) per instruction.  
 **File:** `Backend_D3D11_PageTracker.cpp`
 
-### 1.3 RT Cache Eviction
-**Status:** Not started.  
-**Problem:** `g_PgraphRTCache` grows unbounded. Long-running games with many RT switches leak host `Texture2D` objects until device reset.  
-**Solution:** LRU or generation-based eviction. Evict entries not referenced within N frames.
+### ~~1.3 RT Cache Eviction~~
+**Status:** ✅ DONE.  
+Elastic LRU eviction in `CxbxPgraphRTCacheEvict()` — called each frame from `D3D11_flip_stall`. Cache grows freely up to 64 entries (high watermark); when exceeded, the oldest entries by last-access frame are evicted down to 32 (low watermark). Current backbuffer is pinned from eviction.
 
 ### 1.4 Unified Resource Cache
 **Status:** Not started.  
@@ -161,5 +160,4 @@ Full CPU-side FD (forward differencing) tessellation in `PatchDraw.cpp` — mult
 2. **§1.1 Draw batching** — highest perf gain remaining
 3. **§2.1 Dead code cleanup** — move disabled EMUPATCH impls to dead code file
 4. **§2.3 Disable sync patches** — now unblocked (fence ✅)
-5. **§1.3 RT cache eviction** — correctness for long-running titles
-6. **§5 GPU tessellation CS** — performance (CPU path works)
+5. **§5 GPU tessellation CS** — performance (CPU path works)

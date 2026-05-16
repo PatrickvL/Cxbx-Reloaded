@@ -578,6 +578,9 @@ static void D3D11_flip_stall(NV2AState *d)
 		CxbxPresent();
 	}
 
+	// Evict stale render target cache entries
+	CxbxPgraphRTCacheEvict();
+
 	// Update FPS counter
 	g_renderbase->UpdateFPSCounter();
 
