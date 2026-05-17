@@ -2373,6 +2373,10 @@ XBSYSAPI EXPORTNUM(226) xbox::ntstatus_xt NTAPI xbox::NtSetInformationFile
 				std::wstring convertedFileName = string_to_wstring(FileName);
 				Length = sizeof(NtDll::FILE_RENAME_INFORMATION) + convertedFileName.size() * sizeof(wchar_t);
 				NtDll::FILE_RENAME_INFORMATION* ntRenameInfo = reinterpret_cast<NtDll::FILE_RENAME_INFORMATION*>(ExAllocatePool(Length));
+				if (ntRenameInfo == nullptr) {
+					result = X_STATUS_INSUFFICIENT_RESOURCES;
+					break;
+				}
 				ntRenameInfo->ReplaceIfExists = xboxRenameInfo->ReplaceIfExists;
 				ntRenameInfo->RootDirectory = *ParentDirHandle;
 				ntRenameInfo->FileNameLength = convertedFileName.size() * sizeof(wchar_t);
@@ -2414,6 +2418,10 @@ XBSYSAPI EXPORTNUM(226) xbox::ntstatus_xt NTAPI xbox::NtSetInformationFile
 				std::wstring convertedFileName = string_to_wstring(FileName);
 				Length = sizeof(NtDll::FILE_RENAME_INFORMATION) + convertedFileName.size() * sizeof(wchar_t);
 				NtDll::FILE_RENAME_INFORMATION* ntRenameInfo = reinterpret_cast<NtDll::FILE_RENAME_INFORMATION*>(ExAllocatePool(Length));
+				if (ntRenameInfo == nullptr) {
+					result = X_STATUS_INSUFFICIENT_RESOURCES;
+					break;
+				}
 				ntRenameInfo->ReplaceIfExists = xboxLinkInfo->ReplaceIfExists;
 				ntRenameInfo->RootDirectory = *ParentDirHandle;
 				ntRenameInfo->FileNameLength = convertedFileName.size() * sizeof(wchar_t);
