@@ -1956,7 +1956,7 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	PKEVENT XboxEvent = nullptr;
 	if (Event != nullptr) {
 		PVOID EventObject;
-		ntstatus_xt evResult = ObReferenceObjectByHandle(Event, nullptr, &EventObject);
+		ntstatus_xt evResult = ObReferenceObjectByHandle(Event, &ExEventObjectType, &EventObject);
 		if (X_NT_SUCCESS(evResult)) {
 			XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
 		}
@@ -3030,7 +3030,7 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	PKEVENT XboxEvent = nullptr;
 	if (Event != nullptr) {
 		PVOID EventObject;
-		ntstatus_xt evResult = ObReferenceObjectByHandle(Event, nullptr, &EventObject);
+		ntstatus_xt evResult = ObReferenceObjectByHandle(Event, &ExEventObjectType, &EventObject);
 		if (X_NT_SUCCESS(evResult)) {
 			XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
 		}
