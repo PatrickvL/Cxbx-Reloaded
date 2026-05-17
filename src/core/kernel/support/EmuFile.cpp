@@ -706,7 +706,7 @@ void CxbxLaunchNewXbe(const std::string& XbePath) {
 	}
 	else
 	{
-		if (const auto &err = CxbxrExec(false, nullptr, false))
+		if (const auto &err = CxbxrExec(false, nullptr, false, /*isReboot=*/true))
 		{
 			CxbxrAbort("Could not launch %s\n\nThe reason was: %s", XbePath.c_str(), err->c_str());
 		}

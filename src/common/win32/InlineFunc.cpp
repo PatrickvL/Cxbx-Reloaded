@@ -49,7 +49,7 @@ bool CxbxrIsElevated() {
 	return fRet;
 }
 
-std::optional<std::string> CxbxrExec(bool useDebugger, void** hProcess, bool requestHandleProcess) {
+std::optional<std::string> CxbxrExec(bool useDebugger, void** hProcess, bool requestHandleProcess, bool isReboot) {
 
 	STARTUPINFO startupInfo = { 0 };
 	PROCESS_INFORMATION processInfo = { 0 };
@@ -82,7 +82,10 @@ std::optional<std::string> CxbxrExec(bool useDebugger, void** hProcess, bool req
 	// killed via Task Manager).  This is necessary because the render window
 	// uses WS_POPUP (owned) instead of WS_CHILD, so Windows no longer
 	// auto-destroys it when the parent window/process goes away.
-	{
+	// During reboot the child inherits the GUI's job via normal process
+	// inheritance, so we must not create a second job here (its
+	// KILL_ON_JOB_CLOSE would kill the child when this process exits).
+	if (!isReboot) {
 		static HANDLE s_hJob = NULL;
 		if (!s_hJob) {
 			s_hJob = CreateJobObject(NULL, NULL);
