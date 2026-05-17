@@ -27,7 +27,10 @@ param(
     [switch]$KillExisting,
 
     # If true, stop the emulator after capturing
-    [switch]$StopAfter
+    [switch]$StopAfter,
+
+    # Override the output file base name (defaults to XBE filename without extension)
+    [string]$Name
 )
 
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
@@ -67,6 +70,24 @@ public class WindowCapture {
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
 
     [DllImport("user32.dll")]
@@ -81,9 +102,6 @@ public class WindowCapture {
     [DllImport("user32.dll")]
     public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -97,7 +115,29 @@ public class WindowCapture {
     }
 
     public const int SRCCOPY = 0x00CC0020;
+    public const int SW_RESTORE = 9;
     public const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    // Force a window to the foreground using the AttachThreadInput trick
+    public static void ForceForeground(IntPtr hWnd) {
+        IntPtr foreWnd = GetForegroundWindow();
+        uint foreThread, curThread;
+        uint pid;
+        foreThread = GetWindowThreadProcessId(foreWnd, out pid);
+        curThread = GetCurrentThreadId();
+
+        if (foreThread != curThread) {
+            AttachThreadInput(curThread, foreThread, true);
+            ShowWindow(hWnd, SW_RESTORE);
+            BringWindowToTop(hWnd);
+            SetForegroundWindow(hWnd);
+            AttachThreadInput(curThread, foreThread, false);
+        } else {
+            ShowWindow(hWnd, SW_RESTORE);
+            BringWindowToTop(hWnd);
+            SetForegroundWindow(hWnd);
+        }
+    }
 
     // Find the emulator render window by process ID
     public static IntPtr FindWindowByPid(uint pid) {
@@ -179,7 +219,11 @@ if (Test-Path $hlslSrc) {
 }
 
 # Extract sample name for filenames
-$sampleName = [System.IO.Path]::GetFileNameWithoutExtension($XbePath)
+if ($Name) {
+    $sampleName = $Name
+} else {
+    $sampleName = [System.IO.Path]::GetFileNameWithoutExtension($XbePath)
+}
 
 # Launch emulator
 Write-Host "Launching $sampleName..."
@@ -219,8 +263,8 @@ Start-Sleep -Milliseconds $DelayMs
 # Capture first screenshot (early)
 $ts = Get-Date -Format "yyyyMMdd_HHmmss"
 $earlyPath = Join-Path $OutDir "${sampleName}_early_${ts}.png"
-[WindowCapture]::SetForegroundWindow($hWnd) | Out-Null
-Start-Sleep -Milliseconds 200
+[WindowCapture]::ForceForeground($hWnd)
+Start-Sleep -Milliseconds 500
 
 $ok = [WindowCapture]::CaptureWindow($hWnd, $earlyPath)
 if ($ok) {
