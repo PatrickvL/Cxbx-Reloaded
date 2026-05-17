@@ -183,7 +183,6 @@ XBSYSAPI EXPORTNUM(13) xbox::void_xt NTAPI xbox::ExAcquireReadWriteLockShared
 	if (InterlockedIncrement(reinterpret_cast<LONG*>(&ReadWriteLock->LockCount)) != 0 && must_wait) {
 		ReadWriteLock->ReadersWaitingCount++;
 		RestoreInterruptMode(interrupt_mode);
-#if 0 //FIXME - Enable once KeReleaseSempahore is implemented (used in ExFreeReadWriteLock for Sharedlocks).
 		KeWaitForSingleObject(
 			&ReadWriteLock->ReaderSemaphore,
 			Executive,
@@ -191,7 +190,6 @@ XBSYSAPI EXPORTNUM(13) xbox::void_xt NTAPI xbox::ExAcquireReadWriteLockShared
 			0,
 			0
 		);
-#endif
 	}
 	else {
 		ReadWriteLock->ReadersEntryCount++;
