@@ -24,7 +24,6 @@
 // ******************************************************************
 #include "../EmuD3D8_common.h"
 #include "Backend_D3D11.h"
-#include "Backend_D3D11_PageTracker.h"
 #include "Backend_D3D11_Profiler.h"
 #include <algorithm> // std::min
 #include <intrin.h>  // _BitScanForward64
@@ -259,7 +258,6 @@ static ID3D11Resource* CxbxResolveTextureSource(
 		return nullptr;
 
 	// Check if this texture offset corresponds to a render target.
-	uint32_t texColorFmt = GET_MASK(texFmtReg, NV097_SET_TEXTURE_FORMAT_COLOR);
 
 	// Special case: texOffset matches currently bound RT/DS.
 	// Shadow mapping: game may read depth texture while it's still "bound".
@@ -274,36 +272,23 @@ static ID3D11Resource* CxbxResolveTextureSource(
 			return pPgraphRT;
 		}
 	}
-	// Normal RT-as-texture: only if the texture format is linear (RTs are
-	// always linear on NV2A), the CPU hasn't overwritten the VRAM, and
-	// the cached RT dimensions match what PGRAPH expects.
-	else if (IsNV2AColorFormatLinear(texColorFmt)
-		&& !CxbxPageTrackerIsTextureDirty(texOffset, PAGE_SIZE)) {
+	// Normal RT-as-texture: if the offset was previously rendered to,
+	// use the cached host RT directly.
+	else {
 		auto pPgraphRT = CxbxLookupPgraphRTByOffset(texOffset);
 		if (pPgraphRT) {
-			// Validate dimensions: the RT must match the texture dimensions
-			// expected by PGRAPH (scaled by upscale factor).
-			uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
-			uint32_t texW = (texImageRect >> 16) & 0x1FFF;
-			uint32_t texH = texImageRect & 0x1FFF;
-			D3D11_TEXTURE2D_DESC rtDesc;
-			pPgraphRT->GetDesc(&rtDesc);
-			uint32_t rtW = rtDesc.Width / g_RenderUpscaleFactor;
-			uint32_t rtH = rtDesc.Height / g_RenderUpscaleFactor;
-			if (texW == rtW && texH == rtH) {
-				ID3D11Resource* pResult = nullptr;
-				if (isCubemap) {
-					pResult = CxbxComposeRTCubemap(stage, texOffset, texFmtReg,
-						(ID3D11Texture2D*)pPgraphRT);
-				}
-				if (!pResult) {
-					// Non-cubemap RT, or cubemap composition failed
-					pResult = pPgraphRT;
-				}
-				bIsRenderTargetTexture = true;
-				CxbxInvalidatePgraphRTBinding();
-				return pResult;
+			ID3D11Resource* pResult = nullptr;
+			if (isCubemap) {
+				pResult = CxbxComposeRTCubemap(stage, texOffset, texFmtReg,
+					(ID3D11Texture2D*)pPgraphRT);
 			}
+			if (!pResult) {
+				// Non-cubemap RT, or cubemap composition failed
+				pResult = pPgraphRT;
+			}
+			bIsRenderTargetTexture = true;
+			CxbxInvalidatePgraphRTBinding();
+			return pResult;
 		}
 	}
 
