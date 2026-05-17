@@ -78,13 +78,20 @@ std::recursive_mutex g_ObMtx;
 static xbox::KIRQL ObLock()
 {
 	xbox::KIRQL OldIrql = xbox::KeRaiseIrqlToDpcLevel();
-	// Raising the irql to dpc level doesn't prevent thread switching, so acquire a lock
+	// On real hardware, DISPATCH_LEVEL prevents thread switching, making this
+	// lock unnecessary. In Cxbx-Reloaded, KeRaiseIrqlToDpcLevel only sets
+	// KPCR.Irql — Windows still controls scheduling, so we need g_ObMtx for
+	// actual mutual exclusion. The IRQL raise is kept for bookkeeping only
+	// (code that checks KeGetCurrentIrql still sees the expected level).
 	g_ObMtx.lock();
 	return OldIrql;
 }
 
 static void ObUnlock(xbox::KIRQL OldIrql)
 {
+	// Order doesn't matter for correctness here: since our IRQL changes don't
+	// affect scheduling, neither ordering creates a priority inversion risk.
+	// The mutex alone provides mutual exclusion.
 	xbox::KfLowerIrql(OldIrql);
 	g_ObMtx.unlock();
 }

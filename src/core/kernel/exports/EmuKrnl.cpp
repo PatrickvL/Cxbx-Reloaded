@@ -401,6 +401,14 @@ XBSYSAPI EXPORTNUM(58) xbox::PSLIST_ENTRY FASTCALL xbox::KRNL(InterlockedPushEnt
 // Raises the hardware priority (irq level)
 // NewIrql = Irq level to raise to
 // RETURN VALUE previous irq level
+//
+// NOTE: On real hardware, raising IRQL to DISPATCH_LEVEL or above disables
+// thread preemption — the scheduler cannot switch threads until IRQL is
+// lowered. In Cxbx-Reloaded this is NOT the case: we only store the IRQL
+// value in KPCR. Windows (the host OS) controls actual thread scheduling,
+// so raising IRQL here does NOT prevent preemption. Any code that needs
+// mutual exclusion must use an explicit lock (mutex, spinlock, etc.) in
+// addition to — or instead of — raising IRQL.
 XBSYSAPI EXPORTNUM(160) xbox::KIRQL FASTCALL xbox::KfRaiseIrql
 (
     IN KIRQL NewIrql
