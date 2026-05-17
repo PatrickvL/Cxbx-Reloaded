@@ -94,6 +94,21 @@ static xbox::boolean_xt KeRemoveQueueApc(IN xbox::PRKAPC Apc)
 	return Inserted;
 }
 
+// Cancel an ETIMER's kernel timer and tear down any APC association.
+// Caller must hold Timer->Lock.
+static void ExpCancelTimer(PETIMER Timer)
+{
+	if (Timer->ApcAssociated) {
+		Timer->ApcAssociated = FALSE;
+		xbox::KeCancelTimer(&Timer->KeTimer);
+		KeRemoveQueueDpc(&Timer->TimerDpc);
+		KeRemoveQueueApc(&Timer->TimerApc);
+	}
+	else {
+		xbox::KeCancelTimer(&Timer->KeTimer);
+	}
+}
+
 // Source: ReactOS, modified for xbox compatibility layer
 xbox::ntstatus_xt xbox::NtMakeTemporaryObject(
 	IN HANDLE Handle
@@ -194,22 +209,10 @@ XBSYSAPI EXPORTNUM(185) xbox::ntstatus_xt NTAPI xbox::NtCancelTimer
 		PETIMER Timer = (PETIMER)Object;
 
 		Timer->Lock.lock();
-
-		// Cancel any pending APC association
-		if (Timer->ApcAssociated) {
-			Timer->ApcAssociated = FALSE;
-			KeCancelTimer(&Timer->KeTimer);
-			KeRemoveQueueDpc(&Timer->TimerDpc);
-			KeRemoveQueueApc(&Timer->TimerApc);
-		}
-		else {
-			KeCancelTimer(&Timer->KeTimer);
-		}
-
-		Timer->Lock.unlock();
-
+		ExpCancelTimer(Timer);
 		// Read the signal state
 		BOOLEAN State = (BOOLEAN)Timer->KeTimer.Header.SignalState;
+		Timer->Lock.unlock();
 
 		ObfDereferenceObject(Timer);
 
@@ -2670,17 +2673,7 @@ XBSYSAPI EXPORTNUM(229) xbox::ntstatus_xt NTAPI xbox::NtSetTimerEx
 		PETIMER Timer = (PETIMER)Object;
 
 		Timer->Lock.lock();
-
-		// Cancel any previous APC association
-		if (Timer->ApcAssociated) {
-			Timer->ApcAssociated = FALSE;
-			KeCancelTimer(&Timer->KeTimer);
-			KeRemoveQueueDpc(&Timer->TimerDpc);
-			KeRemoveQueueApc(&Timer->TimerApc);
-		}
-		else {
-			KeCancelTimer(&Timer->KeTimer);
-		}
+		ExpCancelTimer(Timer);
 
 		// Read the previous signal state
 		BOOLEAN State = (BOOLEAN)Timer->KeTimer.Header.SignalState;
