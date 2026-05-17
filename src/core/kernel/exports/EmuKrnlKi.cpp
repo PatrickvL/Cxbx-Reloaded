@@ -600,7 +600,6 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 {
 	ULARGE_INTEGER SystemTime, InterruptTime;
 	LARGE_INTEGER Interval;
-	LONG i;
 	ULONG Timers, ActiveTimers, DpcCalls;
 	PLIST_ENTRY ListHead, NextEntry;
 	KIRQL OldIrql;
@@ -679,29 +678,30 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 				if (TimerDpc)
 				{
 					/* Setup the DPC Entry */
-					DpcEntry[DpcCalls].Dpc = TimerDpc;
-					DpcEntry[DpcCalls].Routine = TimerDpc->DeferredRoutine;
-					DpcEntry[DpcCalls].Context = TimerDpc->DeferredContext;
-					DpcCalls++;
-					assert(DpcCalls < MAX_TIMER_DPCS);
+					if (DpcCalls < MAX_TIMER_DPCS) {
+						DpcEntry[DpcCalls].Dpc = TimerDpc;
+						DpcEntry[DpcCalls].Routine = TimerDpc->DeferredRoutine;
+						DpcEntry[DpcCalls].Context = TimerDpc->DeferredContext;
+						DpcCalls++;
+					}
 				}
 
 				/* Check if we're done processing */
-				if (!(ActiveTimers) || !(Timers))
+				if (!(ActiveTimers) || !(Timers) || (DpcCalls >= MAX_TIMER_DPCS))
 				{
 					/* Release the dispatcher while doing DPCs */
 					KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
 
 					/* Start looping all DPC Entries */
-					for (i = 0; DpcCalls; DpcCalls--, i++)
+					for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
 					{
 						/* Call the DPC */
-						EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[i].Routine);
+						EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[d].Routine);
 
 						// Call the Deferred Procedure  :
-						DpcEntry[i].Routine(
-							DpcEntry[i].Dpc,
-							DpcEntry[i].Context,
+						DpcEntry[d].Routine(
+							DpcEntry[d].Dpc,
+							DpcEntry[d].Context,
 							UlongToPtr(SystemTime.u.LowPart),
 							UlongToPtr(SystemTime.u.HighPart)
 						);
@@ -736,15 +736,15 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 					KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
 
 					/* Start looping all DPC Entries */
-					for (i = 0; DpcCalls; DpcCalls--, i++)
+					for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
 					{
 						/* Call the DPC */
-						EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[i].Routine);
+						EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[d].Routine);
 
 						// Call the Deferred Procedure  :
-						DpcEntry[i].Routine(
-							DpcEntry[i].Dpc,
-							DpcEntry[i].Context,
+						DpcEntry[d].Routine(
+							DpcEntry[d].Dpc,
+							DpcEntry[d].Context,
 							UlongToPtr(SystemTime.u.LowPart),
 							UlongToPtr(SystemTime.u.HighPart)
 						);
@@ -776,15 +776,15 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 		KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
 
 		/* Start looping all DPC Entries */
-		for (i = 0; DpcCalls; DpcCalls--, i++)
+		for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
 		{
 			/* Call the DPC */
-			EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[i].Routine);
+			EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[d].Routine);
 
 			// Call the Deferred Procedure  :
-			DpcEntry[i].Routine(
-				DpcEntry[i].Dpc,
-				DpcEntry[i].Context,
+			DpcEntry[d].Routine(
+				DpcEntry[d].Dpc,
+				DpcEntry[d].Context,
 				UlongToPtr(SystemTime.u.LowPart),
 				UlongToPtr(SystemTime.u.HighPart)
 			);
@@ -812,7 +812,6 @@ xbox::void_xt FASTCALL xbox::KiTimerListExpire
 {
 	ULARGE_INTEGER SystemTime;
 	LARGE_INTEGER Interval;
-	LONG i;
 	ULONG DpcCalls = 0;
 	PKTIMER Timer;
 	PKDPC TimerDpc;
@@ -865,11 +864,12 @@ xbox::void_xt FASTCALL xbox::KiTimerListExpire
 		if (TimerDpc)
 		{
 			/* Setup the DPC Entry */
-			DpcEntry[DpcCalls].Dpc = TimerDpc;
-			DpcEntry[DpcCalls].Routine = TimerDpc->DeferredRoutine;
-			DpcEntry[DpcCalls].Context = TimerDpc->DeferredContext;
-			DpcCalls++;
-			assert(DpcCalls < MAX_TIMER_DPCS);
+			if (DpcCalls < MAX_TIMER_DPCS) {
+				DpcEntry[DpcCalls].Dpc = TimerDpc;
+				DpcEntry[DpcCalls].Routine = TimerDpc->DeferredRoutine;
+				DpcEntry[DpcCalls].Context = TimerDpc->DeferredContext;
+				DpcCalls++;
+			}
 		}
 	}
 
@@ -882,15 +882,15 @@ xbox::void_xt FASTCALL xbox::KiTimerListExpire
 		KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
 
 		/* Start looping all DPC Entries */
-		for (i = 0; DpcCalls; DpcCalls--, i++)
+		for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
 		{
 			/* Call the DPC */
-			EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[i].Routine);
+			EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[d].Routine);
 
 			// Call the Deferred Procedure  :
-			DpcEntry[i].Routine(
-				DpcEntry[i].Dpc,
-				DpcEntry[i].Context,
+			DpcEntry[d].Routine(
+				DpcEntry[d].Dpc,
+				DpcEntry[d].Context,
 				UlongToPtr(SystemTime.u.LowPart),
 				UlongToPtr(SystemTime.u.HighPart)
 			);
