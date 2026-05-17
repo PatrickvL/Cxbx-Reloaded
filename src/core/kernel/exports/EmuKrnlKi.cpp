@@ -613,8 +613,8 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 	InterruptTime.QuadPart = KeQueryInterruptTime();
 
 	/* Get the index of the timer and normalize it */
-	dword_xt OldKeTickCount = PtrToLong(SystemArgument1);
-	dword_xt EndKeTickCount = PtrToLong(SystemArgument2);
+	dword_xt OldKeTickCount = PtrToUlong(SystemArgument1);
+	dword_xt EndKeTickCount = PtrToUlong(SystemArgument2);
 
 	/* Setup accounting data */
 	DpcCalls = 0;
