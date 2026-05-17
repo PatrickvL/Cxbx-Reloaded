@@ -58,9 +58,6 @@ bool g_DisablePixelShaders = false;
 bool g_UseAllCores = false;
 bool g_SkipRdtscPatching = false;
 
-// Static Function(s)
-static int ExitException(LPEXCEPTION_POINTERS e);
-
 std::string EIPToString(xbox::addr_xt EIP)
 {
 	char buffer[256];
@@ -364,37 +361,6 @@ long WINAPI EmuException(struct _EXCEPTION_POINTERS* e)
 	long result = EmuTryHandleException(e) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
 	g_bEmuException = false;
 	return result;
-}
-
-// exception handle for that tough final exit :)
-// TODO: We might just well as delete this, duplicate of EmuExceptionNonBreakpointUnhandledShow
-int ExitException(LPEXCEPTION_POINTERS e)
-{
-    static int count = 0;
-
-	// debug information
-    printf("[0x%.4X] MAIN: * * * * * EXCEPTION * * * * *\n", GetCurrentThreadId());
-    printf("[0x%.4X] MAIN: Received Exception [0x%.8X]@%s\n", GetCurrentThreadId(), e->ExceptionRecord->ExceptionCode, EIPToString(e->ContextRecord->Eip).c_str());
-    printf("[0x%.4X] MAIN: * * * * * EXCEPTION * * * * *\n", GetCurrentThreadId());
-
-    fflush(stdout);
-
-    PopupFatal(nullptr, "Warning: Could not safely terminate process!");
-
-    count++;
-
-    if(count > 1)
-    {
-        PopupFatal(nullptr, "Warning: Multiple Problems!");
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-
-    if(CxbxKrnl_hEmuParent != NULL)
-        SendMessage(CxbxKrnl_hEmuParent, WM_PARENTNOTIFY, WM_DESTROY, 0);
-
-    ExitProcess(1);
-
-    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 // Exception Mananger class; Any custom exceptions must be above this line.
