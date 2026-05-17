@@ -1890,18 +1890,7 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 
 	// Set up a timer for non-infinite timeouts so KiTimerExpiration can wake us
 	if (Timeout != zeroptr) {
-		PKTIMER Timer = &Thread->Timer;
-		PKWAIT_BLOCK WaitTimer = &Thread->TimerWaitBlock;
-		WaitBlock.NextWaitBlock = WaitTimer;
-		WaitTimer->NextWaitBlock = &WaitBlock;
-		Timer->Header.WaitListHead.Flink = &WaitTimer->WaitListEntry;
-		Timer->Header.WaitListHead.Blink = &WaitTimer->WaitListEntry;
-		WaitTimer->WaitListEntry.Flink = &Timer->Header.WaitListHead;
-		WaitTimer->WaitListEntry.Blink = &Timer->Header.WaitListHead;
-		WaitTimer->Thread = Thread;
-		WaitTimer->Object = Timer;
-		WaitTimer->WaitKey = (cshort_xt)X_STATUS_TIMEOUT;
-		WaitTimer->WaitType = WaitAny;
+		KiSetupTimerWaitBlock(Thread, &WaitBlock, &WaitBlock);
 	} else {
 		WaitBlock.NextWaitBlock = &WaitBlock; // circular, no timer
 	}
@@ -2719,18 +2708,7 @@ XBSYSAPI EXPORTNUM(158) xbox::ntstatus_xt NTAPI xbox::KeWaitForMultipleObjects
 				}
 
 				// Setup timer wait block linkage (but don't start the timer yet)
-				PKTIMER Timer = &Thread->Timer;
-				PKWAIT_BLOCK WaitTimer = &Thread->TimerWaitBlock;
-				WaitBlock->NextWaitBlock = WaitTimer;
-				Timer->Header.WaitListHead.Flink = &WaitTimer->WaitListEntry;
-				Timer->Header.WaitListHead.Blink = &WaitTimer->WaitListEntry;
-				WaitTimer->WaitListEntry.Flink = &Timer->Header.WaitListHead;
-				WaitTimer->WaitListEntry.Blink = &Timer->Header.WaitListHead;
-				WaitTimer->NextWaitBlock = &WaitBlockArray[0];
-				WaitTimer->Thread = Thread;
-				WaitTimer->Object = Timer;
-				WaitTimer->WaitKey = (cshort_xt)X_STATUS_TIMEOUT;
-				WaitTimer->WaitType = WaitAny;
+				KiSetupTimerWaitBlock(Thread, WaitBlock, &WaitBlockArray[0]);
 			}
 			else {
 				WaitBlock->NextWaitBlock = &WaitBlockArray[0];
@@ -2946,18 +2924,7 @@ XBSYSAPI EXPORTNUM(159) xbox::ntstatus_xt NTAPI xbox::KeWaitForSingleObject
 				}
 
 				// Setup the timer wait block linkage
-				PKTIMER Timer = &Thread->Timer;
-				PKWAIT_BLOCK WaitTimer = &Thread->TimerWaitBlock;
-				WaitBlock->NextWaitBlock = WaitTimer;
-				Timer->Header.WaitListHead.Flink = &WaitTimer->WaitListEntry;
-				Timer->Header.WaitListHead.Blink = &WaitTimer->WaitListEntry;
-				WaitTimer->WaitListEntry.Flink = &Timer->Header.WaitListHead;
-				WaitTimer->WaitListEntry.Blink = &Timer->Header.WaitListHead;
-				WaitTimer->NextWaitBlock = WaitBlock;
-				WaitTimer->Thread = Thread;
-				WaitTimer->Object = Timer;
-				WaitTimer->WaitKey = (cshort_xt)X_STATUS_TIMEOUT;
-				WaitTimer->WaitType = WaitAny;
+				KiSetupTimerWaitBlock(Thread, WaitBlock, WaitBlock);
 			}
 			else {
 				WaitBlock->NextWaitBlock = WaitBlock;

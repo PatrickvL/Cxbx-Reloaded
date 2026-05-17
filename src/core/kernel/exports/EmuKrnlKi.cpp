@@ -1367,6 +1367,31 @@ xbox::void_xt xbox::KiRemoveWaitBlocks
 	Thread->WaitBlockList = zeroptr;
 }
 
+// Set up the thread's TimerWaitBlock as a single-entry circular list in the
+// thread timer's WaitListHead, and link it into the wait block chain.
+// LastWaitBlock->NextWaitBlock is set to point to the TimerWaitBlock, and
+// TimerWaitBlock->NextWaitBlock is set to FirstWaitBlock (closing the circle).
+xbox::void_xt xbox::KiSetupTimerWaitBlock
+(
+	IN PKTHREAD Thread,
+	IN PKWAIT_BLOCK LastWaitBlock,
+	IN PKWAIT_BLOCK FirstWaitBlock
+)
+{
+	PKTIMER Timer = &Thread->Timer;
+	PKWAIT_BLOCK WaitTimer = &Thread->TimerWaitBlock;
+	LastWaitBlock->NextWaitBlock = WaitTimer;
+	WaitTimer->NextWaitBlock = FirstWaitBlock;
+	Timer->Header.WaitListHead.Flink = &WaitTimer->WaitListEntry;
+	Timer->Header.WaitListHead.Blink = &WaitTimer->WaitListEntry;
+	WaitTimer->WaitListEntry.Flink = &Timer->Header.WaitListHead;
+	WaitTimer->WaitListEntry.Blink = &Timer->Header.WaitListHead;
+	WaitTimer->Thread = Thread;
+	WaitTimer->Object = Timer;
+	WaitTimer->WaitKey = (cshort_xt)X_STATUS_TIMEOUT;
+	WaitTimer->WaitType = WaitAny;
+}
+
 // Cancel the thread's pending timer, if any.  Acquires KiTimerLock internally.
 // Must NOT be called while holding KiWaitListLock (would invert the lock order
 // used by KiTimerExpiration: KiTimerLock → KiWaitListLock).

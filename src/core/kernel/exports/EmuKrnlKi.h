@@ -249,6 +249,17 @@ namespace xbox
 		IN PKTHREAD Thread
 	);
 
+	// Set up the thread's TimerWaitBlock as a single-entry circular list in the
+	// thread timer's WaitListHead, and link it into the wait block chain.
+	// LastWaitBlock->NextWaitBlock is set to point to the TimerWaitBlock, and
+	// TimerWaitBlock->NextWaitBlock is set to FirstWaitBlock (closing the circle).
+	void_xt KiSetupTimerWaitBlock
+	(
+		IN PKTHREAD Thread,
+		IN PKWAIT_BLOCK LastWaitBlock,
+		IN PKWAIT_BLOCK FirstWaitBlock
+	);
+
 	// Cancel the thread's pending timer, if any.  Acquires KiTimerLock internally.
 	// Must NOT be called while holding KiWaitListLock (would invert lock order
 	// with KiTimerExpiration which takes KiTimerLock before KiWaitListLock).
