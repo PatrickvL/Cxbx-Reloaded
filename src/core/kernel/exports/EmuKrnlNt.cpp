@@ -1136,6 +1136,18 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 		return X_STATUS_INVALID_PARAMETER;
 	}
 
+	// Resolve the optional Xbox Event handle to the kernel event object.
+	// We signal it on completion (the host NtQueryDirectoryFile call is
+	// synchronous, so we just signal immediately after the query returns).
+	PKEVENT EventObject = zeroptr;
+	if (Event != zeroptr) {
+		result = ObReferenceObjectByHandle(Event, &ExEventObjectType, reinterpret_cast<PVOID*>(&EventObject));
+		if (!X_NT_SUCCESS(result)) {
+			ObfDereferenceObject(FileObject);
+			RETURN(result);
+		}
+	}
+
 	PIO_COMPLETION_CONTEXT CompletionContext = FileObject->CompletionContext;
 
 	const auto& nFileHandle = GetObjectNativeHandle(FileObject);
@@ -1174,7 +1186,7 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 
 		ret = NtDll::NtQueryDirectoryFile(
 			*nFileHandle,
-			Event, 
+			NULL,
 			(NtDll::PIO_APC_ROUTINE)ApcRoutine,
 			ApcContext,
 			(NtDll::IO_STATUS_BLOCK*)IoStatusBlock, 
@@ -1211,6 +1223,12 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 			ApcContext,
 			IoStatusBlock->Status,
 			static_cast<ulong_xt>(IoStatusBlock->Information));
+	}
+
+	// Signal the Xbox event to notify the caller that the I/O completed.
+	if (EventObject != zeroptr) {
+		KeSetEvent(EventObject, 0/*IO_NO_INCREMENT*/, FALSE);
+		ObfDereferenceObject(EventObject);
 	}
 
 	ObfDereferenceObject(FileObject);
