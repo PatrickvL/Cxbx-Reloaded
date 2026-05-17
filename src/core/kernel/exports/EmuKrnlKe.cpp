@@ -319,7 +319,11 @@ xbox::void_xt xbox::KeEmptyQueueApc()
 			PLIST_ENTRY Entry = kThread->ApcState.ApcListHead[Mode].Flink;
 			PKAPC Apc = CONTAINING_RECORD(Entry, KAPC, ApcListEntry);
 			RemoveEntryList(Entry);
-			ExFreePool(Apc);
+			// Only free heap-allocated APCs. The SuspendApc is embedded
+			// directly in KTHREAD — freeing it would corrupt the heap.
+			if (Apc != &kThread->SuspendApc) {
+				ExFreePool(Apc);
+			}
 		}
 	}
 	KiApcListMtx.unlock();
