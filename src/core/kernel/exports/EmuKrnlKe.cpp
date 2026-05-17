@@ -1197,7 +1197,8 @@ XBSYSAPI EXPORTNUM(114) xbox::boolean_xt NTAPI xbox::KeInsertByKeyDeviceQueue
 
 	BOOLEAN Res = FALSE;
 
-	// We should lock the device queue here
+	KIRQL OldIrql;
+	KiLockDispatcherDatabase(&OldIrql);
 
 	DeviceQueueEntry->SortKey = SortKey;
 	if (DeviceQueue->Busy) {
@@ -1220,7 +1221,7 @@ XBSYSAPI EXPORTNUM(114) xbox::boolean_xt NTAPI xbox::KeInsertByKeyDeviceQueue
 
 	DeviceQueueEntry->Inserted = Res;
 
-	// We should unlock the device queue here
+	KiUnlockDispatcherDatabase(OldIrql);
 
 	RETURN(Res);
 }
@@ -1243,8 +1244,9 @@ XBSYSAPI EXPORTNUM(115) xbox::boolean_xt NTAPI xbox::KeInsertDeviceQueue
 
 	BOOLEAN Res = FALSE;
 
-	// We should lock the device queue here
-	
+	KIRQL OldIrql;
+	KiLockDispatcherDatabase(&OldIrql);
+
 	if (DeviceQueue->Busy == TRUE) {
 		InsertTailList(&DeviceQueue->DeviceListHead, &DeviceQueueEntry->DeviceListEntry);
 		Res = TRUE;
@@ -1255,7 +1257,7 @@ XBSYSAPI EXPORTNUM(115) xbox::boolean_xt NTAPI xbox::KeInsertDeviceQueue
 
 	DeviceQueueEntry->Inserted = Res;
 
-	// We should unlock the device queue here
+	KiUnlockDispatcherDatabase(OldIrql);
 
 	RETURN(Res);
 }
@@ -1778,7 +1780,8 @@ XBSYSAPI EXPORTNUM(134) xbox::PKDEVICE_QUEUE_ENTRY NTAPI xbox::KeRemoveDeviceQue
 
 	KDEVICE_QUEUE_ENTRY *pEntry;
 
-	// We should lock the device queue here
+	KIRQL OldIrql;
+	KiLockDispatcherDatabase(&OldIrql);
 
 	if (IsListEmpty(&DeviceQueue->DeviceListHead)) {
 		DeviceQueue->Busy = FALSE;
@@ -1790,7 +1793,7 @@ XBSYSAPI EXPORTNUM(134) xbox::PKDEVICE_QUEUE_ENTRY NTAPI xbox::KeRemoveDeviceQue
 		pEntry->Inserted = FALSE;
 	}
 
-	// We should unlock the device queue here
+	KiUnlockDispatcherDatabase(OldIrql);
 
 	RETURN(pEntry);
 }
@@ -1809,7 +1812,6 @@ XBSYSAPI EXPORTNUM(135) xbox::boolean_xt NTAPI xbox::KeRemoveEntryDeviceQueue
 
 	KIRQL oldIRQL;
 	KiLockDispatcherDatabase(&oldIRQL);
-	// We should lock the device queue here
 
 	BOOLEAN currentlyInserted = DeviceQueueEntry->Inserted;
 	if (currentlyInserted) {
@@ -1818,7 +1820,6 @@ XBSYSAPI EXPORTNUM(135) xbox::boolean_xt NTAPI xbox::KeRemoveEntryDeviceQueue
 	}
 
 	KiUnlockDispatcherDatabase(oldIRQL);
-	// We should unlock the device queue here
 
 	RETURN(currentlyInserted);
 }
