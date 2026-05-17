@@ -531,7 +531,7 @@ XBSYSAPI EXPORTNUM(361) xbox::int_xt CDECL xbox::RtlSnprintf
 
 	va_list ap;
 	va_start(ap, format);
-	INT Result = snprintf(string, count, format, ap);
+	INT Result = vsnprintf(string, count, format, ap);
 	va_end(ap);
 
 	RETURN(Result);
@@ -556,7 +556,7 @@ XBSYSAPI EXPORTNUM(362) xbox::int_xt CDECL xbox::RtlSprintf
 
 	va_list ap;
 	va_start(ap, format);
-	INT Result = sprintf(string, format, ap);
+	INT Result = vsprintf(string, format, ap);
 	va_end(ap);
 
 	RETURN(Result);
