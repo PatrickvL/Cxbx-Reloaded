@@ -661,7 +661,7 @@ namespace xbox {
 			case fsctl_dismount_volume: {
 
 				if (DeviceObject->DeviceType == FILE_DEVICE_DISK2) {
-					// HACK: this should just free the resources assocoated with the volume, it should not reformat it
+					// HACK: this should just free the resources associated with the volume, it should not reformat it
 					xbox::PIDE_DISK_EXTENSION DeviceExtension = reinterpret_cast<xbox::PIDE_DISK_EXTENSION>(DeviceObject->DeviceExtension);
 					dword_xt PartitionNumber = DeviceExtension->PartitionInformation.PartitionNumber;
 					if (EmuDiskFormatPartition(PartitionNumber)) {

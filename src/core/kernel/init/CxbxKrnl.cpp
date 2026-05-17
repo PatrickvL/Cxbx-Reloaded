@@ -1155,7 +1155,7 @@ static void CxbxrKrnlInitHacks()
 	// CxbxInitWindow because that function creates the xbox EmuUpdateTickCount thread
 	EmuGenerateFS<true>(xbox::zeroptr, Host2XbStackBaseReserved, Host2XbStackSizeReserved);
 	if (!xbox::ObInitSystem()) {
-		CxbxrAbortEx(LOG_PREFIX_INIT, "Unable to intialize ObInitSystem.");
+		CxbxrAbortEx(LOG_PREFIX_INIT, "Unable to initialize ObInitSystem.");
 	}
 	xbox::PsInitSystem();
 	xbox::KiInitSystem();

@@ -363,7 +363,7 @@ long WINAPI EmuException(struct _EXCEPTION_POINTERS* e)
 	return result;
 }
 
-// Exception Mananger class; Any custom exceptions must be above this line.
+// Exception Manager class; Any custom exceptions must be above this line.
 ExceptionManager *g_ExceptionManager = nullptr;
 
 ExceptionManager::ExceptionManager()
