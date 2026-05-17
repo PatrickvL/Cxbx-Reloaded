@@ -398,8 +398,8 @@ XBSYSAPI EXPORTNUM(24) xbox::ntstatus_xt NTAPI xbox::ExQueryNonVolatileSetting
 
 	NTSTATUS Status = X_STATUS_SUCCESS;
 	void * value_addr = nullptr;
-	int value_type;
-	int result_length;
+	int value_type = 0;
+	int result_length = 0;
 	xbox::XC_VALUE_INDEX index = (XC_VALUE_INDEX)ValueIndex;
 
 	// handle eeprom read
@@ -635,7 +635,7 @@ XBSYSAPI EXPORTNUM(29) xbox::ntstatus_xt NTAPI xbox::ExSaveNonVolatileSetting
 
 	NTSTATUS Status = X_STATUS_SUCCESS;
 	void * value_addr = nullptr;
-	DWORD result_length;
+	DWORD result_length = 0;
 
 	// Don't allow writing to the eeprom encrypted area
 	if (ValueIndex == XC_ENCRYPTED_SECTION)
