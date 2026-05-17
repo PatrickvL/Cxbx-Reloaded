@@ -1215,7 +1215,10 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 
 	// convert from PC to Xbox
 	{
-		// TODO : assert that NtDll::FILE_DIRECTORY_INFORMATION has same members and size as xbox::FILE_DIRECTORY_INFORMATION
+		// Verify that the fixed-size header (all fields before FileName) has identical layout in both structs,
+		// since we memcpy from NtDll's wide-char version into the Xbox narrow-char version up to FileName.
+		static_assert(offsetof(NtDll::FILE_DIRECTORY_INFORMATION, FileName) == offsetof(xbox::FILE_DIRECTORY_INFORMATION, FileName),
+			"FILE_DIRECTORY_INFORMATION layout mismatch before FileName");
 		memcpy(/*Dst=*/FileInformation, /*Src=*/NtFileDirInfo, /*Size=*/NtFileDirectoryInformationSize);
 		wcstombs(/*Dest=*/mbstr, /*Source=*/wcstr, MAX_PATH);
 		FileInformation->FileNameLength /= sizeof(wchar_t);
