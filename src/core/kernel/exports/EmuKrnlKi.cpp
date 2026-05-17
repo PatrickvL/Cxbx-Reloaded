@@ -1137,7 +1137,7 @@ xbox::void_xt xbox::KiInitializeContextThread(
 
 	/* And set up the Context Switch Frame */
 	CtxSwitchFrame->RetAddr = KiThreadStartup;
-	CtxSwitchFrame->Unknown = 0x200; // TODO: Find out what this field is.
+	CtxSwitchFrame->Eflags = 0x200; // IF (Interrupt Flag) enabled
 	CtxSwitchFrame->ExceptionList = reinterpret_cast<PVOID>(X_EXCEPTION_CHAIN_END);
 
 	/* Save back the new value of the kernel stack. */

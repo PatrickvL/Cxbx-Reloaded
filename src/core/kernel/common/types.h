@@ -1923,7 +1923,7 @@ typedef struct _KSTART_FRAME
 typedef struct _KSWITCHFRAME
 {
 	PVOID ExceptionList;
-	dword_xt Unknown;
+	dword_xt Eflags;
 	PVOID RetAddr;
 } KSWITCHFRAME, *PKSWITCHFRAME;
 
