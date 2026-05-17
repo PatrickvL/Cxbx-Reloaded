@@ -89,7 +89,9 @@ the said software).
 #include "EmuKrnlKe.h"
 #include <unordered_map>
 
-#define MAX_TIMER_DPCS   16
+#define MAX_TIMER_DPCS          16
+#define TIMER_SCAN_LIMIT        24  // Max timers to inspect per table slot before yielding
+#define ACTIVE_TIMER_LIMIT       4  // Max expired timers to process per batch before yielding
 
 #define ASSERT_TIMER_LOCKED assert(KiTimerMtx.Acquired > 0)
 #define ASSERT_WAIT_LIST_LOCKED assert(KiWaitListMtx.Acquired > 0)
@@ -618,8 +620,8 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 
 	/* Setup accounting data */
 	DpcCalls = 0;
-	Timers = 24;
-	ActiveTimers = 4;
+	Timers = TIMER_SCAN_LIMIT;
+	ActiveTimers = ACTIVE_TIMER_LIMIT;
 
 	/* Lock the Database */
 	KiTimerLock();
@@ -677,13 +679,30 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 				/* Check if we have a DPC */
 				if (TimerDpc)
 				{
-					/* Setup the DPC Entry */
-					if (DpcCalls < MAX_TIMER_DPCS) {
-						DpcEntry[DpcCalls].Dpc = TimerDpc;
-						DpcEntry[DpcCalls].Routine = TimerDpc->DeferredRoutine;
-						DpcEntry[DpcCalls].Context = TimerDpc->DeferredContext;
-						DpcCalls++;
+					/* If the buffer is full, flush it before adding */
+					if (DpcCalls >= MAX_TIMER_DPCS) {
+						KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
+
+						for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
+						{
+							DpcEntry[d].Routine(
+								DpcEntry[d].Dpc,
+								DpcEntry[d].Context,
+								UlongToPtr(SystemTime.u.LowPart),
+								UlongToPtr(SystemTime.u.HighPart)
+							);
+						}
+
+						Timers = TIMER_SCAN_LIMIT;
+						ActiveTimers = ACTIVE_TIMER_LIMIT;
+						KiLockDispatcherDatabaseAtDpcLevel();
 					}
+
+					/* Setup the DPC Entry */
+					DpcEntry[DpcCalls].Dpc = TimerDpc;
+					DpcEntry[DpcCalls].Routine = TimerDpc->DeferredRoutine;
+					DpcEntry[DpcCalls].Context = TimerDpc->DeferredContext;
+					DpcCalls++;
 				}
 
 				/* Check if we're done processing */
@@ -708,8 +727,8 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 					}
 
 					/* Reset accounting */
-					Timers = 24;
-					ActiveTimers = 4;
+					Timers = TIMER_SCAN_LIMIT;
+					ActiveTimers = ACTIVE_TIMER_LIMIT;
 
 					/* Lock the dispatcher database */
 					KiLockDispatcherDatabaseAtDpcLevel();
@@ -751,8 +770,8 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 					}
 
 					/* Reset accounting */
-					Timers = 24;
-					ActiveTimers = 4;
+					Timers = TIMER_SCAN_LIMIT;
+					ActiveTimers = ACTIVE_TIMER_LIMIT;
 
 					/* Lock the dispatcher database */
 					KiLockDispatcherDatabaseAtDpcLevel();
