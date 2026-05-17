@@ -993,10 +993,19 @@ xbox::ntstatus_xt NTAPI xbox::IopParseDevice(
 		// Then it must be from xbox's end which we don't have any support.
 		if (!UseDummyFile) {
 			ObfDereferenceObject(FileObject);
+			// Note: IopDeleteFile (the FILE_OBJECT delete procedure) handles
+			// decrementing DeviceObject->ReferenceCount when freeing the FileObject.
 		}
-		reinterpret_cast<PDEVICE_OBJECT>(ParseObject)->ReferenceCount--;
+		else {
+			// Dummy file objects are stack-allocated so they can't be ObfDereferenced,
+			// but we still need to balance the refcount from IopCheckDeviceAndDriver.
+			reinterpret_cast<PDEVICE_OBJECT>(ParseObject)->ReferenceCount--;
+		}
+		OpenPacket->FileObject = nullptr;
+		OpenPacket->ParseCheck = true;
+		OpenPacket->FinalStatus = X_STATUS_OBJECT_NAME_NOT_FOUND;
 		EmuLog(LOG_LEVEL::ERROR2, "IopParseDevice attempt call GetObjectNativeHandle could not find any.");
-		return X_STATUS_OBJECT_NAME_NOT_FOUND;
+		RETURN(X_STATUS_OBJECT_NAME_NOT_FOUND);
 	}
 
 	// We don't need slash, so let's go ahead remove it as Windows doesn't support it.
@@ -1101,8 +1110,9 @@ xbox::ntstatus_xt NTAPI xbox::IopParseDevice(
 		// for this operation.  Without this, the FileObject (and its
 		// DeviceObject reference) would be leaked because ParseCheck=true
 		// prevents the caller (IoCreateFile) from running its cleanup path.
+		// Note: IopDeleteFile (the FILE_OBJECT delete procedure) handles
+		// decrementing DeviceObject->ReferenceCount when freeing the FileObject.
 		ObfDereferenceObject(FileObject);
-		reinterpret_cast<PDEVICE_OBJECT>(ParseObject)->ReferenceCount--;
 		OpenPacket->FileObject = nullptr;
 		OpenPacket->ParseCheck = true;
 		OpenPacket->FinalStatus = result;
