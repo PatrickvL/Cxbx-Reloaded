@@ -2495,7 +2495,11 @@ XBSYSAPI EXPORTNUM(152) xbox::ulong_xt NTAPI xbox::KeSuspendThread
 	char_xt OldCount = Thread->SuspendCount;
 	if (OldCount == X_MAXIMUM_SUSPEND_COUNT) {
 		KiUnlockDispatcherDatabase(OldIrql);
-		RETURN(X_STATUS_SUSPEND_COUNT_EXCEEDED);
+		// The real kernel raises STATUS_SUSPEND_COUNT_EXCEEDED here.
+		// We log an error and return the current count instead of returning
+		// an NTSTATUS value through a ULONG return type.
+		EmuLog(LOG_LEVEL::WARNING, "KeSuspendThread: suspend count already at maximum (%d)", OldCount);
+		RETURN(OldCount);
 	}
 
 	if (Thread->ApcState.ApcQueueable == TRUE) {
