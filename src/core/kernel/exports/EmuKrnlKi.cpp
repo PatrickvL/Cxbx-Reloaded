@@ -1332,6 +1332,10 @@ xbox::void_xt xbox::KiUnlinkThread
 // Remove all wait blocks from their respective dispatcher objects' wait lists
 // and cancel the thread's timer if one is pending.  Must be called with
 // KiWaitListLock held.  Acquires KiTimerLock internally if needed.
+// WARNING: This function acquires KiTimerLock while the caller holds
+// KiWaitListLock, which inverts the lock order used by KiTimerExpiration
+// (KiTimerLock → KiWaitListLock).  Prefer inlining the WaitBlock removal
+// under KiWaitListLock and handling the timer separately to avoid deadlock.
 xbox::void_xt xbox::KiCleanupWaitBlocks
 (
 	IN PKTHREAD Thread
@@ -1345,6 +1349,8 @@ xbox::void_xt xbox::KiCleanupWaitBlocks
 			WaitBlock = WaitBlock->NextWaitBlock;
 		} while (WaitBlock != FirstBlock);
 	}
+
+	Thread->WaitBlockList = zeroptr;
 
 	PKTIMER Timer = &Thread->Timer;
 	if (Timer->Header.Inserted) {

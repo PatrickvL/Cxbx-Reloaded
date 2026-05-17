@@ -186,8 +186,14 @@ bool AddWaitObject(xbox::PKTHREAD kThread, xbox::PLARGE_INTEGER Timeout)
 	kThread->WaitBlockList = WaitBlock;
 	xbox::PKTIMER Timer = &kThread->Timer;
 	WaitBlock->NextWaitBlock = WaitBlock;
+	WaitBlock->Thread = kThread;
+	WaitBlock->Object = Timer;
+	WaitBlock->WaitKey = (xbox::cshort_xt)X_STATUS_TIMEOUT;
+	WaitBlock->WaitType = xbox::WaitAny;
 	Timer->Header.WaitListHead.Flink = &WaitBlock->WaitListEntry;
 	Timer->Header.WaitListHead.Blink = &WaitBlock->WaitListEntry;
+	WaitBlock->WaitListEntry.Flink = &Timer->Header.WaitListHead;
+	WaitBlock->WaitListEntry.Blink = &Timer->Header.WaitListHead;
 	if (Timeout && Timeout->QuadPart) {
 		// Setup a timer so that KiTimerExpiration can discover the timeout and yield to us.
 		// Otherwise, we will only be able to discover the timeout when Windows decides to schedule us again, and testing shows that
