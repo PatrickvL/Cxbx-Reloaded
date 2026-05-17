@@ -536,49 +536,25 @@ void CxbxD3D11UpdateViewportFromPGRAPH(PGRAPHState *pg)
 {
 	if (!pg) return;
 
-	// Change-detection: viewport/scissor is deterministic from PGRAPH + surface state.
-	// Skip recalculation when PGRAPH regs, surface config, and xfctx are unchanged.
+	// Change-detection: viewport/scissor depends on RT dimensions and surface clip state.
+	// VPSCL is NOT used here — the D3D11 viewport is always set to full RT size,
+	// and the scissor is derived from surface clip registers.
 	static uint32_t s_lastPgraphGen = UINT32_MAX;
 	static uint32_t s_lastSurfaceGen = UINT32_MAX;
-	static uint32_t s_lastXfctxVpscl[2] = { UINT32_MAX, UINT32_MAX };
-
-	uint32_t vpscl0 = pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][0];
-	uint32_t vpscl1 = pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][1];
 
 	if (pg->dirty[NV2A_DIRTY_PGRAPH] == s_lastPgraphGen
-		&& pg->dirty[NV2A_DIRTY_SURFACE] == s_lastSurfaceGen
-		&& vpscl0 == s_lastXfctxVpscl[0]
-		&& vpscl1 == s_lastXfctxVpscl[1])
+		&& pg->dirty[NV2A_DIRTY_SURFACE] == s_lastSurfaceGen)
 		return;
 
 	s_lastPgraphGen = pg->dirty[NV2A_DIRTY_PGRAPH];
 	s_lastSurfaceGen = pg->dirty[NV2A_DIRTY_SURFACE];
-	s_lastXfctxVpscl[0] = vpscl0;
-	s_lastXfctxVpscl[1] = vpscl1;
-
-	// Read viewport offset and scale from XFCTX constants
-	float vpscl[2];
-	for (int i = 0; i < 2; i++) {
-		std::memcpy(&vpscl[i], &pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][i], sizeof(float));
-	}
-
-	// If the viewport scale constants are zero, PGRAPH hasn't been programmed
-	// yet (the Xbox D3D runtime hasn't issued SET_VIEWPORT_OFFSET/SCALE).
-	if (vpscl[0] == 0.0f && vpscl[1] == 0.0f) {
-		return;
-	}
-
-
-	// Read depth clip range (not yet consumed; retained as placeholder for
-	// future depth range / MinDepth/MaxDepth setup in the viewport below)
-	float minZ, maxZ;
-	std::memcpy(&minZ, &pg->regs[RI(NV_PGRAPH_ZCLIPMIN)], sizeof(float));
-	std::memcpy(&maxZ, &pg->regs[RI(NV_PGRAPH_ZCLIPMAX)], sizeof(float));
-
 
 	DWORD HostRenderTarget_Width, HostRenderTarget_Height;
 	if (!GetHostRenderTargetDimensions(&HostRenderTarget_Width, &HostRenderTarget_Height)) {
-		return; // can't set viewport without RT dimensions
+		// RT not bound yet — reset dirty tracking so we retry next call.
+		s_lastPgraphGen = UINT32_MAX;
+		s_lastSurfaceGen = UINT32_MAX;
+		return;
 	}
 
 	// Scissor from NV2A surface clip registers — matches xemu pgraph_gl/vk_draw_begin.

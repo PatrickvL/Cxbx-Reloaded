@@ -854,9 +854,10 @@ void GetRenderTargetBaseDimensions(float& x, float& y) {
 	x = (float)surf.clipWidth;
 	y = (float)surf.clipHeight;
 
-	float aaX, aaY;
-	GetMultiSampleScaleRaw(aaX, aaY);
-
-	x /= aaX;
-	y /= aaY;
+	// NV2A clip registers (SURFACECLIPX/Y) contain LOGICAL dimensions.
+	// The AA factor (CENTER_CORNER_2, SQUARE_OFFSET_4) is a separate
+	// hardware register that scales the surface physically — it is NOT
+	// baked into the clip rect. So no AA division needed here.
+	// For SSAA, the D3D runtime adjusts the viewport transform via
+	// GetScreenScaleFactors, which multiplies by the AA factor.
 }
