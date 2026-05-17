@@ -525,6 +525,9 @@ XBSYSAPI EXPORTNUM(258) xbox::void_xt NTAPI xbox::PsTerminateSystemThread
 		eThread->UniqueThread = xbox::zeroptr;
 	}
 
+	// Clean up the host wake event before the reaper can free our ETHREAD
+	CxbxUnregisterThreadWakeEvent(&eThread->Tcb);
+
 	// Remove thread from the process (synchronized with KeInitializeThread's insertion)
 	{
 		KIRQL OldIrql = KeRaiseIrqlToDpcLevel();
@@ -538,9 +541,6 @@ XBSYSAPI EXPORTNUM(258) xbox::void_xt NTAPI xbox::PsTerminateSystemThread
 	// PspReaperRoutine technically free'd the memory allocation from MmCreateKernelStack function.
 	// Therefore is run from another thread.
 	KeInsertQueueDpc(&PsReaperDpc, NULL, NULL);
-
-	// Clean up the host wake event before freeing the KPCR
-	CxbxUnregisterThreadWakeEvent(&eThread->Tcb);
 
 	EmuKeFreePcr();
 
