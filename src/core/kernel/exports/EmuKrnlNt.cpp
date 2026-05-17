@@ -1095,7 +1095,7 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 (
 	IN  HANDLE                      FileHandle,
 	IN  HANDLE                      Event OPTIONAL,
-	IN  PVOID                       ApcRoutine, // Todo: define this routine's prototype
+	IN  PIO_APC_ROUTINE             ApcRoutine OPTIONAL,
 	IN  PVOID                       ApcContext,
 	OUT PIO_STATUS_BLOCK            IoStatusBlock,
 	OUT FILE_DIRECTORY_INFORMATION *FileInformation,

@@ -273,7 +273,7 @@ XBSYSAPI EXPORTNUM(207) ntstatus_xt NTAPI NtQueryDirectoryFile
 (
     IN  HANDLE                      FileHandle,
     IN  HANDLE                      Event OPTIONAL,
-    IN  PVOID                       ApcRoutine, // Todo: define this routine's prototype
+    IN  PIO_APC_ROUTINE             ApcRoutine OPTIONAL,
     IN  PVOID                       ApcContext,
     OUT PIO_STATUS_BLOCK            IoStatusBlock,
     OUT FILE_DIRECTORY_INFORMATION *FileInformation,
