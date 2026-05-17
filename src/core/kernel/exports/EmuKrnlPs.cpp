@@ -362,13 +362,27 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		// Start thread initialization process here before insert and create thread
 		KeInitializeThread(&eThread->Tcb, KernelStack, KernelStackSize, TlsDataSize, SystemRoutine, StartRoutine, StartContext, &KiUniqueProcess);
 
+		// Take an extra reference so eThread survives ObInsertObject's unconditional
+		// ObfDereferenceObject on failure, allowing us to clean up the thread list.
+		ObfReferenceObject(eThread);
+
 		// The ob handle of the ethread obj is the thread id we return to the title
 		result = ObInsertObject(eThread, zeroptr, 0, &eThread->UniqueThread);
 		if (!X_NT_SUCCESS(result)) {
-			// ObInsertObject always calls ObfDereferenceObject on the object
-			// (even on failure), so do NOT dereference again here.
+			// ObInsertObject already dereferenced eThread once, but our extra ref keeps it alive.
+			// Undo KeInitializeThread's thread list insertion and free the kernel stack.
+			{
+				KIRQL OldIrql = KeRaiseIrqlToDpcLevel();
+				RemoveEntryList(&eThread->Tcb.ThreadListEntry);
+				KiUniqueProcess.StackCount--;
+				KfLowerIrql(OldIrql);
+			}
+			MmDeleteKernelStack(eThread->Tcb.StackBase, eThread->Tcb.StackLimit);
+			ObfDereferenceObject(eThread); // Release extra ref, frees eThread
 			RETURN(result);
 		}
+		// Release the extra reference (handle reference keeps eThread alive)
+		ObfDereferenceObject(eThread);
 
 		if (g_iThreadNotificationCount) {
 			PspCallThreadNotificationRoutines(eThread, TRUE);
@@ -377,7 +391,16 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		// Create another handle to pass back to the title in the ThreadHandle argument
 		result = ObOpenObjectByPointer(eThread, &PsThreadObjectType, ThreadHandle);
 		if (!X_NT_SUCCESS(result)) {
-			ObpClose(eThread->UniqueThread);
+			// Undo KeInitializeThread's thread list insertion and free the kernel stack
+			// while the UniqueThread handle still holds a reference to eThread.
+			{
+				KIRQL OldIrql = KeRaiseIrqlToDpcLevel();
+				RemoveEntryList(&eThread->Tcb.ThreadListEntry);
+				KiUniqueProcess.StackCount--;
+				KfLowerIrql(OldIrql);
+			}
+			MmDeleteKernelStack(eThread->Tcb.StackBase, eThread->Tcb.StackLimit);
+			ObpClose(eThread->UniqueThread); // Drops last ref, frees eThread
 			RETURN(result);
 		}
 
@@ -394,8 +417,17 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		HANDLE handle = reinterpret_cast<HANDLE>(_beginthreadex(NULL, hKernelStackSize, PCSTProxy, iPCSTProxyParam, CREATE_SUSPENDED, &ThreadId));
 		if (handle == zeroptr) {
 			delete iPCSTProxyParam;
+			// Undo KeInitializeThread's thread list insertion and free the kernel stack
+			// while handles still hold references to eThread.
+			{
+				KIRQL OldIrql = KeRaiseIrqlToDpcLevel();
+				RemoveEntryList(&eThread->Tcb.ThreadListEntry);
+				KiUniqueProcess.StackCount--;
+				KfLowerIrql(OldIrql);
+			}
+			MmDeleteKernelStack(eThread->Tcb.StackBase, eThread->Tcb.StackLimit);
 			ObpClose(*ThreadHandle);
-			ObpClose(eThread->UniqueThread);
+			ObpClose(eThread->UniqueThread); // Drops last ref, frees eThread
 			RETURN(X_STATUS_INSUFFICIENT_RESOURCES);
 		}
 
