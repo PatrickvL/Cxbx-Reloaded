@@ -931,11 +931,20 @@ static xbox::void_xt KiExecuteApc()
 		Apc->Inserted = FALSE;
 		xbox::KiApcListMtx.unlock();
 
-		// This is either KiFreeUserApc, which frees the memory of the apc, or KiSuspendNop, which does nothing
-		(Apc->KernelRoutine)(Apc, &Apc->NormalRoutine, &Apc->NormalContext, &Apc->SystemArgument1, &Apc->SystemArgument2);
+		// Save fields BEFORE calling KernelRoutine — for user APCs, the
+		// KernelRoutine is KiFreeUserApc which calls ExFreePool(Apc),
+		// making any subsequent access to the APC struct use-after-free.
+		// The KernelRoutine may modify NormalRoutine/NormalContext through
+		// the output pointers, so we pass local copies.
+		xbox::PKNORMAL_ROUTINE NormalRoutine = Apc->NormalRoutine;
+		xbox::PVOID NormalContext = Apc->NormalContext;
+		xbox::PVOID SystemArgument1 = Apc->SystemArgument1;
+		xbox::PVOID SystemArgument2 = Apc->SystemArgument2;
 
-		if (Apc->NormalRoutine != xbox::zeroptr) {
-			(Apc->NormalRoutine)(Apc->NormalContext, Apc->SystemArgument1, Apc->SystemArgument2);
+		(Apc->KernelRoutine)(Apc, &NormalRoutine, &NormalContext, &SystemArgument1, &SystemArgument2);
+
+		if (NormalRoutine != xbox::zeroptr) {
+			(NormalRoutine)(NormalContext, SystemArgument1, SystemArgument2);
 		}
 
 		xbox::KiApcListMtx.lock();
@@ -1130,11 +1139,14 @@ xbox::boolean_xt xbox::KiInsertQueueApc
 	}
 	InsertTailList(&kThread->ApcState.ApcListHead[Apc->ApcMode], &Apc->ApcListEntry);
 	Apc->Inserted = TRUE;
+	// Save ApcMode before unlocking — after unlock, the target thread could
+	// immediately execute and free this APC (for user APCs via KiFreeUserApc).
+	auto ApcMode = Apc->ApcMode;
 	KiApcListMtx.unlock();
 
 	// We can only attempt to execute the queued apc right away if it is been inserted in the current thread, because otherwise the KTHREAD
 	// in the fs selector will not be correct
-	if (Apc->ApcMode == KernelMode) { // kernel apc
+	if (ApcMode == KernelMode) { // kernel apc
 		kThread->ApcState.KernelApcPending = TRUE;
 		// NOTE: this is wrong, we should check the thread state instead of just signaling the kernel apc, but we currently
 		// don't set the appropriate state in kthread
