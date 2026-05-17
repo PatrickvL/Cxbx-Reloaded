@@ -994,6 +994,33 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		rtHeight = 1u << surf.logHeight;
 	}
 
+	// Apply anti-aliasing factor to surface dimensions.
+	// On NV2A, AA modes physically expand the surface: 2x doubles width,
+	// 4x doubles both. The host RT must match this physical size so that
+	// when the game reads the supersampled buffer back as a texture
+	// (TEXIMAGERECT reflects the AA-scaled dimensions), our cached RT
+	// has the correct dimensions.
+	// Matches xemu's pgraph_apply_anti_aliasing_factor.
+	switch (surf.antiAliasing) {
+	case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
+		rtWidth *= 2;
+		break;
+	case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_SQUARE_OFFSET_4:
+		rtWidth *= 2;
+		rtHeight *= 2;
+		break;
+	default: // CENTER_1: no scaling
+		break;
+	}
+
+	// For pitch-linear surfaces, include the clip offset in dimensions.
+	// The surface must be large enough to contain the clip region at its offset.
+	// Matches xemu's populate_surface_binding_entry.
+	if (surf.surfaceType != 0x2 /*NV097_SET_SURFACE_FORMAT_TYPE_SWIZZLE*/) {
+		rtWidth += surf.clipX;
+		rtHeight += surf.clipY;
+	}
+
 	// Color render target (rebind if offset changed, or if format/pitch/clip changed)
 	bool colorChanged = (colorOffset != prevColorOffset) ||
 		(surf.colorFormat != g_LastBoundSurfaceState.colorFormat) ||
@@ -1029,10 +1056,12 @@ void CxbxD3D11UpdateRenderTargetFromPGRAPH(PGRAPHState *pg)
 		// that happens to be rendered before the backbuffer.
 		// Also accept half-height surfaces for field rendering (D3DPRESENTFLAG_FIELD),
 		// where the Xbox renders 640x240 per field into a 640x480 display.
+		// Compare against logical clip dimensions (pre-AA), since presentation
+		// parameters reflect the game's logical resolution, not the supersampled size.
 		if (g_PgraphBackBufferOffset == 0 && pHostRT) {
-			if (rtWidth == g_EmuCDPD.HostPresentationParameters.BackBufferWidth &&
-				(rtHeight == g_EmuCDPD.HostPresentationParameters.BackBufferHeight ||
-				 rtHeight * 2 == g_EmuCDPD.HostPresentationParameters.BackBufferHeight)) {
+			if (surf.clipWidth == g_EmuCDPD.HostPresentationParameters.BackBufferWidth &&
+				(surf.clipHeight == g_EmuCDPD.HostPresentationParameters.BackBufferHeight ||
+				 surf.clipHeight * 2 == g_EmuCDPD.HostPresentationParameters.BackBufferHeight)) {
 				g_PgraphBackBufferOffset = colorOffset;
 			}
 		}
