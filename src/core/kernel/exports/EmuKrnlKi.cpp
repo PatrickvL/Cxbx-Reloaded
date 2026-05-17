@@ -1174,6 +1174,12 @@ xbox::void_xt xbox::KiWaitTest
 	WaitList = &FirstObject->Header.WaitListHead;
 	WaitEntry = WaitList->Flink;
 	while ((FirstObject->Header.SignalState > 0) && (WaitEntry != WaitList)) {
+		/* Save the next entry BEFORE KiUnwaitThread may free this entry's memory.
+		 * KiUnwaitThread wakes the target thread, which can immediately return
+		 * from KeWaitForSingleObject and destroy its stack-allocated WaitBlock,
+		 * making WaitEntry->Flink a use-after-free. */
+		PLIST_ENTRY NextEntry = WaitEntry->Flink;
+
 		/* Get the current wait block */
 		WaitBlock = CONTAINING_RECORD(WaitEntry, KWAIT_BLOCK, WaitListEntry);
 		WaitThread = WaitBlock->Thread;
@@ -1205,7 +1211,7 @@ xbox::void_xt xbox::KiWaitTest
 		/* Now do the rest of the unwait */
 		KiUnwaitThread(WaitThread, WaitBlock->WaitKey, Increment);
 NextWaitEntry:
-		WaitEntry = WaitEntry->Flink;
+		WaitEntry = NextEntry;
 	}
 	KiWaitListUnlock();
 }
