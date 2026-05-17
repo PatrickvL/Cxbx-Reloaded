@@ -836,9 +836,9 @@ static std::string GenerateHLSL(const PSJITKey& key)
 
     // Hoist shared (non-unique) C0/C1 loads before the stage loop
     if (!flagUniqueC0 && anyC0 && (masks.stageC0 & 0xFF))
-        ss << "    C0 = PG_COLOR(0x" << std::hex << 0x1880 << ");\n" << std::dec;
+        ss << "    C0 = PG_COLOR_ARGB(0x" << std::hex << 0x1880 << ");\n" << std::dec;
     if (!flagUniqueC1 && anyC1 && (masks.stageC1 & 0xFF))
-        ss << "    C1 = PG_COLOR(0x" << std::hex << 0x18A0 << ");\n" << std::dec;
+        ss << "    C1 = PG_COLOR_ARGB(0x" << std::hex << 0x18A0 << ");\n" << std::dec;
 
     // Combiner stages
     ss << "\n    // --- Combiner stages ---\n";
@@ -848,11 +848,11 @@ static std::string GenerateHLSL(const PSJITKey& key)
         // Load per-stage C0/C1 from PGRAPH (only when unique per stage)
         if (flagUniqueC0 && (masks.stageC0 & (1u << stage))) {
             uint32_t c0Off = 0x1880 + stage * 4;
-            ss << "    C0 = PG_COLOR(0x" << std::hex << c0Off << ");\n" << std::dec;
+            ss << "    C0 = PG_COLOR_ARGB(0x" << std::hex << c0Off << ");\n" << std::dec;
         }
         if (flagUniqueC1 && (masks.stageC1 & (1u << stage))) {
             uint32_t c1Off = 0x18A0 + stage * 4;
-            ss << "    C1 = PG_COLOR(0x" << std::hex << c1Off << ");\n" << std::dec;
+            ss << "    C1 = PG_COLOR_ARGB(0x" << std::hex << c1Off << ");\n" << std::dec;
         }
 
         // Decode output control
@@ -1059,9 +1059,9 @@ static std::string GenerateHLSL(const PSJITKey& key)
     } else {
         // Load final combiner C0/C1
         if (masks.stageC0 & (1u << 8))
-            ss << "    C0 = PG_COLOR(0x19AC);\n";
+            ss << "    C0 = PG_COLOR_ARGB(0x19AC);\n";
         if (masks.stageC1 & (1u << 8))
-            ss << "    C1 = PG_COLOR(0x19B0);\n";
+            ss << "    C1 = PG_COLOR_ARGB(0x19B0);\n";
 
         // EFG phase
         uint32_t settings = (fcEFG) & 0xFF;

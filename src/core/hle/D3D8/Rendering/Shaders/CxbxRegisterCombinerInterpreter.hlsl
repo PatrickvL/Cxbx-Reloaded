@@ -874,8 +874,8 @@ float4 DoFinalCombiner(inout float4 Regs[16])
 
     // Initialise C0/C1 for the final combiner from PGRAPH specular/fog factor regs.
     // Placed after early exit so unused final combiners skip the writes.
-    Regs[PS_REGISTER_C0] = PG_COLOR(NV_PGRAPH_SPECFOGFACTOR0);
-    Regs[PS_REGISTER_C1] = PG_COLOR(NV_PGRAPH_SPECFOGFACTOR1);
+    Regs[PS_REGISTER_C0] = PG_COLOR_ARGB(NV_PGRAPH_SPECFOGFACTOR0);
+    Regs[PS_REGISTER_C1] = PG_COLOR_ARGB(NV_PGRAPH_SPECFOGFACTOR1);
 
     // --- EFG phase: resolve E, F (RGB) and G (alpha) ---
     float3 E = ResolveFinalInput(Regs, eReg, false).rgb;
@@ -1026,8 +1026,8 @@ PS_OUTPUT main(PS_INPUT input)
             // stages share constant[0].  Combiner outputs CAN write to C0/C1
             // (confirmed by xemu / NV2A hardware), so this must happen before
             // DoCombinerStage, not inside ResolveStageInput.
-            Regs[PS_REGISTER_C0] = flagUniqueC0 ? PG_COLOR(NV_PGRAPH_COMBINEFACTOR0 + stage * 4) : PG_COLOR(NV_PGRAPH_COMBINEFACTOR0);
-            Regs[PS_REGISTER_C1] = flagUniqueC1 ? PG_COLOR(NV_PGRAPH_COMBINEFACTOR1 + stage * 4) : PG_COLOR(NV_PGRAPH_COMBINEFACTOR1);
+            Regs[PS_REGISTER_C0] = flagUniqueC0 ? PG_COLOR_ARGB(NV_PGRAPH_COMBINEFACTOR0 + stage * 4) : PG_COLOR_ARGB(NV_PGRAPH_COMBINEFACTOR0);
+            Regs[PS_REGISTER_C1] = flagUniqueC1 ? PG_COLOR_ARGB(NV_PGRAPH_COMBINEFACTOR1 + stage * 4) : PG_COLOR_ARGB(NV_PGRAPH_COMBINEFACTOR1);
             DoCombinerStage(Regs, stage, flagMuxMsb);
         }
     }

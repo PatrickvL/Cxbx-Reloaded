@@ -105,7 +105,10 @@ float PG_FLOAT(uint byteOff) { return asfloat(g_PGRegs.Load(GPU_PGRAPH_BASE + by
 // ============================================================
 // Color unpacking: ABGR uint32 → float4 RGBA [0..1]
 //
-// NV2A stores color registers in ABGR byte order:
+// Legacy unpacker kept for any PGRAPH registers that happen to
+// store colors in ABGR byte order.  Most NV2A color registers
+// (combiner factors, specfog factors, fog color) are ARGB —
+// use PG_COLOR_ARGB / UnpackARGB for those.
 //   bits  0-7  = R
 //   bits  8-15 = G
 //   bits 16-23 = B
