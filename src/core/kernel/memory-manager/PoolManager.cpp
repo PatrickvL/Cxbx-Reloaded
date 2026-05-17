@@ -256,10 +256,24 @@ void PoolManager::DeallocatePool(VAddr addr)
 
 	Entry = reinterpret_cast<PPOOL_HEADER>(reinterpret_cast<PCHAR>(addr) - POOL_OVERHEAD);
 
+	// Validate the address looks like a legitimate pool allocation.
+	// Valid pool return addresses have a page offset of POOL_OVERHEAD + N*POOL_SMALLEST_BLOCK.
+	// If the offset doesn't match, the caller is likely freeing a non-pool address (e.g. stack memory).
+	ULONG PageOffset = addr & (PAGE_SIZE - 1);
+	if (PageOffset < POOL_OVERHEAD || ((PageOffset - POOL_OVERHEAD) % POOL_SMALLEST_BLOCK) != 0) {
+		CxbxrAbort("DeallocatePool: address 0x%08X is not a valid pool allocation! "
+			"Page offset 0x%X is misaligned (expected 0x%X + N*0x%X). "
+			"Caller may be freeing a stack or global address.",
+			addr, PageOffset, POOL_OVERHEAD, POOL_SMALLEST_BLOCK);
+	}
+
 	assert((Entry->PoolType & POOL_TYPE_MASK) != 0);
 
 	if (!IS_POOL_HEADER_MARKED_ALLOCATED(Entry)) {
-		CxbxrAbort("Pool at address 0x%X is already free!", addr);
+		CxbxrAbort("DeallocatePool: address 0x%08X (pool header at 0x%08X) is already free! "
+			"BlockSize=%u, PreviousSize=%u, PoolType=0x%X, Tag=0x%08X",
+			addr, (ULONG)(uintptr_t)Entry,
+			Entry->BlockSize, Entry->PreviousSize, Entry->PoolType, Entry->PoolTag);
 	}
 
 	MARK_POOL_HEADER_FREED(Entry);

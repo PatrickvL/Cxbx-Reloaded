@@ -1112,7 +1112,14 @@ xbox::ntstatus_xt NTAPI xbox::IopParseDevice(
 		// prevents the caller (IoCreateFile) from running its cleanup path.
 		// Note: IopDeleteFile (the FILE_OBJECT delete procedure) handles
 		// decrementing DeviceObject->ReferenceCount when freeing the FileObject.
-		ObfDereferenceObject(FileObject);
+		if (!UseDummyFile) {
+			ObfDereferenceObject(FileObject);
+		}
+		else {
+			// Dummy file objects are stack-allocated so they can't be ObfDereferenced,
+			// but we still need to balance the refcount from IopCheckDeviceAndDriver.
+			reinterpret_cast<PDEVICE_OBJECT>(ParseObject)->ReferenceCount--;
+		}
 		OpenPacket->FileObject = nullptr;
 		OpenPacket->ParseCheck = true;
 		OpenPacket->FinalStatus = result;
