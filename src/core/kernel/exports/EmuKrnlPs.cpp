@@ -171,6 +171,16 @@ static xbox::void_xt PspCallThreadNotificationRoutines(xbox::PETHREAD eThread, x
 	}
 }
 
+// Remove a thread from KiUniqueProcess.ThreadListHead and decrement StackCount.
+// Used to undo KeInitializeThread's insertion on PsCreateSystemThreadEx failure paths.
+static void PspRemoveThreadFromProcess(xbox::PETHREAD eThread)
+{
+	xbox::KIRQL OldIrql = xbox::KeRaiseIrqlToDpcLevel();
+	RemoveEntryList(&eThread->Tcb.ThreadListEntry);
+	KiUniqueProcess.StackCount--;
+	xbox::KfLowerIrql(OldIrql);
+}
+
 // Source: ReactOS
 xbox::LIST_ENTRY PspReaperListHead;
 static std::mutex g_ReaperListMtx;
@@ -378,12 +388,7 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		if (!X_NT_SUCCESS(result)) {
 			// ObInsertObject already dereferenced eThread once, but our extra ref keeps it alive.
 			// Undo KeInitializeThread's thread list insertion and free the kernel stack.
-			{
-				KIRQL OldIrql = KeRaiseIrqlToDpcLevel();
-				RemoveEntryList(&eThread->Tcb.ThreadListEntry);
-				KiUniqueProcess.StackCount--;
-				KfLowerIrql(OldIrql);
-			}
+			PspRemoveThreadFromProcess(eThread);
 			MmDeleteKernelStack(eThread->Tcb.StackBase, eThread->Tcb.StackLimit);
 			ObfDereferenceObject(eThread); // Release extra ref, frees eThread
 			RETURN(result);
@@ -400,12 +405,7 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		if (!X_NT_SUCCESS(result)) {
 			// Undo KeInitializeThread's thread list insertion and free the kernel stack
 			// while the UniqueThread handle still holds a reference to eThread.
-			{
-				KIRQL OldIrql = KeRaiseIrqlToDpcLevel();
-				RemoveEntryList(&eThread->Tcb.ThreadListEntry);
-				KiUniqueProcess.StackCount--;
-				KfLowerIrql(OldIrql);
-			}
+			PspRemoveThreadFromProcess(eThread);
 			MmDeleteKernelStack(eThread->Tcb.StackBase, eThread->Tcb.StackLimit);
 			ObpClose(eThread->UniqueThread); // Drops last ref, frees eThread
 			RETURN(result);
@@ -426,12 +426,7 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 			delete iPCSTProxyParam;
 			// Undo KeInitializeThread's thread list insertion and free the kernel stack
 			// while handles still hold references to eThread.
-			{
-				KIRQL OldIrql = KeRaiseIrqlToDpcLevel();
-				RemoveEntryList(&eThread->Tcb.ThreadListEntry);
-				KiUniqueProcess.StackCount--;
-				KfLowerIrql(OldIrql);
-			}
+			PspRemoveThreadFromProcess(eThread);
 			MmDeleteKernelStack(eThread->Tcb.StackBase, eThread->Tcb.StackLimit);
 			ObpClose(*ThreadHandle);
 			ObpClose(eThread->UniqueThread); // Drops last ref, frees eThread

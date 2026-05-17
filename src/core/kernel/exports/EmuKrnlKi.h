@@ -241,7 +241,18 @@ namespace xbox
 		IN long_ptr_xt WaitStatus
 	);
 
-	void_xt KiCleanupWaitBlocks
+	// Remove all wait blocks from their dispatcher objects' wait lists
+	// and clear Thread->WaitBlockList.  Must be called with KiWaitListLock held.
+	// Does not acquire any locks internally.
+	void_xt KiRemoveWaitBlocks
+	(
+		IN PKTHREAD Thread
+	);
+
+	// Cancel the thread's pending timer, if any.  Acquires KiTimerLock internally.
+	// Must NOT be called while holding KiWaitListLock (would invert lock order
+	// with KiTimerExpiration which takes KiTimerLock before KiWaitListLock).
+	void_xt KiCancelThreadTimer
 	(
 		IN PKTHREAD Thread
 	);

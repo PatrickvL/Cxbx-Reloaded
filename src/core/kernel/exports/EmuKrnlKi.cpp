@@ -1322,23 +1322,13 @@ xbox::void_xt xbox::KiUnlinkThread
 	IN long_ptr_xt WaitStatus
 )
 {
-	PKWAIT_BLOCK WaitBlock;
-	PKTIMER Timer;
-
 	ASSERT_WAIT_LIST_LOCKED;
 
 	/* Update wait status */
 	Thread->WaitStatus |= WaitStatus;
 
-	/* Remove the Wait Blocks from the list */
-	WaitBlock = Thread->WaitBlockList;
-	do {
-		/* Remove it */
-		RemoveEntryList(&WaitBlock->WaitListEntry);
-
-		/* Go to the next one */
-		WaitBlock = WaitBlock->NextWaitBlock;
-	} while (WaitBlock != Thread->WaitBlockList);
+	/* Remove the Wait Blocks from the list and clear WaitBlockList */
+	KiRemoveWaitBlocks(Thread);
 
 #if 0
 	// Disabled, as we currently don't put threads in the ready list
@@ -1349,31 +1339,18 @@ xbox::void_xt xbox::KiUnlinkThread
 #endif
 
 	/* Check if there's a Thread Timer */
-	Timer = &Thread->Timer;
-	if (Timer->Header.Inserted) {
-		KiTimerLock();
-		KxRemoveTreeTimer(Timer);
-		KiTimerUnlock();
-	}
+	KiCancelThreadTimer(Thread);
 
 	/* Increment the Queue's active threads */
 	if (Thread->Queue) {
 		((PRKQUEUE)Thread->Queue)->CurrentCount++;
 	}
-
-	// Sanity check: set WaitBlockList to nullptr so that we can catch the case where a waiter starts a new wait but forgets to setup a new wait block. This
-	// way, we will crash instead of silently using the pointer to the old block
-	Thread->WaitBlockList = zeroptr;
 }
 
 // Remove all wait blocks from their respective dispatcher objects' wait lists
-// and cancel the thread's timer if one is pending.  Must be called with
-// KiWaitListLock held.  Acquires KiTimerLock internally if needed.
-// WARNING: This function acquires KiTimerLock while the caller holds
-// KiWaitListLock, which inverts the lock order used by KiTimerExpiration
-// (KiTimerLock → KiWaitListLock).  Prefer inlining the WaitBlock removal
-// under KiWaitListLock and handling the timer separately to avoid deadlock.
-xbox::void_xt xbox::KiCleanupWaitBlocks
+// and clear Thread->WaitBlockList.  Must be called with KiWaitListLock held.
+// Does not acquire any locks internally.
+xbox::void_xt xbox::KiRemoveWaitBlocks
 (
 	IN PKTHREAD Thread
 )
@@ -1388,7 +1365,16 @@ xbox::void_xt xbox::KiCleanupWaitBlocks
 	}
 
 	Thread->WaitBlockList = zeroptr;
+}
 
+// Cancel the thread's pending timer, if any.  Acquires KiTimerLock internally.
+// Must NOT be called while holding KiWaitListLock (would invert the lock order
+// used by KiTimerExpiration: KiTimerLock → KiWaitListLock).
+xbox::void_xt xbox::KiCancelThreadTimer
+(
+	IN PKTHREAD Thread
+)
+{
 	PKTIMER Timer = &Thread->Timer;
 	if (Timer->Header.Inserted) {
 		KiTimerLock();
