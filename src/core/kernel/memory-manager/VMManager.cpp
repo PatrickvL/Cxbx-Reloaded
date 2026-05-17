@@ -552,7 +552,9 @@ void VMManager::MemoryStatistics(xbox::PMM_STATISTICS memory_statistics)
 	memory_statistics->CachePagesCommitted = m_PagesByUsage[xbox::CacheType];
 	memory_statistics->PoolPagesCommitted = m_PagesByUsage[xbox::PoolType];
 	memory_statistics->StackPagesCommitted = m_PagesByUsage[xbox::StackType];
-	memory_statistics->ImagePagesCommitted = m_PagesByUsage[xbox::ImageType];
+	if (memory_statistics->Length >= sizeof(xbox::MM_STATISTICS)) {
+		memory_statistics->ImagePagesCommitted = m_PagesByUsage[xbox::ImageType];
+	}
 
 	Unlock();
 }

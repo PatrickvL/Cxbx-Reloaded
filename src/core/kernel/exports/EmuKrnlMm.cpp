@@ -406,7 +406,9 @@ XBSYSAPI EXPORTNUM(181) xbox::ntstatus_xt NTAPI xbox::MmQueryStatistics
 		RETURN(STATUS_INVALID_PARAMETER);
 	}
 
-	if (MemoryStatistics->Length == sizeof(MM_STATISTICS))
+	// Accept any Length that covers at least the pre-ImagePagesCommitted fields (0x20).
+	// Older XDK versions used an MM_STATISTICS without the ImagePagesCommitted field.
+	if (MemoryStatistics->Length >= offsetof(MM_STATISTICS, ImagePagesCommitted))
 	{
 		g_VMManager.MemoryStatistics(MemoryStatistics);
 
@@ -418,7 +420,9 @@ XBSYSAPI EXPORTNUM(181) xbox::ntstatus_xt NTAPI xbox::MmQueryStatistics
 		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->CachePagesCommitted         = 0x%.08X", MemoryStatistics->CachePagesCommitted);
 		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->PoolPagesCommitted          = 0x%.08X", MemoryStatistics->PoolPagesCommitted);
 		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->StackPagesCommitted         = 0x%.08X", MemoryStatistics->StackPagesCommitted);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->ImagePagesCommitted         = 0x%.08X", MemoryStatistics->ImagePagesCommitted);
+		if (MemoryStatistics->Length >= sizeof(MM_STATISTICS)) {
+			EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->ImagePagesCommitted         = 0x%.08X", MemoryStatistics->ImagePagesCommitted);
+		}
 
 		ret = X_STATUS_SUCCESS;
 	}
