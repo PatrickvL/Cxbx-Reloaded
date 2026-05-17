@@ -405,7 +405,7 @@ XBSYSAPI EXPORTNUM(218) ntstatus_xt NTAPI NtQueryVolumeInformationFile
 // ******************************************************************
 XBSYSAPI EXPORTNUM(219) ntstatus_xt NTAPI NtReadFile
 (
-    IN  HANDLE          FileHandle,            // TODO: correct paramters
+    IN  HANDLE          FileHandle,
     IN  HANDLE          Event OPTIONAL,
     IN  PIO_APC_ROUTINE ApcRoutine OPTIONAL,
     IN  PVOID           ApcContext,
@@ -488,7 +488,7 @@ XBSYSAPI EXPORTNUM(225) ntstatus_xt NTAPI NtSetEvent
 // ******************************************************************
 XBSYSAPI EXPORTNUM(226) ntstatus_xt NTAPI NtSetInformationFile
 (
-    IN  HANDLE  FileHandle,            // TODO: correct paramters
+    IN  HANDLE  FileHandle,
     OUT PIO_STATUS_BLOCK   IoStatusBlock,
     IN  PVOID   FileInformation,
     IN  ulong_xt   Length,

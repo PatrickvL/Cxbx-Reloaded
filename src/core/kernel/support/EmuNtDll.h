@@ -1399,7 +1399,7 @@ typedef NTSTATUS (NTAPI *FPTR_NtOpenFile)
 // ******************************************************************
 typedef NTSTATUS (NTAPI *FPTR_NtReadFile)
 (
-    IN  HANDLE          FileHandle,            // TODO: correct paramters
+    IN  HANDLE          FileHandle,
     IN  HANDLE          Event OPTIONAL,
     IN  PVOID           ApcRoutine OPTIONAL,
     IN  PVOID           ApcContext,
@@ -1415,7 +1415,7 @@ typedef NTSTATUS (NTAPI *FPTR_NtReadFile)
 // ******************************************************************
 typedef NTSTATUS (NTAPI *FPTR_NtWriteFile)
 (
-    IN  HANDLE          FileHandle,            // TODO: correct paramters
+    IN  HANDLE          FileHandle,
     IN  HANDLE          Event OPTIONAL,
     IN  PVOID           ApcRoutine OPTIONAL,
     IN  PVOID           ApcContext,
@@ -1436,7 +1436,7 @@ typedef VOID (NTAPI *FPTR_NtYieldExecution)();
 // ******************************************************************
 typedef NTSTATUS (NTAPI *FPTR_NtSetInformationFile)
 (
-    IN  HANDLE  FileHandle,            // TODO: correct paramters
+    IN  HANDLE  FileHandle,
     OUT PVOID   IoStatusBlock,
     IN  PVOID   FileInformation,
     IN  ULONG   Length,

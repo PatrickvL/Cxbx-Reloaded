@@ -1881,7 +1881,7 @@ XBSYSAPI EXPORTNUM(218) xbox::ntstatus_xt NTAPI xbox::NtQueryVolumeInformationFi
 // ******************************************************************
 XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 (
-	IN  HANDLE          FileHandle,            // TODO: correct paramters
+	IN  HANDLE          FileHandle,
 	IN  HANDLE          Event OPTIONAL,
 	IN  PIO_APC_ROUTINE ApcRoutine OPTIONAL,
 	IN  PVOID           ApcContext,
