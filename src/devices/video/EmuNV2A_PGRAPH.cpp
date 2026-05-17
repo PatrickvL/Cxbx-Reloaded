@@ -165,6 +165,12 @@ void pgraph_trace_close()
 
 PgraphBackend g_pgraph_backend = {};
 
+// Set true the first time the title issues an explicit NV097_FLIP_STALL.
+// Once observed, the puller's auto-present fallback (intended for raw push
+// buffer games that never flip) is disabled to avoid spurious mid-frame
+// presents between explicit flips, which causes flicker at half frame rate.
+bool g_pgraph_explicit_flip_stall_seen = false;
+
 void pgraph_handle_method(NV2AState *d, unsigned int subchannel, unsigned int method, uint32_t parameter);
 static void pgraph_log_method(unsigned int subchannel, unsigned int graphics_class, unsigned int method, uint32_t parameter);
 static void pgraph_allocate_inline_buffer_vertices(PGRAPHState *pg, unsigned int attr);
@@ -314,6 +320,15 @@ DEVICE_WRITE32(PGRAPH)
 				% GET_MASK(pg->regs[RI(NV_PGRAPH_SURFACE)],
 					NV_PGRAPH_SURFACE_MODULO_3D));
 			qemu_cond_broadcast(&pg->flip_3d);
+
+			// For MMIO-only games (no pushbuffer FLIP_STALL), mark surface dirty
+			// and wake the puller thread so its auto-present fires.  We can't call
+			// g_pgraph_backend.flip_stall directly here because this runs on the DPC/system_events
+			// thread, not the puller thread that owns the D3D11 context.
+			if (!g_pgraph_explicit_flip_stall_seen) {
+				d->pgraph.surface_color.draw_dirty = true;
+				qemu_cond_broadcast(&d->pfifo.puller_cond);
+			}
 		}
 		break;
     case NV_PGRAPH_RDI_DATA: {
@@ -667,12 +682,15 @@ void pgraph_handle_method(NV2AState *d,
 			break;
 		}
 		case NV097_FLIP_STALL:
+			// Title is using explicit flips — disable puller auto-present fallback.
+			g_pgraph_explicit_flip_stall_seen = true;
+
 			// Trigger host present via the flip_stall plugin callback
 			if (g_pgraph_backend.flip_stall != nullptr) {
+				// Clear draw_dirty so the auto-present in the puller loop
+				// doesn't fire again after this explicit FLIP_STALL present.
+				d->pgraph.surface_color.draw_dirty = false;
 				g_pgraph_backend.flip_stall(d);
-				// Record the VBlank at which we presented so the puller's
-				// VBlank-driven scan-out doesn't double-present this frame.
-				d->pcrtc.last_present_vblank = d->pcrtc.vblank_count;
 			}
 
 			// VBlank-gated frame pacing: wait until the next VBlank deadline.

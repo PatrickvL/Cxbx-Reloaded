@@ -1393,14 +1393,12 @@ static void CxbxrKrnlInitHacks()
 							d->pvideo.pending_interrupts |= NV_PVIDEO_INTR_BUFFER_0;
 						if (pvideo_buffer & NV_PVIDEO_BUFFER_1_USE)
 							d->pvideo.pending_interrupts |= NV_PVIDEO_INTR_BUFFER_1;
-					}
 
-					// Wake the puller thread for VBlank-driven PCRTC scan-out.
-					// On real hardware, PCRTC continuously scans out the framebuffer
-					// at NV_PCRTC_START every VBlank, with the PVIDEO overlay composited
-					// by the RAMDAC.  We emulate this by waking the puller each VBlank
-					// to present whatever PCRTC_START points to.
-					qemu_cond_broadcast(&d->pfifo.puller_cond);
+						// Wake the puller thread so it can composite and present the
+						// overlay.  During FMV, no pushbuffer activity occurs, so the
+						// puller stays asleep and the overlay is never displayed.
+						qemu_cond_broadcast(&d->pfifo.puller_cond);
+					}
 				}
 
 				// Check if any NV2A sub-unit has a pending interrupt that should

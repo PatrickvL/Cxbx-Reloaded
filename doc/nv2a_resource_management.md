@@ -136,10 +136,10 @@ multiple RT offsets for the backbuffer. All matching offsets are accumulated in
 `g_PgraphBackBufferOffsets` (unordered_set), and `g_pHostPgraphBackBuffer` always
 points to the most recently rendered one.
 
-**VBlank-driven scan-out:** The puller thread presents the framebuffer at
-`NV_PCRTC_START` every VBlank (with PVIDEO overlay composited), emulating
-continuous PCRTC scan-out.  NV097_FLIP_STALL also presents (for correct frame
-timing) and updates `last_present_vblank` to prevent double-presenting.
+**Auto-present fallback:** For raw pushbuffer games that never call FLIP_STALL,
+the puller thread auto-presents on VBlank if `!g_pgraph_explicit_flip_stall_seen`
+and `draw_dirty` is set.  During FMV (overlay active, no 3D draws), the DPC
+thread wakes the puller so it composites and presents the PVIDEO overlay.
 
 **When synced to CPU:** Same as RT readback — only if Xbox CPU reads the framebuffer
 pages (extremely rare; typically only for screenshots or save-game thumbnails).
