@@ -173,6 +173,7 @@ static xbox::void_xt PspCallThreadNotificationRoutines(xbox::PETHREAD eThread, x
 
 // Source: ReactOS
 xbox::LIST_ENTRY PspReaperListHead;
+static std::mutex g_ReaperListMtx;
 xbox::void_xt NTAPI PspReaperRoutine(
 	IN xbox::PKDPC Dpc,
 	IN xbox::PVOID DeferredContext,
@@ -184,6 +185,12 @@ xbox::void_xt NTAPI PspReaperRoutine(
 	xbox::PLIST_ENTRY NextEntry;
 	PETHREAD Thread;
 	//PSTRACE(PS_KILL_DEBUG, "Context: %p\n", Context);
+
+	// Acquire the reaper list lock to synchronize with PsTerminateSystemThread's
+	// InsertTailList.  On real hardware, DPCs are serialized on the uniprocessor
+	// Xbox, but in the emulator, DPCs and terminating threads run on separate
+	// host threads and can race on the list.
+	std::unique_lock lck(g_ReaperListMtx);
 
 	/* Write magic value and return the next entry to process */
 	NextEntry = PspReaperListHead.Flink;
@@ -566,7 +573,10 @@ XBSYSAPI EXPORTNUM(258) xbox::void_xt NTAPI xbox::PsTerminateSystemThread
 		RemoveEntryList(&eThread->Tcb.ThreadListEntry);
 		eThread->Tcb.State = Terminated;
 		KiUniqueProcess.StackCount--;
-		InsertTailList(&PspReaperListHead, &((PETHREAD)eThread)->ReaperLink);
+		{
+			std::unique_lock lck(g_ReaperListMtx);
+			InsertTailList(&PspReaperListHead, &((PETHREAD)eThread)->ReaperLink);
+		}
 		KfLowerIrql(OldIrql);
 	}
 
