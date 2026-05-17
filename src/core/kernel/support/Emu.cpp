@@ -178,10 +178,10 @@ bool EmuExceptionNonBreakpointUnhandledShow(LPEXCEPTION_POINTERS e)
 	return false;
 }
 
-// Returns weither the given address is part of an Xbox managed memory region
+// Returns whether the given address is part of an Xbox managed memory region
 bool IsXboxCodeAddress(xbox::addr_xt addr)
 {
-	// TODO : Replace the following with a (fast) check weither
+	// TODO : Replace the following with a (fast) check whether
 	// the given address lies in xbox allocated virtual memory,
 	// for example by g_VMManager.CheckConflictingVMA(addr, 0).
 	return (addr >= XBE_IMAGE_BASE) && (addr <= XBE_MAX_VA);
