@@ -144,6 +144,25 @@ xbox::LIST_ENTRY KiWaitInListHead;
 std::mutex xbox::KiApcListMtx;
 
 
+// Invoke all buffered timer DPC entries and reset the call count to zero.
+template<typename UInt, typename ULargeInt>
+static void KiFlushDpcBuffer(
+	xbox::DPC_QUEUE_ENTRY *DpcEntry,
+	UInt &DpcCalls,
+	const ULargeInt &SystemTime
+)
+{
+	for (UInt d = 0; DpcCalls; DpcCalls--, d++)
+	{
+		DpcEntry[d].Routine(
+			DpcEntry[d].Dpc,
+			DpcEntry[d].Context,
+			UlongToPtr(SystemTime.u.LowPart),
+			UlongToPtr(SystemTime.u.HighPart)
+		);
+	}
+}
+
 xbox::void_xt xbox::KiInitSystem()
 {
 	KiUniqueProcess.StackCount = 0;
@@ -682,16 +701,7 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 					/* If the buffer is full, flush it before adding */
 					if (DpcCalls >= MAX_TIMER_DPCS) {
 						KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
-
-						for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
-						{
-							DpcEntry[d].Routine(
-								DpcEntry[d].Dpc,
-								DpcEntry[d].Context,
-								UlongToPtr(SystemTime.u.LowPart),
-								UlongToPtr(SystemTime.u.HighPart)
-							);
-						}
+						KiFlushDpcBuffer(DpcEntry, DpcCalls, SystemTime);
 
 						Timers = TIMER_SCAN_LIMIT;
 						ActiveTimers = ACTIVE_TIMER_LIMIT;
@@ -710,21 +720,7 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 				{
 					/* Release the dispatcher while doing DPCs */
 					KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
-
-					/* Start looping all DPC Entries */
-					for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
-					{
-						/* Call the DPC */
-						EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[d].Routine);
-
-						// Call the Deferred Procedure  :
-						DpcEntry[d].Routine(
-							DpcEntry[d].Dpc,
-							DpcEntry[d].Context,
-							UlongToPtr(SystemTime.u.LowPart),
-							UlongToPtr(SystemTime.u.HighPart)
-						);
-					}
+					KiFlushDpcBuffer(DpcEntry, DpcCalls, SystemTime);
 
 					/* Reset accounting */
 					Timers = TIMER_SCAN_LIMIT;
@@ -753,21 +749,7 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 				{
 					/* Release the dispatcher while doing DPCs */
 					KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
-
-					/* Start looping all DPC Entries */
-					for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
-					{
-						/* Call the DPC */
-						EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[d].Routine);
-
-						// Call the Deferred Procedure  :
-						DpcEntry[d].Routine(
-							DpcEntry[d].Dpc,
-							DpcEntry[d].Context,
-							UlongToPtr(SystemTime.u.LowPart),
-							UlongToPtr(SystemTime.u.HighPart)
-						);
-					}
+					KiFlushDpcBuffer(DpcEntry, DpcCalls, SystemTime);
 
 					/* Reset accounting */
 					Timers = TIMER_SCAN_LIMIT;
@@ -793,21 +775,7 @@ xbox::void_xt NTAPI xbox::KiTimerExpiration
 	{
 		/* Release the dispatcher while doing DPCs */
 		KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
-
-		/* Start looping all DPC Entries */
-		for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
-		{
-			/* Call the DPC */
-			EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[d].Routine);
-
-			// Call the Deferred Procedure  :
-			DpcEntry[d].Routine(
-				DpcEntry[d].Dpc,
-				DpcEntry[d].Context,
-				UlongToPtr(SystemTime.u.LowPart),
-				UlongToPtr(SystemTime.u.HighPart)
-			);
-		}
+		KiFlushDpcBuffer(DpcEntry, DpcCalls, SystemTime);
 
 		KiTimerUnlock();
 		/* Lower IRQL if we need to */
@@ -899,21 +867,7 @@ xbox::void_xt FASTCALL xbox::KiTimerListExpire
 	{
 		/* Release the dispatcher while doing DPCs */
 		KiUnlockDispatcherDatabase(DISPATCH_LEVEL);
-
-		/* Start looping all DPC Entries */
-		for (ULONG d = 0; DpcCalls; DpcCalls--, d++)
-		{
-			/* Call the DPC */
-			EmuLog(LOG_LEVEL::DEBUG, "%s, calling DPC at 0x%.8X", __func__, DpcEntry[d].Routine);
-
-			// Call the Deferred Procedure  :
-			DpcEntry[d].Routine(
-				DpcEntry[d].Dpc,
-				DpcEntry[d].Context,
-				UlongToPtr(SystemTime.u.LowPart),
-				UlongToPtr(SystemTime.u.HighPart)
-			);
-		}
+		KiFlushDpcBuffer(DpcEntry, DpcCalls, SystemTime);
 
 		/* Lower IRQL */
 		KfLowerIrql(OldIrql);
