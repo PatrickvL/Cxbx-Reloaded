@@ -82,7 +82,7 @@ xbox::boolean_xt RtlpCaptureStackLimits(
 	else {
 		/* We're somewhere else entirely... use EBP for safety */
 		*StackBegin = Ebp;
-		*StackEnd = PAGE_ALIGN(*StackBegin);
+		*StackEnd = PAGE_ALIGN(*StackBegin) + PAGE_SIZE;
 	}
 
 	/* Return success */
@@ -359,7 +359,7 @@ XBSYSAPI EXPORTNUM(266) xbox::ushort_xt NTAPI xbox::RtlCaptureStackBackTrace
 	}
 
 	/* Clear the other entries and return count */
-	RtlFillMemoryUlong(Frames, 128, 0);
+	RtlFillMemoryUlong(Frames, sizeof(Frames), 0);
 
 	RETURN(i);
 }
@@ -768,20 +768,18 @@ XBSYSAPI EXPORTNUM(277) xbox::void_xt NTAPI xbox::RtlEnterCriticalSection
     }
     else {
         if(CriticalSection->OwningThread != thread) {
-			if (CriticalSection->OwningThread != nullptr) {
-				NTSTATUS result;
-				result = KeWaitForSingleObject(
-					(PVOID)CriticalSection,
-					(KWAIT_REASON)0,
-					(KPROCESSOR_MODE)0,
-					(boolean_xt)0,
-					(PLARGE_INTEGER)0
-				);
-				if (!X_NT_SUCCESS(result))
-				{
-					CxbxrAbort("Waiting for event of a critical section returned %lx.", result);
-				};
-			}
+			NTSTATUS result;
+			result = KeWaitForSingleObject(
+				(PVOID)CriticalSection,
+				(KWAIT_REASON)0,
+				(KPROCESSOR_MODE)0,
+				(boolean_xt)0,
+				(PLARGE_INTEGER)0
+			);
+			if (!X_NT_SUCCESS(result))
+			{
+				CxbxrAbort("Waiting for event of a critical section returned %lx.", result);
+			};
             CriticalSection->OwningThread = thread;
             CriticalSection->RecursionCount = 1;
         }
@@ -1349,9 +1347,9 @@ XBSYSAPI EXPORTNUM(295) xbox::void_xt NTAPI xbox::RtlLeaveCriticalSectionAndRegi
 
     RtlLeaveCriticalSection(CriticalSection);
 
-	if (CriticalSection->RecursionCount == 0) {
-		KeLeaveCriticalRegion();
-	}
+	// KeLeaveCriticalRegion must be called unconditionally to pair 1:1
+	// with KeLeaveCriticalRegion in RtlEnterCriticalSectionAndRegion.
+	KeLeaveCriticalRegion();
 }
 
 // ******************************************************************
@@ -1977,7 +1975,7 @@ XBSYSAPI EXPORTNUM(310) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeToMultiByteN
 	}
 
 	while (numChars) {
-		*MultiByteString = (*UnicodeString < 0xff) ? (CHAR)(*UnicodeString) : '?';
+		*MultiByteString = (*UnicodeString < 0x100) ? (CHAR)(*UnicodeString) : '?';
 
 		UnicodeString++;
 		MultiByteString++;
@@ -2003,7 +2001,7 @@ XBSYSAPI EXPORTNUM(311) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeToMultiByteSize
 		LOG_FUNC_ARG(BytesInUnicodeString)
 		LOG_FUNC_END;
 
-	*BytesInMultiByteString = BytesInUnicodeString * sizeof(WCHAR);
+	*BytesInMultiByteString = BytesInUnicodeString / sizeof(WCHAR);
 
 	RETURN(X_STATUS_SUCCESS);
 }
