@@ -85,8 +85,8 @@ static xbox::KIRQL ObLock()
 
 static void ObUnlock(xbox::KIRQL OldIrql)
 {
-	g_ObMtx.unlock();
 	xbox::KfLowerIrql(OldIrql);
+	g_ObMtx.unlock();
 }
 
 xbox::boolean_xt xbox::ObpCreatePermanentDirectoryObject(

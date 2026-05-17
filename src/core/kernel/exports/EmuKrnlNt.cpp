@@ -1980,9 +1980,11 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	if (Event != nullptr) {
 		PVOID EventObject;
 		ntstatus_xt evResult = ObReferenceObjectByHandle(Event, &ExEventObjectType, &EventObject);
-		if (X_NT_SUCCESS(evResult)) {
-			XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
+		if (!X_NT_SUCCESS(evResult)) {
+			ObfDereferenceObject(FileObject);
+			RETURN(evResult);
 		}
+		XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
 	}
 
 	// Save the original APC routine/context before we potentially clear them
@@ -3057,9 +3059,11 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	if (Event != nullptr) {
 		PVOID EventObject;
 		ntstatus_xt evResult = ObReferenceObjectByHandle(Event, &ExEventObjectType, &EventObject);
-		if (X_NT_SUCCESS(evResult)) {
-			XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
+		if (!X_NT_SUCCESS(evResult)) {
+			ObfDereferenceObject(FileObject);
+			RETURN(evResult);
 		}
+		XboxEvent = reinterpret_cast<PKEVENT>(EventObject);
 	}
 
 	// Save the original APC routine/context
