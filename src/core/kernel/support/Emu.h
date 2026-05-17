@@ -54,6 +54,13 @@ extern class ExceptionManager* g_ExceptionManager;
 // print call stack trace
 void EmuPrintStackTrace(PCONTEXT ContextRecord);
 
+// Dump stack traces for all threads (hang diagnostics)
+void EmuDumpAllThreadStacks(const char* reason);
+
+// Present stall detection
+void EmuPresentTick();          // Call after every successful present
+void EmuCheckPresentStall(uint64_t stallThresholdMs = 5000);
+
 // global flags specifying current emulation state
 extern volatile thread_local bool g_bEmuException;
 

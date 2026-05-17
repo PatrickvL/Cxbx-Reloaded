@@ -1438,6 +1438,10 @@ static void CxbxrKrnlInitHacks()
 				}
 			}
 		} while (more_work);
+
+		// Check for present stalls — if no present has arrived in 5 seconds,
+		// dump all thread stacks to diagnose what's blocking progress.
+		EmuCheckPresentStall(5000);
 	}
 }
 

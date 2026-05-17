@@ -40,9 +40,16 @@
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
 
 #include <Dbghelp.h>
+#include <TlHelp32.h>
+#include <atomic>
+#include <chrono>
 #ifdef _DEBUG
 CRITICAL_SECTION dbgCritical;
 #endif
+
+// Present stall detection
+std::atomic<uint64_t> g_LastPresentTick{0};
+static std::atomic<bool> g_PresentStallDumped{false};
 
 // Global Variable(s)
 volatile thread_local  bool    g_bEmuException = false;
@@ -523,4 +530,146 @@ void EmuPrintStackTrace(PCONTEXT ContextRecord)
         SymCleanup(g_CurrentProcessHandle);
 
     // LeaveCriticalSection(&dbgCritical);
+}
+
+// Dump stack traces for all threads in the current process.
+// Used to diagnose hangs when presents stop arriving.
+void EmuDumpAllThreadStacks(const char* reason)
+{
+    static int const STACK_MAX     = 32;
+    static int const SYMBOL_MAXLEN = 256;
+
+    DWORD currentPid = GetCurrentProcessId();
+    DWORD currentTid = GetCurrentThreadId();
+
+    printf("\n======================================================\n");
+    printf("PRESENT STALL DETECTED: %s\n", reason);
+    printf("Dumping all thread stacks (PID=%lu, reporter TID=%lu)\n", currentPid, currentTid);
+    printf("======================================================\n");
+
+    // Build symbol search path
+    char symPath[MAX_PATH * 2] = {};
+    GetModuleFileNameA(NULL, symPath, MAX_PATH);
+    char* lastSlash = strrchr(symPath, '\\');
+    if (lastSlash) *lastSlash = '\0';
+
+    BOOL fSymInitialized = SymInitialize(g_CurrentProcessHandle, symPath, TRUE);
+
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE) {
+        printf("  Failed to create thread snapshot (error=%lu)\n", GetLastError());
+        if (fSymInitialized) SymCleanup(g_CurrentProcessHandle);
+        return;
+    }
+
+    THREADENTRY32 te = { sizeof(THREADENTRY32) };
+    if (Thread32First(hSnapshot, &te)) {
+        do {
+            if (te.th32OwnerProcessID != currentPid) continue;
+
+            HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                                        FALSE, te.th32ThreadID);
+            if (!hThread) continue;
+
+            printf("\n--- Thread %lu %s---\n", te.th32ThreadID,
+                   (te.th32ThreadID == currentTid) ? "(reporter) " : "");
+
+            if (te.th32ThreadID == currentTid) {
+                // Can't suspend ourselves; capture our own context
+                CONTEXT ctx = {};
+                ctx.ContextFlags = CONTEXT_FULL;
+                RtlCaptureContext(&ctx);
+                EmuPrintStackTrace(&ctx);
+            } else {
+                DWORD suspendCount = SuspendThread(hThread);
+                if (suspendCount == (DWORD)-1) {
+                    printf("  Failed to suspend (error=%lu)\n", GetLastError());
+                    CloseHandle(hThread);
+                    continue;
+                }
+
+                CONTEXT ctx = {};
+                ctx.ContextFlags = CONTEXT_FULL;
+                if (GetThreadContext(hThread, &ctx)) {
+                    // Print register state
+                    printf("  EIP=0x%08lX ESP=0x%08lX EBP=0x%08lX\n",
+                           ctx.Eip, ctx.Esp, ctx.Ebp);
+
+                    // Walk stack
+                    STACKFRAME64 frame = {};
+                    frame.AddrPC.Offset    = ctx.Eip;
+                    frame.AddrPC.Mode      = AddrModeFlat;
+                    frame.AddrFrame.Offset = ctx.Ebp;
+                    frame.AddrFrame.Mode   = AddrModeFlat;
+                    frame.AddrStack.Offset = ctx.Esp;
+                    frame.AddrStack.Mode   = AddrModeFlat;
+
+                    for (int i = 0; i < STACK_MAX; i++) {
+                        if (!StackWalk64(IMAGE_FILE_MACHINE_I386,
+                                        g_CurrentProcessHandle, hThread,
+                                        &frame, &ctx, NULL,
+                                        SymFunctionTableAccess64,
+                                        SymGetModuleBase64, NULL))
+                            break;
+
+                        IMAGEHLP_MODULE64 module = { sizeof(IMAGEHLP_MODULE) };
+                        SymGetModuleInfo64(g_CurrentProcessHandle, frame.AddrPC.Offset, &module);
+                        if (module.ModuleName)
+                            printf("  %2d: %-8s 0x%.08llX", i, module.ModuleName, frame.AddrPC.Offset);
+                        else
+                            printf("  %2d: %8c 0x%.08llX", i, ' ', frame.AddrPC.Offset);
+
+                        BYTE symbol[sizeof(SYMBOL_INFO) + SYMBOL_MAXLEN] = {};
+                        PSYMBOL_INFO pSymbol = (PSYMBOL_INFO)symbol;
+                        pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+                        pSymbol->MaxNameLen = SYMBOL_MAXLEN;
+                        DWORD64 dwDisplacement = 0;
+                        if (fSymInitialized && SymFromAddr(g_CurrentProcessHandle,
+                                                           frame.AddrPC.Offset, &dwDisplacement, pSymbol)) {
+                            printf(" %s+0x%.04llX", pSymbol->Name, dwDisplacement);
+                        }
+                        printf("\n");
+                    }
+                } else {
+                    printf("  Failed to get context (error=%lu)\n", GetLastError());
+                }
+
+                ResumeThread(hThread);
+            }
+
+            CloseHandle(hThread);
+        } while (Thread32Next(hSnapshot, &te));
+    }
+
+    CloseHandle(hSnapshot);
+    if (fSymInitialized) SymCleanup(g_CurrentProcessHandle);
+
+    printf("======================================================\n\n");
+    fflush(stdout);
+}
+
+void EmuPresentTick()
+{
+    g_LastPresentTick.store(GetTickCount64(), std::memory_order_relaxed);
+    g_PresentStallDumped.store(false, std::memory_order_relaxed);
+}
+
+void EmuCheckPresentStall(uint64_t stallThresholdMs)
+{
+    uint64_t lastTick = g_LastPresentTick.load(std::memory_order_relaxed);
+    if (lastTick == 0) return; // No present has happened yet
+
+    uint64_t now = GetTickCount64();
+    uint64_t elapsed = now - lastTick;
+    if (elapsed > stallThresholdMs) {
+        // Only dump once per stall episode
+        bool expected = false;
+        if (g_PresentStallDumped.compare_exchange_strong(expected, true)) {
+            char reason[128];
+            snprintf(reason, sizeof(reason),
+                     "No present for %.1f seconds (threshold=%.1fs)",
+                     elapsed / 1000.0, stallThresholdMs / 1000.0);
+            EmuDumpAllThreadStacks(reason);
+        }
+    }
 }
