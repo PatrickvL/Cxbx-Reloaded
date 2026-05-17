@@ -39,8 +39,8 @@
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
 
-#ifdef _DEBUG
 #include <Dbghelp.h>
+#ifdef _DEBUG
 CRITICAL_SECTION dbgCritical;
 #endif
 
@@ -93,10 +93,8 @@ void EmuExceptionPrintDebugInformation(LPEXCEPTION_POINTERS e, bool IsBreakpoint
 			e->ContextRecord->Esi, e->ContextRecord->Edi, e->ContextRecord->Esp, e->ContextRecord->Ebp,
 			e->ContextRecord->Dr2);
 
-#ifdef _DEBUG
 		CONTEXT Context = *(e->ContextRecord);
 		EmuPrintStackTrace(&Context);
-#endif
 	}
 
 	fflush(stdout);
@@ -294,10 +292,24 @@ bool EmuTryHandleException(EXCEPTION_POINTERS *e)
 		return genericException(e);
 	}
 
-	// Do not handle exceptions from non-Xbox code (e.g. D3D11 internal guard
-	// page faults). Let those propagate to the system/runtime SEH handlers.
+	// For access violations in our own emulator code (non-Xbox), dump a stack
+	// trace so crashes are diagnosable, then let the process terminate.
 	if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION
 		&& !IsXboxCodeAddress(e->ContextRecord->Eip)) {
+		printf("\n[0x%.4X] FATAL: Access violation in emulator code at EIP=0x%.08X\n",
+			GetCurrentThreadId(), e->ContextRecord->Eip);
+		printf("  Fault address: 0x%.08X (%s)\n",
+			(DWORD)e->ExceptionRecord->ExceptionInformation[1],
+			e->ExceptionRecord->ExceptionInformation[0] ? "write" : "read");
+		printf("  EAX=0x%.08X EBX=0x%.08X ECX=0x%.08X EDX=0x%.08X\n",
+			e->ContextRecord->Eax, e->ContextRecord->Ebx,
+			e->ContextRecord->Ecx, e->ContextRecord->Edx);
+		printf("  ESI=0x%.08X EDI=0x%.08X ESP=0x%.08X EBP=0x%.08X\n",
+			e->ContextRecord->Esi, e->ContextRecord->Edi,
+			e->ContextRecord->Esp, e->ContextRecord->Ebp);
+		CONTEXT ctx = *(e->ContextRecord);
+		EmuPrintStackTrace(&ctx);
+		fflush(stdout);
 		return false;
 	}
 
@@ -428,19 +440,24 @@ bool ExceptionManager::AddVEH(unsigned long first, PVECTORED_EXCEPTION_HANDLER v
 	return isSuccess;
 }
 
-#ifdef _DEBUG
 // print call stack trace
 void EmuPrintStackTrace(PCONTEXT ContextRecord)
 {
-    static int const STACK_MAX     = 16;
-    static int const SYMBOL_MAXLEN = 64;
+    static int const STACK_MAX     = 32;
+    static int const SYMBOL_MAXLEN = 256;
 
 	// TODO: Figure out why this causes a loop of Exceptions until the process dies
     //EnterCriticalSection(&dbgCritical);
 
     IMAGEHLP_MODULE64 module = { sizeof(IMAGEHLP_MODULE) };
 
-    BOOL fSymInitialized = SymInitialize(g_CurrentProcessHandle, NULL, TRUE);
+    // Build a symbol search path that includes the executable's directory
+    char symPath[MAX_PATH * 2] = {};
+    GetModuleFileNameA(NULL, symPath, MAX_PATH);
+    char* lastSlash = strrchr(symPath, '\\');
+    if (lastSlash) *lastSlash = '\0';
+
+    BOOL fSymInitialized = SymInitialize(g_CurrentProcessHandle, symPath, TRUE);
 
     STACKFRAME64 frame = { sizeof(STACKFRAME64) };
     frame.AddrPC.Offset    = ContextRecord->Eip;
@@ -477,7 +494,7 @@ void EmuPrintStackTrace(PCONTEXT ContextRecord)
 		if (fSymInitialized)
 		{
 			PSYMBOL_INFO pSymbol = (PSYMBOL_INFO)&symbol;
-			pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO) + SYMBOL_MAXLEN - 1;
+			pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
 			pSymbol->MaxNameLen = SYMBOL_MAXLEN;
 			if (SymFromAddr(g_CurrentProcessHandle, frame.AddrPC.Offset, &dwDisplacement, pSymbol))
 				symbolName = pSymbol->Name;
@@ -507,4 +524,3 @@ void EmuPrintStackTrace(PCONTEXT ContextRecord)
 
     // LeaveCriticalSection(&dbgCritical);
 }
-#endif
