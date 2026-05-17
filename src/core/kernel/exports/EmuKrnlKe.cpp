@@ -2721,17 +2721,15 @@ XBSYSAPI EXPORTNUM(158) xbox::ntstatus_xt NTAPI xbox::KeWaitForMultipleObjects
 				Timer->Header.WaitListHead.Blink = &WaitTimer->WaitListEntry;
 				WaitTimer->WaitListEntry.Flink = &Timer->Header.WaitListHead;
 				WaitTimer->WaitListEntry.Blink = &Timer->Header.WaitListHead;
-				WaitTimer->NextWaitBlock = WaitBlock;
+				WaitTimer->NextWaitBlock = &WaitBlockArray[0];
 				WaitTimer->Thread = Thread;
 				WaitTimer->Object = Timer;
 				WaitTimer->WaitKey = (cshort_xt)X_STATUS_TIMEOUT;
 				WaitTimer->WaitType = WaitAny;
 			}
 			else {
-				WaitBlock->NextWaitBlock = WaitBlock;
+				WaitBlock->NextWaitBlock = &WaitBlockArray[0];
 			}
-
-			WaitBlock->NextWaitBlock = &WaitBlockArray[0];
 
 			// If the current thread is processing a queue object, wake other treads using the same queue
 			PRKQUEUE Queue = (PRKQUEUE)Thread->Queue;
