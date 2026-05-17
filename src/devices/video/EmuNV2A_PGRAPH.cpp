@@ -223,6 +223,7 @@ static void pgraph_rdi_write(PGRAPHState *pg,
             if (pg->xf.xfctx[idx][slot] != val) {
                 pg->xf.xfctx[idx][slot] = val;
                 pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+                pg->xf.xfctx_generation++;
             }
         }
         break;

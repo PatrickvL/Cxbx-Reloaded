@@ -523,8 +523,10 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 
 		if (slot != old_val) {
 			// Per-constant dirty tracking for xfctx; global dirty flag for xfpr
-			if (target == NV097_TARGET_XFCTX_INDIRECT)
+			if (target == NV097_TARGET_XFCTX_INDIRECT) {
 				pg->xf.xfctx_dirty[load_ptr / 32] |= (1u << (load_ptr % 32));
+				pg->xf.xfctx_generation++;
+			}
 			if (entry.dirty_group)
 				pg->dirty[entry.dirty_group]++;
 		}
@@ -598,6 +600,8 @@ static inline uint32_t nv097_dispatch_method(PGRAPHState *pg, unsigned int metho
 		if (row_dirty) {
 			unsigned row_idx = entry.reg_index / 4;
 			row_dirty[row_idx / 32] |= (1u << (row_idx % 32));
+			if (target == NV097_TARGET_XFCTX)
+				pg->xf.xfctx_generation++;
 		}
 		if (dirty_group)
 			pg->dirty[dirty_group]++;

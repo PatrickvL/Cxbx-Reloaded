@@ -263,6 +263,7 @@ typedef struct CheopsState {
 	// matrices, viewport params, eye position, etc.
 	uint32_t xfctx[NV2A_VERTEXSHADER_CONSTANTS][4];
 	uint32_t xfctx_dirty[6]; // Bitmap: 192 bits across 6 words
+	uint32_t xfctx_generation; // Monotonic counter: incremented on every xfctx write
 
 	// LTCTXA: Lighting Context A (26 × float4) — fog, ambient, material color,
 	// per-light attenuation/spot params

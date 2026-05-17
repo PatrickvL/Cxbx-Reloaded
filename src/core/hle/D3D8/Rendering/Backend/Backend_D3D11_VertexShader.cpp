@@ -313,9 +313,11 @@ void D3D11_launch_transform_program(NV2AState *d, unsigned int program_start)
 				if (step->mac.outputs[0].type == NV2ART_CONTEXT) {
 					unsigned idx = step->mac.outputs[0].index;
 					pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+					pg->xf.xfctx_generation++;
 				} else if (step->mac.outputs[1].type == NV2ART_CONTEXT) {
 					unsigned idx = step->mac.outputs[1].index;
 					pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+					pg->xf.xfctx_generation++;
 				}
 			}
 			// Track context register writes from ILU unit
@@ -323,9 +325,11 @@ void D3D11_launch_transform_program(NV2AState *d, unsigned int program_start)
 				if (step->ilu.outputs[0].type == NV2ART_CONTEXT) {
 					unsigned idx = step->ilu.outputs[0].index;
 					pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+					pg->xf.xfctx_generation++;
 				} else if (step->ilu.outputs[1].type == NV2ART_CONTEXT) {
 					unsigned idx = step->ilu.outputs[1].index;
 					pg->xf.xfctx_dirty[idx / 32] |= (1u << (idx % 32));
+					pg->xf.xfctx_generation++;
 				}
 			}
 			if (step->is_final) break;

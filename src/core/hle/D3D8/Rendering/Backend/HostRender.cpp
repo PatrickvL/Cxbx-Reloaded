@@ -1143,23 +1143,19 @@ void UpdateFixedFunctionVertexShaderState()
 	// Also re-uploads unconditionally after a VP draw overwrites the shared cbuffer.
 	static uint32_t s_lastPgraphGen = UINT32_MAX;
 	static uint32_t s_lastLightingGen = UINT32_MAX;
-	static uint32_t s_lastXfctxDirtySum = UINT32_MAX;
+	static uint32_t s_lastXfctxGen = UINT32_MAX;
 	static uint32_t s_lastAttrGen = UINT32_MAX;
-
-	uint32_t xfctxDirtySum = pg->xf.xfctx_dirty[0] | pg->xf.xfctx_dirty[1]
-	                        | pg->xf.xfctx_dirty[2] | pg->xf.xfctx_dirty[3]
-	                        | pg->xf.xfctx_dirty[4] | pg->xf.xfctx_dirty[5];
 
 	if (s_ffStateUploadValid
 		&& pg->dirty[NV2A_DIRTY_PGRAPH] == s_lastPgraphGen
 		&& pg->dirty[NV2A_DIRTY_LIGHTING] == s_lastLightingGen
-		&& xfctxDirtySum == s_lastXfctxDirtySum
+		&& pg->xf.xfctx_generation == s_lastXfctxGen
 		&& pg->vertex_attributes_generation == s_lastAttrGen)
 		return;
 
 	s_lastPgraphGen = pg->dirty[NV2A_DIRTY_PGRAPH];
 	s_lastLightingGen = pg->dirty[NV2A_DIRTY_LIGHTING];
-	s_lastXfctxDirtySum = xfctxDirtySum;
+	s_lastXfctxGen = pg->xf.xfctx_generation;
 	s_lastAttrGen = pg->vertex_attributes_generation;
 	s_ffStateUploadValid = true;
 
