@@ -187,31 +187,6 @@ static unsigned int kelvin_map_stencil_op(uint32_t parameter);
 static unsigned int kelvin_map_polygon_mode(uint32_t parameter);
 static unsigned int kelvin_map_texgen(uint32_t parameter, unsigned int channel);
 
-// Flush any deferred draw_arrays squash.  Called at the end of method
-// processing loops and when a non-compatible method interrupts a squash.
-static void pgraph_flush_draw_arrays_squash(NV2AState *d)
-{
-    PGRAPHState *pg = &d->pgraph;
-    if (!pg->draw_arrays_squash_pending) return;
-    pg->draw_arrays_squash_pending = false;
-    if (pg->draw_arrays_length) {
-        if (g_pgraph_backend.draw != nullptr) {
-            g_pgraph_backend.draw(d);
-        }
-        if (g_pgraph_backend.zpass_end != nullptr) {
-            g_pgraph_backend.zpass_end(d);
-        }
-        uint32_t control_0 = pg->regs[RI(NV_PGRAPH_CONTROL_0)];
-        uint32_t control_1 = pg->regs[RI(NV_PGRAPH_CONTROL_1)];
-        bool depth_test = control_0 & NV_PGRAPH_CONTROL_0_ZENABLE;
-        bool stencil_test = control_1 & NV_PGRAPH_CONTROL_1_STENCIL_TEST_ENABLE;
-        pgraph_set_surface_dirty(pg, true, depth_test || stencil_test);
-        pg->draw_arrays_length = 0;
-        pg->draw_arrays_max_count = 0;
-    }
-    pg->draw_arrays_prevent_connect = false;
-}
-
 /* PGRAPH - accelerated 2d/3d drawing engine */
 
 static uint32_t pgraph_rdi_read(PGRAPHState *pg,
@@ -453,13 +428,6 @@ void pgraph_handle_method(NV2AState *d,
     }
 
     /* ugly switch for now */
-
-    // Flush deferred draw_arrays if a non-Kelvin method arrives (e.g. 2D blit
-    // that might read from the render target). Kelvin handles its own squash.
-    if (pg->draw_arrays_squash_pending && graphics_class != NV_KELVIN_PRIMITIVE) {
-        pgraph_flush_draw_arrays_squash(d);
-    }
-
     switch (graphics_class) {
 
     case NV_CONTEXT_PATTERN: {
@@ -594,22 +562,6 @@ void pgraph_handle_method(NV2AState *d,
 	}
 
 	case NV_KELVIN_PRIMITIVE: {
-		// Cross-bracket draw_arrays squash: if a previous END deferred its draw,
-		// check whether the current method continues with a compatible BEGIN.
-		if (pg->draw_arrays_squash_pending) {
-			if (method == NV097_SET_BEGIN_END
-				&& parameter != NV097_SET_BEGIN_END_OP_END
-				&& parameter == pg->primitive_mode
-				&& pg->draw_arrays_length < (ARRAY_SIZE(pg->draw_arrays_start) - 1)) {
-				// Same primitive BEGIN after deferred END — continue accumulating
-				pg->draw_arrays_squash_pending = false;
-				pg->draw_arrays_prevent_connect = true;
-				break;
-			}
-			// Non-matching method — flush the deferred draw before proceeding
-			pgraph_flush_draw_arrays_squash(d);
-		}
-
 		// Data-driven dispatch: handles reg copies and masked writes for all
 		// table-registered methods. Returns old register value before overwrite.
 		uint32_t old_reg = nv097_dispatch_method(pg, method, parameter);
@@ -1385,12 +1337,6 @@ void pgraph_handle_method(NV2AState *d,
 					assert(pg->inline_buffer_length == 0);
 					assert(pg->inline_array_length == 0);
 					assert(pg->inline_elements_length == 0);
-					// Defer the draw for potential cross-bracket squashing:
-					// if the next method is BEGIN with the same primitive type,
-					// we'll continue accumulating into the same batch.
-					pg->draw_arrays_squash_pending = true;
-					pgraph_set_surface_dirty(pg, true, depth_test || stencil_test);
-					break;
 				} else if (pg->inline_buffer_length) {
 					NV2A_DPRINTF_IF(false, "Inline Buffer");
 					assert(pg->draw_arrays_length == 0);

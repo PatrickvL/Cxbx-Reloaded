@@ -195,7 +195,6 @@ static void pfifo_run_puller(NV2AState *d)
 
     }
 
-    pgraph_flush_draw_arrays_squash(d);
     qemu_mutex_unlock(&d->pgraph.pgraph_lock);
 }
 
@@ -327,6 +326,31 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
                 } else {
                     pgraph_handle_method(d, state.subc, method, word);
                 }
+
+                // Squash repeated BEGIN/DRAW_ARRAYS/END (xemu approach):
+                // peek ahead for END, BEGIN(same_mode), DRAW_ARRAYS pattern.
+                if (method == NV097_DRAW_ARRAYS && state.mcnt == 1) {
+                    PGRAPHState *pg = &d->pgraph;
+                    ptrdiff_t remaining_words = dma_put - dma_get;
+                    if (remaining_words >= 6 &&
+                        pg->inline_elements_length == 0 &&
+                        pg->draw_arrays_length > 0 &&
+                        pg->draw_arrays_length < (ARRAY_SIZE(pg->draw_arrays_start) - 1)) {
+                        uint32_t w0 = dma_get[0];  // expected: END header
+                        uint32_t w1 = dma_get[1];  // expected: END param (0)
+                        uint32_t w2 = dma_get[2];  // expected: BEGIN header
+                        uint32_t w3 = dma_get[3];  // expected: BEGIN param (primitive_mode)
+                        uint32_t w4 = dma_get[4];  // expected: DRAW_ARRAYS header
+                        if ((w0 & 0x1FFC) == NV097_SET_BEGIN_END &&
+                            w1 == NV097_SET_BEGIN_END_OP_END &&
+                            (w2 & 0x1FFC) == NV097_SET_BEGIN_END &&
+                            w3 == pg->primitive_mode &&
+                            (w4 & 0x1FFC) == NV097_DRAW_ARRAYS) {
+                            dma_get += 4;  // skip END hdr+param, BEGIN hdr+param
+                            pg->draw_arrays_prevent_connect = true;
+                        }
+                    }
+                }
             }
 
             if (!state.ni)
@@ -379,7 +403,6 @@ void pfifo_submit_pushbuffer(NV2AState *d, void *pPushData, uint32_t uSizeInByte
     }
 
 done:
-    pgraph_flush_draw_arrays_squash(d);
     qemu_mutex_unlock(&d->pgraph.pgraph_lock);
     CxbxSetPullerContext(false);
 }
@@ -555,6 +578,39 @@ static void pfifo_run_pusher(NV2AState *d)
                 pgraph_handle_method(d, method_subchannel, method, word);
             }
 
+            // Squash repeated BEGIN/DRAW_ARRAYS/END sequences (xemu approach):
+            // After the last data word of a DRAW_ARRAYS command, peek ahead in
+            // the DMA pushbuffer for the exact pattern END, BEGIN(same_mode),
+            // DRAW_ARRAYS.  If found, skip the END/BEGIN pair so the next
+            // DRAW_ARRAYS accumulates into the same batch.  Any intervening
+            // method (texture switch, render target change, etc.) breaks the
+            // pattern and prevents incorrect cross-state merging.
+            if (method == NV097_DRAW_ARRAYS && method_count == 1) {
+                PGRAPHState *pg = &d->pgraph;
+                uint32_t dma_put_v = *dma_put;
+                uint32_t remaining = (dma_put_v > dma_get_v) ? (dma_put_v - dma_get_v) : 0;
+                if (remaining >= 24 &&  // 6 words: END hdr+param, BEGIN hdr+param, DA hdr+param
+                    pg->inline_elements_length == 0 &&
+                    pg->draw_arrays_length > 0 &&
+                    pg->draw_arrays_length < (ARRAY_SIZE(pg->draw_arrays_start) - 1)) {
+                    uint32_t *peek = (uint32_t*)(dma + dma_get_v);
+                    uint32_t w0 = ldl_le_p(&peek[0]);  // expected: END header
+                    uint32_t w1 = ldl_le_p(&peek[1]);  // expected: END param (0)
+                    uint32_t w2 = ldl_le_p(&peek[2]);  // expected: BEGIN header
+                    uint32_t w3 = ldl_le_p(&peek[3]);  // expected: BEGIN param (primitive_mode)
+                    uint32_t w4 = ldl_le_p(&peek[4]);  // expected: DRAW_ARRAYS header
+                    if ((w0 & 0x1FFC) == NV097_SET_BEGIN_END &&
+                        w1 == NV097_SET_BEGIN_END_OP_END &&
+                        (w2 & 0x1FFC) == NV097_SET_BEGIN_END &&
+                        w3 == pg->primitive_mode &&
+                        (w4 & 0x1FFC) == NV097_DRAW_ARRAYS) {
+                        // Skip END header+param and BEGIN header+param (4 words)
+                        dma_get_v += 16;
+                        pg->draw_arrays_prevent_connect = true;
+                    }
+                }
+            }
+
             if (method_type == NV_PFIFO_CACHE1_DMA_STATE_METHOD_TYPE_INC) {
                 SET_MASK(*dma_state, NV_PFIFO_CACHE1_DMA_STATE_METHOD,
                          (method + 4) >> 2);
@@ -642,9 +698,6 @@ static void pfifo_run_pusher(NV2AState *d)
             break;
         }
     }
-
-    // Flush any deferred draw_arrays squash before releasing pgraph_lock.
-    pgraph_flush_draw_arrays_squash(d);
 
     // Release the batched pgraph_lock acquired before the loop.
     qemu_mutex_unlock(&d->pgraph.pgraph_lock);
