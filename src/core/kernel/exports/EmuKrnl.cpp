@@ -169,7 +169,7 @@ void CallSoftwareInterrupt(const xbox::KIRQL SoftwareIrql)
 	default:
 		// Software Interrupts > 3 map to Hardware Interrupts [4 = IRQ0]
 		// This is used to trigger hardware interrupt routines from software
-		if (EmuInterruptList[SoftwareIrql - 4]->Connected) {
+		if (EmuInterruptList[SoftwareIrql - 4] && EmuInterruptList[SoftwareIrql - 4]->Connected) {
 			HalSystemInterrupts[SoftwareIrql - 4].Trigger(EmuInterruptList[SoftwareIrql - 4]);
 		}
 		break;
