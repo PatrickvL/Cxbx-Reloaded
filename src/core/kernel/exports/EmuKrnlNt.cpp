@@ -1151,6 +1151,11 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 	PIO_COMPLETION_CONTEXT CompletionContext = FileObject->CompletionContext;
 
 	const auto& nFileHandle = GetObjectNativeHandle(FileObject);
+	if (!nFileHandle) {
+		if (EventObject) { ObfDereferenceObject(EventObject); }
+		ObfDereferenceObject(FileObject);
+		RETURN(X_STATUS_INVALID_HANDLE);
+	}
 
 	NtDll::UNICODE_STRING NtFileMask;
 
@@ -1160,7 +1165,7 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 	{
 		if (FileMask != 0) {
 			// Xbox expects directories to be listed when *.* is passed
-			if (strncmp(FileMask->Buffer, "*.*", FileMask->Length) == 0) {
+			if (FileMask->Length == 3 && strncmp(FileMask->Buffer, "*.*", 3) == 0) {
 				FileMask->Length = 1;
 				std::strcpy(FileMask->Buffer, "*");
 			}
@@ -1174,6 +1179,11 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 
 	NtDll::FILE_DIRECTORY_INFORMATION *NtFileDirInfo = 
 		(NtDll::FILE_DIRECTORY_INFORMATION *) malloc(NtFileDirectoryInformationSize + NtPathBufferSize);
+	if (NtFileDirInfo == nullptr) {
+		if (EventObject) { ObfDereferenceObject(EventObject); }
+		ObfDereferenceObject(FileObject);
+		RETURN(X_STATUS_NO_MEMORY);
+	}
 
 	// Short-hand pointer to Nt filename :
 	wchar_t *wcstr = NtFileDirInfo->FileName;
@@ -1831,8 +1841,17 @@ XBSYSAPI EXPORTNUM(218) xbox::ntstatus_xt NTAPI xbox::NtQueryVolumeInformationFi
 	}
 
 	PVOID NativeFileInformation = _aligned_malloc(HostBufferSize, 8);
+	if (NativeFileInformation == nullptr) {
+		ObfDereferenceObject(FileObject);
+		RETURN(X_STATUS_NO_MEMORY);
+	}
 
 	const auto& nFileHandle = GetObjectNativeHandle(FileObject);
+	if (!nFileHandle) {
+		_aligned_free(NativeFileInformation);
+		ObfDereferenceObject(FileObject);
+		RETURN(X_STATUS_INVALID_HANDLE);
+	}
 
 	NTSTATUS ret = NtDll::NtQueryVolumeInformationFile(
 		*nFileHandle,
@@ -1850,11 +1869,12 @@ XBSYSAPI EXPORTNUM(218) xbox::ntstatus_xt NTAPI xbox::NtQueryVolumeInformationFi
 					// Most options can just be directly copied to the Xbox version, only the strings differ
 					XboxVolumeInfo->VolumeCreationTime.QuadPart = HostVolumeInfo->VolumeCreationTime.QuadPart;
 					XboxVolumeInfo->VolumeSerialNumber = HostVolumeInfo->VolumeSerialNumber;
-					XboxVolumeInfo->VolumeLabelLength = HostVolumeInfo->VolumeLabelLength;
+					// Host VolumeLabelLength is in wide-char bytes; Xbox uses ANSI (1 byte/char)
+					XboxVolumeInfo->VolumeLabelLength = HostVolumeInfo->VolumeLabelLength / sizeof(wchar_t);
 					XboxVolumeInfo->SupportsObjects = HostVolumeInfo->SupportsObjects;
 
 					// Convert strings to the Xbox format 
-					wcstombs(XboxVolumeInfo->VolumeLabel, HostVolumeInfo->VolumeLabel, HostVolumeInfo->VolumeLabelLength);
+					wcstombs(XboxVolumeInfo->VolumeLabel, HostVolumeInfo->VolumeLabel, XboxVolumeInfo->VolumeLabelLength);
 				}
 				break;
 			default:
@@ -2506,10 +2526,10 @@ XBSYSAPI EXPORTNUM(226) xbox::ntstatus_xt NTAPI xbox::NtSetInformationFile
 			ntFileInfo,
 			Length,
 			FileInformationClass);
+	}
 
-		if (FileHandleTarget) {
-			NtClose(FileHandleTarget);
-		}
+	if (FileHandleTarget) {
+		NtClose(FileHandleTarget);
 	}
 
 	if (isXbox2Nt && ntFileInfo) {
