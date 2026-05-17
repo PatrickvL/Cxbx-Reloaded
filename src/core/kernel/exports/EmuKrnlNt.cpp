@@ -1972,6 +1972,9 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		HANDLE hHostEvent = NULL;
 		if (XboxEvent != nullptr || ApcRoutine != nullptr) {
 			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
+			if (hHostEvent == NULL) {
+				EmuLog(LOG_LEVEL::WARNING, "NtReadFile: CreateEvent failed, forcing synchronous I/O");
+			}
 		}
 
 		result = NtDll::NtReadFile(
@@ -3046,6 +3049,9 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		HANDLE hHostEvent = NULL;
 		if (XboxEvent != nullptr || ApcRoutine != nullptr) {
 			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
+			if (hHostEvent == NULL) {
+				EmuLog(LOG_LEVEL::WARNING, "NtWriteFile: CreateEvent failed, forcing synchronous I/O");
+			}
 		}
 
 		result = NtDll::NtWriteFile(
