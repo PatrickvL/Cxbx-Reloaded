@@ -160,6 +160,10 @@ XBSYSAPI EXPORTNUM(169) xbox::PVOID NTAPI xbox::MmCreateKernelStack
 	PVOID addr = (PVOID)g_VMManager.AllocateSystemMemory(DebuggerThread ? DebuggerType : StackType,
 		XBOX_PAGE_READWRITE, NumberOfBytes, true);
 
+	if (addr == NULL) {
+		RETURN(NULL);
+	}
+
 	// Since this is creating a stack (which counts DOWN) we must return the *end* of the address range, not the start
 	// Test cases: DOA3, Futurama
 	addr = (PVOID)((uint32_t)addr + NumberOfBytes + PAGE_SIZE);
