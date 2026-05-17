@@ -1096,6 +1096,17 @@ xbox::ntstatus_xt NTAPI xbox::IopParseDevice(
 	else {
 		std::string xPathName(CompleteName->Buffer, CompleteName->Length);
 		EmuLog(LOG_LEVEL::ERROR2, "Unable to access directory or file: %s", xPathName.c_str());
+
+		// NtCreateFile failed — clean up the FileObject that was allocated
+		// for this operation.  Without this, the FileObject (and its
+		// DeviceObject reference) would be leaked because ParseCheck=true
+		// prevents the caller (IoCreateFile) from running its cleanup path.
+		ObfDereferenceObject(FileObject);
+		reinterpret_cast<PDEVICE_OBJECT>(ParseObject)->ReferenceCount--;
+		OpenPacket->FileObject = nullptr;
+		OpenPacket->ParseCheck = true;
+		OpenPacket->FinalStatus = result;
+		RETURN(result);
 	}
 #endif
 

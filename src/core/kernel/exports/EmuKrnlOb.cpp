@@ -112,6 +112,7 @@ xbox::boolean_xt xbox::ObpCreatePermanentDirectoryObject(
 	result = ObReferenceObjectByHandle(Handle, &ObDirectoryObjectType, (PVOID *)DirectoryObject);
 	
 	if (!X_NT_SUCCESS(result)) {
+		NtClose(Handle);
 		RETURN(FALSE);
 	}
 
