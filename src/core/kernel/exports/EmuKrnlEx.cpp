@@ -298,19 +298,9 @@ XBSYSAPI EXPORTNUM(19) xbox::LARGE_INTEGER NTAPI xbox::ExInterlockedAddLargeInte
 		LOG_FUNC_END;
 
 	LARGE_INTEGER OldValue;
-// TODO :	BOOLEAN Enable;
 
-	/* Disable interrupts and acquire the spinlock */
-// TODO :	Enable = _ExiDisableInterruptsAndAcquireSpinlock(Lock);
-
-	/* Save the old value */
-	OldValue.QuadPart = Addend->QuadPart;
-
-	/* Do the operation */
-	Addend->QuadPart += Increment.QuadPart;
-
-	/* Release the spinlock and restore interrupts */
-	// TODO :	_ExiReleaseSpinLockAndRestoreInterrupts(Lock, Enable);
+	/* Atomically add and return the old value (replaces spinlock-based implementation) */
+	OldValue.QuadPart = reinterpret_cast<std::atomic<LONGLONG>*>(&Addend->QuadPart)->fetch_add(Increment.QuadPart, std::memory_order_seq_cst);
 
 	/* Return the old value */
 	return OldValue; // TODO : operator<<(LARGE_INTERGER) enables RETURN(OldValue);
