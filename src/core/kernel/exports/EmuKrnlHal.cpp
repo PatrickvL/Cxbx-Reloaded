@@ -140,6 +140,11 @@ XBSYSAPI EXPORTNUM(39) xbox::void_xt NTAPI xbox::HalDisableSystemInterrupt
 {
 	LOG_FUNC_ONE_ARG(BusInterruptLevel);
 
+	if (BusInterruptLevel > MAX_BUS_INTERRUPT_LEVEL) {
+		EmuLog(LOG_LEVEL::WARNING, "HalDisableSystemInterrupt: BusInterruptLevel %u out of range", BusInterruptLevel);
+		return;
+	}
+
 	HalSystemInterrupts[BusInterruptLevel].Disable();
 }
 
@@ -175,6 +180,11 @@ XBSYSAPI EXPORTNUM(43) xbox::void_xt NTAPI xbox::HalEnableSystemInterrupt
 		LOG_FUNC_ARG(BusInterruptLevel)
 		LOG_FUNC_ARG(InterruptMode)
 		LOG_FUNC_END;
+
+	if (BusInterruptLevel > MAX_BUS_INTERRUPT_LEVEL) {
+		EmuLog(LOG_LEVEL::WARNING, "HalEnableSystemInterrupt: BusInterruptLevel %u out of range", BusInterruptLevel);
+		return;
+	}
 
 	HalSystemInterrupts[BusInterruptLevel].Enable();
 	HalSystemInterrupts[BusInterruptLevel].SetInterruptMode(InterruptMode);
