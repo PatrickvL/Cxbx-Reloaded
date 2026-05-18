@@ -556,7 +556,7 @@ bool APUDevice::ReadGuestWord(uint32_t guestAddress, uint32_t& value) const
 		return false;
 	}
 
-	value = *reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress));
+	std::memcpy(&value, reinterpret_cast<const void*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress)), sizeof(value));
 	return true;
 }
 
@@ -566,7 +566,7 @@ bool APUDevice::WriteGuestWord(uint32_t guestAddress, uint32_t value)
 		return false;
 	}
 
-	*reinterpret_cast<uint32_t*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress)) = value;
+	std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress)), &value, sizeof(value));
 	return true;
 }
 

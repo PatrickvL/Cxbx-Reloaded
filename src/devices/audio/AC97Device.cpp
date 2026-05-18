@@ -430,6 +430,6 @@ bool AC97Device::ReadGuest32(uint32_t guestAddress, uint32_t& value) const
 		return false;
 	}
 
-	value = *reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(PHYSICAL_MAP_BASE + guestAddress));
+	std::memcpy(&value, reinterpret_cast<const void*>(static_cast<uintptr_t>(PHYSICAL_MAP_BASE + guestAddress)), sizeof(value));
 	return true;
 }
