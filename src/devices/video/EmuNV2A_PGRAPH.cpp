@@ -1729,12 +1729,14 @@ void pgraph_handle_method(NV2AState *d,
 		// case NV097_SET_CONTEXT_DMA_ZETA:
 		//     pg->dma_zeta = parameter;
 		//     break;
-		// case NV097_SET_CONTEXT_DMA_VERTEX_A:
-		// case NV097_SET_CONTEXT_DMA_VERTEX_B:
-		//     DMA context methods are not needed under HLE: vertex attribute
-		//     offsets already store physical byte offsets into contiguous memory,
-		//     and both DMA contexts point to the same region.
-		//     break;
+		case NV097_SET_CONTEXT_DMA_VERTEX_A:
+		    pg->dma_vertex_a = parameter;
+		    pg->vertex_attributes_generation++;
+		    break;
+		case NV097_SET_CONTEXT_DMA_VERTEX_B:
+		    pg->dma_vertex_b = parameter;
+		    pg->vertex_attributes_generation++;
+		    break;
 		//
 		CASE_4(NV097_SET_TEXTURE_MATRIX_ENABLE, 4):
 		    slot = (method - NV097_SET_TEXTURE_MATRIX_ENABLE) / 4;

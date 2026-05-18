@@ -472,11 +472,14 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 	// GPU mirror before the vertex shader can fetch correct data.
 	if (!bIsUPDraw && g_NV2A != nullptr) {
 		PGRAPHState* pgVB = &g_NV2A->GetDeviceState()->pgraph;
+		NV2AState* d = g_NV2A->GetDeviceState();
 		for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
 			const VertexAttribute& attr = pgVB->vertex_attributes[i];
 			if (attr.count == 0) continue;
-			// attr.offset is a physical address (27-bit, masked into 64 MiB)
-			uint32_t vbOffset = (uint32_t)(attr.offset & 0x07FFFFFF);
+			// Resolve DMA context base + attribute offset to physical address
+			uint32_t dmaBase = NV2ADevice::ResolveDmaBaseAddress(
+				d, attr.dma_select ? pgVB->dma_vertex_b : pgVB->dma_vertex_a);
+			uint32_t vbOffset = (dmaBase + (uint32_t)attr.offset) & 0x07FFFFFF;
 			uint32_t vbSize = attr.stride * DrawContext.dwVertexCount;
 			if (vbSize == 0) continue;
 			CxbxPageTrackerFlushGPUDirtyToMirror(vbOffset, vbSize);
@@ -600,6 +603,7 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 		// All draws come through push buffer → PFIFO → PGRAPH, so PGRAPH is
 		// the authoritative source for vertex layout information.
 		PGRAPHState* pg = (g_NV2A != nullptr) ? &g_NV2A->GetDeviceState()->pgraph : nullptr;
+		NV2AState* d = (g_NV2A != nullptr) ? g_NV2A->GetDeviceState() : nullptr;
 
 		if (pg) {
 			if (DrawContext.bNV2AInlineData) {
@@ -620,15 +624,18 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 					packedOffset = (packedOffset + 3) & ~3u; // pad to DWORD boundary
 				}
 			} else {
-				// VB draw path: slot index = register index, offset = physical address
+				// VB draw path: resolve DMA context base + attribute offset
+				uint32_t dmaBaseA = NV2ADevice::ResolveDmaBaseAddress(d, pg->dma_vertex_a);
+				uint32_t dmaBaseB = NV2ADevice::ResolveDmaBaseAddress(d, pg->dma_vertex_b);
 				for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
 					const VertexAttribute& attr = pg->vertex_attributes[i];
 					if (attr.count == 0) continue;
 
+					uint32_t dmaBase = attr.dma_select ? dmaBaseB : dmaBaseA;
 					cb.Attribs[i][0] = 0;           // elemOffset (baked into offset)
 					cb.Attribs[i][1] = attr.stride;
 					cb.Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
-					cb.Attribs[i][3] = (UINT)attr.offset; // physical addr = SRV byte offset
+					cb.Attribs[i][3] = (dmaBase + (UINT)attr.offset) & 0x07FFFFFF;
 				}
 			}
 		} else {
