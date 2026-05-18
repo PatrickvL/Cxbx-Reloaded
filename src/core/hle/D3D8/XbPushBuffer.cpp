@@ -365,11 +365,20 @@ void D3D11_draw_clear(NV2AState *d)
 	rect.right  += 1;
 	rect.bottom += 1;
 
-	// Scale for upscale factor and MSAA
-	float aaX, aaY;
-	GetMultiSampleScaleRaw(aaX, aaY);
-	float Xscale = aaX * g_RenderUpscaleFactor;
-	float Yscale = aaY * g_RenderUpscaleFactor;
+	// Apply anti-aliasing factor from PGRAPH surface state (matches xemu's
+	// pgraph_apply_anti_aliasing_factor). The NV2A clear rect registers contain
+	// logical coordinates; the AA factor expands them to physical surface pixels.
+	auto surf = NV2AGetSurfaceState(pg);
+	unsigned int aaFactorX = 1, aaFactorY = 1;
+	switch (surf.antiAliasing) {
+	case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_CENTER_CORNER_2:
+		aaFactorX = 2; break;
+	case NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_SQUARE_OFFSET_4:
+		aaFactorX = 2; aaFactorY = 2; break;
+	default: break;
+	}
+	float Xscale = (float)aaFactorX * g_RenderUpscaleFactor;
+	float Yscale = (float)aaFactorY * g_RenderUpscaleFactor;
 	rect.left   = static_cast<LONG>(rect.left   * Xscale);
 	rect.right  = static_cast<LONG>(rect.right  * Xscale);
 	rect.top    = static_cast<LONG>(rect.top    * Yscale);
