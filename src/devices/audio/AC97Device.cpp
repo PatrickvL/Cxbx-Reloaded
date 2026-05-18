@@ -67,8 +67,8 @@ constexpr uint16_t SR_CELV = 1 << 1;
 constexpr uint16_t SR_DCH = 1 << 0;
 constexpr uint16_t SR_WCLEAR_MASK = SR_FIFOE | SR_BCIS | SR_LVBCI;
 
-	constexpr uint8_t CR_RR = 1 << 1;
-	constexpr uint8_t CR_RPBM = 1 << 0;
+constexpr uint8_t CR_RR = 1 << 1;
+constexpr uint8_t CR_RPBM = 1 << 0;
 
 constexpr uint16_t AC97_EXT_AUDIO_ID_VRA = 1 << 0;
 constexpr uint16_t AC97_EXT_AUDIO_ID_VRM = 1 << 3;
