@@ -44,7 +44,7 @@ typedef struct RAMHTEntry {
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 
 static RAMHTEntry ramht_lookup(NV2AState *d, uint32_t handle); // forward declaration
-static void pfifo_run_puller(NV2AState *d); // forward declaration
+static bool pfifo_run_puller(NV2AState *d); // forward declaration
 static void pfifo_run_pusher(NV2AState *d); // forward declaration
 
 /* PFIFO - MMIO and DMA FIFO submission to PGRAPH and VPE */
@@ -131,9 +131,14 @@ DEVICE_WRITE32(PFIFO)
 
 	DEVICE_WRITE32_END(PFIFO);
 }
+// Set by NV097_FLIP_STALL handler, cleared by puller after checking.
+// When true, FLIP_STALL already presented (with overlay compositing),
+// so the puller's idle overlay path should not double-present.
+bool g_PullerFlipStallThisCycle = false;
 
-static void pfifo_run_puller(NV2AState *d)
+static bool pfifo_run_puller(NV2AState *d)
 {
+    bool processed_any = false;
     uint32_t *pull0 = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_PULL0)];
     uint32_t *pull1 = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_PULL1)];
     uint32_t *engine_reg = &d->pfifo.regs[RI(NV_PFIFO_CACHE1_ENGINE)];
@@ -182,6 +187,7 @@ static void pfifo_run_puller(NV2AState *d)
 
         // Process pushbuffer methods into PGRAPH register state.
         // Skip object binding (method 0) — Xbox uses a single channel.
+        processed_any = true;
         if (method >= 0x180 && method < 0x200) {
             // DMA context binding methods: parameter is a handle that must
             // be resolved via RAMHT to get the PRAMIN instance address.
@@ -196,6 +202,7 @@ static void pfifo_run_puller(NV2AState *d)
     }
 
     qemu_mutex_unlock(&d->pgraph.pgraph_lock);
+    return processed_any;
 }
 
 // Defined in HostSync.cpp — marks the current thread as the PFIFO puller
@@ -214,7 +221,7 @@ int pfifo_puller_thread(NV2AState *d)
 
     qemu_mutex_lock(&d->pfifo.pfifo_lock);
     while (!d->exiting) {
-        pfifo_run_puller(d);
+        bool had_commands = pfifo_run_puller(d);
 
         // Present logic — at most one present per wake-up cycle.
         // The two paths are mutually exclusive (else-if) to prevent
@@ -231,16 +238,17 @@ int pfifo_puller_thread(NV2AState *d)
                 qemu_mutex_unlock(&d->pfifo.pfifo_lock);
                 g_pgraph_backend.flip_stall(d);
                 qemu_mutex_lock(&d->pfifo.pfifo_lock);
-            } else if (d->enable_overlay
-                       && !d->pgraph.surface_color.draw_dirty) {
-                // PVIDEO overlay present: during FMV playback, no PGRAPH
-                // draws or FLIP_STALL commands occur. The VBlank handler
-                // wakes us when the overlay is active so video frames are
-                // composited and displayed at frame rate.
+            } else if (d->enable_overlay && !g_PullerFlipStallThisCycle) {
+                // PVIDEO overlay present: composite and display the overlay
+                // at frame rate. Only skip when FLIP_STALL already presented
+                // this cycle (it composites overlay too). Clear draw_dirty
+                // so stale 3D→FMV transition state doesn't block anything.
+                d->pgraph.surface_color.draw_dirty = false;
                 qemu_mutex_unlock(&d->pfifo.pfifo_lock);
                 g_pgraph_backend.flip_stall(d);
                 qemu_mutex_lock(&d->pfifo.pfifo_lock);
             }
+            g_PullerFlipStallThisCycle = false;
         }
 
         // If the HLE thread is waiting for a PFIFO flush, signal it now

@@ -122,6 +122,16 @@ static void update_irq(NV2AState *d)
 	}
 	else {
 		HalSystemInterrupts[3].Assert(false);
+		// PGRAPH INTR_ERROR (InsertCallback) stalls the GPU pipeline on real
+		// hardware until the CPU acknowledges it. If the ISR temporarily
+		// disabled NV_PMC_INTR_EN_0 (standard ISR prologue), we still need
+		// the DPC thread awake to re-fire the ISR once PMC is re-enabled.
+		// Without this, the puller blocks forever waiting for an ack that
+		// never comes because the DPC thread is asleep.
+		if (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR) {
+			extern void KeSignalVBlankPending();
+			KeSignalVBlankPending();
+		}
 	}
 }
 
