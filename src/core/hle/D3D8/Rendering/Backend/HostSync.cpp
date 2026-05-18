@@ -522,11 +522,11 @@ void CxbxUpdateHostTextures()
 		}
 
 		// Resolve texture offset from PGRAPH
-		auto texAddr = NV2AGetTextureAddress(d, stage);
+		uint32_t rawOffset = NV2AGetTextureOffsetRaw(d, stage);
 		auto texFmt = NV2AGetTextureFormat(d, stage);
 		uint32_t texFmtReg = texFmt.raw;
 		bool isCubemap = texFmt.cubemap;
-		uint32_t texOffset = texAddr.physicalAddress;
+		uint32_t texOffset = rawOffset != 0 ? NV2AResolveTexturePhysicalAddress(d, stage, rawOffset) : 0;
 
 		// Resolve the host texture resource (RT cache or Xbox texture)
 		bool bIsRenderTargetTexture = false;

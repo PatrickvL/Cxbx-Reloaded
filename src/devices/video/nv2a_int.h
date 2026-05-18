@@ -42,7 +42,6 @@
 
 #include "nv2a_debug.h" // For HWADDR_PRIx, NV2A_DPRINTF, NV2A_DPRINTF_IF, etc.
 #include "nv2a_regs.h" // For NV2A_MAX_TEXTURES, etc
-#include "core\\hle\\D3D8\\Rendering\\NV2A_PGRAPH_Helpers.h" // For NV2ASurfaceState
 
 
 typedef xbox::addr_xt hwaddr; // Compatibility; Cxbx uses xbox::addr_xt, xqemu and OpenXbox use hwaddr 
@@ -300,6 +299,23 @@ typedef struct ImageBlitState {
 	unsigned int width, height;
 } ImageBlitState;
 
+// NV2A surface register state (decoded from PGRAPH MMIO).
+struct NV2ASurfaceState {
+	uint32_t colorOffset;     // Raw color surface offset (relative to dma_color context)
+	uint32_t zetaOffset;      // Raw zeta surface offset (relative to dma_zeta context)
+	uint32_t colorPitch;      // Color surface pitch (bytes per row)
+	uint32_t zetaPitch;       // Zeta surface pitch
+	uint32_t clipX, clipY;    // Surface clip origin
+	uint32_t clipWidth;       // Surface clip width
+	uint32_t clipHeight;      // Surface clip height
+	uint32_t antiAliasing;    // NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_* value
+	uint32_t colorFormat;     // Surface color format
+	uint32_t zetaFormat;      // Surface zeta format
+	uint32_t surfaceType;     // NV097_SET_SURFACE_FORMAT_TYPE_PITCH or _SWIZZLE
+	uint32_t logWidth;        // log2(base width) for swizzle surfaces
+	uint32_t logHeight;       // log2(base height) for swizzle surfaces
+};
+
 typedef struct PGRAPHState {
 	QemuMutex pgraph_lock;
 
@@ -544,5 +560,9 @@ typedef struct {
 	DWORD Ignored2[0x7ED];
 } Nv2AControlDma;
 #endif
+
+// Include PGRAPH helpers at the end so inline functions have access to full struct definitions.
+// Safe with pragma once: NV2A_PGRAPH_Helpers.h includes nv2a_int.h which will be a no-op.
+#include "core\\hle\\D3D8\\Rendering\\NV2A_PGRAPH_Helpers.h"
 
 #endif

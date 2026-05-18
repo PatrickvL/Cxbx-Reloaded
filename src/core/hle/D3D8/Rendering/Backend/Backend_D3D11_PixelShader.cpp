@@ -315,9 +315,9 @@ void CxbxD3D11UploadRCInterpreterState()
 	{
 		float dta[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 		for (int i = 0; i < 4; i++) {
-			auto texAddr = NV2AGetTextureAddress(i);
-			if (texAddr.rawOffset == 0) continue;
-			auto* pRT = CxbxLookupPgraphRTByOffset(texAddr.physicalAddress);
+			uint32_t rawOffset = NV2AGetTextureOffsetRaw(i);
+			if (rawOffset == 0) continue;
+			auto* pRT = CxbxLookupPgraphRTByOffset(NV2AResolveTexturePhysicalAddress(i, rawOffset));
 			if (pRT) {
 				D3D11_TEXTURE2D_DESC desc;
 				pRT->GetDesc(&desc);

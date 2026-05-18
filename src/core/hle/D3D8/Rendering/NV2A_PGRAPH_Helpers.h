@@ -11,54 +11,67 @@
 // ******************************************************************
 #pragma once
 
-#include <cstdint>
+#include "devices\video\nv2a_int.h" // For NV2AState, PGRAPHState, RI(), NV_PGRAPH_* constants
 
-struct NV2AState; // Forward declaration
-struct PGRAPHState; // Forward declaration
+// ---- Texture Stage Scalars (inline — single register read) ----
 
-// ---- Texture Stage Scalars ----
+inline uint32_t NV2AGetTextureControlRaw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
+}
 
-uint32_t NV2AGetTextureControlRaw(NV2AState* d, int stage);
+inline uint32_t NV2AGetTextureControl1Raw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_TEXCTL1_0 + stage * 4)];
+}
+
+inline uint32_t NV2AGetTextureOffsetRaw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
+}
+
+inline uint32_t NV2AGetTextureAddressModeRaw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_TEXADDRESS0 + stage * 4)];
+}
+
+inline uint32_t NV2AGetTextureFormatRaw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
+}
+
+inline uint32_t NV2AGetTextureImageRectRaw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
+}
+
+inline uint32_t NV2AGetTextureFilterRaw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_TEXFILTER0 + stage * 4)];
+}
+
+inline uint32_t NV2AGetBorderColorRaw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_BORDERCOLOR0 + stage * 4)];
+}
+
+inline uint32_t NV2AGetTexturePaletteRaw(NV2AState* d, int stage) {
+	return d->pgraph.regs[RI(NV_PGRAPH_TEXPALETTE0 + stage * 4)];
+}
+
+// Derived from Raw PGRAPH register values:
+
+inline bool NV2AIsTextureEnabled(NV2AState* d, int stage) {
+	return (NV2AGetTextureControlRaw(d, stage) & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
+}
+
+inline uint32_t NV2AGetTexturePitch(NV2AState* d, int stage) {
+	return GET_MASK(NV2AGetTextureControl1Raw(d, stage), NV_PGRAPH_TEXCTL1_0_IMAGE_PITCH);
+}
+
+// Convenience overloads (go through g_NV2A global; defined in .cpp)
 uint32_t NV2AGetTextureControlRaw(int stage);
-
-// Read the raw TEXCTL1 register value for a stage (no decoding).
-uint32_t NV2AGetTextureControl1Raw(NV2AState* d, int stage);
 uint32_t NV2AGetTextureControl1Raw(int stage);
-
-// Read the raw TEXOFFSET register value for a stage (no decoding).
-uint32_t NV2AGetTextureOffsetRaw(NV2AState* d, int stage);
 uint32_t NV2AGetTextureOffsetRaw(int stage);
-
-// Read the raw TEXADDRESS register value for a stage (no decoding).
-uint32_t NV2AGetTextureAddressModeRaw(NV2AState* d, int stage);
 uint32_t NV2AGetTextureAddressModeRaw(int stage);
-
-// Read the raw TEXFMT register value for a stage (no decoding).
-uint32_t NV2AGetTextureFormatRaw(NV2AState* d, int stage);
 uint32_t NV2AGetTextureFormatRaw(int stage);
-
-// Read the raw TEXIMAGERECT register value for a stage (no decoding).
-uint32_t NV2AGetTextureImageRectRaw(NV2AState* d, int stage);
 uint32_t NV2AGetTextureImageRectRaw(int stage);
-
-// Read the raw TEXFILTER register value for a stage (no decoding).
-uint32_t NV2AGetTextureFilterRaw(NV2AState* d, int stage);
 uint32_t NV2AGetTextureFilterRaw(int stage);
-
-// Read the raw BORDERCOLOR register value for a stage (no decoding).
-uint32_t NV2AGetBorderColorRaw(NV2AState* d, int stage);
 uint32_t NV2AGetBorderColorRaw(int stage);
-
-// Read the raw TEXPALETTE register value for a stage (no decoding).
-uint32_t NV2AGetTexturePaletteRaw(NV2AState* d, int stage);
 uint32_t NV2AGetTexturePaletteRaw(int stage);
-
-// Check if a texture stage is enabled (TEXCTL0 bit 30).
-bool NV2AIsTextureEnabled(NV2AState* d, int stage);
 bool NV2AIsTextureEnabled(int stage);
-
-// Read texture image pitch for a stage (from TEXCTL1 bits 16-31).
-uint32_t NV2AGetTexturePitch(NV2AState* d, int stage);
 uint32_t NV2AGetTexturePitch(int stage);
 
 // ---- DMA Resolution ----
@@ -73,18 +86,14 @@ uint32_t NV2AResolveTexturePhysicalAddress(int stage, uint32_t rawOffset);
 uint32_t NV2AResolvePalettePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
 uint32_t NV2AResolvePalettePhysicalAddress(int stage, uint32_t rawOffset);
 
+// Resolve a raw vertex buffer offset through the vertex DMA context.
+// This adds dma_vertex_base[dmaSelect] to the offset, masked to 27-bit VRAM range.
+inline uint32_t NV2AResolveVertexPhysicalAddress(NV2AState* d, bool dmaSelect, uint32_t rawOffset) {
+	return (d->pgraph.dma_vertex_base[dmaSelect] + rawOffset) & 0x07FFFFFF;
+}
+uint32_t NV2AResolveVertexPhysicalAddress(bool dmaSelect, uint32_t rawOffset);
+
 // ---- Texture Stage State ----
-
-struct NV2ATextureAddress {
-	uint32_t physicalAddress; // DMA-resolved physical address in VRAM (0 if disabled/invalid)
-	uint32_t rawOffset;       // Raw offset from PGRAPH register (before DMA resolution)
-	uint32_t dmaBase;         // DMA context base address that was added
-};
-
-// Resolve the physical VRAM address of a texture's data for the given stage.
-// Reads TEXOFFSET0 and resolves through DMA context A/B (selected by TEXFMT0 CONTEXT_DMA bit).
-NV2ATextureAddress NV2AGetTextureAddress(NV2AState* d, int stage);
-NV2ATextureAddress NV2AGetTextureAddress(int stage);
 
 struct NV2ATextureFormat {
 	uint32_t raw;             // Raw TEXFMT register value (= Xbox D3D Format field)
@@ -139,30 +148,7 @@ NV2APaletteState NV2AGetPaletteState(int stage);
 
 // ---- Surface State ----
 // NV2A surfaces use the same PGRAPH register file as textures.
-// NV097 SET_SURFACE_* methods write to these PGRAPH registers:
-//   NV_PGRAPH_SURFACECLIPX   (0x19B4) - clip_x and clip_width
-//   NV_PGRAPH_SURFACECLIPY   (0x19B8) - clip_y and clip_height
-//   NV_PGRAPH_SURFACEFORMAT  (0x0714) - color/zeta format, type, AA, log width/height
-//   NV_PGRAPH_DMA_PITCH      (0x0770) - color pitch (15:0), zeta pitch (31:16)
-//   NV_PGRAPH_BOFFSET3       (0x082C) - color surface offset
-//   NV_PGRAPH_BOFFSET4       (0x0830) - zeta surface offset
-// All fields are decoded from register state; no side-struct is needed.
-
-struct NV2ASurfaceState {
-	uint32_t colorOffset;     // Raw color surface offset (relative to dma_color context)
-	uint32_t zetaOffset;      // Raw zeta surface offset (relative to dma_zeta context)
-	uint32_t colorPitch;      // Color surface pitch (bytes per row)
-	uint32_t zetaPitch;       // Zeta surface pitch
-	uint32_t clipX, clipY;    // Surface clip origin
-	uint32_t clipWidth;       // Surface clip width
-	uint32_t clipHeight;      // Surface clip height
-	uint32_t antiAliasing;    // NV097_SET_SURFACE_FORMAT_ANTI_ALIASING_* value
-	uint32_t colorFormat;     // Surface color format
-	uint32_t zetaFormat;      // Surface zeta format
-	uint32_t surfaceType;     // NV097_SET_SURFACE_FORMAT_TYPE_PITCH or _SWIZZLE
-	uint32_t logWidth;        // log2(base width) for swizzle surfaces
-	uint32_t logHeight;       // log2(base height) for swizzle surfaces
-};
+// NV2ASurfaceState is defined in nv2a_int.h (member of PGRAPHState).
 
 // Read current surface configuration from PGRAPH.
 NV2ASurfaceState NV2AGetSurfaceState(NV2AState* d);

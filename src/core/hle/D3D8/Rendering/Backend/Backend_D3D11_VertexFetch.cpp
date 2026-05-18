@@ -475,7 +475,7 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 		for (int i = 0; i < NV2A_VERTEXSHADER_ATTRIBUTES; i++) {
 			const VertexAttribute& attr = pgVB->vertex_attributes[i];
 			if (attr.count == 0) continue;
-			uint32_t vbOffset = (pgVB->dma_vertex_base[attr.dma_select] + (uint32_t)attr.offset) & 0x07FFFFFF;
+			uint32_t vbOffset = NV2AResolveVertexPhysicalAddress(g_NV2A->GetDeviceState(), attr.dma_select, (uint32_t)attr.offset);
 			uint32_t vbSize = attr.stride * DrawContext.dwVertexCount;
 			if (vbSize == 0) continue;
 			CxbxPageTrackerFlushGPUDirtyToMirror(vbOffset, vbSize);
@@ -627,7 +627,7 @@ void CxbxD3D11VertexFetchDraw(CxbxDrawContext& DrawContext)
 					cb.Attribs[i][0] = 0;           // elemOffset (baked into offset)
 					cb.Attribs[i][1] = attr.stride;
 					cb.Attribs[i][2] = NV2AFormatToVtxFmt(attr.format, attr.count);
-					cb.Attribs[i][3] = (pg->dma_vertex_base[attr.dma_select] + (UINT)attr.offset) & 0x07FFFFFF;
+					cb.Attribs[i][3] = NV2AResolveVertexPhysicalAddress(g_NV2A->GetDeviceState(), attr.dma_select, (UINT)attr.offset);
 				}
 			}
 		} else {

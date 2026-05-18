@@ -10,74 +10,6 @@
 #include "EmuD3D8_common.h"
 #include "NV2A_PGRAPH_Helpers.h"
 
-// ==== Primary overloads (accept NV2AState*) ====
-
-uint32_t NV2AGetTextureControlRaw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
-}
-
-uint32_t NV2AGetTextureControl1Raw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_TEXCTL1_0 + stage * 4)];
-}
-
-uint32_t NV2AGetTextureOffsetRaw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
-}
-
-uint32_t NV2AGetTextureAddressModeRaw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_TEXADDRESS0 + stage * 4)];
-}
-
-uint32_t NV2AGetTextureFormatRaw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
-}
-
-uint32_t NV2AGetTextureImageRectRaw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
-}
-
-uint32_t NV2AGetTextureFilterRaw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_TEXFILTER0 + stage * 4)];
-}
-
-uint32_t NV2AGetBorderColorRaw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_BORDERCOLOR0 + stage * 4)];
-}
-
-uint32_t NV2AGetTexturePaletteRaw(NV2AState* d, int stage)
-{
-	auto pg = &d->pgraph;
-	return pg->regs[RI(NV_PGRAPH_TEXPALETTE0 + stage * 4)];
-}
-
-// Derived from Raw PGRAPH register values:
-
-bool NV2AIsTextureEnabled(NV2AState* d, int stage)
-{
-	return (NV2AGetTextureControlRaw(d, stage) & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
-}
-
-uint32_t NV2AGetTexturePitch(NV2AState* d, int stage)
-{
-	return GET_MASK(NV2AGetTextureControl1Raw(d, stage), NV_PGRAPH_TEXCTL1_0_IMAGE_PITCH);
-}
-
 uint32_t NV2AResolveTexturePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset)
 {
 	auto pg = &d->pgraph;
@@ -92,21 +24,6 @@ uint32_t NV2AResolvePalettePhysicalAddress(NV2AState* d, int stage, uint32_t raw
 	uint32_t texPalette = NV2AGetTexturePaletteRaw(d, stage);
 	bool dmaSelect = (texPalette & NV_PGRAPH_TEXPALETTE0_CONTEXT_DMA) != 0;
 	return pg->dma_base[dmaSelect] + rawOffset;
-}
-
-NV2ATextureAddress NV2AGetTextureAddress(NV2AState* d, int stage)
-{
-	NV2ATextureAddress result = {};
-
-	uint32_t rawOffset = NV2AGetTextureOffsetRaw(d, stage);
-	result.rawOffset = rawOffset;
-
-	if (rawOffset == 0)
-		return result;
-
-	result.physicalAddress = NV2AResolveTexturePhysicalAddress(d, stage, rawOffset);
-	result.dmaBase = result.physicalAddress - rawOffset;
-	return result;
 }
 
 NV2ATextureFormat NV2AGetTextureFormat(NV2AState* d, int stage)
@@ -234,11 +151,11 @@ uint32_t NV2AGetTexturePaletteRaw(int stage) { return NV2AGetTexturePaletteRaw(g
 
 uint32_t NV2AResolveTexturePhysicalAddress(int stage, uint32_t rawOffset) { return NV2AResolveTexturePhysicalAddress(g_NV2A->GetDeviceState(), stage, rawOffset); }
 uint32_t NV2AResolvePalettePhysicalAddress(int stage, uint32_t rawOffset) { return NV2AResolvePalettePhysicalAddress(g_NV2A->GetDeviceState(), stage, rawOffset); }
+uint32_t NV2AResolveVertexPhysicalAddress(bool dmaSelect, uint32_t rawOffset) { return NV2AResolveVertexPhysicalAddress(g_NV2A->GetDeviceState(), dmaSelect, rawOffset); }
 
 bool NV2AIsTextureEnabled(int stage) { return NV2AIsTextureEnabled(g_NV2A->GetDeviceState(), stage); }
 uint32_t NV2AGetTexturePitch(int stage) { return NV2AGetTexturePitch(g_NV2A->GetDeviceState(), stage); }
 
-NV2ATextureAddress NV2AGetTextureAddress(int stage) { return NV2AGetTextureAddress(g_NV2A->GetDeviceState(), stage); }
 NV2ATextureFormat NV2AGetTextureFormat(int stage) { return NV2AGetTextureFormat(g_NV2A->GetDeviceState(), stage); }
 NV2ATextureImageRect NV2AGetTextureImageRect(int stage) { return NV2AGetTextureImageRect(g_NV2A->GetDeviceState(), stage); }
 NV2ATextureControl NV2AGetTextureControl(int stage) { return NV2AGetTextureControl(g_NV2A->GetDeviceState(), stage); }
