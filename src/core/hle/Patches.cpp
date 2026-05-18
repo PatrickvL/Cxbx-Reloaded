@@ -30,7 +30,6 @@
 #include "core\kernel\support\Emu.h"
 #include "core\hle\D3D8\Rendering/RenderGlobals.h"
 #include "core\hle\JVS\JVS.h"
-#include "core\hle\DSOUND\DirectSound\DirectSound.hpp"
 #include "Patches.hpp"
 #include "Intercept.hpp"
 
@@ -45,9 +44,8 @@ typedef struct {
 
 const uint32_t PATCH_ALWAYS = 1 << 0;
 const uint32_t PATCH_HLE_D3D = 1 << 1;
-const uint32_t PATCH_HLE_DSOUND = 1 << 2;
-const uint32_t PATCH_HLE_OHCI = 1 << 3;
-const uint32_t PATCH_IS_FIBER = 1 << 4;
+const uint32_t PATCH_HLE_OHCI = 1 << 2;
+const uint32_t PATCH_IS_FIBER = 1 << 3;
 
 #define PATCH_ENTRY(Name, Func, Flags) \
     { Name, xbox_patch_t { (void *)&Func, Flags} }
@@ -330,144 +328,6 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	//PATCH_ENTRY("Lock3DSurface", xbox::EMUPATCH(Lock3DSurface), PATCH_HLE_D3D),
 	//PATCH_ENTRY("Lock3DSurface_16__LTCG_eax4", xbox::EMUPATCH(Lock3DSurface_16__LTCG_eax4), PATCH_HLE_D3D),
 
-	// DSOUND
-	PATCH_ENTRY("CDirectSound3DCalculator_Calculate3D", xbox::EMUPATCH(CDirectSound3DCalculator_Calculate3D), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSound3DCalculator_GetVoiceData", xbox::EMUPATCH(CDirectSound3DCalculator_GetVoiceData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_AddRef", xbox::EMUPATCH(CDirectSoundStream_AddRef), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_Discontinuity", xbox::EMUPATCH(CDirectSoundStream_Discontinuity), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_Flush", xbox::EMUPATCH(CDirectSoundStream_Flush), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_FlushEx", xbox::EMUPATCH(CDirectSoundStream_FlushEx), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_GetInfo", xbox::EMUPATCH(CDirectSoundStream_GetInfo), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_GetStatus__r1", xbox::EMUPATCH(CDirectSoundStream_GetStatus__r1), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_GetStatus__r2", xbox::EMUPATCH(CDirectSoundStream_GetStatus__r2), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_GetVoiceProperties", xbox::EMUPATCH(CDirectSoundStream_GetVoiceProperties), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_Pause", xbox::EMUPATCH(CDirectSoundStream_Pause), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_PauseEx", xbox::EMUPATCH(CDirectSoundStream_PauseEx), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_Process", xbox::EMUPATCH(CDirectSoundStream_Process), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_Release", xbox::EMUPATCH(CDirectSoundStream_Release), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetAllParameters", xbox::EMUPATCH(CDirectSoundStream_SetAllParameters), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetConeAngles", xbox::EMUPATCH(CDirectSoundStream_SetConeAngles), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetConeOrientation", xbox::EMUPATCH(CDirectSoundStream_SetConeOrientation), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetConeOutsideVolume", xbox::EMUPATCH(CDirectSoundStream_SetConeOutsideVolume), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetDistanceFactor", xbox::EMUPATCH(CDirectSoundStream_SetDistanceFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetDopplerFactor", xbox::EMUPATCH(CDirectSoundStream_SetDopplerFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetEG", xbox::EMUPATCH(CDirectSoundStream_SetEG), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetFilter", xbox::EMUPATCH(CDirectSoundStream_SetFilter), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetFormat", xbox::EMUPATCH(CDirectSoundStream_SetFormat), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetFrequency", xbox::EMUPATCH(CDirectSoundStream_SetFrequency), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetHeadroom", xbox::EMUPATCH(CDirectSoundStream_SetHeadroom), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetI3DL2Source", xbox::EMUPATCH(CDirectSoundStream_SetI3DL2Source), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetLFO", xbox::EMUPATCH(CDirectSoundStream_SetLFO), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetMaxDistance", xbox::EMUPATCH(CDirectSoundStream_SetMaxDistance), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetMinDistance", xbox::EMUPATCH(CDirectSoundStream_SetMinDistance), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetMixBinVolumes_12", xbox::EMUPATCH(CDirectSoundStream_SetMixBinVolumes_12), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetMixBinVolumes_8", xbox::EMUPATCH(CDirectSoundStream_SetMixBinVolumes_8), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetMixBins", xbox::EMUPATCH(CDirectSoundStream_SetMixBins), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetMode", xbox::EMUPATCH(CDirectSoundStream_SetMode), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetOutputBuffer", xbox::EMUPATCH(CDirectSoundStream_SetOutputBuffer), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetPitch", xbox::EMUPATCH(CDirectSoundStream_SetPitch), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetPosition", xbox::EMUPATCH(CDirectSoundStream_SetPosition), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetRolloffCurve", xbox::EMUPATCH(CDirectSoundStream_SetRolloffCurve), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetRolloffFactor", xbox::EMUPATCH(CDirectSoundStream_SetRolloffFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetVelocity", xbox::EMUPATCH(CDirectSoundStream_SetVelocity), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSoundStream_SetVolume", xbox::EMUPATCH(CDirectSoundStream_SetVolume), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSound_CommitDeferredSettings", xbox::EMUPATCH(CDirectSound_CommitDeferredSettings), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSound_GetSpeakerConfig", xbox::EMUPATCH(CDirectSound_GetSpeakerConfig), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSound_SynchPlayback", xbox::EMUPATCH(CDirectSound_SynchPlayback), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CMcpxStream_Dummy_0x10", xbox::EMUPATCH(CMcpxStream_Dummy_0x10), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundCreate", xbox::EMUPATCH(DirectSoundCreate), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundCreateBuffer", xbox::EMUPATCH(DirectSoundCreateBuffer), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundCreateStream", xbox::EMUPATCH(DirectSoundCreateStream), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundDoWork", xbox::EMUPATCH(DirectSoundDoWork), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundGetSampleTime", xbox::EMUPATCH(DirectSoundGetSampleTime), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundUseFullHRTF", xbox::EMUPATCH(DirectSoundUseFullHRTF), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundUseFullHRTF4Channel", xbox::EMUPATCH(DirectSoundUseFullHRTF4Channel), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundUseLightHRTF", xbox::EMUPATCH(DirectSoundUseLightHRTF), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("DirectSoundUseLightHRTF4Channel", xbox::EMUPATCH(DirectSoundUseLightHRTF4Channel), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_AddRef", xbox::EMUPATCH(IDirectSoundBuffer_AddRef), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_GetCurrentPosition", xbox::EMUPATCH(IDirectSoundBuffer_GetCurrentPosition), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_GetStatus", xbox::EMUPATCH(IDirectSoundBuffer_GetStatus), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_GetVoiceProperties", xbox::EMUPATCH(IDirectSoundBuffer_GetVoiceProperties), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_Lock", xbox::EMUPATCH(IDirectSoundBuffer_Lock), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_Pause", xbox::EMUPATCH(IDirectSoundBuffer_Pause), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_PauseEx", xbox::EMUPATCH(IDirectSoundBuffer_PauseEx), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_Play", xbox::EMUPATCH(IDirectSoundBuffer_Play), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_PlayEx", xbox::EMUPATCH(IDirectSoundBuffer_PlayEx), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_Release", xbox::EMUPATCH(IDirectSoundBuffer_Release), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_Set3DVoiceData", xbox::EMUPATCH(IDirectSoundBuffer_Set3DVoiceData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetAllParameters", xbox::EMUPATCH(IDirectSoundBuffer_SetAllParameters), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetBufferData", xbox::EMUPATCH(IDirectSoundBuffer_SetBufferData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetConeAngles", xbox::EMUPATCH(IDirectSoundBuffer_SetConeAngles), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetConeOrientation", xbox::EMUPATCH(IDirectSoundBuffer_SetConeOrientation), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetConeOutsideVolume", xbox::EMUPATCH(IDirectSoundBuffer_SetConeOutsideVolume), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetCurrentPosition", xbox::EMUPATCH(IDirectSoundBuffer_SetCurrentPosition), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetDistanceFactor", xbox::EMUPATCH(IDirectSoundBuffer_SetDistanceFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetDopplerFactor", xbox::EMUPATCH(IDirectSoundBuffer_SetDopplerFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetEG", xbox::EMUPATCH(IDirectSoundBuffer_SetEG), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetFilter", xbox::EMUPATCH(IDirectSoundBuffer_SetFilter), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetFormat", xbox::EMUPATCH(IDirectSoundBuffer_SetFormat), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetFrequency", xbox::EMUPATCH(IDirectSoundBuffer_SetFrequency), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetHeadroom", xbox::EMUPATCH(IDirectSoundBuffer_SetHeadroom), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetI3DL2Source", xbox::EMUPATCH(IDirectSoundBuffer_SetI3DL2Source), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetLFO", xbox::EMUPATCH(IDirectSoundBuffer_SetLFO), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetLoopRegion", xbox::EMUPATCH(IDirectSoundBuffer_SetLoopRegion), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetMaxDistance", xbox::EMUPATCH(IDirectSoundBuffer_SetMaxDistance), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetMinDistance", xbox::EMUPATCH(IDirectSoundBuffer_SetMinDistance), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetMixBinVolumes_12", xbox::EMUPATCH(IDirectSoundBuffer_SetMixBinVolumes_12), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetMixBinVolumes_8", xbox::EMUPATCH(IDirectSoundBuffer_SetMixBinVolumes_8), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetMixBins", xbox::EMUPATCH(IDirectSoundBuffer_SetMixBins), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetMode", xbox::EMUPATCH(IDirectSoundBuffer_SetMode), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetNotificationPositions", xbox::EMUPATCH(IDirectSoundBuffer_SetNotificationPositions), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetOutputBuffer", xbox::EMUPATCH(IDirectSoundBuffer_SetOutputBuffer), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetPitch", xbox::EMUPATCH(IDirectSoundBuffer_SetPitch), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetPlayRegion", xbox::EMUPATCH(IDirectSoundBuffer_SetPlayRegion), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetPosition", xbox::EMUPATCH(IDirectSoundBuffer_SetPosition), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetRolloffCurve", xbox::EMUPATCH(IDirectSoundBuffer_SetRolloffCurve), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetRolloffFactor", xbox::EMUPATCH(IDirectSoundBuffer_SetRolloffFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetVelocity", xbox::EMUPATCH(IDirectSoundBuffer_SetVelocity), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_SetVolume", xbox::EMUPATCH(IDirectSoundBuffer_SetVolume), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_Stop", xbox::EMUPATCH(IDirectSoundBuffer_Stop), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_StopEx", xbox::EMUPATCH(IDirectSoundBuffer_StopEx), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_Unlock", xbox::EMUPATCH(IDirectSoundBuffer_Unlock), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundBuffer_Use3DVoiceData", xbox::EMUPATCH(IDirectSoundBuffer_Use3DVoiceData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_Set3DVoiceData", xbox::EMUPATCH(IDirectSoundStream_Set3DVoiceData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_SetEG", xbox::EMUPATCH(IDirectSoundStream_SetEG), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_SetFilter", xbox::EMUPATCH(IDirectSoundStream_SetFilter), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_SetFrequency", xbox::EMUPATCH(IDirectSoundStream_SetFrequency), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_SetHeadroom", xbox::EMUPATCH(IDirectSoundStream_SetHeadroom), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_SetLFO", xbox::EMUPATCH(IDirectSoundStream_SetLFO), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_SetMixBins", xbox::EMUPATCH(IDirectSoundStream_SetMixBins), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_SetPitch", xbox::EMUPATCH(IDirectSoundStream_SetPitch), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_SetVolume", xbox::EMUPATCH(IDirectSoundStream_SetVolume), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSoundStream_Use3DVoiceData", xbox::EMUPATCH(IDirectSoundStream_Use3DVoiceData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_AddRef", xbox::EMUPATCH(IDirectSound_AddRef), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_CommitDeferredSettings", xbox::EMUPATCH(IDirectSound_CommitDeferredSettings), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_CommitEffectData", xbox::EMUPATCH(IDirectSound_CommitEffectData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_CreateSoundBuffer", xbox::EMUPATCH(IDirectSound_CreateSoundBuffer), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_CreateSoundStream", xbox::EMUPATCH(IDirectSound_CreateSoundStream), PATCH_HLE_DSOUND),
-//	PATCH_ENTRY("IDirectSound_DownloadEffectsImage", xbox::EMUPATCH(IDirectSound_DownloadEffectsImage), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("CDirectSound_DownloadEffectsImage", xbox::EMUPATCH(CDirectSound_DownloadEffectsImage), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_EnableHeadphones", xbox::EMUPATCH(IDirectSound_EnableHeadphones), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_GetCaps", xbox::EMUPATCH(IDirectSound_GetCaps), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_GetEffectData", xbox::EMUPATCH(IDirectSound_GetEffectData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_GetOutputLevels", xbox::EMUPATCH(IDirectSound_GetOutputLevels), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_GetSpeakerConfig", xbox::EMUPATCH(IDirectSound_GetSpeakerConfig), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_Release", xbox::EMUPATCH(IDirectSound_Release), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetAllParameters", xbox::EMUPATCH(IDirectSound_SetAllParameters), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetDistanceFactor", xbox::EMUPATCH(IDirectSound_SetDistanceFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetDopplerFactor", xbox::EMUPATCH(IDirectSound_SetDopplerFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetEffectData", xbox::EMUPATCH(IDirectSound_SetEffectData), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetI3DL2Listener", xbox::EMUPATCH(IDirectSound_SetI3DL2Listener), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetMixBinHeadroom", xbox::EMUPATCH(IDirectSound_SetMixBinHeadroom), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetOrientation", xbox::EMUPATCH(IDirectSound_SetOrientation), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetPosition", xbox::EMUPATCH(IDirectSound_SetPosition), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetRolloffFactor", xbox::EMUPATCH(IDirectSound_SetRolloffFactor), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SetVelocity", xbox::EMUPATCH(IDirectSound_SetVelocity), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("IDirectSound_SynchPlayback", xbox::EMUPATCH(IDirectSound_SynchPlayback), PATCH_HLE_DSOUND),
-	//PATCH_ENTRY("XAudioCreateAdpcmFormat", xbox::EMUPATCH(XAudioCreateAdpcmFormat), PATCH_HLE_DSOUND), // NOTE: Not require to patch
-	PATCH_ENTRY("XAudioDownloadEffectsImage", xbox::EMUPATCH(XAudioDownloadEffectsImage), PATCH_HLE_DSOUND),
-	PATCH_ENTRY("XAudioSetEffectData", xbox::EMUPATCH(XAudioSetEffectData), PATCH_HLE_DSOUND),
-
 	// OHCI
 	PATCH_ENTRY("XGetDeviceChanges", xbox::EMUPATCH(XGetDeviceChanges), PATCH_HLE_OHCI),
 	PATCH_ENTRY("XGetDeviceEnumerationStatus", xbox::EMUPATCH(XGetDeviceEnumerationStatus), PATCH_HLE_OHCI),
@@ -594,11 +454,6 @@ inline void EmuInstallPatch(const std::string FunctionName, const xbox::addr_xt 
 	}
 
 	auto patch = it->second;
-
-	if ((patch.flags & PATCH_HLE_DSOUND) && bLLE_APU) {
-		printf("HLE: %s: Skipped (LLE APU Enabled)\n", FunctionName.c_str());
-		return;
-	}
 
 	if ((patch.flags & PATCH_HLE_OHCI) && bLLE_USB) {
 		printf("HLE: %s: Skipped (LLE OHCI Enabled)\n", FunctionName.c_str());

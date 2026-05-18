@@ -39,7 +39,6 @@ extern std::string g_exec_filepath;
 
 // Individual library version
 extern uint16_t g_LibVersion_D3D8;
-extern uint16_t g_LibVersion_DSOUND;
 
 #define szSettings_alloc_error "ERROR: Unable to allocate Settings class."
 #define assert_check_shared_memory(type) \
@@ -135,7 +134,7 @@ public:
 
 	// Audio settings
 	struct s_audio {
-		GUID adapterGUID;
+		int  Reserved0[4] = { 0 };
 		bool codec_pcm ;
 		bool codec_xadpcm;
 		bool codec_unknown;

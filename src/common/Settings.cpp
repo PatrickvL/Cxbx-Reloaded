@@ -50,7 +50,6 @@ static_assert(false, "Please implement support for cross-platform's user profile
 
 // Individual library version
 uint16_t g_LibVersion_D3D8 = 0;
-uint16_t g_LibVersion_DSOUND = 0;
 
 // NOTE: Update settings_version when conversion to setting's structure is required.
 // UPDATE: When settings are removed, use "if (use false && settings_version < {next_version}) {" statement
@@ -127,8 +126,6 @@ static struct {
 
 static const char* section_audio = "audio";
 static struct {
-	const char* adapter = "adapter";
-	const char* adapter_value = "%08X %04X %04X %02X%02X %02X%02X%02X%02X%02X%02X";
 	const char* codec_pcm = "PCM";
 	const char* codec_xadpcm = "XADPCM";
 	const char* codec_unknown = "UnknownCodec";
@@ -425,24 +422,6 @@ bool Settings::LoadConfig()
 
 	// ==== Audio Begin =========
 
-	// Audio - Adapter config
-	si_data = m_si.GetValue(section_audio, sect_audio_keys.adapter, /*Default=*/nullptr);
-	if (si_data == nullptr) {
-		// Default to primary audio device
-		m_audio.adapterGUID = { 0 };
-	}
-	else {
-		iStatus = std::sscanf(si_data, sect_audio_keys.adapter_value,
-		            &m_audio.adapterGUID.Data1, &m_audio.adapterGUID.Data2, &m_audio.adapterGUID.Data3,
-		            &m_audio.adapterGUID.Data4[0], &m_audio.adapterGUID.Data4[1], &m_audio.adapterGUID.Data4[2], &m_audio.adapterGUID.Data4[3],
-		            &m_audio.adapterGUID.Data4[4], &m_audio.adapterGUID.Data4[5], &m_audio.adapterGUID.Data4[6], &m_audio.adapterGUID.Data4[7]);
-
-		// Fallback to primary audio device if file contain invalid value.
-		if (iStatus != 11 /*= total arguments*/) {
-			m_audio.adapterGUID = { 0 };
-		}
-	}
-
 	m_audio.codec_pcm = m_si.GetBoolValue(section_audio, sect_audio_keys.codec_pcm, /*Default=*/true, nullptr);
 	m_audio.codec_xadpcm = m_si.GetBoolValue(section_audio, sect_audio_keys.codec_xadpcm, /*Default=*/true, nullptr);
 	m_audio.codec_unknown = m_si.GetBoolValue(section_audio, sect_audio_keys.codec_unknown, /*Default=*/true, nullptr);
@@ -630,14 +609,6 @@ bool Settings::Save(std::string file_path)
 	// ==== Video End ===========
 
 	// ==== Audio Begin =========
-
-	// Audio - Adapter config
-	std::sprintf(si_value, sect_audio_keys.adapter_value,
-		m_audio.adapterGUID.Data1, m_audio.adapterGUID.Data2, m_audio.adapterGUID.Data3,
-		m_audio.adapterGUID.Data4[0], m_audio.adapterGUID.Data4[1], m_audio.adapterGUID.Data4[2], m_audio.adapterGUID.Data4[3],
-		m_audio.adapterGUID.Data4[4], m_audio.adapterGUID.Data4[5], m_audio.adapterGUID.Data4[6], m_audio.adapterGUID.Data4[7]);
-
-	m_si.SetValue(section_audio, sect_audio_keys.adapter, si_value, nullptr, true);
 
 	m_si.SetBoolValue(section_audio, sect_audio_keys.codec_pcm, m_audio.codec_pcm, nullptr, true);
 	m_si.SetBoolValue(section_audio, sect_audio_keys.codec_xadpcm, m_audio.codec_xadpcm, nullptr, true);

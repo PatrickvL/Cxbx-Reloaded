@@ -172,8 +172,7 @@ set(WINS_LIB
  Shlwapi
  dxerr9
  ws2_32
- dsound
- winmm
+  winmm
  ddraw
  dbghelp
  comctl32
