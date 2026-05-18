@@ -19,40 +19,13 @@
 // *  If not, write to the Free Software Foundation, Inc.,
 // *  59 Temple Place - Suite 330, Bostom, MA 02111-1307, USA.
 // *
-// *  (c) 2018 Luke Usher <luke.usher@outlook.com>
-// *
-// *  All rights reserved
-// *
 // ******************************************************************
 
-#ifndef _AC97_H_
-#define _AC97_H_
+#include "APUTimer.h"
 
-#include <array>
+#include "common/Timer.h"
 
-#include "../PCIDevice.h"
-class AC97Device : public PCIDevice {
-	public:
-		using PCIDevice::PCIDevice;
-
-		// PCI Functions
-		void Init();
-		void Reset();
-
-		uint32_t IORead(int barIndex, uint32_t addr, unsigned size = sizeof(uint8_t));
-		void IOWrite(int barIndex, uint32_t addr, uint32_t data, unsigned size = sizeof(uint8_t));
-
-		uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
-		void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
-	private:
-		uint32_t ReadRegister(uint32_t addr, unsigned size) const;
-		void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
-		uint16_t ReadRegister16(uint32_t addr) const;
-		void WriteRegister16(uint32_t addr, uint16_t value);
-		void ResetBusMasterChannel(uint32_t channelBase);
-		void UpdateBusMasterStatus(uint32_t channelBase);
-
-		std::array<uint8_t, 0x180> m_Registers{};
-};
-
-#endif
+uint32_t GetAPUTime()
+{
+	return static_cast<uint32_t>(Timer_GetScaledPerformanceCounter(APU_TIMER_FREQUENCY));
+}

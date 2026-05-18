@@ -32,6 +32,7 @@
 #include <core\kernel\exports\xboxkrnl.h>
 #include <dsound.h>
 #include "DirectSoundGlobal.hpp" // Global variables
+#include "devices/audio/APUTimer.h"
 #include <common/Timer.h>
 
 #include "Logging.h"
@@ -49,16 +50,7 @@
 #define IID_IDirectSound3DListener8 IID_IDirectSound3DListener
 #endif
 
-// Temporary APU Timer Functions
-// TODO: Move these to LLE APUDevice once we have one!
-
-static constexpr uint32_t APU_TIMER_FREQUENCY = 48000;
 static uint64_t dsound_last;
-
-uint32_t GetAPUTime()
-{
-    return static_cast<int32_t>(Timer_GetScaledPerformanceCounter(APU_TIMER_FREQUENCY));
-}
 
 
 // TODO: Tasks need to do for DirectSound HLE

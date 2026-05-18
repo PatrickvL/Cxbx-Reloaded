@@ -25,61 +25,144 @@
 // *
 // ******************************************************************
 
-#include <cstdio>
-
 #include "APUDevice.h"
+#include "APUTimer.h"
 
-extern uint32_t GetAPUTime();
+#include <cstring>
+
+namespace {
+
+constexpr uint32_t APU_VP_BASE = 0x20000;
+constexpr uint32_t APU_VP_SIZE = 0x10000;
+
+constexpr uint32_t APU_GP_BASE = 0x30000;
+constexpr uint32_t APU_GP_SIZE = 0x10000;
+
+constexpr uint32_t APU_EP_BASE = 0x50000;
+constexpr uint32_t APU_EP_SIZE = 0x10000;
+
+constexpr uint32_t NV_PAPU_ISTS = 0x00001000;
+constexpr uint32_t NV_PAPU_IEN = 0x00001004;
+constexpr uint32_t NV_PAPU_FECTL = 0x00001100;
+constexpr uint32_t NV_PAPU_FECV = 0x00001110;
+constexpr uint32_t NV_PAPU_FEAV = 0x00001118;
+constexpr uint32_t NV_PAPU_FENADDR = 0x0000115C;
+constexpr uint32_t NV_PAPU_FEDECMETH = 0x00001300;
+constexpr uint32_t NV_PAPU_FEDECPARAM = 0x00001304;
+constexpr uint32_t NV_PAPU_FEMEMADDR = 0x00001324;
+constexpr uint32_t NV_PAPU_FEMEMDATA = 0x00001334;
+constexpr uint32_t NV_PAPU_FETFORCE0 = 0x00001500;
+constexpr uint32_t NV_PAPU_FETFORCE1 = 0x00001504;
+constexpr uint32_t NV_PAPU_SECTL = 0x00002000;
+constexpr uint32_t NV_PAPU_XGSCNT = 0x0000200C;
+constexpr uint32_t NV_PAPU_VPVADDR = 0x0000202C;
+constexpr uint32_t NV_PAPU_VPSGEADDR = 0x00002030;
+constexpr uint32_t NV_PAPU_VPSSLADDR = 0x00002034;
+constexpr uint32_t NV_PAPU_GPSADDR = 0x00002040;
+constexpr uint32_t NV_PAPU_GPFADDR = 0x00002044;
+constexpr uint32_t NV_PAPU_EPSADDR = 0x00002048;
+constexpr uint32_t NV_PAPU_EPFADDR = 0x0000204C;
+constexpr uint32_t NV_PAPU_GPSMAXSGE = 0x000020D4;
+constexpr uint32_t NV_PAPU_GPFMAXSGE = 0x000020D8;
+constexpr uint32_t NV_PAPU_EPSMAXSGE = 0x000020DC;
+constexpr uint32_t NV_PAPU_EPFMAXSGE = 0x000020E0;
+
+uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
+{
+	uint32_t value = 0;
+	for (unsigned i = 0; i < size; ++i) {
+		value |= static_cast<uint32_t>(data[addr + i]) << (i * 8);
+	}
+	return value;
+}
+
+void WriteLE(uint8_t* data, uint32_t addr, uint32_t value, unsigned size)
+{
+	for (unsigned i = 0; i < size; ++i) {
+		data[addr + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xFF);
+	}
+}
+
+uint32_t ReadRegisterFragment(uint32_t value, uint32_t byteOffset, unsigned size)
+{
+	const uint32_t shift = byteOffset * 8;
+	if (size >= sizeof(uint32_t)) {
+		return value;
+	}
+
+	const uint32_t mask = (1u << (size * 8)) - 1;
+	return (value >> shift) & mask;
+}
+
+}
 
 // TODO: Everything :P
 // TODO: Audio Processing/Thread
 
-#define APU_VP_BASE 0x20000
-#define APU_VP_SIZE 0x10000
-
-#define APU_GP_BASE 0x30000
-#define APU_GP_SIZE 0x10000
-
-#define APU_EP_BASE 0x50000
-#define APU_EP_SIZE 0x10000
-
 void APUDevice::Init()
 {
 	PCIBarRegister r;
-	r.Raw.type = PCI_BAR_TYPE_IO;
-	r.IO.address = 0xD000 >> 4;
-	RegisterBAR(0, 256, r.value);
-
-	r.Raw.type = PCI_BAR_TYPE_IO;
-	r.IO.address = 0xD200 >> 4;
-	RegisterBAR(0, 128, r.value);
-
 	r.Raw.type = PCI_BAR_TYPE_MEMORY;
 	r.Memory.address = APU_BASE >> 4;
-	RegisterBAR(2, APU_SIZE, r.value);
+	RegisterBAR(0, APU_SIZE, r.value);
 
 	m_DeviceId = 0x01B0;
 	m_VendorId = PCI_VENDOR_ID_NVIDIA;
+
+	Reset();
 }
-	
+
 void APUDevice::Reset()
 {
+	std::memset(m_Registers.data(), 0, m_Registers.size());
 
+	SetRegister32(NV_PAPU_ISTS, 0);
+	SetRegister32(NV_PAPU_IEN, 0);
+	SetRegister32(NV_PAPU_FECTL, 0);
+	SetRegister32(NV_PAPU_FECV, 0);
+	SetRegister32(NV_PAPU_FEAV, 0);
+	SetRegister32(NV_PAPU_FENADDR, 0);
+	SetRegister32(NV_PAPU_FEDECMETH, 0);
+	SetRegister32(NV_PAPU_FEDECPARAM, 0);
+	SetRegister32(NV_PAPU_FEMEMADDR, 0);
+	SetRegister32(NV_PAPU_FEMEMDATA, 0);
+	SetRegister32(NV_PAPU_FETFORCE0, 0);
+	SetRegister32(NV_PAPU_FETFORCE1, 0);
+	SetRegister32(NV_PAPU_SECTL, 0);
+	SetRegister32(NV_PAPU_VPVADDR, 0);
+	SetRegister32(NV_PAPU_VPSGEADDR, 0);
+	SetRegister32(NV_PAPU_VPSSLADDR, 0);
+	SetRegister32(NV_PAPU_GPSADDR, 0);
+	SetRegister32(NV_PAPU_GPFADDR, 0);
+	SetRegister32(NV_PAPU_EPSADDR, 0);
+	SetRegister32(NV_PAPU_EPFADDR, 0);
+	SetRegister32(NV_PAPU_GPSMAXSGE, 0);
+	SetRegister32(NV_PAPU_GPFMAXSGE, 0);
+	SetRegister32(NV_PAPU_EPSMAXSGE, 0);
+	SetRegister32(NV_PAPU_EPFMAXSGE, 0);
+	SetRegister32(APU_VP_BASE + 0x10, 0x80);
 }
 
 uint32_t APUDevice::IORead(int barIndex, uint32_t addr, unsigned size)
 {
-	printf("APUDevice: Unimplemented IORead %X\n", addr);
+	(void)barIndex;
+	(void)addr;
+	(void)size;
 	return 0;
 }
 
 void APUDevice::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
-	printf("APUDevice: Unimplemented IOWrite %X\n", addr);
+	(void)barIndex;
+	(void)addr;
+	(void)value;
+	(void)size;
 }
 
 uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 {
+	(void)barIndex;
+
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		return VPRead(addr - APU_VP_BASE, size);
 	}
@@ -92,16 +175,17 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 		return EPRead(addr - APU_EP_BASE, size);
 	}
 
-	switch (addr) {
-		case 0x200C: return GetAPUTime();	
+	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
+		return ReadRegisterFragment(GetAPUTime(), addr - NV_PAPU_XGSCNT, size);
 	}
 
-	printf("APUDevice: Unimplemented MMIORead %X\n", addr);
-	return 0;
+	return ReadRegister(addr, size);
 }
 
 void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
+	(void)barIndex;
+
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		VPWrite(addr - APU_VP_BASE, value, size);
 		return;
@@ -117,19 +201,24 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		return;
 	}
 
-	printf("APUDevice: Unimplemented MMIOWrite %X\n", addr);
+	if (addr >= NV_PAPU_ISTS && addr < NV_PAPU_ISTS + sizeof(uint32_t)) {
+		const uint32_t clearMask = value << ((addr - NV_PAPU_ISTS) * 8);
+		SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) & ~clearMask);
+		return;
+	}
+
+	WriteRegister(addr, value, size);
 }
 
 
 uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 {
-	printf("APUDevice: Unimplemented GP MMIORead %X\n", addr);
-	return 0;
+	return ReadRegister(APU_GP_BASE + addr, size);
 }
 
 void APUDevice::GPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
-	printf("APUDevice: Unimplemented GP MMIOWrite %X\n", addr);
+	WriteRegister(APU_GP_BASE + addr, value, size);
 }
 
 
@@ -139,23 +228,53 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 		case 0x10: return 0x80; // HACK: Pretend the FIFO is always empty, bypasses hangs when APU isn't fully implemented
 	}
 
-	printf("APUDevice: Unimplemented VP MMIORead %X\n", addr);
-	return 0;
+	return ReadRegister(APU_VP_BASE + addr, size);
 }
 
 void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
-	printf("APUDevice: Unimplemented VP MMIOWrite %X\n", addr);
+	if (addr == 0x10) {
+		return;
+	}
+
+	WriteRegister(APU_VP_BASE + addr, value, size);
 }
 
 
 uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 {
-	printf("APUDevice: Unimplemented EP MMIORead %X\n", addr);
-	return 0;
+	return ReadRegister(APU_EP_BASE + addr, size);
 }
 
 void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
-	printf("APUDevice: Unimplemented EP MMIOWrite %X\n", addr);
+	WriteRegister(APU_EP_BASE + addr, value, size);
+}
+
+uint32_t APUDevice::ReadRegister(uint32_t addr, unsigned size) const
+{
+	if (size == 0 || addr + size > m_Registers.size()) {
+		return 0;
+	}
+
+	return ReadLE(m_Registers.data(), addr, size);
+}
+
+void APUDevice::WriteRegister(uint32_t addr, uint32_t value, unsigned size)
+{
+	if (size == 0 || addr + size > m_Registers.size()) {
+		return;
+	}
+
+	WriteLE(m_Registers.data(), addr, value, size);
+}
+
+void APUDevice::SetRegister32(uint32_t addr, uint32_t value)
+{
+	WriteRegister(addr, value, sizeof(uint32_t));
+}
+
+uint32_t APUDevice::GetRegister32(uint32_t addr) const
+{
+	return ReadRegister(addr, sizeof(uint32_t));
 }
