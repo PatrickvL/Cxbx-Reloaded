@@ -283,6 +283,7 @@ typedef struct CheopsState {
 
 typedef struct ContextSurfaces2DState {
 	xbox::addr_xt object_instance;
+	xbox::addr_xt dma_notifies; // Stored by NV097_SET_CONTEXT_DMA_NOTIFIES, to be used by ?? to trigger a notify when the blit finishes.
 	xbox::addr_xt dma_image_source;
 	xbox::addr_xt dma_image_dest;
 	unsigned int color_format;

@@ -1106,6 +1106,7 @@
 
 #define NV_CONTEXT_SURFACES_2D                           0x0062
 #   define NV062_SET_OBJECT                                   0x00000000
+#   define NV062_SET_CONTEXT_DMA_NOTIFIES                     0x00000180
 #   define NV062_SET_CONTEXT_DMA_IMAGE_SOURCE                 0x00000184
 #   define NV062_SET_CONTEXT_DMA_IMAGE_DESTIN                 0x00000188
 #   define NV062_SET_COLOR_FORMAT                             0x00000300
