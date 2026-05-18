@@ -446,6 +446,9 @@ void pgraph_handle_method(NV2AState *d,
 		case NV062_SET_OBJECT:
 			context_surfaces_2d->object_instance = parameter;
 			break;
+		case NV062_SET_CONTEXT_DMA_NOTIFIES:
+			context_surfaces_2d->dma_notifies = parameter;
+			break;
 		case NV062_SET_CONTEXT_DMA_IMAGE_SOURCE:
 			context_surfaces_2d->dma_image_source = parameter;
 			break;
