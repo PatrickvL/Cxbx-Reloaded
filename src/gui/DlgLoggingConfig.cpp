@@ -51,7 +51,6 @@ static int g_DlgIndexes[] = {
 	IDC_LOG_D3D8,
 	IDC_LOG_D3DST,
 	IDC_LOG_D3DCVT,
-	IDC_LOG_DSOUND,
 	IDC_LOG_XAPI,
 	IDC_LOG_XACT,
 	IDC_LOG_XGRP,
@@ -78,10 +77,6 @@ static int g_DlgIndexes[] = {
 	IDC_LOG_XIDCTRL,
 	IDC_LOG_ADM,
 	IDC_LOG_INPSYS,
-	IDC_LOG_DSBUFFER,
-	IDC_LOG_DSSTREAM,
-	IDC_LOG_DS3DCALC,
-	IDC_LOG_XMO,
 	IDC_LOG_RINP,
 	IDC_LOG_JVS,
 	IDC_LOG_LIBUSB,
@@ -368,11 +363,6 @@ INT_PTR CALLBACK DlgLogConfigProc(HWND hWndDlg, UINT uMsg, WPARAM wParam, LPARAM
 				case IDC_LOG_D3D8:
 				case IDC_LOG_D3DST:
 				case IDC_LOG_D3DCVT:
-				case IDC_LOG_DSOUND:
-				case IDC_LOG_DSBUFFER:
-				case IDC_LOG_DSSTREAM:
-				case IDC_LOG_DS3DCALC:
-				case IDC_LOG_XMO:
 				case IDC_LOG_XAPI:
 				case IDC_LOG_XACT:
 				case IDC_LOG_XGRP:

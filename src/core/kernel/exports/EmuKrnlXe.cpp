@@ -77,9 +77,8 @@ XBSYSAPI EXPORTNUM(327) xbox::ntstatus_xt NTAPI xbox::XeLoadSection
 		if (Section->SectionReferenceCount == 0) {
 			// REMARK: Some titles have sections less than PAGE_SIZE, which will cause an overlap with the next section
 			// since both will have the same aligned starting address.
-			// Test case: Dead or Alive 3, section XGRPH has a size of 764 bytes
-			// XGRPH										DSOUND
-			// 1F18A0 + 2FC -> aligned_start = 1F1000		1F1BA0 -> aligned_start = 1F1000 <- collision
+			// Test case: Dead or Alive 3, section XGRPH has a size of 764 bytes.
+			// 1F18A0 + 2FC -> aligned_start = 1F1000
 
 			VAddr BaseAddress = (VAddr)Section->VirtualAddress;
 			size_t SectionSize = (VAddr)Section->VirtualSize;

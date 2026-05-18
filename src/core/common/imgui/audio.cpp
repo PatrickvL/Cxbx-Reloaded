@@ -32,10 +32,6 @@ void ImGuiAudio::DrawMenu()
 
 void ImGuiAudio::DrawWidgets(bool is_focus, ImGuiWindowFlags input_handler)
 {
-	//TODO: In need of make interface class to return generic info in some way.
-	extern void DSound_PrintStats(bool, ImGuiWindowFlags, bool m_show_audio_stats);
-	DSound_PrintStats(is_focus, input_handler, m_windows.cache_stats_general);
-
-	extern void DSound_DrawBufferVisualization(bool, bool *p_show, ImGuiWindowFlags);
-	DSound_DrawBufferVisualization(is_focus, &m_windows.cache_visualization, input_handler);
+	(void)is_focus;
+	(void)input_handler;
 }

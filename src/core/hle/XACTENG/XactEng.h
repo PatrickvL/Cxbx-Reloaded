@@ -30,8 +30,6 @@
 
 #include <windows.h>
 
-#include <dsound.h>
-
 namespace xbox {
 
 // ******************************************************************

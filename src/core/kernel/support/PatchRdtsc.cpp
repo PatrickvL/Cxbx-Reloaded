@@ -105,8 +105,7 @@ void PatchRdtscInstructions()
 		}
 
 		// Skip some segments known to never contain rdtsc (to avoid false positives)
-		if (std::string(CxbxKrnl_Xbe->m_szSectionName[sectionIndex]) == "DSOUND"
-			|| std::string(CxbxKrnl_Xbe->m_szSectionName[sectionIndex]) == "XGRPH"
+		if (std::string(CxbxKrnl_Xbe->m_szSectionName[sectionIndex]) == "XGRPH"
 			|| std::string(CxbxKrnl_Xbe->m_szSectionName[sectionIndex]) == ".data"
 			|| std::string(CxbxKrnl_Xbe->m_szSectionName[sectionIndex]) == ".rdata"
 			|| std::string(CxbxKrnl_Xbe->m_szSectionName[sectionIndex]) == "XMV"
