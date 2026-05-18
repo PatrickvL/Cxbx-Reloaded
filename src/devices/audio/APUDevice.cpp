@@ -34,6 +34,9 @@ namespace {
 
 constexpr uint32_t APU_VP_BASE = 0x20000;
 constexpr uint32_t APU_VP_SIZE = 0x10000;
+constexpr uint32_t APU_VP_FREE = 0x10;
+constexpr uint32_t APU_VP_FIFO_CAPACITY = 0x80;
+constexpr uint32_t APU_VP_STATUS_EMPTY = 0x80;
 
 constexpr uint32_t APU_GP_BASE = 0x30000;
 constexpr uint32_t APU_GP_SIZE = 0x10000;
@@ -115,6 +118,8 @@ void APUDevice::Init()
 void APUDevice::Reset()
 {
 	std::memset(m_Registers.data(), 0, m_Registers.size());
+	m_VPFifoLevel = 0;
+	m_VPFifoLastUpdate = GetAPUTime();
 
 	SetRegister32(NV_PAPU_ISTS, 0);
 	SetRegister32(NV_PAPU_IEN, 0);
@@ -140,7 +145,7 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_GPFMAXSGE, 0);
 	SetRegister32(NV_PAPU_EPSMAXSGE, 0);
 	SetRegister32(NV_PAPU_EPFMAXSGE, 0);
-	SetRegister32(APU_VP_BASE + 0x10, 0x80);
+	RefreshVPStatus();
 }
 
 uint32_t APUDevice::IORead(int barIndex, uint32_t addr, unsigned size)
@@ -224,8 +229,13 @@ void APUDevice::GPWrite(uint32_t addr, uint32_t value, unsigned size)
 
 uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 {
-	switch (addr) {
-		case 0x10: return 0x80; // HACK: Pretend the FIFO is always empty, bypasses hangs when APU isn't fully implemented
+	UpdateVPFifo();
+
+	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
+		return ReadRegisterFragment(
+			GetRegister32(APU_VP_BASE + APU_VP_FREE),
+			addr - APU_VP_FREE,
+			size);
 	}
 
 	return ReadRegister(APU_VP_BASE + addr, size);
@@ -233,11 +243,17 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 
 void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
-	if (addr == 0x10) {
+	UpdateVPFifo();
+
+	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
 		return;
 	}
 
 	WriteRegister(APU_VP_BASE + addr, value, size);
+	if (m_VPFifoLevel < APU_VP_FIFO_CAPACITY) {
+		++m_VPFifoLevel;
+	}
+	RefreshVPStatus();
 }
 
 
@@ -277,4 +293,34 @@ void APUDevice::SetRegister32(uint32_t addr, uint32_t value)
 uint32_t APUDevice::GetRegister32(uint32_t addr) const
 {
 	return ReadRegister(addr, sizeof(uint32_t));
+}
+
+void APUDevice::UpdateVPFifo()
+{
+	const uint32_t now = GetAPUTime();
+	if (m_VPFifoLastUpdate == 0) {
+		m_VPFifoLastUpdate = now;
+		RefreshVPStatus();
+		return;
+	}
+
+	const uint32_t elapsed = now - m_VPFifoLastUpdate;
+	if (elapsed > 0) {
+		if (elapsed >= m_VPFifoLevel) {
+			m_VPFifoLevel = 0;
+		} else {
+			m_VPFifoLevel -= elapsed;
+		}
+		m_VPFifoLastUpdate = now;
+		RefreshVPStatus();
+	}
+}
+
+void APUDevice::RefreshVPStatus()
+{
+	uint32_t status = 0;
+	if (m_VPFifoLevel == 0) {
+		status |= APU_VP_STATUS_EMPTY;
+	}
+	SetRegister32(APU_VP_BASE + APU_VP_FREE, status);
 }

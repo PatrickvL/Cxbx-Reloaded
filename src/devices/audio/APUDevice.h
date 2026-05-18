@@ -51,6 +51,8 @@ private:
 	void EPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t VPRead(uint32_t addr, unsigned size);
 	void VPWrite(uint32_t addr, uint32_t value, unsigned size);
+	void UpdateVPFifo();
+	void RefreshVPStatus();
 
 	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -58,6 +60,8 @@ private:
 	uint32_t GetRegister32(uint32_t addr) const;
 
 	std::array<uint8_t, APU_SIZE> m_Registers{};
+	uint32_t m_VPFifoLevel = 0;
+	uint32_t m_VPFifoLastUpdate = 0;
 };
 
 #endif
