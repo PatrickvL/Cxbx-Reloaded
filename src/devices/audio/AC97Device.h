@@ -49,10 +49,16 @@ class AC97Device : public PCIDevice {
 		void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
 		uint16_t ReadRegister16(uint32_t addr) const;
 		void WriteRegister16(uint32_t addr, uint16_t value);
+		void UpdateBusMasterChannels();
 		void ResetBusMasterChannel(uint32_t channelBase);
+		bool PrimeBusMasterChannel(uint32_t channelBase);
 		void UpdateBusMasterStatus(uint32_t channelBase);
+		uint32_t GetBusMasterSampleRate(uint32_t channelBase) const;
+		bool ReadGuest32(uint32_t guestAddress, uint32_t& value) const;
 
 		std::array<uint8_t, 0x180> m_Registers{};
+		std::array<uint32_t, 3> m_ChannelLastUpdate{};
+		std::array<uint32_t, 3> m_ChannelSampleRemainder{};
 };
 
 #endif

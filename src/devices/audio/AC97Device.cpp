@@ -26,6 +26,8 @@
 // ******************************************************************
 
 #include "AC97Device.h"
+#include "APUTimer.h"
+#include "common/AddressRanges.h"
 
 #include <cstring>
 
@@ -53,12 +55,18 @@ constexpr uint32_t NABM_MC_BASE = 0x20;
 constexpr uint32_t NABM_GLOB_CNT = 0x2C;
 constexpr uint32_t NABM_GLOB_STA = 0x30;
 
+constexpr uint32_t BM_BDBAR = 0x00;
 constexpr uint32_t BM_CIV = 0x04;
 constexpr uint32_t BM_LVI = 0x05;
 constexpr uint32_t BM_SR = 0x06;
 constexpr uint32_t BM_PICB = 0x08;
 constexpr uint32_t BM_PIV = 0x0A;
 constexpr uint32_t BM_CR = 0x0B;
+
+constexpr uint32_t AC97_DESCRIPTOR_COUNT = 32;
+constexpr uint32_t AC97_DESCRIPTOR_STRIDE = 8;
+constexpr uint32_t AC97_DESCRIPTOR_LENGTH_MASK = 0x0000FFFF;
+constexpr uint32_t AC97_DESCRIPTOR_IOC = 0x80000000;
 
 constexpr uint16_t SR_FIFOE = 1 << 4;
 constexpr uint16_t SR_BCIS = 1 << 3;
@@ -91,6 +99,24 @@ void WriteLE(uint8_t* data, uint32_t addr, uint32_t value, unsigned size)
 	for (unsigned i = 0; i < size; ++i) {
 		data[addr + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xFF);
 	}
+}
+
+size_t ChannelIndex(uint32_t channelBase)
+{
+	switch (channelBase) {
+	case NABM_PI_BASE:
+		return 0;
+	case NABM_PO_BASE:
+		return 1;
+	case NABM_MC_BASE:
+	default:
+		return 2;
+	}
+}
+
+bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
+{
+	return size > 0 && guestAddress <= PHYSICAL_MAP_SIZE && size <= (PHYSICAL_MAP_SIZE - guestAddress);
 }
 
 }
@@ -131,6 +157,8 @@ void AC97Device::Reset()
 	WriteRegister16(AC97_MIC_ADC_Rate, AC97_RATE_48KHZ);
 	WriteRegister16(AC97_Vendor_ID1, AC97_VENDOR_SIGMATEL_1);
 	WriteRegister16(AC97_Vendor_ID2, AC97_VENDOR_SIGMATEL_2);
+	m_ChannelLastUpdate.fill(GetAPUTime());
+	m_ChannelSampleRemainder.fill(0);
 
 	ResetBusMasterChannel(NABM_PI_BASE);
 	ResetBusMasterChannel(NABM_PO_BASE);
@@ -141,6 +169,10 @@ void AC97Device::Reset()
 
 uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
 {
+	if (barIndex == 1) {
+		UpdateBusMasterChannels();
+	}
+
 	switch (barIndex) {
 	case 0:
 		return ReadRegister(addr, size);
@@ -153,6 +185,10 @@ uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
 
 void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
+	if (barIndex == 1) {
+		UpdateBusMasterChannels();
+	}
+
 	switch (barIndex) {
 	case 0:
 		if (addr == AC97_Reset && size >= sizeof(uint16_t)) {
@@ -194,6 +230,9 @@ uint32_t AC97Device::MMIORead(int barIndex, uint32_t addr, unsigned size)
 	(void)barIndex;
 
 	if (addr < AC97_MMIO_SIZE) {
+		if (addr >= AC97_NAM_SIZE) {
+			UpdateBusMasterChannels();
+		}
 		return ReadRegister(addr, size);
 	}
 
@@ -205,6 +244,9 @@ void AC97Device::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned
 	(void)barIndex;
 
 	if (addr < AC97_MMIO_SIZE) {
+		if (addr >= AC97_NAM_SIZE) {
+			UpdateBusMasterChannels();
+		}
 		IOWrite(addr < AC97_NAM_SIZE ? 0 : 1, addr < AC97_NAM_SIZE ? addr : addr - AC97_NAM_SIZE, value, size);
 	}
 }
@@ -237,33 +279,157 @@ void AC97Device::WriteRegister16(uint32_t addr, uint16_t value)
 	WriteRegister(addr, value, sizeof(uint16_t));
 }
 
+void AC97Device::UpdateBusMasterChannels()
+{
+	UpdateBusMasterStatus(NABM_PI_BASE);
+	UpdateBusMasterStatus(NABM_PO_BASE);
+	UpdateBusMasterStatus(NABM_MC_BASE);
+}
+
 void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 {
+	const size_t channelIndex = ChannelIndex(channelBase);
+	m_ChannelLastUpdate[channelIndex] = GetAPUTime();
+	m_ChannelSampleRemainder[channelIndex] = 0;
+
+	WriteRegister(AC97_NAM_SIZE + channelBase + BM_BDBAR, 0, sizeof(uint32_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CIV, 0, sizeof(uint8_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_LVI, 0, sizeof(uint8_t));
-	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_SR, SR_DCH);
+	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_SR, SR_DCH | SR_CELV);
 	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PICB, 0);
 	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, 0);
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CR, 0, sizeof(uint8_t));
+}
+
+bool AC97Device::PrimeBusMasterChannel(uint32_t channelBase)
+{
+	const uint32_t baseAddr = AC97_NAM_SIZE + channelBase;
+	const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CIV, sizeof(uint8_t)) & 0x1F);
+	const uint32_t descriptorBase = ReadRegister(baseAddr + BM_BDBAR, sizeof(uint32_t)) & ~0x7u;
+	if (descriptorBase == 0) {
+		return false;
+	}
+
+	uint32_t descriptorControl = 0;
+	if (!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl)) {
+		return false;
+	}
+
+	const uint16_t descriptorLength = static_cast<uint16_t>(descriptorControl & AC97_DESCRIPTOR_LENGTH_MASK);
+	if (descriptorLength == 0) {
+		return false;
+	}
+
+	WriteRegister16(baseAddr + BM_PICB, descriptorLength);
+	WriteRegister16(baseAddr + BM_PIV, currentIndex);
+	return true;
 }
 
 void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 {
 	const uint32_t crAddr = AC97_NAM_SIZE + channelBase + BM_CR;
 	const uint32_t srAddr = AC97_NAM_SIZE + channelBase + BM_SR;
+	const uint32_t civAddr = AC97_NAM_SIZE + channelBase + BM_CIV;
+	const uint32_t lviAddr = AC97_NAM_SIZE + channelBase + BM_LVI;
+	const uint32_t picbAddr = AC97_NAM_SIZE + channelBase + BM_PICB;
+	const uint32_t bdbarAddr = AC97_NAM_SIZE + channelBase + BM_BDBAR;
 	const uint8_t control = static_cast<uint8_t>(ReadRegister(crAddr, sizeof(uint8_t)));
 	uint16_t status = ReadRegister16(srAddr) & SR_WCLEAR_MASK;
+	const size_t channelIndex = ChannelIndex(channelBase);
+	const uint32_t now = GetAPUTime();
+	const uint32_t elapsed = now - m_ChannelLastUpdate[channelIndex];
+	m_ChannelLastUpdate[channelIndex] = now;
+
 	if (control & CR_RPBM) {
-		status &= ~SR_DCH;
-	} else {
-		status |= SR_DCH;
+		uint64_t samplesToConsume = m_ChannelSampleRemainder[channelIndex];
+		samplesToConsume += static_cast<uint64_t>(elapsed) * GetBusMasterSampleRate(channelBase);
+		m_ChannelSampleRemainder[channelIndex] = static_cast<uint32_t>(samplesToConsume % APU_TIMER_FREQUENCY);
+		samplesToConsume /= APU_TIMER_FREQUENCY;
+
+		if (ReadRegister16(picbAddr) == 0) {
+			PrimeBusMasterChannel(channelBase);
+		}
+
+		while (samplesToConsume > 0) {
+			uint16_t remaining = ReadRegister16(picbAddr);
+			if (remaining == 0 && !PrimeBusMasterChannel(channelBase)) {
+				break;
+			}
+
+			remaining = ReadRegister16(picbAddr);
+			if (remaining == 0) {
+				break;
+			}
+
+			const uint16_t consumed = static_cast<uint16_t>(samplesToConsume > remaining ? remaining : samplesToConsume);
+			remaining = static_cast<uint16_t>(remaining - consumed);
+			WriteRegister16(picbAddr, remaining);
+			samplesToConsume -= consumed;
+
+			if (remaining != 0) {
+				continue;
+			}
+
+			const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
+			const uint8_t lastValidIndex = static_cast<uint8_t>(ReadRegister(lviAddr, sizeof(uint8_t)) & 0x1F);
+			const uint32_t descriptorBase = ReadRegister(bdbarAddr, sizeof(uint32_t)) & ~0x7u;
+			uint32_t descriptorControl = 0;
+			if (descriptorBase != 0 &&
+				ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl) &&
+				(descriptorControl & AC97_DESCRIPTOR_IOC) != 0) {
+				status |= SR_BCIS;
+			}
+
+			if (currentIndex == lastValidIndex) {
+				status |= SR_LVBCI;
+				break;
+			}
+
+			const uint8_t nextIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
+			WriteRegister(civAddr, nextIndex, sizeof(uint8_t));
+			WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, nextIndex);
+			if (!PrimeBusMasterChannel(channelBase)) {
+				break;
+			}
+		}
 	}
 
-	if (ReadRegister(AC97_NAM_SIZE + channelBase + BM_LVI, sizeof(uint8_t)) == 0) {
+	if ((control & CR_RPBM) == 0 || ReadRegister16(picbAddr) == 0) {
+		status |= SR_DCH;
+	} else {
+		status &= ~SR_DCH;
+	}
+
+	const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
+	const uint8_t lastValidIndex = static_cast<uint8_t>(ReadRegister(lviAddr, sizeof(uint8_t)) & 0x1F);
+	if ((control & CR_RPBM) == 0 || ReadRegister16(picbAddr) == 0 || currentIndex == lastValidIndex) {
 		status |= SR_CELV;
 	} else {
 		status &= ~SR_CELV;
 	}
 
 	WriteRegister16(srAddr, status);
+}
+
+uint32_t AC97Device::GetBusMasterSampleRate(uint32_t channelBase) const
+{
+	switch (channelBase) {
+	case NABM_PI_BASE:
+		return ReadRegister16(AC97_PCM_LR_ADC_Rate);
+	case NABM_MC_BASE:
+		return ReadRegister16(AC97_MIC_ADC_Rate);
+	case NABM_PO_BASE:
+	default:
+		return ReadRegister16(AC97_PCM_Front_DAC_Rate);
+	}
+}
+
+bool AC97Device::ReadGuest32(uint32_t guestAddress, uint32_t& value) const
+{
+	if (!IsGuestRangeAccessible(guestAddress, sizeof(uint32_t))) {
+		return false;
+	}
+
+	value = *reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(PHYSICAL_MAP_BASE + guestAddress));
+	return true;
 }
