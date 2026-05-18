@@ -309,6 +309,12 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		return;
 	}
 
+	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
+		WriteRegister(addr, value, size);
+		WriteGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
+		return;
+	}
+
 	WriteRegister(addr, value, size);
 }
 
