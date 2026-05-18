@@ -298,12 +298,6 @@ uint32_t APUDevice::GetRegister32(uint32_t addr) const
 void APUDevice::UpdateVPFifo()
 {
 	const uint32_t now = GetAPUTime();
-	if (m_VPFifoLastUpdate == 0) {
-		m_VPFifoLastUpdate = now;
-		RefreshVPStatus();
-		return;
-	}
-
 	const uint32_t elapsed = now - m_VPFifoLastUpdate;
 	if (elapsed > 0) {
 		if (elapsed >= m_VPFifoLevel) {

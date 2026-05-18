@@ -134,7 +134,7 @@ public:
 
 	// Audio settings
 	struct s_audio {
-		int  Reserved0[4] = { 0 };
+		int  Deprecated_AdapterGUID[4] = { 0 };
 		bool codec_pcm ;
 		bool codec_xadpcm;
 		bool codec_unknown;
