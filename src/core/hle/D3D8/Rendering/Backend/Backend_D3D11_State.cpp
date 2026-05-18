@@ -432,10 +432,10 @@ void CxbxD3D11UpdateSamplersFromPGRAPH(PGRAPHState *pg)
 	static uint32_t s_CachedBorderColor[4] = {};
 
 	for (int stage = 0; stage < 4; stage++) {
-		uint32_t texAddr   = pg->regs[RI(NV_PGRAPH_TEXADDRESS0 + stage * 4)];
-		uint32_t texFilter = pg->regs[RI(NV_PGRAPH_TEXFILTER0 + stage * 4)];
-		uint32_t texCtl0   = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
-		uint32_t borderCol = pg->regs[RI(NV_PGRAPH_BORDERCOLOR0 + stage * 4)];
+		uint32_t texAddr   = NV2AGetTextureAddressModeRaw(stage);
+		uint32_t texFilter = NV2AGetTextureFilterRaw(stage);
+		uint32_t texCtl0   = NV2AGetTextureControlRaw(stage);
+		uint32_t borderCol = NV2AGetBorderColorRaw(stage);
 
 		// Skip if nothing changed
 		if (texAddr == s_CachedTexAddress[stage] &&

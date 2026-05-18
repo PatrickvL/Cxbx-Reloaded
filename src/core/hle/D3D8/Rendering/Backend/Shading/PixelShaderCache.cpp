@@ -21,6 +21,7 @@
 #include "core/hle/D3D8/Rendering/Shaders/CxbxRegisterCombinerInterpreterState.hlsli"
 #include "devices/Xbox.h"
 #include "devices/video/nv2a.h"
+#include "core/hle/D3D8/Rendering/NV2A_PGRAPH_Helpers.h"
 #include "../Backend_D3D11_Profiler.h"
 
 #include <unordered_map>
@@ -277,7 +278,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         ss << "    { float3 proj = " << coords << ".xyz / " << coords << ".w;\n";
         ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", proj.xy);\n";
         if (shadowCompare != 0.0f) {
-            ss << "      " << tReg << " = ApplyShadowCompare(PG_UINT(0x19A4) & 7u, " << tReg << ", proj.z);\n";
+            ss << "      " << tReg << " = ApplyShadowCompare(PG_UINT(0x" << std::hex << NV_PGRAPH_SHADOWCTL << std::dec << ") & 7u, " << tReg << ", proj.z);\n";
         }
         ss << "    }\n";
         break;
@@ -286,7 +287,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         ss << "    { float3 proj = " << coords << ".xyz / " << coords << ".w;\n";
         if (shadowCompare != 0.0f) {
             ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", proj.xy);\n";
-            ss << "      " << tReg << " = ApplyShadowCompare(PG_UINT(0x19A4) & 7u, " << tReg << ", proj.z);\n";
+            ss << "      " << tReg << " = ApplyShadowCompare(PG_UINT(0x" << std::hex << NV_PGRAPH_SHADOWCTL << std::dec << ") & 7u, " << tReg << ", proj.z);\n";
         } else {
             ss << "      " << tReg << " = Tex3D_" << sIdx << ".Sample(Samp" << sIdx << ", proj);\n";
         }
@@ -302,7 +303,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         break;
 
     case PS_TEXTUREMODES_CLIPPLANE:
-        ss << "    ApplyCompareMode((PG_UINT(0x1994) >> " << (stage * 4) << "u) & 0xFu, " << coords << ");\n";
+        ss << "    ApplyCompareMode((PG_UINT(0x" << std::hex << NV_PGRAPH_SHADERCLIPMODE << std::dec << ") >> " << (stage * 4) << "u) & 0xFu, " << coords << ");\n";
         return; // no post-process
 
     case PS_TEXTUREMODES_BUMPENVMAP:
@@ -310,7 +311,7 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         uint32_t bumOff = (stage - 1) * 4;
         ss << "    { float4 src = T" << srcStage << ";\n";
-        ss << "      float4 bem = float4(PG_FLOAT(0x" << std::hex << (0x181C + bumOff) << "), PG_FLOAT(0x" << (0x1828 + bumOff) << "), PG_FLOAT(0x" << (0x1834 + bumOff) << "), PG_FLOAT(0x" << (0x1840 + bumOff) << "));\n" << std::dec;
+        ss << "      float4 bem = float4(PG_FLOAT(0x" << std::hex << (NV_PGRAPH_BUMPMAT00 + bumOff) << "), PG_FLOAT(0x" << (NV_PGRAPH_BUMPMAT01 + bumOff) << "), PG_FLOAT(0x" << (NV_PGRAPH_BUMPMAT10 + bumOff) << "), PG_FLOAT(0x" << (NV_PGRAPH_BUMPMAT11 + bumOff) << "));\n" << std::dec;
         ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", float2("
            << coords << ".x + bem.x * src.r + bem.z * src.g, "
            << coords << ".y + bem.y * src.r + bem.w * src.g));\n";
@@ -323,9 +324,9 @@ static void EmitTextureFetch(std::ostringstream& ss, uint32_t stage, uint32_t mo
         uint32_t srcStage = GetTexSrcStage(stage, shaderCtl);
         uint32_t bumOff = (stage - 1) * 4;
         ss << "    { float4 src = T" << srcStage << ";\n";
-        ss << "      float4 bem = float4(PG_FLOAT(0x" << std::hex << (0x181C + bumOff) << "), PG_FLOAT(0x" << (0x1828 + bumOff) << "), PG_FLOAT(0x" << (0x1834 + bumOff) << "), PG_FLOAT(0x" << (0x1840 + bumOff) << "));\n";
-        ss << "      float lumS = PG_FLOAT(0x" << (0x1858 + (stage - 1) * 4) << ");\n";
-        ss << "      float lumO = PG_FLOAT(0x" << (0x184C + (stage - 1) * 4) << ");\n" << std::dec;
+        ss << "      float4 bem = float4(PG_FLOAT(0x" << std::hex << (NV_PGRAPH_BUMPMAT00 + bumOff) << "), PG_FLOAT(0x" << (NV_PGRAPH_BUMPMAT01 + bumOff) << "), PG_FLOAT(0x" << (NV_PGRAPH_BUMPMAT10 + bumOff) << "), PG_FLOAT(0x" << (NV_PGRAPH_BUMPMAT11 + bumOff) << "));\n";
+        ss << "      float lumS = PG_FLOAT(0x" << (NV_PGRAPH_BUMPSCALE1 + (stage - 1) * 4) << ");\n";
+        ss << "      float lumO = PG_FLOAT(0x" << (NV_PGRAPH_BUMPOFFSET1 + (stage - 1) * 4) << ");\n" << std::dec;
         ss << "      " << tReg << " = Tex2D_" << sIdx << ".Sample(Samp" << sIdx << ", float2("
            << coords << ".x + bem.x * src.r + bem.z * src.g, "
            << coords << ".y + bem.y * src.r + bem.w * src.g));\n";
@@ -820,7 +821,7 @@ static std::string GenerateHLSL(const PSJITKey& key)
             ss << "    float4 V1 = input.iD1;\n";
     }
     if (isRead(PS_REGISTER_FOG))
-        ss << "    float4 FOG = float4(PG_COLOR_ARGB(0x1980).rgb, saturate(input.iFog));\n";
+        ss << "    float4 FOG = float4(PG_COLOR_ARGB(0x" << std::hex << NV_PGRAPH_FOGCOLOR << std::dec << ").rgb, saturate(input.iFog));\n";
     ss << "    float4 R0 = float4(0.0, 0.0, 0.0, T0.a);\n";
     if (isRead(PS_REGISTER_R1))
         ss << "    float4 R1 = (float4)0.0;\n";
@@ -836,9 +837,9 @@ static std::string GenerateHLSL(const PSJITKey& key)
 
     // Hoist shared (non-unique) C0/C1 loads before the stage loop
     if (!flagUniqueC0 && anyC0 && (masks.stageC0 & 0xFF))
-        ss << "    C0 = PG_COLOR_ARGB(0x" << std::hex << 0x1880 << ");\n" << std::dec;
+        ss << "    C0 = PG_COLOR_ARGB(0x" << std::hex << NV_PGRAPH_COMBINEFACTOR0 << ");\n" << std::dec;
     if (!flagUniqueC1 && anyC1 && (masks.stageC1 & 0xFF))
-        ss << "    C1 = PG_COLOR_ARGB(0x" << std::hex << 0x18A0 << ");\n" << std::dec;
+        ss << "    C1 = PG_COLOR_ARGB(0x" << std::hex << NV_PGRAPH_COMBINEFACTOR1 << ");\n" << std::dec;
 
     // Combiner stages
     ss << "\n    // --- Combiner stages ---\n";
@@ -847,11 +848,11 @@ static std::string GenerateHLSL(const PSJITKey& key)
 
         // Load per-stage C0/C1 from PGRAPH (only when unique per stage)
         if (flagUniqueC0 && (masks.stageC0 & (1u << stage))) {
-            uint32_t c0Off = 0x1880 + stage * 4;
+            uint32_t c0Off = NV_PGRAPH_COMBINEFACTOR0 + stage * 4;
             ss << "    C0 = PG_COLOR_ARGB(0x" << std::hex << c0Off << ");\n" << std::dec;
         }
         if (flagUniqueC1 && (masks.stageC1 & (1u << stage))) {
-            uint32_t c1Off = 0x18A0 + stage * 4;
+            uint32_t c1Off = NV_PGRAPH_COMBINEFACTOR1 + stage * 4;
             ss << "    C1 = PG_COLOR_ARGB(0x" << std::hex << c1Off << ");\n" << std::dec;
         }
 
@@ -1059,9 +1060,9 @@ static std::string GenerateHLSL(const PSJITKey& key)
     } else {
         // Load final combiner C0/C1
         if (masks.stageC0 & (1u << 8))
-            ss << "    C0 = PG_COLOR_ARGB(0x19AC);\n";
+            ss << "    C0 = PG_COLOR_ARGB(0x" << std::hex << NV_PGRAPH_SPECFOGFACTOR0 << std::dec << ");\n";
         if (masks.stageC1 & (1u << 8))
-            ss << "    C1 = PG_COLOR_ARGB(0x19B0);\n";
+            ss << "    C1 = PG_COLOR_ARGB(0x" << std::hex << NV_PGRAPH_SPECFOGFACTOR1 << std::dec << ");\n";
 
         // EFG phase
         uint32_t settings = (fcEFG) & 0xFF;
@@ -1111,7 +1112,7 @@ static std::string GenerateHLSL(const PSJITKey& key)
 
     // Alpha test
     ss << "\n    // --- Alpha test ---\n";
-    ss << "    { uint c0 = PG_UINT(0x194C);\n";
+    ss << "    { uint c0 = PG_UINT(0x" << std::hex << NV_PGRAPH_CONTROL_0 << std::dec << ");\n";
     ss << "      float ae = (c0 & 0x1000u) ? 1.0 : 0.0;\n";
     ss << "      float ar = float(c0 & 0xFFu) / 255.0;\n";
     ss << "      float af = float((c0 & 0xF00u) >> 8);\n";
@@ -1120,7 +1121,7 @@ static std::string GenerateHLSL(const PSJITKey& key)
     // Fog blending
     if (key.fogEnable) {
         ss << "\n    // --- Fog ---\n";
-        ss << "    result.rgb = lerp(PG_COLOR_ARGB(0x1980).rgb, result.rgb, saturate(input.iFog));\n";
+        ss << "    result.rgb = lerp(PG_COLOR_ARGB(0x" << std::hex << NV_PGRAPH_FOGCOLOR << std::dec << ").rgb, result.rgb, saturate(input.iFog));\n";
     }
 
     if (hasDotZW) {
@@ -1162,35 +1163,35 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     // (no dependency on g_LastPSAuxCB or CxbxD3D11UploadRCInterpreterState)
     PSJITKey key = {};
     key.cacheVersion = PS_JIT_CACHE_VERSION;
-    key.combinectl = pg->regs[0x1940 >> 2];
+    key.combinectl = pg->regs[RI(NV_PGRAPH_COMBINECTL)];
     key.numStages = key.combinectl & 0xFF;
     if (key.numStages == 0) key.numStages = 1;
     if (key.numStages > 8)  key.numStages = 8;
 
     for (uint32_t i = 0; i < 8; i++) {
-        key.rgbInputs[i]   = pg->regs[(0x1900 + i * 4) >> 2];
-        key.alphaInputs[i] = pg->regs[(0x18C0 + i * 4) >> 2];
-        key.rgbOutputs[i]  = pg->regs[(0x1920 + i * 4) >> 2];
-        key.alphaOutputs[i]= pg->regs[(0x18E0 + i * 4) >> 2];
+        key.rgbInputs[i]   = pg->regs[RI(NV_PGRAPH_COMBINECOLORI0 + i * 4)];
+        key.alphaInputs[i] = pg->regs[RI(NV_PGRAPH_COMBINEALPHAI0 + i * 4)];
+        key.rgbOutputs[i]  = pg->regs[RI(NV_PGRAPH_COMBINECOLORO0 + i * 4)];
+        key.alphaOutputs[i]= pg->regs[RI(NV_PGRAPH_COMBINEALPHAO0 + i * 4)];
     }
 
-    key.shaderCtl      = pg->regs[0x1998 >> 2];
-    key.shaderClipMode = pg->regs[0x1994 >> 2];
+    key.shaderCtl      = pg->regs[RI(NV_PGRAPH_SHADERCTL)];
+    key.shaderClipMode = pg->regs[RI(NV_PGRAPH_SHADERCLIPMODE)];
 
     // Read from the last-built aux CB (already computed by CxbxD3D11UploadRCInterpreterState)
     const PSAuxCBLayout& aux = g_LastPSAuxCB;
 
-    // Read textureModes directly from PGRAPH (NV_PGRAPH_SHADERPROG = 0x199C)
+    // Read textureModes directly from PGRAPH (NV_PGRAPH_SHADERPROG)
     // to avoid stale g_LastPSAuxCB issues.
-    key.textureModes = pg->regs[0x199C >> 2]; // NV_PGRAPH_SHADERPROG
+    key.textureModes = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
 
     // Final combiner inputs — derive from PGRAPH (synthesize default if not set)
     {
-        uint32_t fcABCD = pg->regs[0x1944 >> 2]; // COMBINESPECFOG0
-        uint32_t fcEFG  = pg->regs[0x1948 >> 2]; // COMBINESPECFOG1
+        uint32_t fcABCD = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG0)];
+        uint32_t fcEFG  = pg->regs[RI(NV_PGRAPH_COMBINESPECFOG1)];
         if (fcABCD == 0 && fcEFG == 0) {
-            bool fogEnable = (pg->regs[0x1958 >> 2] & 0x100) != 0;
-            bool specEnable = (pg->regs[0x0FB8 >> 2] & 0x10000) != 0;
+            bool fogEnable = (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & 0x100) != 0;
+            bool specEnable = (pg->regs[RI(NV_PGRAPH_CSV0_C)] & 0x10000) != 0;
             // NV2A register encoding: FOG=0x03, R0=0x0C, V1=0x05, ZERO=0x00, ALPHA=0x10
             uint32_t regA = 0x13; // FOG | CHANNEL_ALPHA
             uint32_t regB = 0x0C; // R0
@@ -1204,14 +1205,14 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
     }
 
     // Fog enable — from PGRAPH CONTROL_3
-    key.fogEnable = (pg->regs[0x1958 >> 2] & 0x100) ? 1u : 0u;
+    key.fogEnable = (pg->regs[RI(NV_PGRAPH_CONTROL_3)] & 0x100) ? 1u : 0u;
 
     // Front face factor — from PGRAPH CSV0_C + SETUPRASTER
     {
-        uint32_t csv0c = pg->regs[0x0FB8 >> 2];
+        uint32_t csv0c = pg->regs[RI(NV_PGRAPH_CSV0_C)];
         bool twoSided = (csv0c & 0x20000000u) != 0;
         if (twoSided) {
-            bool ccwFront = (pg->regs[0x1990 >> 2] & 0x00800000u) != 0;
+            bool ccwFront = (pg->regs[RI(NV_PGRAPH_SETUPRASTER)] & 0x00800000u) != 0;
             key.frontFaceFactor = ccwFront ? -1.0f : 1.0f;
         } else {
             key.frontFaceFactor = 0.0f;
@@ -1220,14 +1221,14 @@ ID3D11PixelShader* PixelShaderCache::GetShader(ID3D11Device* pDevice)
 
     // Color key, alpha kill, shadow compare — from PGRAPH TEXCTL0/TEXFMT0
     for (int i = 0; i < 4; i++) {
-        uint32_t texCtl = pg->regs[(0x19CC + i * 4) >> 2];
+        uint32_t texCtl = NV2AGetTextureControlRaw(i);
         key.colorKeyOp[i]    = (float)(texCtl & 0x03u);
         key.alphaKill[i]     = (texCtl & 0x04u) ? 1.0f : 0.0f;
 
         // Shadow compare: check if TEXFMT COLOR field is a depth format
         float sc = 0.0f;
         if (texCtl & 0x40000000u) { // ENABLE
-            uint32_t texFmt = pg->regs[(0x1A04 + i * 4) >> 2];
+            uint32_t texFmt = NV2AGetTextureFormatRaw(i);
             uint32_t colorCode = (texFmt >> 8) & 0x7Fu;
             if ((colorCode >= 0x2A && colorCode <= 0x2D) || (colorCode >= 0x2E && colorCode <= 0x31))
                 sc = 1.0f;

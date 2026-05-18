@@ -16,6 +16,63 @@
 struct NV2AState; // Forward declaration
 struct PGRAPHState; // Forward declaration
 
+// ---- Texture Stage Scalars ----
+
+uint32_t NV2AGetTextureControlRaw(NV2AState* d, int stage);
+uint32_t NV2AGetTextureControlRaw(int stage);
+
+// Read the raw TEXCTL1 register value for a stage (no decoding).
+uint32_t NV2AGetTextureControl1Raw(NV2AState* d, int stage);
+uint32_t NV2AGetTextureControl1Raw(int stage);
+
+// Read the raw TEXOFFSET register value for a stage (no decoding).
+uint32_t NV2AGetTextureOffsetRaw(NV2AState* d, int stage);
+uint32_t NV2AGetTextureOffsetRaw(int stage);
+
+// Read the raw TEXADDRESS register value for a stage (no decoding).
+uint32_t NV2AGetTextureAddressModeRaw(NV2AState* d, int stage);
+uint32_t NV2AGetTextureAddressModeRaw(int stage);
+
+// Read the raw TEXFMT register value for a stage (no decoding).
+uint32_t NV2AGetTextureFormatRaw(NV2AState* d, int stage);
+uint32_t NV2AGetTextureFormatRaw(int stage);
+
+// Read the raw TEXIMAGERECT register value for a stage (no decoding).
+uint32_t NV2AGetTextureImageRectRaw(NV2AState* d, int stage);
+uint32_t NV2AGetTextureImageRectRaw(int stage);
+
+// Read the raw TEXFILTER register value for a stage (no decoding).
+uint32_t NV2AGetTextureFilterRaw(NV2AState* d, int stage);
+uint32_t NV2AGetTextureFilterRaw(int stage);
+
+// Read the raw BORDERCOLOR register value for a stage (no decoding).
+uint32_t NV2AGetBorderColorRaw(NV2AState* d, int stage);
+uint32_t NV2AGetBorderColorRaw(int stage);
+
+// Read the raw TEXPALETTE register value for a stage (no decoding).
+uint32_t NV2AGetTexturePaletteRaw(NV2AState* d, int stage);
+uint32_t NV2AGetTexturePaletteRaw(int stage);
+
+// Check if a texture stage is enabled (TEXCTL0 bit 30).
+bool NV2AIsTextureEnabled(NV2AState* d, int stage);
+bool NV2AIsTextureEnabled(int stage);
+
+// Read texture image pitch for a stage (from TEXCTL1 bits 16-31).
+uint32_t NV2AGetTexturePitch(NV2AState* d, int stage);
+uint32_t NV2AGetTexturePitch(int stage);
+
+// ---- DMA Resolution ----
+
+// Resolve a raw VRAM offset through the texture DMA context for a given stage.
+// This adds the DMA base (from dma_a or dma_b per TEXFMT CONTEXT_DMA bit) to the offset.
+uint32_t NV2AResolveTexturePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
+uint32_t NV2AResolveTexturePhysicalAddress(int stage, uint32_t rawOffset);
+
+// Resolve a raw VRAM offset through the palette DMA context for a given stage.
+// This adds the DMA base (from dma_a or dma_b per TEXPALETTE CONTEXT_DMA bit) to the offset.
+uint32_t NV2AResolvePalettePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
+uint32_t NV2AResolvePalettePhysicalAddress(int stage, uint32_t rawOffset);
+
 // ---- Texture Stage State ----
 
 struct NV2ATextureAddress {
@@ -28,18 +85,6 @@ struct NV2ATextureAddress {
 // Reads TEXOFFSET0 and resolves through DMA context A/B (selected by TEXFMT0 CONTEXT_DMA bit).
 NV2ATextureAddress NV2AGetTextureAddress(NV2AState* d, int stage);
 NV2ATextureAddress NV2AGetTextureAddress(int stage);
-
-struct NV2APaletteState {
-	void*    data;    // Pointer to palette data (CONTIGUOUS_MEMORY_BASE + physAddr), or nullptr
-	unsigned size;    // Size in bytes (entries × 4)
-	uint32_t physicalAddress; // DMA-resolved physical address
-};
-
-// Resolve palette data pointer and size for a texture stage.
-// Reads TEXPALETTE0, resolves through DMA context. Returns empty if offset is zero.
-// Caller is responsible for checking whether the texture format is palettized.
-NV2APaletteState NV2AGetPaletteState(NV2AState* d, int stage);
-NV2APaletteState NV2AGetPaletteState(int stage);
 
 struct NV2ATextureFormat {
 	uint32_t raw;             // Raw TEXFMT register value (= Xbox D3D Format field)
@@ -78,6 +123,20 @@ struct NV2ATextureControl {
 NV2ATextureControl NV2AGetTextureControl(NV2AState* d, int stage);
 NV2ATextureControl NV2AGetTextureControl(int stage);
 
+// ---- Palette Stage State ----
+
+struct NV2APaletteState {
+	void*    data;    // Pointer to palette data (CONTIGUOUS_MEMORY_BASE + physAddr), or nullptr
+	unsigned size;    // Size in bytes (entries × 4)
+	uint32_t physicalAddress; // DMA-resolved physical address
+};
+
+// Resolve palette data pointer and size for a texture stage.
+// Reads TEXPALETTE0, resolves through DMA context. Returns empty if offset is zero.
+// Caller is responsible for checking whether the texture format is palettized.
+NV2APaletteState NV2AGetPaletteState(NV2AState* d, int stage);
+NV2APaletteState NV2AGetPaletteState(int stage);
+
 // ---- Surface State ----
 // NV2A surfaces use the same PGRAPH register file as textures.
 // NV097 SET_SURFACE_* methods write to these PGRAPH registers:
@@ -109,18 +168,6 @@ struct NV2ASurfaceState {
 NV2ASurfaceState NV2AGetSurfaceState(NV2AState* d);
 NV2ASurfaceState NV2AGetSurfaceState(PGRAPHState* pg);
 NV2ASurfaceState NV2AGetSurfaceState();
-
-// ---- DMA Resolution ----
-
-// Resolve a raw VRAM offset through the texture DMA context for a given stage.
-// This adds the DMA base (from dma_a or dma_b per TEXFMT CONTEXT_DMA bit) to the offset.
-uint32_t NV2AResolveTexturePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
-uint32_t NV2AResolveTexturePhysicalAddress(int stage, uint32_t rawOffset);
-
-// Resolve a raw VRAM offset through the palette DMA context for a given stage.
-// This adds the DMA base (from dma_a or dma_b per TEXPALETTE CONTEXT_DMA bit) to the offset.
-uint32_t NV2AResolvePalettePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
-uint32_t NV2AResolvePalettePhysicalAddress(int stage, uint32_t rawOffset);
 
 // ---- Vertex Shader Mode ----
 

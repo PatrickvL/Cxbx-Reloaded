@@ -75,8 +75,7 @@ float CxbxGetTexFmtFixup(int stage_nr)
 	xbox::X_D3DBaseTexture *pXboxTex = xbox::zeroptr;
 	{
 		auto pg_ff = &(g_NV2A->GetDeviceState()->pgraph);
-		uint32_t texCtl = pg_ff->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage_nr * 4)];
-		bool bEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
+		bool bEnabled = NV2AIsTextureEnabled(stage_nr);
 		// SHADERPROG mode overrides TEXCTL0 (e.g. point sprites use stage 3
 		// via SHADERPROG without necessarily enabling TEXCTL0_3)
 		if (!bEnabled) {
@@ -86,9 +85,9 @@ float CxbxGetTexFmtFixup(int stage_nr)
 				bEnabled = true;
 		}
 		if (bEnabled) {
-			uint32_t texOffset = pg_ff->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage_nr * 4)];
-			if (texOffset != 0)
-				pXboxTex = CxbxLookupTextureByDataAddr(texOffset);
+			uint32_t rawOffset = NV2AGetTextureOffsetRaw(stage_nr);
+			if (rawOffset != 0)
+				pXboxTex = CxbxLookupTextureByDataAddr(NV2AResolveTexturePhysicalAddress(stage_nr, rawOffset));
 		}
 	}
 	if (pXboxTex == xbox::zeroptr)
@@ -147,7 +146,7 @@ D3DXCOLOR CxbxCalcColorSign(int stage_nr)
 	// The Xbox D3D runtime writes X_D3DTSS_COLORSIGN bits directly into the TEXFILTER register,
 	// and the bit positions match: ASIGNED=bit28, RSIGNED=bit29, GSIGNED=bit30, BSIGNED=bit31.
 	auto pg = &(g_NV2A->GetDeviceState()->pgraph);
-	uint32_t texFilter = pg->regs[RI(NV_PGRAPH_TEXFILTER0 + stage_nr * 4)];
+	uint32_t texFilter = NV2AGetTextureFilterRaw(stage_nr);
 	DWORD XboxColorSign = texFilter & 0xF0000000; // Extract sign bits (matches X_D3DTSIGN layout)
 
 	{ // This mimics behaviour of XDK LazySetShaderStageProgram, which we bypass due to our drawing patches without trampolines.
@@ -306,8 +305,7 @@ void CxbxD3D11UploadRCInterpreterState()
 		float vpscl_z;
 		std::memcpy(&vpscl_z, &pg->xf.xfctx[NV_IGRAPH_XF_XFCTX_VPSCL][2], sizeof(float));
 		if (vpscl_z == 0.0f) {
-			uint32_t surfFmt = pg->regs[RI(NV_PGRAPH_SURFACEFORMAT)];
-			unsigned int zetaFmt = GET_MASK(surfFmt, NV_PGRAPH_SURFACEFORMAT_ZETA);
+			unsigned int zetaFmt = NV2AGetSurfaceState(pg).zetaFormat;
 			vpscl_z = (zetaFmt == NV097_SET_SURFACE_FORMAT_ZETA_Z16) ? 65535.0f : 16777215.0f;
 		}
 		aux.DepthScale = { vpscl_z, 0.0f, 0.0f, 0.0f };
@@ -317,14 +315,9 @@ void CxbxD3D11UploadRCInterpreterState()
 	{
 		float dta[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 		for (int i = 0; i < 4; i++) {
-			uint32_t texOffsetRaw = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + i * 4)];
-			if (texOffsetRaw == 0) continue;
-			uint32_t texFmtReg = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
-			bool dmaSelect = (texFmtReg & NV_PGRAPH_TEXFMT0_CONTEXT_DMA) != 0;
-			uint32_t dmaBase = NV2ADevice::ResolveDmaBaseAddress(
-				g_NV2A->GetDeviceState(), dmaSelect ? pg->dma_b : pg->dma_a);
-			uint32_t texOffset = dmaBase + texOffsetRaw;
-			auto* pRT = CxbxLookupPgraphRTByOffset(texOffset);
+			auto texAddr = NV2AGetTextureAddress(i);
+			if (texAddr.rawOffset == 0) continue;
+			auto* pRT = CxbxLookupPgraphRTByOffset(texAddr.physicalAddress);
 			if (pRT) {
 				D3D11_TEXTURE2D_DESC desc;
 				pRT->GetDesc(&desc);

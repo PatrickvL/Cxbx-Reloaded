@@ -311,15 +311,14 @@ static ID3D11Resource* CxbxResolveTextureSource(
 		synth.Common = X_D3DCOMMON_TYPE_TEXTURE | X_D3DCOMMON_D3DCREATED | 1;
 		synth.Data = texOffset;
 		synth.Lock = 0;
-		synth.Format = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
+		synth.Format = NV2AGetTextureFormatRaw(d, stage);
 
 		uint32_t fmtColor = GET_MASK(synth.Format, NV097_SET_TEXTURE_FORMAT_COLOR);
 		if (IsNV2AColorFormatLinear(fmtColor)) {
-			uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
-			uint32_t texCtl1 = pg->regs[RI(NV_PGRAPH_TEXCTL1_0 + stage * 4)];
-			uint32_t width = (texImageRect >> 16) & 0x1FFF;
-			uint32_t height = texImageRect & 0x1FFF;
-			uint32_t pitch = (texCtl1 >> 16) & 0xFFFF;
+			auto texRect = NV2AGetTextureImageRect(d, stage);
+			uint32_t width = texRect.width;
+			uint32_t height = texRect.height;
+			uint32_t pitch = NV2AGetTexturePitch(d, stage);
 			if (pitch < 64) pitch = 64;
 			if (width > 0 && height > 0)
 				synth.Size = ((width - 1) & 0xFFF)
@@ -468,11 +467,17 @@ void CxbxUpdateHostTextures()
 	// Fast path: skip entire function if texture-related registers unchanged.
 	// This avoids hash map lookups, format decoding, and SRV creation.
 	{
+		static uint32_t s_LastTexDirtyGen = ~0u;
 		bool anyChanged = false;
+		// Detect DMA context changes (dma_base[] updated without register changes)
+		if (pg->dirty[NV2A_DIRTY_TEXTURE] != s_LastTexDirtyGen) {
+			s_LastTexDirtyGen = pg->dirty[NV2A_DIRTY_TEXTURE];
+			anyChanged = true;
+		}
 		for (int i = 0; i < 4; i++) {
-			uint32_t off = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + i * 4)];
-			uint32_t ctl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + i * 4)];
-			uint32_t fmt = pg->regs[RI(NV_PGRAPH_TEXFMT0 + i * 4)];
+			uint32_t off = NV2AGetTextureOffsetRaw(d, i);
+			uint32_t ctl = NV2AGetTextureControlRaw(d, i);
+			uint32_t fmt = NV2AGetTextureFormatRaw(d, i);
 			if (off != s_CachedTexOff[i] || ctl != s_CachedTexCtl[i] || fmt != s_CachedTexFmt[i]) {
 				s_CachedTexOff[i] = off;
 				s_CachedTexCtl[i] = ctl;
@@ -490,8 +495,7 @@ void CxbxUpdateHostTextures()
 		auto pXboxBaseTexture = g_pXbox_SetTexture[stage];
 
 		// Check PGRAPH TEXCTL0 enable bit (with SHADERPROG override)
-		uint32_t texCtl = pg->regs[RI(NV_PGRAPH_TEXCTL0_0 + stage * 4)];
-		bool bTextureEnabled = (texCtl & NV_PGRAPH_TEXCTL0_0_ENABLE) != 0;
+		bool bTextureEnabled = NV2AIsTextureEnabled(d, stage);
 		if (!bTextureEnabled) {
 			uint32_t shaderProg = pg->regs[RI(NV_PGRAPH_SHADERPROG)];
 			uint32_t stageMode = (shaderProg >> (stage * 5)) & 0x1Fu;
@@ -518,13 +522,11 @@ void CxbxUpdateHostTextures()
 		}
 
 		// Resolve texture offset from PGRAPH
-		uint32_t texOffsetRaw = pg->regs[RI(NV_PGRAPH_TEXOFFSET0 + stage * 4)];
-		uint32_t texFmtReg = pg->regs[RI(NV_PGRAPH_TEXFMT0 + stage * 4)];
-		bool isCubemap = (texFmtReg & NV_PGRAPH_TEXFMT0_CUBEMAPENABLE) != 0;
-		bool texDmaSelect = (texFmtReg & NV_PGRAPH_TEXFMT0_CONTEXT_DMA) != 0;
-		uint32_t texDmaBase = NV2ADevice::ResolveDmaBaseAddress(
-			d, texDmaSelect ? pg->dma_b : pg->dma_a);
-		uint32_t texOffset = texDmaBase + texOffsetRaw;
+		auto texAddr = NV2AGetTextureAddress(d, stage);
+		auto texFmt = NV2AGetTextureFormat(d, stage);
+		uint32_t texFmtReg = texFmt.raw;
+		bool isCubemap = texFmt.cubemap;
+		uint32_t texOffset = texAddr.physicalAddress;
 
 		// Resolve the host texture resource (RT cache or Xbox texture)
 		bool bIsRenderTargetTexture = false;
@@ -609,7 +611,7 @@ void CxbxUpdateHostTextureScaling()
 		uint32_t surfColor = pg->regs[RI(NV_PGRAPH_BOFFSET3)];
 		if (surfColor != s_LastSurfColor) { s_LastSurfColor = surfColor; anyChanged = true; }
 		for (int i = 0; i < 4; i++) {
-			uint32_t rect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + i * 4)];
+			uint32_t rect = NV2AGetTextureImageRectRaw(d, i);
 			if (rect != s_LastRect[i]) { s_LastRect[i] = rect; anyChanged = true; }
 		}
 		if (!anyChanged) return;
@@ -685,9 +687,9 @@ void CxbxUpdateHostTextureScaling()
 			// all texture-coordinates in the vertex shader
 			// Note : Linear textures are two-dimensional at most (right?)
 			// Read dimensions from PGRAPH TEXIMAGERECT (authoritative, replaces HLE reads)
-			uint32_t texImageRect = pg->regs[RI(NV_PGRAPH_TEXIMAGERECT0 + stage * 4)];
-			float width  = (float)((texImageRect >> 16) & 0x1FFF);
-			float height = (float)(texImageRect & 0x1FFF);
+			auto texRect = NV2AGetTextureImageRect(d, stage);
+			float width  = (float)texRect.width;
+			float height = (float)texRect.height;
 
 			// Account for MSAA when texture is the current render target (backbuffer)
 			if (texOffset == pg->regs[RI(NV_PGRAPH_BOFFSET3)]) {
