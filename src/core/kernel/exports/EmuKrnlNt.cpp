@@ -62,6 +62,39 @@ namespace NtDll
 #include <unordered_map>
 #include <mutex>
 
+// Context for async I/O completion port notifications.
+// When NtReadFile/NtWriteFile is called on an async file with a completion port,
+// we must NOT block the calling thread. Instead, we register a thread pool wait
+// and post the completion when the host I/O finishes.
+struct IoCompletionWaitContext {
+	::HANDLE hHostEvent;
+	xbox::PIO_STATUS_BLOCK IoStatusBlock;
+	xbox::PIO_COMPLETION_CONTEXT CompletionContext;
+	xbox::PVOID ApcContext;
+	xbox::PFILE_OBJECT FileObject;
+	::HANDLE hWait; // handle returned by RegisterWaitForSingleObject
+};
+
+static void NTAPI IoCompletionWaitCallback(void* Parameter, BOOLEAN /*TimerOrWaitFired*/)
+{
+	auto* ctx = static_cast<IoCompletionWaitContext*>(Parameter);
+
+	// The host I/O has completed; IoStatusBlock is now valid.
+	xbox::IoSetIoCompletion(
+		reinterpret_cast<xbox::PKQUEUE>(ctx->CompletionContext->Port),
+		ctx->CompletionContext->Key,
+		ctx->ApcContext,
+		ctx->IoStatusBlock->Status,
+		static_cast<xbox::ulong_xt>(ctx->IoStatusBlock->Information));
+
+	// Clean up: UnregisterWaitEx with NULL is safe from within the callback
+	// for WT_EXECUTEONLYONCE waits, and frees the wait object resources.
+	UnregisterWaitEx(ctx->hWait, NULL);
+	CloseHandle(ctx->hHostEvent);
+	xbox::ObfDereferenceObject(ctx->FileObject);
+	delete ctx;
+}
+
 // Prevent setting the system time from multiple threads at the same time
 xbox::RTL_CRITICAL_SECTION xbox::NtSystemTimeCritSec;
 
@@ -589,12 +622,50 @@ namespace xbox {
 			{
 			case 0x4D014: { // IOCTL_SCSI_PASS_THROUGH_DIRECT
 				PSCSI_PASS_THROUGH_DIRECT PassThrough = (PSCSI_PASS_THROUGH_DIRECT)InputBuffer;
-				PDVDX2_AUTHENTICATION Authentication = (PDVDX2_AUTHENTICATION)PassThrough->DataBuffer;
 
-				// Should be just enough info to pass XapiVerifyMediaInDrive
-				Authentication->AuthenticationPage.CDFValid = 1;
-				Authentication->AuthenticationPage.PartitionArea = 1;
-				Authentication->AuthenticationPage.Authentication = 1;
+				// Indicate SCSI command completed successfully
+				PassThrough->ScsiStatus = 0; // SCSISTAT_GOOD
+
+				// Handle specific SCSI commands based on the CDB opcode
+				switch (PassThrough->Cdb[0]) {
+				case 0x00: // TEST_UNIT_READY — disc is present and ready
+					break;
+				case 0x12: // INQUIRY — report as CD-ROM device
+					if (PassThrough->DataBuffer && PassThrough->DataTransferLength >= 36) {
+						memset(PassThrough->DataBuffer, 0, PassThrough->DataTransferLength);
+						uchar_xt* inq = (uchar_xt*)PassThrough->DataBuffer;
+						inq[0] = 0x05; // Peripheral device type: CD-ROM
+						inq[1] = 0x80; // RMB: removable media
+						inq[2] = 0x02; // Version: SCSI-2
+						inq[3] = 0x02; // Response data format
+						inq[4] = 31;   // Additional length
+					}
+					break;
+				case 0x25: // READ_CAPACITY
+					if (PassThrough->DataBuffer && PassThrough->DataTransferLength >= 8) {
+						uchar_xt* cap = (uchar_xt*)PassThrough->DataBuffer;
+						// Report ~7.8 GB disc (typical Xbox DVD)
+						// LBA count (big-endian): 0x003B4800 sectors
+						cap[0] = 0x00; cap[1] = 0x3B; cap[2] = 0x48; cap[3] = 0x00;
+						// Sector size (big-endian): 2048 bytes
+						cap[4] = 0x00; cap[5] = 0x00; cap[6] = 0x08; cap[7] = 0x00;
+					}
+					break;
+				case 0x5A: // MODE_SENSE_10
+					if (PassThrough->Cdb[2] == 0x3E) {
+						// Authentication page — XapiVerifyMediaInDrive checks these
+						PDVDX2_AUTHENTICATION Authentication = (PDVDX2_AUTHENTICATION)PassThrough->DataBuffer;
+						memset(Authentication, 0, sizeof(DVDX2_AUTHENTICATION));
+						Authentication->AuthenticationPage.CDFValid = 1;
+						Authentication->AuthenticationPage.PartitionArea = 1;
+						Authentication->AuthenticationPage.Authentication = 1;
+					}
+					break;
+				default:
+					// Unknown SCSI command — return success (device present)
+					EmuLog(LOG_LEVEL::DEBUG, "SCSI_PASS_THROUGH: unhandled CDB opcode 0x%02X", PassThrough->Cdb[0]);
+					break;
+				}
 			}
 			break;
 
@@ -607,6 +678,13 @@ namespace xbox {
 					DiskGeometry->SectorsPerTrack = 1;
 					DiskGeometry->BytesPerSector = 512;
 					DiskGeometry->Cylinders.QuadPart = 0x1400000;	// 10GB, size of stock xbox HDD
+				}
+				else if (DeviceObject->DeviceType == FILE_DEVICE_CD_ROM2) {
+					DiskGeometry->MediaType = RemovableMedia;
+					DiskGeometry->TracksPerCylinder = 1;
+					DiskGeometry->SectorsPerTrack = 1;
+					DiskGeometry->BytesPerSector = 2048;
+					DiskGeometry->Cylinders.QuadPart = 0x3B4800;	// ~7.8GB, Xbox DVD
 				}
 				else if (DeviceObject->DeviceType == FILE_DEVICE_MEMORY_UNIT) {
 					DiskGeometry->MediaType = FixedMedia;
@@ -656,6 +734,8 @@ namespace xbox {
 			break;
 
 			default:
+				EmuLog(LOG_LEVEL::DEBUG, "NtDeviceIoControlFile: unhandled IoControlCode 0x%X for device type %d",
+					IoControlCode, DeviceObject->DeviceType);
 				LOG_UNIMPLEMENTED();
 			}
 		}
@@ -1995,10 +2075,14 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	PVOID OriginalApcContext = ApcContext;
 
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
-		// When an Xbox event or APC is requested, use a temporary Windows event
-		// to synchronize host I/O completion instead of relying on Windows APCs.
+		// When an Xbox event or APC is involved, use a temporary Windows event
+		// to guarantee host I/O completes before we signal/post. Without this,
+		// the host could return STATUS_PENDING for async file handles and we'd
+		// propagate an incomplete result.
+		// For completion ports, we also need an event to track async completion,
+		// but we must NOT block — instead we use a thread pool wait.
 		HANDLE hHostEvent = NULL;
-		if (XboxEvent != nullptr || ApcRoutine != nullptr) {
+		if (XboxEvent != nullptr || ApcRoutine != nullptr || CompletionContext != nullptr) {
 			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
 			if (hHostEvent == NULL) {
 				EmuLog(LOG_LEVEL::WARNING, "NtReadFile: CreateEvent failed, forcing synchronous I/O");
@@ -2007,7 +2091,7 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 
 		result = NtDll::NtReadFile(
 			*nFileHandle,
-			hHostEvent,  // Temp Windows event (or NULL if no Xbox event/APC)
+			hHostEvent,  // Temp Windows event (or NULL for simple synchronous reads)
 			NULL,        // No APC — we handle completion ourselves
 			NULL,        // No APC context
 			IoStatusBlock,
@@ -2015,6 +2099,24 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 			Length,
 			(NtDll::LARGE_INTEGER*)ByteOffset,
 			/*Key=*/nullptr);
+
+		// Handle async file with completion port: don't block the caller
+		if (result == X_STATUS_PENDING && CompletionContext != nullptr && hHostEvent != NULL
+			&& XboxEvent == nullptr && ApcRoutine == nullptr) {
+			// Register a thread pool wait to post the completion when I/O finishes.
+			// We transfer ownership of hHostEvent and FileObject ref to the callback.
+			auto* ctx = new IoCompletionWaitContext{
+				hHostEvent, IoStatusBlock, CompletionContext,
+				OriginalApcContext, FileObject, NULL };
+			if (RegisterWaitForSingleObject(&ctx->hWait, hHostEvent,
+				IoCompletionWaitCallback, ctx, INFINITE, WT_EXECUTEONLYONCE)) {
+				// Successfully registered — return PENDING without blocking.
+				// FileObject ref and event are owned by the callback now.
+				RETURN(X_STATUS_PENDING);
+			}
+			// RegisterWait failed — fall through to synchronous wait
+			delete ctx;
+		}
 
 		// If the host returned STATUS_PENDING, wait for the I/O to complete
 		if (result == X_STATUS_PENDING && hHostEvent != NULL) {
@@ -3064,10 +3166,14 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	PVOID OriginalApcContext = ApcContext;
 
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
-		// When an Xbox event or APC is requested, use a temporary Windows event
-		// to synchronize host I/O completion instead of relying on Windows APCs.
+		// When an Xbox event or APC is involved, use a temporary Windows event
+		// to guarantee host I/O completes before we signal/post. Without this,
+		// the host could return STATUS_PENDING for async file handles and we'd
+		// propagate an incomplete result.
+		// For completion ports, we also need an event to track async completion,
+		// but we must NOT block — instead we use a thread pool wait.
 		HANDLE hHostEvent = NULL;
-		if (XboxEvent != nullptr || ApcRoutine != nullptr) {
+		if (XboxEvent != nullptr || ApcRoutine != nullptr || CompletionContext != nullptr) {
 			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
 			if (hHostEvent == NULL) {
 				EmuLog(LOG_LEVEL::WARNING, "NtWriteFile: CreateEvent failed, forcing synchronous I/O");
@@ -3076,7 +3182,7 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 
 		result = NtDll::NtWriteFile(
 			*nFileHandle,
-			hHostEvent,  // Temp Windows event (or NULL if no Xbox event/APC)
+			hHostEvent,  // Temp Windows event (or NULL for simple synchronous writes)
 			NULL,        // No APC — we handle completion ourselves
 			NULL,        // No APC context
 			IoStatusBlock,
@@ -3084,6 +3190,24 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 			Length,
 			(NtDll::LARGE_INTEGER*)ByteOffset,
 			/*Key=*/nullptr);
+
+		// Handle async file with completion port: don't block the caller
+		if (result == X_STATUS_PENDING && CompletionContext != nullptr && hHostEvent != NULL
+			&& XboxEvent == nullptr && ApcRoutine == nullptr) {
+			// Register a thread pool wait to post the completion when I/O finishes.
+			// We transfer ownership of hHostEvent and FileObject ref to the callback.
+			auto* ctx = new IoCompletionWaitContext{
+				hHostEvent, IoStatusBlock, CompletionContext,
+				OriginalApcContext, FileObject, NULL };
+			if (RegisterWaitForSingleObject(&ctx->hWait, hHostEvent,
+				IoCompletionWaitCallback, ctx, INFINITE, WT_EXECUTEONLYONCE)) {
+				// Successfully registered — return PENDING without blocking.
+				// FileObject ref and event are owned by the callback now.
+				RETURN(X_STATUS_PENDING);
+			}
+			// RegisterWait failed — fall through to synchronous wait
+			delete ctx;
+		}
 
 		// If the host returned STATUS_PENDING, wait for the I/O to complete
 		if (result == X_STATUS_PENDING && hHostEvent != NULL) {

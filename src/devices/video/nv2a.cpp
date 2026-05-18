@@ -122,6 +122,16 @@ static void update_irq(NV2AState *d)
 	}
 	else {
 		HalSystemInterrupts[3].Assert(false);
+		// PGRAPH INTR_ERROR (InsertCallback) stalls the GPU pipeline on real
+		// hardware until the CPU acknowledges it. If the ISR temporarily
+		// disabled NV_PMC_INTR_EN_0 (standard ISR prologue), we still need
+		// the DPC thread awake to re-fire the ISR once PMC is re-enabled.
+		// Without this, the puller blocks forever waiting for an ack that
+		// never comes because the DPC thread is asleep.
+		if (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR) {
+			extern void KeSignalVBlankPending();
+			KeSignalVBlankPending();
+		}
 	}
 }
 
@@ -135,12 +145,14 @@ static void update_irq(NV2AState *d)
 #define DEBUG_WRITE32(DEV)             EmuLog(LOG_LEVEL::DEBUG, "Wr32 NV2A " #DEV "(0x%08X, 0x%08X) [Handled %s]", addr, value, DebugNV_##DEV(addr))
 #define DEBUG_WRITE32_UNHANDLED(DEV) { EmuLog(LOG_LEVEL::DEBUG, "Wr32 NV2A " #DEV "(0x%08X, 0x%08X) [Unhandled %s]", addr, value, DebugNV_##DEV(addr)); return; }
 
-#define DEVICE_READ32(DEV) uint32_t EmuNV2A_##DEV##_Read32(NV2AState *d, xbox::addr_xt addr)
+#define DEVICE_READ32_NAME(DEV) EmuNV2A_##DEV##_Read32
+#define DEVICE_READ32(DEV) uint32_t DEVICE_READ32_NAME(DEV)(NV2AState *d, xbox::addr_xt addr)
 #define DEVICE_READ32_SWITCH() uint32_t result = 0; switch (addr) 
 #define DEVICE_READ32_REG(dev) result = d->dev.regs[RI(addr)]
 #define DEVICE_READ32_END(DEV) DEBUG_READ32(DEV); return result
 
-#define DEVICE_WRITE32(DEV) void EmuNV2A_##DEV##_Write32(NV2AState *d, xbox::addr_xt addr, uint32_t value)
+#define DEVICE_WRITE32_NAME(DEV) EmuNV2A_##DEV##_Write32
+#define DEVICE_WRITE32(DEV) void DEVICE_WRITE32_NAME(DEV)(NV2AState *d, xbox::addr_xt addr, uint32_t value)
 #define DEVICE_WRITE32_REG(dev) d->dev.regs[RI(addr)] = value
 #define DEVICE_WRITE32_END(DEV) DEBUG_WRITE32(DEV)
 
@@ -233,57 +245,71 @@ uint32_t NV2ADevice::ResolveDmaBaseAddress(NV2AState *d, xbox::addr_xt dma_obj_a
 const NV2ABlockInfo regions[] = { // blocktable
 
 // Note : Avoid designated initializers to facilitate C++ builds
-#define ENTRY(OFFSET, SIZE, NAME, RDFUNC, WRFUNC) \
+#define ENTRY(OFFSET, SIZE, NAME) \
 	{ \
         #NAME, OFFSET, SIZE, \
-        { RDFUNC, WRFUNC }, \
+        { DEVICE_READ32_NAME(NAME), DEVICE_WRITE32_NAME(NAME) }, \
+    }, \
+
+#define ENTRY_MIRROR(OFFSET, SIZE, NAME, MIRROR) \
+	{ \
+        #NAME, OFFSET, SIZE, \
+        { DEVICE_READ32_NAME(MIRROR), DEVICE_WRITE32_NAME(MIRROR) }, \
+    }, \
+	
+#define ENTRY_END(OFFSET, SIZE, NAME) \
+	{ \
+        #NAME, OFFSET, SIZE, \
+        { nullptr, nullptr }, \
     }, \
 
 	/* card master control */
-	ENTRY(0x000000, 0x001000, PMC, EmuNV2A_PMC_Read32, EmuNV2A_PMC_Write32)
+	ENTRY(0x000000, 0x001000, PMC)
 	/* bus control */
-	ENTRY(0x001000, 0x001000, PBUS, EmuNV2A_PBUS_Read32, EmuNV2A_PBUS_Write32)
+	ENTRY(0x001000, 0x001000, PBUS)
 	/* MMIO and DMA FIFO submission to PGRAPH and VPE */
-	ENTRY(0x002000, 0x002000, PFIFO, EmuNV2A_PFIFO_Read32, EmuNV2A_PFIFO_Write32)
+	ENTRY(0x002000, 0x002000, PFIFO)
 	/* access to BAR0/BAR1 from real mode */
-	ENTRY(0x007000, 0x001000, PRMA, EmuNV2A_PRMA_Read32, EmuNV2A_PRMA_Write32)
+	ENTRY(0x007000, 0x001000, PRMA)
 	/* video overlay */
-	ENTRY(0x008000, 0x001000, PVIDEO, EmuNV2A_PVIDEO_Read32, EmuNV2A_PVIDEO_Write32)
+	ENTRY(0x008000, 0x001000, PVIDEO)
 	/* time measurement and time-based alarms */
-	ENTRY(0x009000, 0x001000, PTIMER, EmuNV2A_PTIMER_Read32, EmuNV2A_PTIMER_Write32)
+	ENTRY(0x009000, 0x001000, PTIMER)
 	/* performance monitoring counters */
-	ENTRY(0x00a000, 0x001000, PCOUNTER, EmuNV2A_PCOUNTER_Read32, EmuNV2A_PCOUNTER_Write32)
+	ENTRY(0x00a000, 0x001000, PCOUNTER)
 	/* MPEG2 decoding engine */
-	ENTRY(0x00b000, 0x001000, PVPE, EmuNV2A_PVPE_Read32, EmuNV2A_PVPE_Write32)
+	ENTRY(0x00b000, 0x001000, PVPE)
 	/* TV encoder */
-	ENTRY(0x00d000, 0x001000, PTV, EmuNV2A_PTV_Read32, EmuNV2A_PTV_Write32)
+	ENTRY(0x00d000, 0x001000, PTV)
 	/* aliases VGA memory window */
-	ENTRY(0x0a0000, 0x020000, PRMFB, EmuNV2A_PRMFB_Read32, EmuNV2A_PRMFB_Write32)
+	ENTRY(0x0a0000, 0x020000, PRMFB)
 	/* aliases VGA sequencer and graphics controller registers */
-	ENTRY(0x0c0000, 0x008000, PRMVIO, EmuNV2A_PRMVIO_Read32, EmuNV2A_PRMVIO_Write32) // Size was 0x001000
+	ENTRY(0x0c0000, 0x008000, PRMVIO) // Size was 0x001000
 	/* memory interface */
-	ENTRY(0x100000, 0x001000, PFB, EmuNV2A_PFB_Read32, EmuNV2A_PFB_Write32)
+	ENTRY(0x100000, 0x001000, PFB)
 	/* straps readout / override */
-	ENTRY(0x101000, 0x001000, PSTRAPS, EmuNV2A_PSTRAPS_Read32, EmuNV2A_PSTRAPS_Write32)
+	ENTRY(0x101000, 0x001000, PSTRAPS)
 	/* accelerated 2d/3d drawing engine */
-	ENTRY(0x400000, 0x002000, PGRAPH, EmuNV2A_PGRAPH_Read32, EmuNV2A_PGRAPH_Write32)
+	ENTRY(0x400000, 0x002000, PGRAPH)
 	/* more CRTC controls */
-	ENTRY(0x600000, 0x001000, PCRTC, EmuNV2A_PCRTC_Read32, EmuNV2A_PCRTC_Write32)
+	ENTRY(0x600000, 0x001000, PCRTC)
 	/* aliases VGA CRTC and attribute controller registers */
-	ENTRY(0x601000, 0x001000, PRMCIO, EmuNV2A_PRMCIO_Read32, EmuNV2A_PRMCIO_Write32)
+	ENTRY(0x601000, 0x001000, PRMCIO)
 	/* RAMDAC, cursor, and PLL control */
-	ENTRY(0x680000, 0x001000, PRAMDAC, EmuNV2A_PRAMDAC_Read32, EmuNV2A_PRAMDAC_Write32)
+	ENTRY(0x680000, 0x001000, PRAMDAC)
 	/* aliases VGA palette registers */
-	ENTRY(0x681000, 0x001000, PRMDIO, EmuNV2A_PRMDIO_Read32, EmuNV2A_PRMDIO_Write32)
+	ENTRY(0x681000, 0x001000, PRMDIO)
 	/* RAMIN access */
-	ENTRY(0x700000, 0x100000, PRAMIN, EmuNV2A_PRAMIN_Read32, EmuNV2A_PRAMIN_Write32)
+	ENTRY(0x700000, 0x100000, PRAMIN)
 	/* PFIFO MMIO and DMA submission area */
-	ENTRY(0x800000, 0x400000, USER, EmuNV2A_USER_Read32, EmuNV2A_USER_Write32) // Size was 0x800000
+	ENTRY(0x800000, 0x400000, USER) // Size was 0x800000
 	/* UREMAP User area mirror - TODO : Confirm */
-	ENTRY(0xC00000, 0x400000, UREMAP, EmuNV2A_USER_Read32, EmuNV2A_USER_Write32) // NOTE : Mirror of USER
+	ENTRY_MIRROR(0xC00000, 0x400000, UREMAP, USER) // NOTE : Mirror of USER
 	/* Terminating entry */
-	ENTRY(0xFFFFFF, 0x000000, END, nullptr, nullptr)
+	ENTRY_END(0xFFFFFF, 0x000000, END)
 #undef ENTRY
+#undef ENTRY_MIRROR
+#undef ENTRY_END
 };
 
 const NV2ABlockInfo* EmuNV2A_Block(xbox::addr_xt addr)

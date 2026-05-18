@@ -175,7 +175,15 @@ std::string GenerateExecDirectoryStr()
 {
 	std::string exec_path;
 	(void)cli_config::GetValue(cli_config::exec, &exec_path);
-	return exec_path.substr(0, exec_path.find_last_of("\\/"));
+	auto pos = exec_path.find_last_of("\\/");
+	if (pos != std::string::npos) {
+		return exec_path.substr(0, pos);
+	}
+	// No path separator — resolve relative to the actual module path
+	char modulePath[MAX_PATH];
+	GetModuleFileNameA(nullptr, modulePath, MAX_PATH);
+	std::string fullPath(modulePath);
+	return fullPath.substr(0, fullPath.find_last_of("\\/"));
 }
 
 // NOTE: This function will be only have Qt support, std::filesystem doesn't have generic support.
@@ -941,7 +949,8 @@ CXBX_DATA Settings::SetupFile(std::string& file_path_out)
 			// Check if data directory exists.
 			if (!std::filesystem::exists(setupFile)) {
 				// Then try create data directory.
-				if (!std::filesystem::create_directory(setupFile)) {
+				std::error_code ec;
+				if (!std::filesystem::create_directory(setupFile, ec)) {
 					// Unable to create a data directory
 					data_ret = CXBX_DATA_INVALID;
 				}

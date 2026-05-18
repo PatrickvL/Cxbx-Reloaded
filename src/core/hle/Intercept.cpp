@@ -360,7 +360,8 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
 
 	// Make sure the Symbol Cache directory exists
 	std::string cachePath = g_DataFilePath + "\\SymbolCache\\";
-	if (!std::filesystem::exists(cachePath) && !std::filesystem::create_directory(cachePath)) {
+	std::error_code ec;
+	if (!std::filesystem::exists(cachePath) && !std::filesystem::create_directory(cachePath, ec)) {
 		CxbxrAbort("Couldn't create Cxbx-Reloaded SymbolCache folder!");
 	}
 
