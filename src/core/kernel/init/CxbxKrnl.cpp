@@ -1412,6 +1412,19 @@ static void CxbxrKrnlInitHacks()
 					 (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
 					 (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts));
 
+				// PGRAPH INTR_ERROR (D3DDevice_InsertCallback) stalls the GPU
+				// pipeline until the CPU acknowledges it. When pmc_en=0, the
+				// ISR cannot fire, so we ack directly to unblock the puller.
+				// When pmc_en=1, the game's ISR handles it naturally (reads
+				// TRAPPED_DATA_LOW, dispatches the callback, writes PGRAPH_INTR
+				// to ack). We must NOT steal the ack from the ISR because the
+				// callback dispatch is essential for game logic.
+				if (!d->pmc.enabled_interrupts &&
+				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
+					d->pgraph.pending_interrupts &= ~NV_PGRAPH_INTR_ERROR;
+					qemu_cond_broadcast(&d->pgraph.interrupt_cond);
+				}
+
 				if (nv2a_irq_pending &&
 				    EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
 					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
@@ -1433,7 +1446,8 @@ static void CxbxrKrnlInitHacks()
 				      (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
 				      (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
 				      (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
-				      (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts)))) {
+				      (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts))) ||
+				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
 					more_work = true;
 				}
 			}

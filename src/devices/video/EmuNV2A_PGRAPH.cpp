@@ -643,6 +643,8 @@ void pgraph_handle_method(NV2AState *d,
 				// Clear draw_dirty so the auto-present in the puller loop
 				// doesn't fire again after this explicit FLIP_STALL present.
 				d->pgraph.surface_color.draw_dirty = false;
+				extern bool g_PullerFlipStallThisCycle;
+				g_PullerFlipStallThisCycle = true;
 				g_pgraph_backend.flip_stall(d);
 			}
 
