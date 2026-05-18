@@ -80,17 +80,21 @@ void CxbxrInitFilePaths()
 		g_DataFilePath = dataLoc;
 	}
 
+	// For non-throwing version of std::filesystem functions, we need to pass
+	// in an std::error_code object to receive any error information instead of exceptions.
+	// This allows us to handle errors gracefully without crashing the program.
+	std::error_code ec;
 	// Make sure our data folder exists :
 	bool result = std::filesystem::exists(g_DataFilePath);
-	if (!result && !std::filesystem::create_directory(g_DataFilePath)) {
-		CxbxrAbort("%s : Couldn't create Cxbx-Reloaded's data folder!", __func__);
+	if (!result && !std::filesystem::create_directory(g_DataFilePath, ec)) {
+		CxbxrAbort("%s : Couldn't create Cxbx-Reloaded's data folder! Path='%s' ec=%d", __func__, g_DataFilePath.c_str(), ec.value());
 	}
 
 	// Make sure the EmuDisk folder exists
 	g_DiskBasePath = g_DataFilePath + "\\EmuDisk";
 	result = std::filesystem::exists(g_DiskBasePath);
-	if (!result && !std::filesystem::create_directory(g_DiskBasePath)) {
-		CxbxrAbort("%s : Couldn't create Cxbx-Reloaded EmuDisk folder!", __func__);
+	if (!result && !std::filesystem::create_directory(g_DiskBasePath, ec)) {
+		CxbxrAbort("%s : Couldn't create Cxbx-Reloaded EmuDisk folder! Path='%s' ec=%d", __func__, g_DiskBasePath.c_str(), ec.value());
 	}
 	CxbxResolveHostToFullPath(g_DiskBasePath, "Cxbx-Reloaded's EmuDisk directory");
 	g_DiskBasePath = std::filesystem::path(g_DiskBasePath).append("").string();
@@ -98,7 +102,7 @@ void CxbxrInitFilePaths()
 	// Make sure the EmuDMu folder exists
 	g_MuBasePath = g_DataFilePath + "\\EmuMu";
 	result = std::filesystem::exists(g_MuBasePath);
-	if (!result && !std::filesystem::create_directory(g_MuBasePath)) {
+	if (!result && !std::filesystem::create_directory(g_MuBasePath, ec)) {
 		CxbxrAbort("%s : Couldn't create Cxbx-Reloaded EmuMu folder!", __func__);
 	}
 	CxbxResolveHostToFullPath(g_MuBasePath, "Cxbx-Reloaded's EmuMu directory");
@@ -109,7 +113,7 @@ void CxbxrInitFilePaths()
 	// Make sure the EmuMediaBoard folder exists
 	g_MediaBoardBasePath = g_DataFilePath + "\\EmuMediaBoard";
 	result = std::filesystem::exists(g_MediaBoardBasePath);
-	if (!result && !std::filesystem::create_directory(g_MediaBoardBasePath)) {
+	if (!result && !std::filesystem::create_directory(g_MediaBoardBasePath, ec)) {
 		CxbxrAbort("%s : Couldn't create Cxbx-Reloaded EmuMediaBoard folder!", __func__);
 	}
 	CxbxResolveHostToFullPath(g_MediaBoardBasePath, "Cxbx-Reloaded's EmuMediaBoard directory");

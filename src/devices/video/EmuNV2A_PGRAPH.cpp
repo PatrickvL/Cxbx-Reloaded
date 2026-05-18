@@ -446,6 +446,9 @@ void pgraph_handle_method(NV2AState *d,
 		case NV062_SET_OBJECT:
 			context_surfaces_2d->object_instance = parameter;
 			break;
+		case NV062_SET_CONTEXT_DMA_NOTIFIES:
+			context_surfaces_2d->dma_notifies = parameter;
+			break;
 		case NV062_SET_CONTEXT_DMA_IMAGE_SOURCE:
 			context_surfaces_2d->dma_image_source = parameter;
 			break;
@@ -598,12 +601,23 @@ void pgraph_handle_method(NV2AState *d,
 				qemu_mutex_lock(&pg->pgraph_lock);
 				qemu_mutex_unlock_iothread();
 
+				int localTimeouts = 0;
 				while (pg->pending_interrupts & NV_PGRAPH_INTR_ERROR) {
 					// Use timed wait as a safety net: if the DPC signal was lost
 					// (due to any unforeseen race), we re-signal after 50ms rather
 					// than hanging indefinitely. Normal path returns in <1ms.
 					if (qemu_cond_timedwait(&pg->interrupt_cond, &pg->pgraph_lock, 50)) {
-						// Timed out — re-signal DPC thread in case the original was lost
+						localTimeouts++;
+						// After 6 timeouts (300ms), the ISR has had ample opportunity
+						// to ack but hasn't — likely because the game deregistered its
+						// callback handler for this specific TRAPPED_DATA value.
+						// Force-ack to unblock the puller. The callback won't fire
+						// (it wasn't going to anyway), but the command stream continues.
+						if (localTimeouts >= 6) {
+							pg->pending_interrupts &= ~NV_PGRAPH_INTR_ERROR;
+							break;
+						}
+						// Re-signal DPC thread in case the original signal was lost
 						qemu_mutex_unlock(&pg->pgraph_lock);
 						update_irq(d);
 						qemu_mutex_lock(&pg->pgraph_lock);
@@ -643,6 +657,8 @@ void pgraph_handle_method(NV2AState *d,
 				// Clear draw_dirty so the auto-present in the puller loop
 				// doesn't fire again after this explicit FLIP_STALL present.
 				d->pgraph.surface_color.draw_dirty = false;
+				extern bool g_PullerFlipStallThisCycle;
+				g_PullerFlipStallThisCycle = true;
 				g_pgraph_backend.flip_stall(d);
 			}
 
