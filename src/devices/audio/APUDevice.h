@@ -51,8 +51,15 @@ private:
 	void EPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t VPRead(uint32_t addr, unsigned size);
 	void VPWrite(uint32_t addr, uint32_t value, unsigned size);
+	void ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size);
 	void UpdateVPFifo();
 	void RefreshVPStatus();
+	bool ReadGuestWord(uint32_t guestAddress, uint32_t& value) const;
+	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
+	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
+	bool ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const;
+	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
+	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
 
 	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -62,6 +69,8 @@ private:
 	std::array<uint8_t, APU_SIZE> m_Registers{};
 	uint32_t m_VPFifoLevel = 0;
 	uint32_t m_VPFifoLastUpdate = 0;
+	uint32_t m_VPInputSgeHandle = 0;
+	uint32_t m_VPOutputSgeHandle = 0;
 };
 
 #endif
