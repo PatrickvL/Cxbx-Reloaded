@@ -493,28 +493,22 @@ static void D3D11_flip_stall(NV2AState *d)
 			int out_h = GET_MASK(pvideo_size_out, NV_PVIDEO_SIZE_OUT_HEIGHT);
 
 			// Scale overlay output rect from Xbox framebuffer coords to host backbuffer coords.
-			// Derive dimensions from the resolved display surface when available,
-			// then fall back to PGRAPH tracking, then PRAMDAC flat-panel timing regs.
+			// PVIDEO coordinates are ALWAYS in scanout/display space (the resolution
+			// programmed into the DAC, i.e. what the TV receives). Use PRAMDAC timing
+			// as the definitive reference — this is independent of whether the 3D render
+			// target is AA-scaled or has been reconfigured for video-only playback.
 			DWORD XboxBackBufferWidth = 0;
 			DWORD XboxBackBufferHeight = 0;
-			if (pXboxBackBufferHostSurface) {
-				D3D11_TEXTURE2D_DESC fbDesc;
-				pXboxBackBufferHostSurface->GetDesc(&fbDesc);
-				XboxBackBufferWidth = fbDesc.Width;
-				XboxBackBufferHeight = fbDesc.Height;
-			}
-			if (XboxBackBufferWidth == 0) XboxBackBufferWidth = g_PgraphBackBufferWidth;
-			if (XboxBackBufferHeight == 0) XboxBackBufferHeight = g_PgraphBackBufferHeight;
-			// Fall back to PRAMDAC flat-panel display end registers (programmed by
-			// the Xbox kernel's display mode setup — gives the true scanout resolution).
-			if (XboxBackBufferWidth == 0) {
+			// Primary: PRAMDAC flat-panel display end (true scanout resolution)
+			{
 				DWORD fp_h = d->pramdac.regs[RI(NV_PRAMDAC_FP_HDISPLAY_END)];
-				if (fp_h > 0) XboxBackBufferWidth = fp_h + 1;
-			}
-			if (XboxBackBufferHeight == 0) {
 				DWORD fp_v = d->pramdac.regs[RI(NV_PRAMDAC_FP_VDISPLAY_END)];
+				if (fp_h > 0) XboxBackBufferWidth = fp_h + 1;
 				if (fp_v > 0) XboxBackBufferHeight = fp_v + 1;
 			}
+			// Fallback: PGRAPH tracked dimensions (logical, not AA-scaled)
+			if (XboxBackBufferWidth == 0) XboxBackBufferWidth = g_PgraphBackBufferWidth;
+			if (XboxBackBufferHeight == 0) XboxBackBufferHeight = g_PgraphBackBufferHeight;
 			if (XboxBackBufferWidth == 0) XboxBackBufferWidth = 640;
 			if (XboxBackBufferHeight == 0) XboxBackBufferHeight = 480;
 
