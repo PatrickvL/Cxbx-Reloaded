@@ -1718,12 +1718,10 @@ void pgraph_handle_method(NV2AState *d,
 		//     pg->dma_notifies = parameter;
 		//     break;
 		case NV097_SET_CONTEXT_DMA_A:
-		    pg->dma_a = parameter;
 		    pg->dma_base[0] = NV2ADevice::ResolveDmaBaseAddress(d, parameter);
 		    pg->dirty[NV2A_DIRTY_TEXTURE]++;
 		    break;
 		case NV097_SET_CONTEXT_DMA_B:
-		    pg->dma_b = parameter;
 		    pg->dma_base[1] = NV2ADevice::ResolveDmaBaseAddress(d, parameter);
 		    pg->dirty[NV2A_DIRTY_TEXTURE]++;
 		    break;
@@ -1734,12 +1732,10 @@ void pgraph_handle_method(NV2AState *d,
 		//     pg->dma_zeta = parameter;
 		//     break;
 		case NV097_SET_CONTEXT_DMA_VERTEX_A:
-		    pg->dma_vertex_a = parameter;
 		    pg->dma_vertex_base[0] = NV2ADevice::ResolveDmaBaseAddress(d, parameter);
 		    pg->vertex_attributes_generation++;
 		    break;
 		case NV097_SET_CONTEXT_DMA_VERTEX_B:
-		    pg->dma_vertex_b = parameter;
 		    pg->dma_vertex_base[1] = NV2ADevice::ResolveDmaBaseAddress(d, parameter);
 		    pg->vertex_attributes_generation++;
 		    break;

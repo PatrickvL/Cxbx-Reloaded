@@ -64,12 +64,12 @@ uint32_t NV2AGetTexturePitch(int stage);
 // ---- DMA Resolution ----
 
 // Resolve a raw VRAM offset through the texture DMA context for a given stage.
-// This adds the DMA base (from dma_a or dma_b per TEXFMT CONTEXT_DMA bit) to the offset.
+// This adds dma_base[0 or 1] (per TEXFMT CONTEXT_DMA bit) to the offset.
 uint32_t NV2AResolveTexturePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
 uint32_t NV2AResolveTexturePhysicalAddress(int stage, uint32_t rawOffset);
 
 // Resolve a raw VRAM offset through the palette DMA context for a given stage.
-// This adds the DMA base (from dma_a or dma_b per TEXPALETTE CONTEXT_DMA bit) to the offset.
+// This adds dma_base[0 or 1] (per TEXPALETTE CONTEXT_DMA bit) to the offset.
 uint32_t NV2AResolvePalettePhysicalAddress(NV2AState* d, int stage, uint32_t rawOffset);
 uint32_t NV2AResolvePalettePhysicalAddress(int stage, uint32_t rawOffset);
 

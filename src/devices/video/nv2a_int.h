@@ -320,13 +320,10 @@ typedef struct PGRAPHState {
 
 	xbox::addr_xt dma_semaphore;
 
-	xbox::addr_xt dma_a, dma_b; // PRAMIN offsets for DMA context A/B (texture/palette address resolution)
-	xbox::addr_xt dma_vertex_a, dma_vertex_b; // PRAMIN offsets for vertex DMA context A/B
-
 	// Cached resolved DMA base addresses (recalculated when context methods fire).
 	// Indexed by dma_select boolean: [0] = context A, [1] = context B.
-	uint32_t dma_base[2];        // Texture/palette DMA base (from dma_a, dma_b)
-	uint32_t dma_vertex_base[2]; // Vertex DMA base (from dma_vertex_a, dma_vertex_b)
+	uint32_t dma_base[2];        // Texture/palette DMA base
+	uint32_t dma_vertex_base[2]; // Vertex DMA base
 
 	xbox::addr_xt dma_report;
 	unsigned int zpass_pixel_count_enable;
