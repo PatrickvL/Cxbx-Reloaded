@@ -344,6 +344,23 @@ XBSYSAPI EXPORTNUM(21) xbox::longlong_xt FASTCALL xbox::ExInterlockedCompareExch
 }
 
 // ******************************************************************
+// * ExpDeleteMutant - Mutant object delete procedure
+// ******************************************************************
+// Called by ObfDereferenceObject when the mutant's reference count drops to 0.
+// If the mutant is still owned by a thread, remove it from that thread's list.
+// Source: ReactOS
+xbox::void_xt NTAPI xbox::ExpDeleteMutant(IN xbox::PVOID ObjectBody)
+{
+	PKMUTANT Mutant = (PKMUTANT)ObjectBody;
+
+	if (Mutant->OwnerThread != nullptr) {
+		KIRQL OldIrql = KfRaiseIrql(DISPATCH_LEVEL);
+		RemoveEntryList(&Mutant->MutantListEntry);
+		KfLowerIrql(OldIrql);
+	}
+}
+
+// ******************************************************************
 // * 0x0016 - ExMutantObjectType
 // ******************************************************************
 XBSYSAPI EXPORTNUM(22) xbox::OBJECT_TYPE xbox::ExMutantObjectType = 
@@ -351,7 +368,7 @@ XBSYSAPI EXPORTNUM(22) xbox::OBJECT_TYPE xbox::ExMutantObjectType =
 	xbox::ExAllocatePoolWithTag,
 	xbox::ExFreePool,
 	NULL,
-	NULL, // TODO : xbox::ExpDeleteMutant,
+	xbox::ExpDeleteMutant,
 	NULL,
 	(PVOID)offsetof(xbox::KMUTANT, Header),
 	'atuM' // = first four characters of "Mutant" in reverse

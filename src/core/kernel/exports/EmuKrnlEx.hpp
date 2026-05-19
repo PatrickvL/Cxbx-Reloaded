@@ -47,4 +47,7 @@ void_xt NTAPI ExpDeleteTimer(IN PVOID ObjectBody);
 void_xt NTAPI ExpTimerDpcRoutine(IN PKDPC Dpc, IN PVOID DeferredContext, IN PVOID SystemArgument1, IN PVOID SystemArgument2);
 void_xt NTAPI ExpTimerApcKernelRoutine(IN PKAPC Apc, IN PKNORMAL_ROUTINE *NormalRoutine, IN PVOID *NormalContext, IN PVOID *SystemArgument1, IN PVOID *SystemArgument2);
 
+// Executive mutant helper functions (implemented in EmuKrnlEx.cpp)
+void_xt NTAPI ExpDeleteMutant(IN PVOID ObjectBody);
+
 };
