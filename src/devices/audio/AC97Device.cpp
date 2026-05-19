@@ -430,6 +430,7 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					return;
 				case BM_LVI:
 				{
+					const size_t channelIndex = ChannelIndex(channelBase);
 					const uint32_t baseAddr = AC97_NAM_SIZE + channelBase;
 					const uint8_t previousLastValid = static_cast<uint8_t>(ReadRegister(baseAddr + BM_LVI, sizeof(uint8_t)) & 0x1F);
 					const uint8_t newLastValid = static_cast<uint8_t>(value & 0x1F);
@@ -443,10 +444,12 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 						(status & SR_DCH) != 0 &&
 						remaining == 0 &&
 						currentIndex == previousLastValid &&
+						m_ChannelAdvanceOnRestart[channelIndex] &&
 						newLastValid != currentIndex) {
 						const uint8_t nextIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
 						WriteRegister(baseAddr + BM_CIV, nextIndex, sizeof(uint8_t));
-						m_ChannelAdvanceOnRestart[ChannelIndex(channelBase)] = false;
+						WriteRegister16(baseAddr + BM_SR, status & ~(SR_DCH | SR_CELV));
+						m_ChannelAdvanceOnRestart[channelIndex] = false;
 					}
 
 					UpdateBusMasterStatus(channelBase);
