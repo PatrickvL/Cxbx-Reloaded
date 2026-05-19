@@ -392,9 +392,10 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 			return;
 		}
 		{
-			const uint32_t channelBase = (addr - AC97_NAM_SIZE) & ~0xF;
+			const uint32_t channelAddr = addr - AC97_NAM_SIZE;
+			const uint32_t channelBase = channelAddr & ~0xFu;
 			if (channelBase == NABM_PI_BASE || channelBase == NABM_PO_BASE || channelBase == NABM_MC_BASE) {
-				switch ((addr - AC97_NAM_SIZE) & 0x0F) {
+				switch (channelAddr & 0x0Fu) {
 				case BM_BDBAR:
 					if (size >= sizeof(uint32_t)) {
 						WriteRegister(addr, value & ~0x7u, sizeof(uint32_t));
@@ -406,7 +407,7 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 				case BM_PIV:
 					return;
 				case BM_LVI:
-					WriteRegister(addr, value & 0x1Fu, sizeof(uint8_t));
+					WriteRegister(addr, value & 0x1fu, sizeof(uint8_t));
 					UpdateBusMasterStatus(channelBase);
 					return;
 				case BM_SR: {
