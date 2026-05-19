@@ -1228,7 +1228,7 @@ XBSYSAPI EXPORTNUM(72) xbox::void_xt NTAPI xbox::IoFreeIrp
 {
 	LOG_FUNC_ONE_ARG(Irp);
 
-	LOG_UNIMPLEMENTED();
+	ExFreePool(Irp);
 }
 
 // ******************************************************************
