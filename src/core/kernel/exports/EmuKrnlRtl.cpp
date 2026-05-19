@@ -2024,22 +2024,50 @@ XBSYSAPI EXPORTNUM(312) xbox::void_xt NTAPI xbox::RtlUnwind
 		LOG_FUNC_ARG(ReturnValue)
 	LOG_FUNC_END;
 
-	// The Xbox RtlUnwind signature is identical to the Windows one.
-	// Delegate to the host to walk and unwind the SEH chain back to
-	// TargetFrame, invoking termination handlers along the way.
-	//
-	// WARNING: RtlUnwind does not respect stdcall non-volatile register
-	// conventions. It captures the register context via RtlCaptureContext
-	// after some of its prologue has already trashed non-volatile registers,
-	// then ZwContinue restores that (already corrupted) context to return
-	// to the caller. On the Xbox kernel, RtlUnwind is only ever called from
-	// _global_unwind2, which saves/restores non-volatile registers around it
-	// (Microsoft was aware of the problem). We return immediately after
-	// the call here, so the register trashing is harmless. Do NOT add code
-	// after this call that depends on non-volatile register values.
-	::RtlUnwind(TargetFrame, TargetIp,
-		reinterpret_cast<::PEXCEPTION_RECORD>(ExceptionRecord),
-		ReturnValue);
+	// Walk the Xbox exception chain (stored in KPCR[0]) from head to TargetFrame,
+	// calling each handler with the UNWINDING flag to run __finally blocks.
+	// Xbox code's fs:[0] accesses are patched to use KPCR[0], so we must operate
+	// on KPCR[0] directly — NOT delegate to host ::RtlUnwind (which uses real fs:[0]).
+
+	// Build an unwind exception record if none provided
+	EXCEPTION_RECORD LocalRecord = {};
+	if (ExceptionRecord == nullptr) {
+		ExceptionRecord = &LocalRecord;
+	}
+	ExceptionRecord->ExceptionFlags |= X_EXCEPTION_UNWINDING;
+	if (TargetFrame == nullptr) {
+		ExceptionRecord->ExceptionFlags |= X_EXCEPTION_EXIT_UNWIND;
+	}
+
+	// Handler function type
+	typedef EXCEPTION_DISPOSITION (NTAPI *PEXCEPTION_HANDLER_FUNC)(
+		PEXCEPTION_RECORD ExceptionRecord,
+		PVOID EstablisherFrame,
+		PCONTEXT ContextRecord,
+		PVOID DispatcherContext
+	);
+
+	CONTEXT Context = {};
+	PVOID DispatcherContext = nullptr;
+
+	DWORD kpcrPtr = __readfsdword(TIB_ArbitraryDataSlot);
+	auto Registration = reinterpret_cast<PEXCEPTION_REGISTRATION_RECORD>(*(DWORD *)kpcrPtr);
+
+	while (Registration != reinterpret_cast<PEXCEPTION_REGISTRATION_RECORD>(X_EXCEPTION_CHAIN_END)) {
+		if (Registration == reinterpret_cast<PEXCEPTION_REGISTRATION_RECORD>(TargetFrame)) {
+			break;
+		}
+
+		auto Handler = reinterpret_cast<PEXCEPTION_HANDLER_FUNC>(Registration->Handler);
+
+		// Call the handler with UNWINDING flag — runs __finally blocks
+		Handler(ExceptionRecord, Registration, &Context, &DispatcherContext);
+
+		// Pop this frame from the Xbox exception chain
+		// (Re-read KPCR[0] in case the handler modified it during local unwind)
+		Registration = Registration->Next;
+		*(DWORD *)kpcrPtr = reinterpret_cast<DWORD>(Registration);
+	}
 }
 
 // ******************************************************************
