@@ -657,6 +657,12 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 	const uint8_t control = static_cast<uint8_t>(ReadRegister(crAddr, sizeof(uint8_t)));
 	uint16_t status = ReadRegister16(srAddr) & SR_WCLEAR_MASK;
 	const size_t channelIndex = ChannelIndex(channelBase);
+	const uint8_t initialCurrentIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
+	const uint8_t initialLastValidIndex = static_cast<uint8_t>(ReadRegister(lviAddr, sizeof(uint8_t)) & 0x1F);
+	const bool haltedAtEndOfList =
+		ReadRegister16(picbAddr) == 0 &&
+		m_ChannelAdvanceOnRestart[channelIndex] &&
+		initialCurrentIndex == initialLastValidIndex;
 	const uint32_t now = GetAPUTime();
 	const uint32_t elapsed = now - m_ChannelLastUpdate[channelIndex];
 	m_ChannelLastUpdate[channelIndex] = now;
@@ -684,7 +690,9 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 		m_ChannelSampleRemainder[channelIndex] = static_cast<uint32_t>(samplesToConsume % APU_TIMER_FREQUENCY);
 		samplesToConsume /= APU_TIMER_FREQUENCY;
 
-		if (ReadRegister16(picbAddr) == 0 && !primeChannel()) {
+		if (haltedAtEndOfList) {
+			samplesToConsume = 0;
+		} else if (ReadRegister16(picbAddr) == 0 && !primeChannel()) {
 			samplesToConsume = 0;
 		}
 
