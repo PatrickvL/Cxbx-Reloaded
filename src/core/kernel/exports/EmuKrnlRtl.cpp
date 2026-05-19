@@ -1442,22 +1442,23 @@ XBSYSAPI EXPORTNUM(299) xbox::ntstatus_xt NTAPI xbox::RtlMultiByteToUnicodeN
 		LOG_FUNC_ARG(BytesInMultiByteString)
 		LOG_FUNC_END;
 
-	ULONG maxUnicodeChars = MaxBytesInUnicodeString / sizeof(WCHAR);
+	ULONG maxUnicodeChars = MaxBytesInUnicodeString / sizeof(wchar_xt);
 	ULONG numChars = (maxUnicodeChars < BytesInMultiByteString) ? maxUnicodeChars : BytesInMultiByteString;
+	ntstatus_xt Status = (maxUnicodeChars < BytesInMultiByteString) ? X_STATUS_BUFFER_OVERFLOW : X_STATUS_SUCCESS;
 
 	if (BytesInUnicodeString != NULL) {
-		*BytesInUnicodeString = numChars * sizeof(WCHAR);
+		*BytesInUnicodeString = numChars * sizeof(wchar_xt);
 	}
 
 	while (numChars) {
-		*UnicodeString = (WCHAR)(*MultiByteString);
+		*UnicodeString = (wchar_xt)(*MultiByteString);
 
 		UnicodeString++;
 		MultiByteString++;
 		numChars--;
 	}
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(Status);
 }
 
 // ******************************************************************
@@ -1855,15 +1856,15 @@ XBSYSAPI EXPORTNUM(309) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeStringToInteger
 		LOG_FUNC_ARG(Value)
 		LOG_FUNC_END;
 
-	LPWSTR lpwstr = (LPWSTR)String->Buffer;
-	USHORT CharsRemaining = String->Length / sizeof(WCHAR);
+	wchar_xt* lpwstr = String->Buffer;
+	USHORT CharsRemaining = String->Length / sizeof(wchar_xt);
 	char bMinus = 0;
- 
+
 	while (CharsRemaining >= 1 && *lpwstr <= ' ') {
 		lpwstr++;
 		CharsRemaining--;
 	}
- 
+
 	if (CharsRemaining >= 1) {
 		if (*lpwstr == '+') {
 			lpwstr++;
@@ -1875,10 +1876,10 @@ XBSYSAPI EXPORTNUM(309) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeStringToInteger
 			CharsRemaining--;
 		}
 	}
- 
+
 	if (Base == 0) {
 		Base = 10;
- 
+
 		if (CharsRemaining >= 2 && lpwstr[0] == '0') {
 			if (lpwstr[1] == 'b') {
 				lpwstr += 2;
@@ -1900,17 +1901,17 @@ XBSYSAPI EXPORTNUM(309) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeStringToInteger
 	else if (Base != 2 && Base != 8 && Base != 10 && Base != 16) {
 		return STATUS_INVALID_PARAMETER;
 	}
- 
+
 	if (Value == NULL) {
 		return STATUS_ACCESS_VIOLATION;
 	}
- 
+
 	ULONG RunningTotal = 0;
 
 	while (CharsRemaining >= 1) {
-		WCHAR wchCurrent = *lpwstr;
+		wchar_xt wchCurrent = *lpwstr;
 		int digit;
- 
+
 		if (wchCurrent >= '0' && wchCurrent <= '9') {
 			digit = wchCurrent - '0';
 		}
@@ -1923,16 +1924,16 @@ XBSYSAPI EXPORTNUM(309) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeStringToInteger
 		else {
 			digit = -1;
 		}
- 
+
 		if (digit < 0 || (ULONG)digit >= Base) {
 			break;
 		}
- 
+
 		RunningTotal = RunningTotal * Base + digit;
 		lpwstr++;
 		CharsRemaining--;
 	}
- 
+
 	*Value = bMinus ? (0 - RunningTotal) : RunningTotal;
 
 	RETURN(X_STATUS_SUCCESS);
@@ -1958,8 +1959,9 @@ XBSYSAPI EXPORTNUM(310) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeToMultiByteN
 		LOG_FUNC_ARG(BytesInUnicodeString)
 		LOG_FUNC_END;
 
-	ULONG maxUnicodeChars = BytesInUnicodeString / sizeof(WCHAR);
+	ULONG maxUnicodeChars = BytesInUnicodeString / sizeof(wchar_xt);
 	ULONG numChars = (maxUnicodeChars < MaxBytesInMultiByteString) ? maxUnicodeChars : MaxBytesInMultiByteString;
+	ntstatus_xt Status = (maxUnicodeChars > MaxBytesInMultiByteString) ? X_STATUS_BUFFER_OVERFLOW : X_STATUS_SUCCESS;
 
 	if (BytesInMultiByteString != NULL) {
 		*BytesInMultiByteString = numChars;
@@ -1973,7 +1975,7 @@ XBSYSAPI EXPORTNUM(310) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeToMultiByteN
 		numChars--;
 	}
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(Status);
 }
 
 // ******************************************************************
@@ -2137,8 +2139,9 @@ XBSYSAPI EXPORTNUM(315) xbox::ntstatus_xt NTAPI xbox::RtlUpcaseUnicodeToMultiByt
 		LOG_FUNC_ARG(BytesInUnicodeString)
 		LOG_FUNC_END;
 
-	ULONG maxUnicodeChars = BytesInUnicodeString / sizeof(WCHAR);
+	ULONG maxUnicodeChars = BytesInUnicodeString / sizeof(wchar_xt);
 	ULONG numChars = (maxUnicodeChars < MaxBytesInMultiByteString) ? maxUnicodeChars : MaxBytesInMultiByteString;
+	ntstatus_xt Status = (maxUnicodeChars > MaxBytesInMultiByteString) ? X_STATUS_BUFFER_OVERFLOW : X_STATUS_SUCCESS;
 
 	if (BytesInMultiByteString != NULL) {
 		*BytesInMultiByteString = numChars;
@@ -2155,7 +2158,7 @@ XBSYSAPI EXPORTNUM(315) xbox::ntstatus_xt NTAPI xbox::RtlUpcaseUnicodeToMultiByt
 		numChars--;
 	}
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(Status);
 }
 
 // ******************************************************************
