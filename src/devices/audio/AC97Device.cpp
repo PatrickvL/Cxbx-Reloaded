@@ -94,6 +94,9 @@ constexpr uint16_t SR_CELV = 1 << 1;
 constexpr uint16_t SR_DCH = 1 << 0;
 constexpr uint16_t SR_WCLEAR_MASK = SR_FIFOE | SR_BCIS | SR_LVBCI;
 
+constexpr uint8_t CR_FEIE = 1 << 4;
+constexpr uint8_t CR_LVBIE = 1 << 3;
+constexpr uint8_t CR_IOCE = 1 << 2;
 constexpr uint8_t CR_RR = 1 << 1;
 constexpr uint8_t CR_RPBM = 1 << 0;
 constexpr uint8_t CR_VALID_MASK = 0x1F;
@@ -152,6 +155,13 @@ uint8_t GetPrefetchedIndexValue(uint8_t currentIndex, uint8_t lastValidIndex)
 	return currentIndex == lastValidIndex
 		? currentIndex
 		: static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
+}
+
+bool HasBusMasterInterrupt(uint16_t status, uint8_t control)
+{
+	return ((status & SR_FIFOE) != 0 && (control & CR_FEIE) != 0) ||
+		((status & SR_BCIS) != 0 && (control & CR_IOCE) != 0) ||
+		((status & SR_LVBCI) != 0 && (control & CR_LVBIE) != 0);
 }
 
 bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
@@ -515,13 +525,16 @@ void AC97Device::UpdateGlobalStatus()
 	const uint16_t piStatus = ReadRegister16(AC97_NAM_SIZE + NABM_PI_BASE + BM_SR);
 	const uint16_t poStatus = ReadRegister16(AC97_NAM_SIZE + NABM_PO_BASE + BM_SR);
 	const uint16_t mcStatus = ReadRegister16(AC97_NAM_SIZE + NABM_MC_BASE + BM_SR);
-	if ((piStatus & (SR_FIFOE | SR_BCIS | SR_LVBCI)) != 0) {
+	const uint8_t piControl = static_cast<uint8_t>(ReadRegister(AC97_NAM_SIZE + NABM_PI_BASE + BM_CR, sizeof(uint8_t)));
+	const uint8_t poControl = static_cast<uint8_t>(ReadRegister(AC97_NAM_SIZE + NABM_PO_BASE + BM_CR, sizeof(uint8_t)));
+	const uint8_t mcControl = static_cast<uint8_t>(ReadRegister(AC97_NAM_SIZE + NABM_MC_BASE + BM_CR, sizeof(uint8_t)));
+	if (HasBusMasterInterrupt(piStatus, piControl)) {
 		status |= GLOB_STA_PI_INT;
 	}
-	if ((poStatus & (SR_FIFOE | SR_BCIS | SR_LVBCI)) != 0) {
+	if (HasBusMasterInterrupt(poStatus, poControl)) {
 		status |= GLOB_STA_PO_INT;
 	}
-	if ((mcStatus & (SR_FIFOE | SR_BCIS | SR_LVBCI)) != 0) {
+	if (HasBusMasterInterrupt(mcStatus, mcControl)) {
 		status |= GLOB_STA_MC_INT;
 	}
 
