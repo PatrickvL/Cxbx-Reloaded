@@ -545,7 +545,7 @@ bool IsDpcActive()
 }
 
 static constexpr uint32_t XBOX_TSC_FREQUENCY = 733333333; // Xbox Time Stamp Counter Frequency = 733333333 (CPU Clock)
-static constexpr uint32_t XBOX_ACPI_FREQUENCY = 3375000;  // Xbox ACPI frequency (3.375 mhz)
+static constexpr uint32_t XBOX_ACPI_FREQUENCY = 3579545;  // Xbox ACPI timer frequency (3.579545 MHz)
 
 ULONGLONG CxbxGetPerformanceCounter(bool acpi)
 {
