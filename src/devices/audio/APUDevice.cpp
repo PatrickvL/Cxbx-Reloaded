@@ -128,6 +128,7 @@ constexpr uint32_t NV1BA0_PIO_VOICE_ON_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_ON_ENVF = 0x0F000000;
 constexpr uint32_t NV1BA0_PIO_VOICE_ON_ENVA = 0xF0000000;
 constexpr uint32_t NV1BA0_PIO_VOICE_OFF_HANDLE = 0x0000FFFF;
+constexpr uint32_t NV1BA0_PIO_VOICE_RELEASE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE_ACTION = 1 << 18;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_SSL_BASE_PAGE = 0x003FFFC0;
@@ -164,12 +165,18 @@ constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B16 = 1;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM = 2;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B32 = 3;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV0 = 0x00000008;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENV0_EA_ATTACKRATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENV0_EA_DELAYTIME = 0x00FFF000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA = 0x0000000C;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME = 0x00FFF000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1 = 0x00000010;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF = 0x00000014;
 constexpr uint32_t NV_PAVS_VOICE_CFG_MISC = 0x00000018;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSL_START = 0x00000020;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSH_SAMPLE = 0x00000024;
+constexpr uint32_t NV_PAVS_VOICE_CUR_ECNT = 0x00000034;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE = 0x00000054;
 constexpr uint32_t NV_PAVS_VOICE_PAR_OFFSET = 0x00000058;
 constexpr uint32_t NV_PAVS_VOICE_PAR_NEXT = 0x0000005C;
@@ -185,13 +192,27 @@ constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_PAUSED = 1 << 18;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_NEW_VOICE = 1 << 20;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE = 1 << 21;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR = 0x0F000000;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF = 0;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_DELAY = 1;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK = 2;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD = 3;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY = 4;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN = 5;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE = 6;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_FORCE_RELEASE = 7;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EACUR = 0xF0000000;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSL_START_BA = 0x00FFFFFF;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO = 0x00FFFFFF;
+constexpr uint32_t NV_PAVS_VOICE_CUR_ECNT_EACOUNT = 0x0000FFFF;
+constexpr uint32_t NV_PAVS_VOICE_CUR_ECNT_EFCOUNT = 0xFFFF0000;
 constexpr uint32_t NV_PAVS_VOICE_PAR_OFFSET_CBO = 0x00FFFFFF;
+constexpr uint32_t NV_PAVS_VOICE_PAR_OFFSET_EALVL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_PAR_NEXT_EBO = 0x00FFFFFF;
+constexpr uint32_t NV_PAVS_VOICE_PAR_NEXT_EFLVL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH = 0xFFFF0000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE = 0x00000FFF;
 
 constexpr uint32_t APU_VOICE_LIST_INHERIT = 0;
 constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
@@ -574,12 +595,6 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		}
 
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
-			NV_PAVS_VOICE_PAR_STATE_EACUR,
-			(value & NV1BA0_PIO_VOICE_ON_ENVA) >> Ctz32(NV1BA0_PIO_VOICE_ON_ENVA));
-		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
-			NV_PAVS_VOICE_PAR_STATE_EFCUR,
-			(value & NV1BA0_PIO_VOICE_ON_ENVF) >> Ctz32(NV1BA0_PIO_VOICE_ON_ENVF));
-		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 1);
@@ -588,6 +603,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
+		InitializeVoiceEnvelopes(selectedHandle, value);
 		return;
 	}
 	case NV1BA0_PIO_VOICE_OFF: {
@@ -605,9 +621,14 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			(value & NV1BA0_PIO_VOICE_PAUSE_ACTION) != 0 ? 1u : 0u);
 		return;
 	}
-	case NV1BA0_PIO_VOICE_RELEASE:
-		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	case NV1BA0_PIO_VOICE_RELEASE: {
+		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_RELEASE_HANDLE;
+		if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
+			return;
+		}
+		BeginVoiceRelease(voiceHandle);
 		return;
+	}
 	case NV1BA0_PIO_SET_CURRENT_SSL:
 		m_VPSSLBasePage = value & NV1BA0_PIO_SET_CURRENT_SSL_BASE_PAGE;
 		return;
@@ -871,6 +892,242 @@ bool APUDevice::ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t 
 	}
 
 	return true;
+}
+
+void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue)
+{
+	const auto initializeEnvelope = [&](uint32_t startState, uint32_t reg0, uint32_t regA,
+		uint32_t releaseRegister, uint32_t releaseMask, uint32_t levelRegister,
+		uint32_t levelMask, uint32_t countMask, uint32_t stateMask) {
+		uint32_t count = 0;
+		uint32_t level = 0xFF;
+
+		switch (startState) {
+		case NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF:
+			break;
+		case NV_PAVS_VOICE_PAR_STATE_EFCUR_DELAY:
+			ReadVoiceMask(voiceHandle, reg0, NV_PAVS_VOICE_CFG_ENV0_EA_DELAYTIME, count);
+			count *= 16;
+			level = 0;
+			break;
+		case NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK:
+			level = 0;
+			break;
+		case NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD:
+			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME, count);
+			count *= 16;
+			break;
+		case NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY:
+			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, count);
+			count *= 16;
+			break;
+		case NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN:
+			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, level);
+			break;
+		case NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE:
+			ReadVoiceMask(voiceHandle, releaseRegister, releaseMask, count);
+			count *= 16;
+			level = 0;
+			break;
+		case NV_PAVS_VOICE_PAR_STATE_EFCUR_FORCE_RELEASE:
+			level = 0;
+			break;
+		default:
+			break;
+		}
+
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask, startState);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, level);
+	};
+
+	initializeEnvelope(
+		(voiceOnValue & NV1BA0_PIO_VOICE_ON_ENVA) >> Ctz32(NV1BA0_PIO_VOICE_ON_ENVA),
+		NV_PAVS_VOICE_CFG_ENV0, NV_PAVS_VOICE_CFG_ENVA,
+		NV_PAVS_VOICE_TAR_LFO_ENV, NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE,
+		NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_EALVL,
+		NV_PAVS_VOICE_CUR_ECNT_EACOUNT, NV_PAVS_VOICE_PAR_STATE_EACUR);
+	initializeEnvelope(
+		(voiceOnValue & NV1BA0_PIO_VOICE_ON_ENVF) >> Ctz32(NV1BA0_PIO_VOICE_ON_ENVF),
+		NV_PAVS_VOICE_CFG_ENV1, NV_PAVS_VOICE_CFG_ENVF,
+		NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE,
+		NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EFLVL,
+		NV_PAVS_VOICE_CUR_ECNT_EFCOUNT, NV_PAVS_VOICE_PAR_STATE_EFCUR);
+}
+
+void APUDevice::BeginVoiceRelease(uint32_t voiceHandle)
+{
+	uint32_t releaseRate = 0;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_LFO_ENV,
+		NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE, releaseRate);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT,
+		NV_PAVS_VOICE_CUR_ECNT_EACOUNT, releaseRate * 16);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE,
+		NV_PAVS_VOICE_PAR_STATE_EACUR, NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE);
+
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_MISC,
+		NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE, releaseRate);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT,
+		NV_PAVS_VOICE_CUR_ECNT_EFCOUNT, releaseRate * 16);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE,
+		NV_PAVS_VOICE_PAR_STATE_EFCUR, NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE,
+		NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+}
+
+float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
+	uint32_t rrReg, uint32_t rrMask, uint32_t levelRegister, uint32_t levelMask,
+	uint32_t countMask, uint32_t stateMask)
+{
+	uint32_t currentState = 0;
+	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask, currentState)) {
+		return 1.0f;
+	}
+
+	const bool amplitudeEnvelope = countMask == NV_PAVS_VOICE_CUR_ECNT_EACOUNT;
+	const auto stopVoice = [&]() {
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	};
+
+	switch (currentState) {
+	case NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF:
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0xFF);
+		return 1.0f;
+	case NV_PAVS_VOICE_PAR_STATE_EFCUR_DELAY: {
+		uint32_t count = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0);
+		if (count == 0) {
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
+				NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK);
+		} else {
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count - 1);
+		}
+		return 0.0f;
+	}
+	case NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK: {
+		uint32_t count = 0;
+		uint32_t attackRate = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
+		ReadVoiceMask(voiceHandle, reg0, NV_PAVS_VOICE_CFG_ENV0_EA_ATTACKRATE, attackRate);
+
+		const uint32_t attackSpan = attackRate * 16;
+		uint32_t level = 0xFF;
+		if (attackRate != 0 && attackSpan != 0) {
+			level = std::min<uint32_t>(0xFF, static_cast<uint32_t>((count * 0xFFu) / attackSpan));
+		}
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, level);
+
+		if (attackRate == 0 || count >= attackSpan) {
+			uint32_t holdTime = 0;
+			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME, holdTime);
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
+				NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD);
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, holdTime * 16);
+			WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0xFF);
+			return 1.0f;
+		}
+
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count + 1);
+		return static_cast<float>(level) / 255.0f;
+	}
+	case NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD: {
+		uint32_t count = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0xFF);
+		if (count == 0) {
+			uint32_t decayRate = 0;
+			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, decayRate);
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
+				NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY);
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, decayRate * 16);
+		} else {
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count - 1);
+		}
+		return 1.0f;
+	}
+	case NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY: {
+		uint32_t count = 0;
+		uint32_t decayRate = 0;
+		uint32_t sustainLevel = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
+		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, decayRate);
+		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, sustainLevel);
+
+		if (decayRate == 0 || count == 0) {
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
+				NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN);
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
+			WriteVoiceMask(voiceHandle, levelRegister, levelMask, sustainLevel);
+			return static_cast<float>(sustainLevel) / 255.0f;
+		}
+
+		const uint32_t decaySpan = std::max<uint32_t>(1, decayRate * 16);
+		const float progress = std::clamp(
+			static_cast<float>(decaySpan - std::min<uint32_t>(count, decaySpan)) / static_cast<float>(decaySpan),
+			0.0f, 1.0f);
+		const uint32_t level = static_cast<uint32_t>(std::clamp(
+			255.0f + (static_cast<float>(sustainLevel) - 255.0f) * progress,
+			static_cast<float>(sustainLevel), 255.0f));
+
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, level);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count - 1);
+		return static_cast<float>(level) / 255.0f;
+	}
+	case NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN: {
+		uint32_t sustainLevel = 0;
+		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, sustainLevel);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, sustainLevel);
+		return static_cast<float>(sustainLevel) / 255.0f;
+	}
+	case NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE: {
+		uint32_t count = 0;
+		uint32_t level = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
+		ReadVoiceMask(voiceHandle, levelRegister, levelMask, level);
+
+		if (count == 0) {
+			WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0);
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
+				NV_PAVS_VOICE_PAR_STATE_EFCUR_FORCE_RELEASE);
+			if (amplitudeEnvelope) {
+				stopVoice();
+			}
+			return 0.0f;
+		}
+
+		uint32_t releaseRate = 0;
+		ReadVoiceMask(voiceHandle, rrReg, rrMask, releaseRate);
+		if (releaseRate == 0) {
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
+			WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0);
+			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
+				NV_PAVS_VOICE_PAR_STATE_EFCUR_FORCE_RELEASE);
+			if (amplitudeEnvelope) {
+				stopVoice();
+			}
+			return 0.0f;
+		}
+
+		const uint32_t nextCount = count - 1;
+		const uint32_t nextLevel = count > 0 ? static_cast<uint32_t>((static_cast<uint64_t>(level) * nextCount) / count) : 0;
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, nextCount);
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, nextLevel);
+		return static_cast<float>(nextLevel) / 255.0f;
+	}
+	case NV_PAVS_VOICE_PAR_STATE_EFCUR_FORCE_RELEASE:
+		WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
+		if (amplitudeEnvelope) {
+			stopVoice();
+		}
+		return 0.0f;
+	default:
+		return 1.0f;
+	}
 }
 
 void APUDevice::SynchronizeAudio()
@@ -1156,6 +1413,26 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 			break;
 		}
 
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		const float envelopeGain = StepVoiceEnvelope(
+			voiceHandle,
+			NV_PAVS_VOICE_CFG_ENV0, NV_PAVS_VOICE_CFG_ENVA,
+			NV_PAVS_VOICE_TAR_LFO_ENV, NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE,
+			NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_EALVL,
+			NV_PAVS_VOICE_CUR_ECNT_EACOUNT, NV_PAVS_VOICE_PAR_STATE_EACUR);
+		(void)StepVoiceEnvelope(
+			voiceHandle,
+			NV_PAVS_VOICE_CFG_ENV1, NV_PAVS_VOICE_CFG_ENVF,
+			NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE,
+			NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EFLVL,
+			NV_PAVS_VOICE_CUR_ECNT_EFCOUNT, NV_PAVS_VOICE_PAR_STATE_EFCUR);
+
+		uint32_t activeState = 0;
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, activeState) ||
+			(activeState & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+			break;
+		}
+
 		float currentLeft = 0.0f;
 		float currentRight = 0.0f;
 		if (!decodeFrame(baseAddress, currentOffset, currentLeft, currentRight)) {
@@ -1178,8 +1455,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		const float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		const float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
 
-		mixBuffer[frame * 2] += static_cast<int32_t>(sampleLeft * leftGain * 32767.0f);
-		mixBuffer[frame * 2 + 1] += static_cast<int32_t>(sampleRight * rightGain * 32767.0f);
+		mixBuffer[frame * 2] += static_cast<int32_t>(sampleLeft * leftGain * envelopeGain * 32767.0f);
+		mixBuffer[frame * 2 + 1] += static_cast<int32_t>(sampleRight * rightGain * envelopeGain * 32767.0f);
 
 		const double nextPlaybackPosition = playbackState.fraction + pitchStep;
 		const uint32_t wholeFrames = static_cast<uint32_t>(nextPlaybackPosition);
