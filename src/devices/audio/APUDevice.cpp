@@ -29,6 +29,7 @@
 #include "AC97Device.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
+#include "common/audio/XADPCM.h"
 
 #include <algorithm>
 #include <cmath>
@@ -225,6 +226,10 @@ constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0xFF;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
+constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
+constexpr size_t APU_XADPCM_PCM_SAMPLES_PER_BLOCK = XBOX_ADPCM_DSTSIZE / sizeof(int16_t);
+constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XADPCM_MAX_CHANNELS;
+constexpr size_t APU_XADPCM_MAX_DECODED_BLOCK_BYTES = XBOX_ADPCM_DSTSIZE * APU_XADPCM_MAX_CHANNELS;
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -1201,15 +1206,21 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 	}
 
 	const uint32_t samplesPerBlock = ((format & NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK)) + 1;
-	if (samplesPerBlock != 1) {
-		return;
-	}
 
 	const bool loop = (format & NV_PAVS_VOICE_CFG_FMT_LOOP) != 0;
 	const bool stereo = (format & NV_PAVS_VOICE_CFG_FMT_STEREO) != 0;
 	const uint32_t channels = stereo ? 2u : 1u;
 	const uint32_t sampleSize = (format & NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE);
 	const uint32_t containerSizeMode = (format & NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE);
+	const bool adpcm = containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM;
+	if (adpcm) {
+		if (samplesPerBlock != APU_XADPCM_PCM_SAMPLES_PER_BLOCK) {
+			return;
+		}
+	} else if (samplesPerBlock != 1) {
+		return;
+	}
+
 	uint32_t containerSize = 0;
 	switch (containerSizeMode) {
 	case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B8:
@@ -1217,6 +1228,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		break;
 	case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B16:
 		containerSize = 2;
+		break;
+	case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM:
+		containerSize = XBOX_ADPCM_SRCSIZE;
 		break;
 	case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B32:
 		containerSize = 4;
@@ -1250,7 +1264,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 	const float leftGain = AttenuateVoiceVolume(volumeLeft);
 	const float rightGain = AttenuateVoiceVolume(volumeRight);
 	const double pitchStep = DecodePitchStep(pitch);
-	const uint32_t bytesPerFrame = containerSize * channels;
+	const uint32_t bytesPerFrame = adpcm ? 0u : containerSize * channels;
+	const uint32_t bytesPerBlock = containerSize * channels;
 	auto& playbackState = m_VPPlaybackState[voiceHandle];
 	if (!playbackState.valid || playbackState.offset != currentOffset) {
 		playbackState.offset = currentOffset;
@@ -1349,9 +1364,41 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		return true;
 	};
 	auto decodeFrame = [&](uint32_t segmentBaseAddress, uint32_t segmentCurrentOffset, float& sampleLeft, float& sampleRight) -> bool {
-		const uint32_t linearAddress = segmentBaseAddress + segmentCurrentOffset * bytesPerFrame;
 		sampleLeft = 0.0f;
 		sampleRight = 0.0f;
+		if (adpcm) {
+			const uint32_t blockIndex = segmentCurrentOffset / samplesPerBlock;
+			const uint32_t sampleIndexInBlock = segmentCurrentOffset % samplesPerBlock;
+			std::array<uint8_t, APU_XADPCM_MAX_SOURCE_BLOCK_BYTES> encodedBlock{};
+			std::array<uint8_t, APU_XADPCM_MAX_DECODED_BLOCK_BYTES> decodedBlock{};
+			const uint32_t blockAddress = segmentBaseAddress + blockIndex * bytesPerBlock;
+			if (!readSampleBytes(blockAddress, encodedBlock.data(), bytesPerBlock)) {
+				return false;
+			}
+
+			const int decodedBytes = TXboxAdpcmDecoder_Decode_Memory(
+				encodedBlock.data(),
+				static_cast<int>(bytesPerBlock),
+				decodedBlock.data(),
+				static_cast<int>(channels));
+			const uint32_t sampleByteOffset = sampleIndexInBlock * channels * sizeof(int16_t);
+			if (decodedBytes < 0 ||
+				sampleByteOffset + channels * sizeof(int16_t) > static_cast<uint32_t>(decodedBytes)) {
+				return false;
+			}
+
+			const int16_t leftSample = static_cast<int16_t>(ReadLE(decodedBlock.data(), sampleByteOffset, sizeof(int16_t)));
+			sampleLeft = ConvertSigned16(leftSample);
+			if (channels > 1) {
+				const int16_t rightSample = static_cast<int16_t>(ReadLE(decodedBlock.data(), sampleByteOffset + sizeof(int16_t), sizeof(int16_t)));
+				sampleRight = ConvertSigned16(rightSample);
+			} else {
+				sampleRight = sampleLeft;
+			}
+			return true;
+		}
+
+		const uint32_t linearAddress = segmentBaseAddress + segmentCurrentOffset * bytesPerFrame;
 		for (uint32_t channel = 0; channel < channels; ++channel) {
 			const uint32_t sampleAddress = linearAddress + channel * containerSize;
 			float sample = 0.0f;
