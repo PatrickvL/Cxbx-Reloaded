@@ -65,6 +65,7 @@ class AC97Device : public PCIDevice {
 		std::array<uint8_t, 0x180> m_Registers{};
 		std::array<uint32_t, 3> m_ChannelLastUpdate{};
 		std::array<uint32_t, 3> m_ChannelSampleRemainder{};
+		std::array<bool, 3> m_ChannelAdvanceOnRestart{};
 		std::vector<int16_t> m_OutputScratch{};
 		uint32_t m_OutputDevice = 0;
 		bool m_OutputDeviceFailed = false;
