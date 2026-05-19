@@ -254,8 +254,11 @@ constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XA
 constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_MIXBIN_COUNT = 32;
 constexpr uint32_t APU_MAX_3D_VOICES = 64;
+// Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
+// Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
 constexpr float APU_FILTER_MIN_Q = 0.079407f;
+// FC1 is a 16-bit fixed-point resonance value normalized against 0x8000.
 constexpr float APU_FILTER_Q_NORMALIZER = 32768.0f;
 
 float ClampUnitSample(float value)
@@ -265,6 +268,8 @@ float ClampUnitSample(float value)
 
 float RunLowPassFilter(float& high, float& band, float& low, float cutoff, float resonance, float input)
 {
+	// State-variable low-pass filter adapted to the lightweight MCPX VP path.
+	// The small bias and cubic damping terms are the same stabilizers used in xemu's SVF implementation.
 	const float normalizedInput = std::sqrt(resonance / 2.0f + 0.01f) * input;
 	band -= band * band * band * 0.001f;
 	high = normalizedInput - low - resonance * band;

@@ -168,6 +168,7 @@ void AC97Device::Reset()
 	WriteRegister16(AC97_Vendor_ID2, AC97_VENDOR_SIGMATEL_2);
 	m_ChannelLastUpdate.fill(GetAPUTime());
 	m_ChannelSampleRemainder.fill(0);
+	m_LoggedQueueFull = false;
 	if (m_OutputDevice != 0) {
 		SDL_ClearQueuedAudio(static_cast<SDL_AudioDeviceID>(m_OutputDevice));
 	}
@@ -221,8 +222,13 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 
 	const SDL_AudioDeviceID device = static_cast<SDL_AudioDeviceID>(m_OutputDevice);
 	if (SDL_GetQueuedAudioSize(device) >= AC97_MAX_QUEUED_AUDIO_BYTES) {
+		if (!m_LoggedQueueFull) {
+			EmuLog(LOG_LEVEL::WARNING, "AC97 output queue full, dropping PCM frames");
+			m_LoggedQueueFull = true;
+		}
 		return;
 	}
+	m_LoggedQueueFull = false;
 
 	SDL_QueueAudio(device, samples, static_cast<Uint32>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME));
 }

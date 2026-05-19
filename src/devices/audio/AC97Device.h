@@ -65,6 +65,7 @@ class AC97Device : public PCIDevice {
 		std::array<uint32_t, 3> m_ChannelSampleRemainder{};
 		uint32_t m_OutputDevice = 0;
 		bool m_OutputDeviceFailed = false;
+		bool m_LoggedQueueFull = false;
 };
 
 #endif
