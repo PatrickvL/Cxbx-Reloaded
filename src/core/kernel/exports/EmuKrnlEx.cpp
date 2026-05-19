@@ -556,14 +556,38 @@ XBSYSAPI EXPORTNUM(26) xbox::void_xt NTAPI xbox::ExRaiseException
 {
 	LOG_FUNC_ONE_ARG(ExceptionRecord);
 
-	// The Xbox EXCEPTION_RECORD layout is identical to the Windows one, so we
-	// can dispatch through the host Win32 SEH mechanism directly.  This allows
-	// the game's own __try/__except handlers to catch the exception as expected.
+	// The Xbox exception registration chain lives in the Xbox KPCR (offset 0 =
+	// NtTib.ExceptionList), accessed via patched fs:[0] instructions in Xbox code.
+	// The host's real fs:[0] doesn't contain these registrations.  To dispatch
+	// through the Xbox handlers, temporarily install the Xbox exception chain
+	// into the host's fs:[0] before raising.
+	DWORD kpcrPtr = __readfsdword(TIB_ArbitraryDataSlot);
+	DWORD xboxExceptionList = *(DWORD *)kpcrPtr;
+	DWORD savedHostExceptionList;
+
+	__asm {
+		mov eax, dword ptr fs:[0]
+		mov savedHostExceptionList, eax
+		mov eax, xboxExceptionList
+		mov dword ptr fs:[0], eax
+	}
+
 	::RaiseException(
 		ExceptionRecord->ExceptionCode,
 		ExceptionRecord->ExceptionFlags,
 		ExceptionRecord->NumberParameters,
 		reinterpret_cast<const ULONG_PTR*>(ExceptionRecord->ExceptionInformation));
+
+	// Reached only if a filter returned EXCEPTION_CONTINUE_EXECUTION.
+	// Sync the (possibly modified) host chain back to the Xbox KPCR and restore.
+	DWORD updatedChain;
+	__asm {
+		mov eax, dword ptr fs:[0]
+		mov updatedChain, eax
+		mov eax, savedHostExceptionList
+		mov dword ptr fs:[0], eax
+	}
+	*(DWORD *)kpcrPtr = updatedChain;
 }
 
 // ******************************************************************
