@@ -78,6 +78,15 @@ constexpr uint32_t AC97_DESCRIPTOR_STRIDE = 8;
 constexpr uint32_t AC97_DESCRIPTOR_LENGTH_MASK = 0x0000FFFF;
 constexpr uint32_t AC97_DESCRIPTOR_IOC = 0x80000000;
 
+constexpr uint32_t GLOB_CNT_WRST = 1 << 0;
+constexpr uint32_t GLOB_CNT_CRST = 1 << 1;
+constexpr uint32_t GLOB_CNT_MASK = GLOB_CNT_WRST | GLOB_CNT_CRST;
+constexpr uint32_t GLOB_STA_PI_INT = 1 << 8;
+constexpr uint32_t GLOB_STA_PO_INT = 1 << 9;
+constexpr uint32_t GLOB_STA_MC_INT = 1 << 10;
+constexpr uint32_t GLOB_STA_POINT_MASK = GLOB_STA_PI_INT | GLOB_STA_PO_INT | GLOB_STA_MC_INT;
+constexpr uint32_t GLOB_STA_RDY = 1 << 15;
+
 constexpr uint16_t SR_FIFOE = 1 << 4;
 constexpr uint16_t SR_BCIS = 1 << 3;
 constexpr uint16_t SR_LVBCI = 1 << 2;
@@ -221,7 +230,7 @@ void AC97Device::Reset()
 	ResetBusMasterChannel(NABM_PO_BASE);
 	ResetBusMasterChannel(NABM_MC_BASE);
 	WriteRegister(AC97_NAM_SIZE + NABM_GLOB_CNT, 0, sizeof(uint32_t));
-	WriteRegister(AC97_NAM_SIZE + NABM_GLOB_STA, 0, sizeof(uint32_t));
+	UpdateGlobalStatus();
 }
 
 bool AC97Device::EnsureOutputDevice()
@@ -372,6 +381,7 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 			addr == AC97_NAM_SIZE + NABM_MC_BASE + BM_SR) {
 			const uint16_t current = ReadRegister16(addr);
 			WriteRegister16(addr, current & ~(static_cast<uint16_t>(value) & SR_WCLEAR_MASK));
+			UpdateGlobalStatus();
 			return;
 		}
 		if (addr == AC97_NAM_SIZE + NABM_PI_BASE + BM_CR ||
@@ -384,6 +394,20 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 			} else {
 				UpdateBusMasterStatus(channelBase);
 			}
+			return;
+		}
+		if (addr == AC97_NAM_SIZE + NABM_GLOB_CNT && size >= sizeof(uint32_t)) {
+			const uint32_t control = value & GLOB_CNT_MASK;
+			if ((control & (GLOB_CNT_WRST | GLOB_CNT_CRST)) != 0) {
+				Reset();
+				return;
+			}
+			WriteRegister(addr, control, sizeof(uint32_t));
+			UpdateGlobalStatus();
+			return;
+		}
+		if (addr == AC97_NAM_SIZE + NABM_GLOB_STA) {
+			UpdateGlobalStatus();
 			return;
 		}
 		WriteRegister(addr, value, size);
@@ -447,6 +471,32 @@ void AC97Device::WriteRegister16(uint32_t addr, uint16_t value)
 	WriteRegister(addr, value, sizeof(uint16_t));
 }
 
+void AC97Device::UpdateGlobalStatus()
+{
+	uint32_t status = ReadRegister(AC97_NAM_SIZE + NABM_GLOB_STA, sizeof(uint32_t)) & ~GLOB_STA_POINT_MASK;
+
+	if ((ReadRegister16(AC97_Powerdown_Ctrl_Stat) & AC97_POWER_READY) == AC97_POWER_READY) {
+		status |= GLOB_STA_RDY;
+	} else {
+		status &= ~GLOB_STA_RDY;
+	}
+
+	const uint16_t piStatus = ReadRegister16(AC97_NAM_SIZE + NABM_PI_BASE + BM_SR);
+	const uint16_t poStatus = ReadRegister16(AC97_NAM_SIZE + NABM_PO_BASE + BM_SR);
+	const uint16_t mcStatus = ReadRegister16(AC97_NAM_SIZE + NABM_MC_BASE + BM_SR);
+	if ((piStatus & (SR_FIFOE | SR_BCIS | SR_LVBCI)) != 0) {
+		status |= GLOB_STA_PI_INT;
+	}
+	if ((poStatus & (SR_FIFOE | SR_BCIS | SR_LVBCI)) != 0) {
+		status |= GLOB_STA_PO_INT;
+	}
+	if ((mcStatus & (SR_FIFOE | SR_BCIS | SR_LVBCI)) != 0) {
+		status |= GLOB_STA_MC_INT;
+	}
+
+	WriteRegister(AC97_NAM_SIZE + NABM_GLOB_STA, status, sizeof(uint32_t));
+}
+
 void AC97Device::UpdateBusMasterChannels()
 {
 	if (g_APU != nullptr) {
@@ -455,6 +505,7 @@ void AC97Device::UpdateBusMasterChannels()
 	UpdateBusMasterStatus(NABM_PI_BASE);
 	UpdateBusMasterStatus(NABM_PO_BASE);
 	UpdateBusMasterStatus(NABM_MC_BASE);
+	UpdateGlobalStatus();
 }
 
 void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
@@ -470,6 +521,7 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PICB, 0);
 	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, 0);
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CR, 0, sizeof(uint8_t));
+	UpdateGlobalStatus();
 }
 
 bool AC97Device::PrimeBusMasterChannel(uint32_t channelBase)
@@ -580,6 +632,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 	}
 
 	WriteRegister16(srAddr, status);
+	UpdateGlobalStatus();
 }
 
 uint32_t AC97Device::GetBusMasterSampleRate(uint32_t channelBase) const

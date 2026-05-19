@@ -54,6 +54,7 @@ class AC97Device : public PCIDevice {
 		void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
 		uint16_t ReadRegister16(uint32_t addr) const;
 		void WriteRegister16(uint32_t addr, uint16_t value);
+		void UpdateGlobalStatus();
 		void UpdateBusMasterChannels();
 		void ResetBusMasterChannel(uint32_t channelBase);
 		bool PrimeBusMasterChannel(uint32_t channelBase);
