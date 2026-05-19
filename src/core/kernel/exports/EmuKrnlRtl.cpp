@@ -1588,14 +1588,10 @@ XBSYSAPI EXPORTNUM(302) xbox::void_xt NTAPI xbox::RtlRaiseException
 {
 	LOG_FUNC_ONE_ARG(ExceptionRecord);
 
-	// The Xbox EXCEPTION_RECORD layout is identical to the Windows one.
-	// Dispatch through the host Win32 SEH mechanism so that the game's
-	// own __try/__except handlers can catch the exception as expected.
-	::RaiseException(
-		ExceptionRecord->ExceptionCode,
-		ExceptionRecord->ExceptionFlags,
-		ExceptionRecord->NumberParameters,
-		reinterpret_cast<const ULONG_PTR*>(ExceptionRecord->ExceptionInformation));
+	// Dispatch through the Xbox exception chain (KPCR[0]), not host SEH.
+	// Xbox __try/__except handlers register on KPCR[0], so we must use
+	// ExRaiseException which walks that chain.
+	ExRaiseException(ExceptionRecord);
 }
 
 // ******************************************************************
