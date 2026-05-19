@@ -158,14 +158,14 @@ XBSYSAPI EXPORTNUM(40) xbox::ulong_xt xbox::HalDiskCachePartitionCount = 3;
 // ******************************************************************
 // * 0x0029 - HalDiskModelNumber
 // ******************************************************************
-// Source:OpenXDK  TODO : Fill this with something sensible
-XBSYSAPI EXPORTNUM(41) xbox::PANSI_STRING xbox::HalDiskModelNumber = 0;
+static char HalDiskModelNumberBuffer[] = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+XBSYSAPI EXPORTNUM(41) xbox::ANSI_STRING xbox::HalDiskModelNumber = { sizeof(HalDiskModelNumberBuffer) - 1, sizeof(HalDiskModelNumberBuffer), HalDiskModelNumberBuffer };
 
 // ******************************************************************
 // * 0x002A - HalDiskSerialNumber
 // ******************************************************************
-// Source:OpenXDK  TODO : Fill this with something sensible
-XBSYSAPI EXPORTNUM(42) xbox::PANSI_STRING xbox::HalDiskSerialNumber = 0;	
+static char HalDiskSerialNumberBuffer[] = "XXXXXXXXXXXXXXXXXXXX";
+XBSYSAPI EXPORTNUM(42) xbox::ANSI_STRING xbox::HalDiskSerialNumber = { sizeof(HalDiskSerialNumberBuffer) - 1, sizeof(HalDiskSerialNumberBuffer), HalDiskSerialNumberBuffer };	
 
 // ******************************************************************
 // * 0x002B - HalEnableSystemInterrupt()
