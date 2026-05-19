@@ -47,8 +47,12 @@ constexpr uint32_t APU_EP_BASE = 0x50000;
 constexpr uint32_t APU_EP_SIZE = 0x10000;
 
 constexpr uint32_t NV_PAPU_ISTS = 0x00001000;
+constexpr uint32_t NV_PAPU_ISTS_GINTSTS = 1 << 0;
+constexpr uint32_t NV_PAPU_ISTS_FETINTSTS = 1 << 4;
 constexpr uint32_t NV_PAPU_IEN = 0x00001004;
 constexpr uint32_t NV_PAPU_FECTL = 0x00001100;
+constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE = 0x000000E0;
+constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE_TRAPPED = 0x000000E0;
 constexpr uint32_t NV_PAPU_FECV = 0x00001110;
 constexpr uint32_t NV_PAPU_FEAV = 0x00001118;
 constexpr uint32_t NV_PAPU_FENADDR = 0x0000115C;
@@ -306,6 +310,14 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	if (addr >= NV_PAPU_ISTS && addr < NV_PAPU_ISTS + sizeof(uint32_t)) {
 		const uint32_t clearMask = value << ((addr - NV_PAPU_ISTS) * 8);
 		SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) & ~clearMask);
+		RefreshInterruptStatus();
+		return;
+	}
+
+	if ((addr >= NV_PAPU_IEN && addr < NV_PAPU_IEN + sizeof(uint32_t)) ||
+		(addr >= NV_PAPU_FECTL && addr < NV_PAPU_FECTL + sizeof(uint32_t))) {
+		WriteRegister(addr, value, size);
+		RefreshInterruptStatus();
 		return;
 	}
 
@@ -663,4 +675,19 @@ void APUDevice::RefreshVPStatus()
 		status |= APU_VP_STATUS_EMPTY;
 	}
 	SetRegister32(APU_VP_BASE + APU_VP_FREE, status);
+}
+
+void APUDevice::RefreshInterruptStatus()
+{
+	uint32_t status = GetRegister32(NV_PAPU_ISTS) & ~NV_PAPU_ISTS_GINTSTS;
+	if ((GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+		status |= NV_PAPU_ISTS_FETINTSTS;
+	}
+
+	if ((GetRegister32(NV_PAPU_IEN) & NV_PAPU_ISTS_GINTSTS) != 0 &&
+		((status & ~NV_PAPU_ISTS_GINTSTS) & GetRegister32(NV_PAPU_IEN)) != 0) {
+		status |= NV_PAPU_ISTS_GINTSTS;
+	}
+
+	SetRegister32(NV_PAPU_ISTS, status);
 }

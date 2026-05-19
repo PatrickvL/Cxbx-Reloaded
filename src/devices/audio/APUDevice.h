@@ -54,6 +54,7 @@ private:
 	void ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size);
 	void UpdateVPFifo();
 	void RefreshVPStatus();
+	void RefreshInterruptStatus();
 	bool ReadGuestWord(uint32_t guestAddress, uint32_t& value) const;
 	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
 	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
