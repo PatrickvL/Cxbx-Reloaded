@@ -1164,16 +1164,13 @@ XBSYSAPI EXPORTNUM(289) xbox::void_xt NTAPI xbox::RtlInitAnsiString
 	IN     PCSZ         SourceString
 )
 {
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG_OUT(DestinationString)
-		LOG_FUNC_ARG(SourceString)
-		LOG_FUNC_END;
+	// No LOG_FUNC: this is a high-frequency leaf function called by the
+	// kernel's own I/O path. Logging here causes infinite recursion when
+	// the logging infrastructure itself triggers string initialization.
 
 	DestinationString->Buffer = const_cast<PCHAR>(SourceString);
 	if (SourceString != NULL) {
-		CCHAR *pSourceString = (CCHAR*)(SourceString);
-		DestinationString->Buffer = const_cast<PCHAR>(SourceString);
-		DestinationString->Length = (USHORT)strlen(pSourceString);
+		DestinationString->Length = (USHORT)strlen(SourceString);
 		DestinationString->MaximumLength = DestinationString->Length + 1;
 	}
 	else {
@@ -1190,15 +1187,16 @@ XBSYSAPI EXPORTNUM(290) xbox::void_xt NTAPI xbox::RtlInitUnicodeString
 	IN     PCWSTR         SourceString
 )
 {
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG_OUT(DestinationString)
-		LOG_FUNC_ARG(SourceString)
-		LOG_FUNC_END;
+	// No LOG_FUNC: same rationale as RtlInitAnsiString — high-frequency
+	// leaf function used internally by kernel I/O and string operations.
 
 	DestinationString->Buffer = (wchar_xt*)SourceString;
 	if (SourceString != NULL) {
-		DestinationString->Length = (USHORT)std::u16string(SourceString).length() * 2;
-		DestinationString->MaximumLength = DestinationString->Length + 2;
+		const wchar_xt* p = SourceString;
+		while (*p) p++;
+		USHORT len = (USHORT)((p - SourceString) * sizeof(wchar_xt));
+		DestinationString->Length = len;
+		DestinationString->MaximumLength = len + sizeof(wchar_xt);
 	}
 	else {
 		DestinationString->Length = DestinationString->MaximumLength = 0;
