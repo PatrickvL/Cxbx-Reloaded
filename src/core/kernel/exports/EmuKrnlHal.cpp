@@ -282,7 +282,8 @@ XBSYSAPI EXPORTNUM(45) xbox::ntstatus_xt NTAPI xbox::HalReadSMBusValue
 	// TODO : Prevent interrupts
 
 	NTSTATUS Status = X_STATUS_SUCCESS;
-
+	// Clear any previous error status before starting a new transaction
+	g_SMBus->IOWrite(1, SMB_GLOBAL_STATUS, GS_CLEAR_STS);
 	// ergo720: the or 1 on the address is necessary because I have seen that UnleashX and RDX dashboard pass 0x20 instead of the
 	// expected 0x21 to this function when reading cpu and m/b temperatures
 
@@ -642,7 +643,8 @@ XBSYSAPI EXPORTNUM(50) xbox::ntstatus_xt NTAPI xbox::HalWriteSMBusValue
 	// TODO : Prevent interrupts
 
 	NTSTATUS Status = X_STATUS_SUCCESS;
-
+	// Clear any previous error status before starting a new transaction
+	g_SMBus->IOWrite(1, SMB_GLOBAL_STATUS, GS_CLEAR_STS);
 	g_SMBus->IOWrite(1, SMB_HOST_ADDRESS, Address);
 	g_SMBus->IOWrite(1, SMB_HOST_COMMAND, Command);
 	g_SMBus->IOWrite(1, SMB_HOST_DATA, DataValue & 0xFF);
