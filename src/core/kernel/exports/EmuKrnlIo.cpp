@@ -122,11 +122,22 @@ XBSYSAPI EXPORTNUM(60) xbox::PVOID NTAPI xbox::IoBuildAsynchronousFsdRequest
 		LOG_FUNC_ARG_OUT(IoStatusBlock)
 		LOG_FUNC_END;
 
-	xbox::PVOID ret = nullptr;
+	PIRP Irp = (PIRP)IoAllocateIrp(DeviceObject->StackSize);
+	if (Irp == nullptr) {
+		RETURN(nullptr);
+	}
 
-	LOG_UNIMPLEMENTED();
+	Irp->UserIosb = IoStatusBlock;
+	Irp->UserBuffer = Buffer;
 
-	RETURN(ret);
+	PIO_STACK_LOCATION StackLocation = Irp->Tail.Overlay.CurrentStackLocation - 1;
+	StackLocation->MajorFunction = (uchar_xt)MajorFunction;
+	StackLocation->Parameters.Read.Length = Length;
+	if (StartingOffset != nullptr) {
+		StackLocation->Parameters.Read.ByteOffset = *StartingOffset;
+	}
+
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
@@ -157,11 +168,22 @@ XBSYSAPI EXPORTNUM(61) xbox::PVOID NTAPI xbox::IoBuildDeviceIoControlRequest
 		LOG_FUNC_ARG_OUT(IoStatusBlock)
 		LOG_FUNC_END;
 
-	xbox::PVOID ret = nullptr;
+	PIRP Irp = (PIRP)IoAllocateIrp(DeviceObject->StackSize);
+	if (Irp == nullptr) {
+		RETURN(nullptr);
+	}
 
-	LOG_UNIMPLEMENTED();
+	Irp->UserIosb = IoStatusBlock;
+	Irp->UserEvent = Event;
+	Irp->UserBuffer = OutputBuffer;
 
-	RETURN(ret);
+	PIO_STACK_LOCATION StackLocation = Irp->Tail.Overlay.CurrentStackLocation - 1;
+	StackLocation->MajorFunction = InternalDeviceIoControl ? 11 : 10; // IRP_MJ_INTERNAL_DEVICE_CONTROL : IRP_MJ_DEVICE_CONTROL
+	StackLocation->Parameters.DeviceIoControl.IoControlCode = IoControlCode;
+	StackLocation->Parameters.DeviceIoControl.InputBufferLength = InputBufferLength;
+	StackLocation->Parameters.DeviceIoControl.OutputBufferLength = OutputBufferLength;
+
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
@@ -188,11 +210,23 @@ XBSYSAPI EXPORTNUM(62) xbox::PVOID NTAPI xbox::IoBuildSynchronousFsdRequest
 		LOG_FUNC_ARG_OUT(IoStatusBlock)
 		LOG_FUNC_END;
 
-	xbox::PVOID ret = nullptr;
+	PIRP Irp = (PIRP)IoAllocateIrp(DeviceObject->StackSize);
+	if (Irp == nullptr) {
+		RETURN(nullptr);
+	}
 
-	LOG_UNIMPLEMENTED();
+	Irp->UserIosb = IoStatusBlock;
+	Irp->UserEvent = Event;
+	Irp->UserBuffer = Buffer;
 
-	RETURN(ret);
+	PIO_STACK_LOCATION StackLocation = Irp->Tail.Overlay.CurrentStackLocation - 1;
+	StackLocation->MajorFunction = (uchar_xt)MajorFunction;
+	StackLocation->Parameters.Read.Length = Length;
+	if (StartingOffset != nullptr) {
+		StackLocation->Parameters.Read.ByteOffset = *StartingOffset;
+	}
+
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
