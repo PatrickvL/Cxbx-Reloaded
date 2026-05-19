@@ -1050,7 +1050,7 @@ XBSYSAPI EXPORTNUM(109) xbox::void_xt NTAPI xbox::KeInitializeInterrupt
 
 	Interrupt->ServiceRoutine = ServiceRoutine;
 	Interrupt->ServiceContext = ServiceContext;
-	Interrupt->BusInterruptLevel = VECTOR2IRQ(Vector);
+	Interrupt->BusInterruptLevel = Vector;
 	Interrupt->Irql = Irql;
 	Interrupt->Connected = FALSE;
 	// Unused : Interrupt->ShareVector = ShareVector;
