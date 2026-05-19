@@ -84,7 +84,7 @@ constexpr uint32_t GLOB_CNT_MASK = GLOB_CNT_WRST | GLOB_CNT_CRST;
 constexpr uint32_t GLOB_STA_PI_INT = 1 << 8;
 constexpr uint32_t GLOB_STA_PO_INT = 1 << 9;
 constexpr uint32_t GLOB_STA_MC_INT = 1 << 10;
-constexpr uint32_t GLOB_STA_POINT_MASK = GLOB_STA_PI_INT | GLOB_STA_PO_INT | GLOB_STA_MC_INT;
+constexpr uint32_t GLOB_STA_CHANNEL_INT_MASK = GLOB_STA_PI_INT | GLOB_STA_PO_INT | GLOB_STA_MC_INT;
 constexpr uint32_t GLOB_STA_RDY = 1 << 15;
 
 constexpr uint16_t SR_FIFOE = 1 << 4;
@@ -473,7 +473,7 @@ void AC97Device::WriteRegister16(uint32_t addr, uint16_t value)
 
 void AC97Device::UpdateGlobalStatus()
 {
-	uint32_t status = ReadRegister(AC97_NAM_SIZE + NABM_GLOB_STA, sizeof(uint32_t)) & ~GLOB_STA_POINT_MASK;
+	uint32_t status = ReadRegister(AC97_NAM_SIZE + NABM_GLOB_STA, sizeof(uint32_t)) & ~GLOB_STA_CHANNEL_INT_MASK;
 
 	if ((ReadRegister16(AC97_Powerdown_Ctrl_Stat) & AC97_POWER_READY) == AC97_POWER_READY) {
 		status |= GLOB_STA_RDY;
