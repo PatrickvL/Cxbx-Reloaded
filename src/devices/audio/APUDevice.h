@@ -107,6 +107,7 @@ private:
 	uint32_t m_VPSSLBasePage = 0;
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
+	bool m_LoggedXADPCMDecodeFailure = false;
 };
 
 #endif

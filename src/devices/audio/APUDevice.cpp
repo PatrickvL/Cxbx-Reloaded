@@ -30,6 +30,7 @@
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
 #include "common/audio/XADPCM.h"
+#include "core\kernel\support\Emu.h"
 
 #include <algorithm>
 #include <cmath>
@@ -226,10 +227,10 @@ constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0xFF;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
-constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
 constexpr size_t APU_XADPCM_PCM_SAMPLES_PER_BLOCK = XBOX_ADPCM_DSTSIZE / sizeof(int16_t);
+constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
 constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XADPCM_MAX_CHANNELS;
-constexpr size_t APU_XADPCM_MAX_DECODED_BLOCK_BYTES = XBOX_ADPCM_DSTSIZE * APU_XADPCM_MAX_CHANNELS;
+constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -347,6 +348,7 @@ void APUDevice::Reset()
 	m_VPSSLBasePage = 0;
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
+	m_LoggedXADPCMDecodeFailure = false;
 
 	SetRegister32(NV_PAPU_ISTS, 0);
 	SetRegister32(NV_PAPU_IEN, 0);
@@ -1272,6 +1274,11 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		playbackState.fraction = 0.0;
 		playbackState.valid = true;
 	}
+	uint32_t cachedADPCMBlockIndex = 0;
+	uint32_t cachedADPCMBaseAddress = 0;
+	uint8_t cachedADPCMChannels = 0;
+	bool cachedADPCMValid = false;
+	std::array<int16_t, APU_XADPCM_MAX_DECODED_SAMPLES> cachedADPCMSamples{};
 
 	auto sslData = m_VPSSLData[voiceHandle];
 	auto stopVoice = [&]() {
@@ -1370,27 +1377,42 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 			const uint32_t blockIndex = segmentCurrentOffset / samplesPerBlock;
 			const uint32_t sampleIndexInBlock = segmentCurrentOffset % samplesPerBlock;
 			std::array<uint8_t, APU_XADPCM_MAX_SOURCE_BLOCK_BYTES> encodedBlock{};
-			std::array<uint8_t, APU_XADPCM_MAX_DECODED_BLOCK_BYTES> decodedBlock{};
-			const uint32_t blockAddress = segmentBaseAddress + blockIndex * bytesPerBlock;
-			if (!readSampleBytes(blockAddress, encodedBlock.data(), bytesPerBlock)) {
-				return false;
+			if (!cachedADPCMValid ||
+				cachedADPCMBlockIndex != blockIndex ||
+				cachedADPCMBaseAddress != segmentBaseAddress ||
+				cachedADPCMChannels != channels) {
+				const uint32_t blockAddress = segmentBaseAddress + blockIndex * bytesPerBlock;
+				if (!readSampleBytes(blockAddress, encodedBlock.data(), bytesPerBlock)) {
+					return false;
+				}
+
+				const uint32_t expectedDecodedBytes = samplesPerBlock * channels * sizeof(int16_t);
+				const int decodedBytes = TXboxAdpcmDecoder_Decode_Memory(
+					encodedBlock.data(),
+					static_cast<int>(bytesPerBlock),
+					reinterpret_cast<uint8_t*>(cachedADPCMSamples.data()),
+					static_cast<int>(channels));
+				if (decodedBytes != static_cast<int>(expectedDecodedBytes)) {
+					if (!m_LoggedXADPCMDecodeFailure) {
+						EmuLog(LOG_LEVEL::WARNING,
+							"APU XADPCM decode failed for voice %u block %u (decoded %d bytes, expected %u)",
+							voiceHandle, blockIndex, decodedBytes, expectedDecodedBytes);
+						m_LoggedXADPCMDecodeFailure = true;
+					}
+					return false;
+				}
+
+				cachedADPCMBlockIndex = blockIndex;
+				cachedADPCMBaseAddress = segmentBaseAddress;
+				cachedADPCMChannels = static_cast<uint8_t>(channels);
+				cachedADPCMValid = true;
 			}
 
-			const int decodedBytes = TXboxAdpcmDecoder_Decode_Memory(
-				encodedBlock.data(),
-				static_cast<int>(bytesPerBlock),
-				decodedBlock.data(),
-				static_cast<int>(channels));
-			const uint32_t sampleByteOffset = sampleIndexInBlock * channels * sizeof(int16_t);
-			if (decodedBytes < 0 ||
-				sampleByteOffset + channels * sizeof(int16_t) > static_cast<uint32_t>(decodedBytes)) {
-				return false;
-			}
-
-			const int16_t leftSample = static_cast<int16_t>(ReadLE(decodedBlock.data(), sampleByteOffset, sizeof(int16_t)));
+			const uint32_t sampleIndex = sampleIndexInBlock * channels;
+			const int16_t leftSample = cachedADPCMSamples[sampleIndex];
 			sampleLeft = ConvertSigned16(leftSample);
 			if (channels > 1) {
-				const int16_t rightSample = static_cast<int16_t>(ReadLE(decodedBlock.data(), sampleByteOffset + sizeof(int16_t), sizeof(int16_t)));
+				const int16_t rightSample = cachedADPCMSamples[sampleIndex + 1];
 				sampleRight = ConvertSigned16(rightSample);
 			} else {
 				sampleRight = sampleLeft;

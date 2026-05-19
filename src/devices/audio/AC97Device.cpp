@@ -29,6 +29,7 @@
 #include "APUDevice.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
+#include "core\kernel\support\Emu.h"
 
 #include "SDL.h"
 
@@ -202,6 +203,7 @@ bool AC97Device::EnsureOutputDevice()
 	SDL_AudioSpec obtained{};
 	const SDL_AudioDeviceID device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
 	if (device == 0) {
+		EmuLog(LOG_LEVEL::WARNING, "Failed to open audio device: %s", SDL_GetError());
 		m_OutputDeviceFailed = true;
 		return false;
 	}
