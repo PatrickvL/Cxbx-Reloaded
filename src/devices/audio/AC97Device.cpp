@@ -90,7 +90,9 @@ constexpr uint8_t CR_RPBM = 1 << 0;
 
 constexpr uint16_t AC97_EXT_AUDIO_ID_VRA = 1 << 0;
 constexpr uint16_t AC97_EXT_AUDIO_ID_VRM = 1 << 3;
+constexpr uint16_t AC97_EXT_AUDIO_CTRL_MASK = AC97_EXT_AUDIO_ID_VRA | AC97_EXT_AUDIO_ID_VRM;
 constexpr uint16_t AC97_POWER_READY = 0x000F;
+constexpr uint16_t AC97_MIN_RATE = 8000;
 constexpr uint16_t AC97_RATE_48KHZ = 48000;
 constexpr uint16_t AC97_VENDOR_SIGMATEL_1 = 0x8384;
 constexpr uint16_t AC97_VENDOR_SIGMATEL_2 = 0x7608;
@@ -158,6 +160,14 @@ int32_t ScaleSample(int16_t sample, float gain)
 {
 	const float scaled = static_cast<float>(sample) * gain;
 	return static_cast<int32_t>(scaled >= 0.0f ? (scaled + 0.5f) : (scaled - 0.5f));
+}
+
+uint16_t ClampSampleRateRegister(uint16_t value)
+{
+	if (value == 0) {
+		return AC97_RATE_48KHZ;
+	}
+	return std::clamp(value, AC97_MIN_RATE, AC97_RATE_48KHZ);
 }
 
 }
@@ -309,6 +319,49 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 		if (addr == AC97_Reset && size >= sizeof(uint16_t)) {
 			Reset();
 			return;
+		}
+		if (size >= sizeof(uint16_t)) {
+			const uint16_t value16 = static_cast<uint16_t>(value);
+			switch (addr) {
+			case AC97_Extended_Audio_ID:
+			case AC97_Vendor_ID1:
+			case AC97_Vendor_ID2:
+				return;
+			case AC97_Extended_Audio_Ctrl_Stat: {
+				const uint16_t current = ReadRegister16(AC97_Extended_Audio_Ctrl_Stat);
+				const uint16_t next = static_cast<uint16_t>((current & ~AC97_EXT_AUDIO_CTRL_MASK) | (value16 & AC97_EXT_AUDIO_CTRL_MASK));
+				WriteRegister16(AC97_Extended_Audio_Ctrl_Stat, next);
+				if ((next & AC97_EXT_AUDIO_ID_VRA) == 0) {
+					WriteRegister16(AC97_PCM_Front_DAC_Rate, AC97_RATE_48KHZ);
+					WriteRegister16(AC97_PCM_Surround_DAC_Rate, AC97_RATE_48KHZ);
+					WriteRegister16(AC97_PCM_LFE_DAC_Rate, AC97_RATE_48KHZ);
+					WriteRegister16(AC97_PCM_LR_ADC_Rate, AC97_RATE_48KHZ);
+				}
+				if ((next & AC97_EXT_AUDIO_ID_VRM) == 0) {
+					WriteRegister16(AC97_MIC_ADC_Rate, AC97_RATE_48KHZ);
+				}
+				return;
+			}
+			case AC97_PCM_Front_DAC_Rate:
+			case AC97_PCM_Surround_DAC_Rate:
+			case AC97_PCM_LFE_DAC_Rate:
+			case AC97_PCM_LR_ADC_Rate:
+				if ((ReadRegister16(AC97_Extended_Audio_Ctrl_Stat) & AC97_EXT_AUDIO_ID_VRA) == 0) {
+					WriteRegister16(addr, AC97_RATE_48KHZ);
+					return;
+				}
+				WriteRegister16(addr, ClampSampleRateRegister(value16));
+				return;
+			case AC97_MIC_ADC_Rate:
+				if ((ReadRegister16(AC97_Extended_Audio_Ctrl_Stat) & AC97_EXT_AUDIO_ID_VRM) == 0) {
+					WriteRegister16(addr, AC97_RATE_48KHZ);
+					return;
+				}
+				WriteRegister16(addr, ClampSampleRateRegister(value16));
+				return;
+			default:
+				break;
+			}
 		}
 		WriteRegister(addr, value, size);
 		return;
