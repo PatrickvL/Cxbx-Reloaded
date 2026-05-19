@@ -342,6 +342,7 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_TVL3D, APU_VP_VOICE_MAX_HANDLE);
 	SetRegister32(NV_PAPU_TVLMP, APU_VP_VOICE_MAX_HANDLE);
 	RefreshVPStatus();
+	RefreshInterruptStatus();
 }
 
 uint32_t APUDevice::IORead(int barIndex, uint32_t addr, unsigned size)
@@ -973,19 +974,15 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 	auto loadStreamingSegment = [&]() -> bool {
 		auto& sslData = m_VPSSLData[voiceHandle];
 		for (size_t attempts = 0; attempts < 4; ++attempts) {
-			if (sslData.ssl_index < 0 || sslData.ssl_index > 1) {
+			if (sslData.ssl_index > 1) {
 				sslData.ssl_index = 0;
 			}
-			if (sslData.ssl_seg < 0) {
-				sslData.ssl_seg = 0;
-			}
-
-			const uint32_t sslIndex = static_cast<uint32_t>(sslData.ssl_index);
+			const uint32_t sslIndex = sslData.ssl_index;
 			if (sslData.count[sslIndex] == 0) {
 				stopVoice();
 				return false;
 			}
-			if (static_cast<uint32_t>(sslData.ssl_seg) >= sslData.count[sslIndex]) {
+			if (sslData.ssl_seg >= sslData.count[sslIndex]) {
 				WriteNotifierStatus(voiceHandle,
 					sslIndex == 0 ? MCPX_HW_NOTIFIER_SSLA_DONE : MCPX_HW_NOTIFIER_SSLB_DONE,
 					NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
