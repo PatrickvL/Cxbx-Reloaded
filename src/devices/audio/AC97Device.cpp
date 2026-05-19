@@ -238,6 +238,7 @@ void AC97Device::Reset()
 	m_ChannelLastUpdate.fill(GetAPUTime());
 	m_ChannelSampleRemainder.fill(0);
 	m_ChannelAdvanceOnRestart.fill(false);
+	m_ChannelQueuedAfterHalt.fill(false);
 	m_LoggedQueueFull = false;
 	if (m_OutputDevice != 0) {
 		SDL_ClearQueuedAudio(static_cast<SDL_AudioDeviceID>(m_OutputDevice));
@@ -415,7 +416,9 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 				case BM_BDBAR:
 					if (size >= sizeof(uint32_t)) {
 						WriteRegister(addr, value & ~0x7u, sizeof(uint32_t));
-						m_ChannelAdvanceOnRestart[ChannelIndex(channelBase)] = false;
+						const size_t channelIndex = ChannelIndex(channelBase);
+						m_ChannelAdvanceOnRestart[channelIndex] = false;
+						m_ChannelQueuedAfterHalt[channelIndex] = false;
 						UpdateBusMasterStatus(channelBase);
 					}
 					return;
@@ -435,16 +438,23 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					const uint16_t status = ReadRegister16(baseAddr + BM_SR);
 					const uint16_t remaining = ReadRegister16(baseAddr + BM_PICB);
 					const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CIV, sizeof(uint8_t)) & 0x1F);
-					if ((control & CR_RPBM) != 0 &&
-						(status & SR_DCH) != 0 &&
+					const bool haltedAtEndOfList =
 						remaining == 0 &&
 						currentIndex == previousLastValid &&
-						m_ChannelAdvanceOnRestart[channelIndex] &&
+						m_ChannelAdvanceOnRestart[channelIndex];
+					if (haltedAtEndOfList && newLastValid != previousLastValid) {
+						m_ChannelQueuedAfterHalt[channelIndex] = true;
+					}
+					if ((control & CR_RPBM) != 0 &&
+						(status & SR_DCH) != 0 &&
+						haltedAtEndOfList &&
+						m_ChannelQueuedAfterHalt[channelIndex] &&
 						newLastValid != currentIndex) {
 						const uint8_t nextIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
 						WriteRegister(baseAddr + BM_CIV, nextIndex, sizeof(uint8_t));
 						WriteRegister16(baseAddr + BM_SR, status & ~(SR_DCH | SR_CELV));
 						m_ChannelAdvanceOnRestart[channelIndex] = false;
+						m_ChannelQueuedAfterHalt[channelIndex] = false;
 					}
 
 					UpdateBusMasterStatus(channelBase);
@@ -472,10 +482,12 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 							const uint8_t lastValidIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_LVI, sizeof(uint8_t)) & 0x1F);
 							// If software stopped the engine after it halted on the previous LVI
 							// and then extended LVI, restart from the newly queued descriptor.
-							if (ReadRegister16(baseAddr + BM_PICB) == 0 && currentIndex != lastValidIndex) {
+							if (ReadRegister16(baseAddr + BM_PICB) == 0 &&
+								(currentIndex != lastValidIndex || m_ChannelQueuedAfterHalt[channelIndex])) {
 								const uint8_t nextIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
 								WriteRegister(baseAddr + BM_CIV, nextIndex, sizeof(uint8_t));
 								m_ChannelAdvanceOnRestart[channelIndex] = false;
+								m_ChannelQueuedAfterHalt[channelIndex] = false;
 							}
 						}
 						UpdateBusMasterStatus(channelBase);
@@ -594,6 +606,7 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 	m_ChannelLastUpdate[channelIndex] = GetAPUTime();
 	m_ChannelSampleRemainder[channelIndex] = 0;
 	m_ChannelAdvanceOnRestart[channelIndex] = false;
+	m_ChannelQueuedAfterHalt[channelIndex] = false;
 
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_BDBAR, 0, sizeof(uint32_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CIV, 0, sizeof(uint8_t));
@@ -657,6 +670,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 	const bool haltedAtEndOfList =
 		ReadRegister16(picbAddr) == 0 &&
 		m_ChannelAdvanceOnRestart[channelIndex] &&
+		!m_ChannelQueuedAfterHalt[channelIndex] &&
 		initialCurrentIndex == initialLastValidIndex;
 	const uint32_t now = GetAPUTime();
 	const uint32_t elapsed = now - m_ChannelLastUpdate[channelIndex];
@@ -665,13 +679,16 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 	const auto primeChannel = [&]() {
 		switch (PrimeBusMasterChannel(channelBase)) {
 		case PrimeResult::Ready:
+			m_ChannelQueuedAfterHalt[channelIndex] = false;
 			return true;
 		case PrimeResult::EndOfList:
 			m_ChannelAdvanceOnRestart[channelIndex] = true;
+			m_ChannelQueuedAfterHalt[channelIndex] = false;
 			status |= SR_LVBCI;
 			return false;
 		case PrimeResult::DescriptorError:
 			m_ChannelAdvanceOnRestart[channelIndex] = false;
+			m_ChannelQueuedAfterHalt[channelIndex] = false;
 			status |= SR_FIFOE;
 			return false;
 		default:
@@ -723,6 +740,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 
 			if (currentIndex == lastValidIndex) {
 				m_ChannelAdvanceOnRestart[channelIndex] = true;
+				m_ChannelQueuedAfterHalt[channelIndex] = false;
 				status |= SR_LVBCI;
 				break;
 			}
@@ -730,6 +748,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 			const uint8_t nextIndex = GetNextDescriptorIndex(currentIndex);
 			WriteRegister(civAddr, nextIndex, sizeof(uint8_t));
 			m_ChannelAdvanceOnRestart[channelIndex] = false;
+			m_ChannelQueuedAfterHalt[channelIndex] = false;
 			if (!primeChannel()) {
 				break;
 			}
