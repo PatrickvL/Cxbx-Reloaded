@@ -83,11 +83,21 @@ XBSYSAPI EXPORTNUM(59) xbox::PVOID NTAPI xbox::IoAllocateIrp
 {
 	LOG_FUNC_ONE_ARG(StackSize);
 
-	LOG_UNIMPLEMENTED();
+	word_xt Size = sizeof(IRP) + StackSize * sizeof(IO_STACK_LOCATION);
+	PIRP Irp = (PIRP)ExAllocatePoolWithTag(Size, 'pirI');
+	if (Irp == nullptr) {
+		RETURN(nullptr);
+	}
 
-	xbox::PVOID ret = nullptr;
+	memset(Irp, 0, Size);
+	Irp->Type = IO_TYPE_IRP;
+	Irp->Size = Size;
+	Irp->StackCount = StackSize;
+	Irp->CurrentLocation = StackSize + 1;
+	Irp->Tail.Overlay.CurrentStackLocation =
+		(PIO_STACK_LOCATION)((PUCHAR)(Irp + 1) + StackSize * sizeof(IO_STACK_LOCATION));
 
-	RETURN(ret);
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
