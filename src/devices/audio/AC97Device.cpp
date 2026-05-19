@@ -610,26 +610,37 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 AC97Device::PrimeResult AC97Device::PrimeBusMasterChannel(uint32_t channelBase)
 {
 	const uint32_t baseAddr = AC97_NAM_SIZE + channelBase;
-	const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CIV, sizeof(uint8_t)) & 0x1F);
+	uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CIV, sizeof(uint8_t)) & 0x1F);
 	const uint8_t lastValidIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_LVI, sizeof(uint8_t)) & 0x1F);
 	const uint32_t descriptorBase = ReadRegister(baseAddr + BM_BDBAR, sizeof(uint32_t)) & ~0x7u;
 	if (descriptorBase == 0) {
 		return PrimeResult::DescriptorError;
 	}
 
-	uint32_t descriptorControl = 0;
-	if (!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl)) {
-		return PrimeResult::DescriptorError;
+	for (uint32_t descriptorCount = 0; descriptorCount < AC97_DESCRIPTOR_COUNT; ++descriptorCount) {
+		uint32_t descriptorControl = 0;
+		if (!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl)) {
+			return PrimeResult::DescriptorError;
+		}
+
+		const uint16_t descriptorLength = static_cast<uint16_t>(descriptorControl & AC97_DESCRIPTOR_LENGTH_MASK);
+		if (descriptorLength != 0) {
+			WriteRegister(baseAddr + BM_CIV, currentIndex, sizeof(uint8_t));
+			WriteRegister16(baseAddr + BM_PICB, descriptorLength);
+			WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
+			return PrimeResult::Ready;
+		}
+
+		if (currentIndex == lastValidIndex) {
+			WriteRegister(baseAddr + BM_CIV, currentIndex, sizeof(uint8_t));
+			WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
+			return PrimeResult::EndOfList;
+		}
+
+		currentIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
 	}
 
-	const uint16_t descriptorLength = static_cast<uint16_t>(descriptorControl & AC97_DESCRIPTOR_LENGTH_MASK);
-	if (descriptorLength == 0) {
-		return currentIndex == lastValidIndex ? PrimeResult::EndOfList : PrimeResult::DescriptorError;
-	}
-
-	WriteRegister16(baseAddr + BM_PICB, descriptorLength);
-	WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
-	return PrimeResult::Ready;
+	return PrimeResult::DescriptorError;
 }
 
 void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
