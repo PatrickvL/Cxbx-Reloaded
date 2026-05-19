@@ -252,15 +252,12 @@ XBSYSAPI EXPORTNUM(264) xbox::void_xt NTAPI xbox::RtlAssert
 		LOG_FUNC_ARG(Message)
 		LOG_FUNC_END;
 
-	std::stringstream ss;
-	ss << "RtlAssert() raised by emulated program\n" << FileName << ":" << LineNumber << ":" << FailedAssertion ;
-	if (Message) {
-		ss << " " << Message;
-	}
-
-	ss << ")";
-
-	PopupWarning(nullptr, ss.str().c_str());
+	// On retail Xbox, RtlAssert is a no-op (only breaks into debugger on debug kernels)
+	EmuLog(LOG_LEVEL::WARNING, "RtlAssert: %s:%lu: %s %s",
+		FileName ? FileName : "(null)",
+		LineNumber,
+		FailedAssertion ? FailedAssertion : "(null)",
+		Message ? Message : "");
 }
 
 // ******************************************************************
