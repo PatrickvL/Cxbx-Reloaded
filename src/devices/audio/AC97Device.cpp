@@ -144,6 +144,13 @@ size_t ChannelIndex(uint32_t channelBase)
 	}
 }
 
+uint8_t GetPrefetchedIndexValue(uint8_t currentIndex, uint8_t lastValidIndex)
+{
+	return currentIndex == lastValidIndex
+		? currentIndex
+		: static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
+}
+
 bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
 {
 	return size > 0 && guestAddress <= PHYSICAL_MAP_SIZE && size <= (PHYSICAL_MAP_SIZE - guestAddress);
@@ -549,6 +556,7 @@ bool AC97Device::PrimeBusMasterChannel(uint32_t channelBase)
 {
 	const uint32_t baseAddr = AC97_NAM_SIZE + channelBase;
 	const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CIV, sizeof(uint8_t)) & 0x1F);
+	const uint8_t lastValidIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_LVI, sizeof(uint8_t)) & 0x1F);
 	const uint32_t descriptorBase = ReadRegister(baseAddr + BM_BDBAR, sizeof(uint32_t)) & ~0x7u;
 	if (descriptorBase == 0) {
 		return false;
@@ -565,7 +573,7 @@ bool AC97Device::PrimeBusMasterChannel(uint32_t channelBase)
 	}
 
 	WriteRegister16(baseAddr + BM_PICB, descriptorLength);
-	WriteRegister16(baseAddr + BM_PIV, currentIndex);
+	WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
 	return true;
 }
 
@@ -631,7 +639,6 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 
 			const uint8_t nextIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
 			WriteRegister(civAddr, nextIndex, sizeof(uint8_t));
-			WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, nextIndex);
 			if (!PrimeBusMasterChannel(channelBase)) {
 				break;
 			}
@@ -652,6 +659,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 		status &= ~SR_CELV;
 	}
 
+	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
 	WriteRegister16(srAddr, status);
 	UpdateGlobalStatus();
 }
