@@ -36,7 +36,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <vector>
 
 #define LOG_PREFIX CXBXR_MODULE::MCPX
 
@@ -155,6 +154,12 @@ int16_t ClampToInt16(int32_t sample)
 	return static_cast<int16_t>(std::clamp(sample, static_cast<int32_t>(INT16_MIN), static_cast<int32_t>(INT16_MAX)));
 }
 
+int32_t ScaleSample(int16_t sample, float gain)
+{
+	const float scaled = static_cast<float>(sample) * gain;
+	return static_cast<int32_t>(scaled >= 0.0f ? (scaled + 0.5f) : (scaled - 0.5f));
+}
+
 }
 
 extern APUDevice* g_APU;
@@ -268,13 +273,13 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		return;
 	}
 
-	std::vector<int16_t> adjustedSamples(frameCount * AC97_OUTPUT_CHANNELS);
+	m_OutputScratch.resize(frameCount * AC97_OUTPUT_CHANNELS);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
 		const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
-		adjustedSamples[sampleIndex] = ClampToInt16(static_cast<int32_t>(std::lround(static_cast<double>(samples[sampleIndex]) * leftGain)));
-		adjustedSamples[sampleIndex + 1] = ClampToInt16(static_cast<int32_t>(std::lround(static_cast<double>(samples[sampleIndex + 1]) * rightGain)));
+		m_OutputScratch[sampleIndex] = ClampToInt16(ScaleSample(samples[sampleIndex], leftGain));
+		m_OutputScratch[sampleIndex + 1] = ClampToInt16(ScaleSample(samples[sampleIndex + 1], rightGain));
 	}
-	SDL_QueueAudio(device, adjustedSamples.data(), static_cast<Uint32>(adjustedSamples.size() * sizeof(int16_t)));
+	SDL_QueueAudio(device, m_OutputScratch.data(), static_cast<Uint32>(m_OutputScratch.size() * sizeof(int16_t)));
 }
 
 uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
