@@ -1710,9 +1710,17 @@ XBSYSAPI EXPORTNUM(86) xbox::ntstatus_xt FASTCALL xbox::IofCallDriver
 		LOG_FUNC_ARG(Irp)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	// Advance to the next stack location for this driver
+	Irp->CurrentLocation--;
+	Irp->Tail.Overlay.CurrentStackLocation--;
 
-	RETURN(S_OK);
+	PIO_STACK_LOCATION StackLocation = Irp->Tail.Overlay.CurrentStackLocation;
+
+	// Dispatch through the driver's MajorFunction table
+	PDRIVER_DISPATCH DispatchRoutine =
+		DeviceObject->DriverObject->MajorFunction[StackLocation->MajorFunction];
+
+	RETURN(DispatchRoutine(DeviceObject, Irp));
 }
 
 // ******************************************************************
