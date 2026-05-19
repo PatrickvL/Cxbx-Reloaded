@@ -239,6 +239,7 @@ void AC97Device::Reset()
 	m_ChannelSampleRemainder.fill(0);
 	m_ChannelAdvanceOnRestart.fill(false);
 	m_ChannelQueuedAfterHalt.fill(false);
+	m_ChannelDescriptorError.fill(false);
 	m_LoggedQueueFull = false;
 	if (m_OutputDevice != 0) {
 		SDL_ClearQueuedAudio(static_cast<SDL_AudioDeviceID>(m_OutputDevice));
@@ -419,6 +420,7 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 						const size_t channelIndex = ChannelIndex(channelBase);
 						m_ChannelAdvanceOnRestart[channelIndex] = false;
 						m_ChannelQueuedAfterHalt[channelIndex] = false;
+						m_ChannelDescriptorError[channelIndex] = false;
 						UpdateBusMasterStatus(channelBase);
 					}
 					return;
@@ -433,6 +435,7 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					const uint8_t previousLastValid = static_cast<uint8_t>(ReadRegister(baseAddr + BM_LVI, sizeof(uint8_t)) & 0x1F);
 					const uint8_t newLastValid = static_cast<uint8_t>(value & 0x1F);
 					WriteRegister(addr, newLastValid, sizeof(uint8_t));
+					m_ChannelDescriptorError[channelIndex] = false;
 
 					const uint8_t control = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CR, sizeof(uint8_t)));
 					const uint16_t status = ReadRegister16(baseAddr + BM_SR);
@@ -475,6 +478,10 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					if ((control & CR_RR) != 0) {
 						ResetBusMasterChannel(channelBase);
 					} else {
+						if ((previousControl & CR_RPBM) == 0 &&
+							(control & CR_RPBM) != 0) {
+							m_ChannelDescriptorError[channelIndex] = false;
+						}
 						if ((previousControl & CR_RPBM) == 0 &&
 							(control & CR_RPBM) != 0 &&
 							m_ChannelAdvanceOnRestart[channelIndex]) {
@@ -607,6 +614,7 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 	m_ChannelSampleRemainder[channelIndex] = 0;
 	m_ChannelAdvanceOnRestart[channelIndex] = false;
 	m_ChannelQueuedAfterHalt[channelIndex] = false;
+	m_ChannelDescriptorError[channelIndex] = false;
 
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_BDBAR, 0, sizeof(uint32_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CIV, 0, sizeof(uint8_t));
@@ -680,15 +688,18 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 		switch (PrimeBusMasterChannel(channelBase)) {
 		case PrimeResult::Ready:
 			m_ChannelQueuedAfterHalt[channelIndex] = false;
+			m_ChannelDescriptorError[channelIndex] = false;
 			return true;
 		case PrimeResult::EndOfList:
 			m_ChannelAdvanceOnRestart[channelIndex] = true;
 			m_ChannelQueuedAfterHalt[channelIndex] = false;
+			m_ChannelDescriptorError[channelIndex] = false;
 			status |= SR_LVBCI;
 			return false;
 		case PrimeResult::DescriptorError:
 			m_ChannelAdvanceOnRestart[channelIndex] = false;
 			m_ChannelQueuedAfterHalt[channelIndex] = false;
+			m_ChannelDescriptorError[channelIndex] = true;
 			status |= SR_FIFOE;
 			return false;
 		default:
@@ -704,13 +715,15 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 
 		if (haltedAtEndOfList) {
 			samplesToConsume = 0;
-		} else if (ReadRegister16(picbAddr) == 0 && !primeChannel()) {
+		} else if (ReadRegister16(picbAddr) == 0 &&
+			(m_ChannelDescriptorError[channelIndex] || !primeChannel())) {
 			samplesToConsume = 0;
 		}
 
 		while (samplesToConsume > 0) {
 			uint16_t remaining = ReadRegister16(picbAddr);
-			if (remaining == 0 && !primeChannel()) {
+			if (remaining == 0 &&
+				(m_ChannelDescriptorError[channelIndex] || !primeChannel())) {
 				break;
 			}
 
@@ -749,6 +762,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 			WriteRegister(civAddr, nextIndex, sizeof(uint8_t));
 			m_ChannelAdvanceOnRestart[channelIndex] = false;
 			m_ChannelQueuedAfterHalt[channelIndex] = false;
+			m_ChannelDescriptorError[channelIndex] = false;
 			if (!primeChannel()) {
 				break;
 			}
