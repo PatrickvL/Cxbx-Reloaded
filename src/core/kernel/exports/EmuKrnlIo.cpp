@@ -1281,11 +1281,15 @@ XBSYSAPI EXPORTNUM(73) xbox::PVOID NTAPI xbox::IoInitializeIrp
 		LOG_FUNC_ARG(StackSize)
 		LOG_FUNC_END;
 
-	xbox::PVOID ret = nullptr;
+	memset(Irp, 0, PacketSize);
+	Irp->Type = 6; // IO_TYPE_IRP
+	Irp->Size = PacketSize;
+	Irp->StackCount = StackSize;
+	Irp->CurrentLocation = StackSize + 1;
+	Irp->Tail.Overlay.CurrentStackLocation =
+		reinterpret_cast<PIO_STACK_LOCATION>(Irp + 1) + StackSize;
 
-	LOG_UNIMPLEMENTED();
-
-	RETURN(ret);
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
