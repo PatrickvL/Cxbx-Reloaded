@@ -96,6 +96,7 @@ constexpr uint16_t SR_WCLEAR_MASK = SR_FIFOE | SR_BCIS | SR_LVBCI;
 
 constexpr uint8_t CR_RR = 1 << 1;
 constexpr uint8_t CR_RPBM = 1 << 0;
+constexpr uint8_t CR_VALID_MASK = 0x1F;
 
 constexpr uint16_t AC97_EXT_AUDIO_ID_VRA = 1 << 0;
 constexpr uint16_t AC97_EXT_AUDIO_ID_VRM = 1 << 3;
@@ -376,26 +377,6 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 		return;
 	case 1:
 		addr += AC97_NAM_SIZE;
-		if (addr == AC97_NAM_SIZE + NABM_PI_BASE + BM_SR ||
-			addr == AC97_NAM_SIZE + NABM_PO_BASE + BM_SR ||
-			addr == AC97_NAM_SIZE + NABM_MC_BASE + BM_SR) {
-			const uint16_t current = ReadRegister16(addr);
-			WriteRegister16(addr, current & ~(static_cast<uint16_t>(value) & SR_WCLEAR_MASK));
-			UpdateGlobalStatus();
-			return;
-		}
-		if (addr == AC97_NAM_SIZE + NABM_PI_BASE + BM_CR ||
-			addr == AC97_NAM_SIZE + NABM_PO_BASE + BM_CR ||
-			addr == AC97_NAM_SIZE + NABM_MC_BASE + BM_CR) {
-			WriteRegister(addr, value, size);
-			const uint32_t channelBase = (addr - AC97_NAM_SIZE) & ~0xF;
-			if (value & CR_RR) {
-				ResetBusMasterChannel(channelBase);
-			} else {
-				UpdateBusMasterStatus(channelBase);
-			}
-			return;
-		}
 		if (addr == AC97_NAM_SIZE + NABM_GLOB_CNT && size >= sizeof(uint32_t)) {
 			const uint32_t control = value & GLOB_CNT_MASK;
 			if ((control & (GLOB_CNT_WRST | GLOB_CNT_CRST)) != 0) {
@@ -409,6 +390,45 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 		if (addr == AC97_NAM_SIZE + NABM_GLOB_STA) {
 			UpdateGlobalStatus();
 			return;
+		}
+		{
+			const uint32_t channelBase = (addr - AC97_NAM_SIZE) & ~0xF;
+			if (channelBase == NABM_PI_BASE || channelBase == NABM_PO_BASE || channelBase == NABM_MC_BASE) {
+				switch ((addr - AC97_NAM_SIZE) & 0x0F) {
+				case BM_BDBAR:
+					if (size >= sizeof(uint32_t)) {
+						WriteRegister(addr, value & ~0x7u, sizeof(uint32_t));
+						UpdateBusMasterStatus(channelBase);
+					}
+					return;
+				case BM_CIV:
+				case BM_PICB:
+				case BM_PIV:
+					return;
+				case BM_LVI:
+					WriteRegister(addr, value & 0x1Fu, sizeof(uint8_t));
+					UpdateBusMasterStatus(channelBase);
+					return;
+				case BM_SR: {
+					const uint16_t current = ReadRegister16(addr);
+					WriteRegister16(addr, current & ~(static_cast<uint16_t>(value) & SR_WCLEAR_MASK));
+					UpdateGlobalStatus();
+					return;
+				}
+				case BM_CR: {
+					const uint8_t control = static_cast<uint8_t>(value) & CR_VALID_MASK;
+					WriteRegister(addr, control, sizeof(uint8_t));
+					if ((control & CR_RR) != 0) {
+						ResetBusMasterChannel(channelBase);
+					} else {
+						UpdateBusMasterStatus(channelBase);
+					}
+					return;
+				}
+				default:
+					break;
+				}
+			}
 		}
 		WriteRegister(addr, value, size);
 		return;
