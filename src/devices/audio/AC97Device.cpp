@@ -607,29 +607,29 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 	UpdateGlobalStatus();
 }
 
-bool AC97Device::PrimeBusMasterChannel(uint32_t channelBase)
+AC97Device::PrimeResult AC97Device::PrimeBusMasterChannel(uint32_t channelBase)
 {
 	const uint32_t baseAddr = AC97_NAM_SIZE + channelBase;
 	const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CIV, sizeof(uint8_t)) & 0x1F);
 	const uint8_t lastValidIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_LVI, sizeof(uint8_t)) & 0x1F);
 	const uint32_t descriptorBase = ReadRegister(baseAddr + BM_BDBAR, sizeof(uint32_t)) & ~0x7u;
 	if (descriptorBase == 0) {
-		return false;
+		return PrimeResult::DescriptorError;
 	}
 
 	uint32_t descriptorControl = 0;
 	if (!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl)) {
-		return false;
+		return PrimeResult::DescriptorError;
 	}
 
 	const uint16_t descriptorLength = static_cast<uint16_t>(descriptorControl & AC97_DESCRIPTOR_LENGTH_MASK);
 	if (descriptorLength == 0) {
-		return false;
+		return currentIndex == lastValidIndex ? PrimeResult::EndOfList : PrimeResult::DescriptorError;
 	}
 
 	WriteRegister16(baseAddr + BM_PICB, descriptorLength);
 	WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
-	return true;
+	return PrimeResult::Ready;
 }
 
 void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
@@ -647,19 +647,35 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 	const uint32_t elapsed = now - m_ChannelLastUpdate[channelIndex];
 	m_ChannelLastUpdate[channelIndex] = now;
 
+	const auto primeChannel = [&]() {
+		switch (PrimeBusMasterChannel(channelBase)) {
+		case PrimeResult::Ready:
+			return true;
+		case PrimeResult::EndOfList:
+			m_ChannelAdvanceOnRestart[channelIndex] = true;
+			status |= SR_LVBCI;
+			return false;
+		case PrimeResult::DescriptorError:
+			m_ChannelAdvanceOnRestart[channelIndex] = false;
+			status |= SR_FIFOE;
+			return false;
+		}
+		return false;
+	};
+
 	if (control & CR_RPBM) {
 		uint64_t samplesToConsume = m_ChannelSampleRemainder[channelIndex];
 		samplesToConsume += static_cast<uint64_t>(elapsed) * GetBusMasterSampleRate(channelBase);
 		m_ChannelSampleRemainder[channelIndex] = static_cast<uint32_t>(samplesToConsume % APU_TIMER_FREQUENCY);
 		samplesToConsume /= APU_TIMER_FREQUENCY;
 
-		if (ReadRegister16(picbAddr) == 0) {
-			PrimeBusMasterChannel(channelBase);
+		if (ReadRegister16(picbAddr) == 0 && !primeChannel()) {
+			samplesToConsume = 0;
 		}
 
 		while (samplesToConsume > 0) {
 			uint16_t remaining = ReadRegister16(picbAddr);
-			if (remaining == 0 && !PrimeBusMasterChannel(channelBase)) {
+			if (remaining == 0 && !primeChannel()) {
 				break;
 			}
 
@@ -696,7 +712,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 			const uint8_t nextIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
 			WriteRegister(civAddr, nextIndex, sizeof(uint8_t));
 			m_ChannelAdvanceOnRestart[channelIndex] = false;
-			if (!PrimeBusMasterChannel(channelBase)) {
+			if (!primeChannel()) {
 				break;
 			}
 		}

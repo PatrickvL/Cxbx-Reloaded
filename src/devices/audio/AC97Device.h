@@ -49,6 +49,12 @@ class AC97Device : public PCIDevice {
 		void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
 		void SubmitPCMFrames(const int16_t* samples, size_t frameCount);
 	private:
+		enum class PrimeResult : uint8_t {
+			Ready,
+			EndOfList,
+			DescriptorError,
+		};
+
 		bool EnsureOutputDevice();
 		uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 		void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -57,7 +63,7 @@ class AC97Device : public PCIDevice {
 		void UpdateGlobalStatus();
 		void UpdateBusMasterChannels();
 		void ResetBusMasterChannel(uint32_t channelBase);
-		bool PrimeBusMasterChannel(uint32_t channelBase);
+		PrimeResult PrimeBusMasterChannel(uint32_t channelBase);
 		void UpdateBusMasterStatus(uint32_t channelBase);
 		uint32_t GetBusMasterSampleRate(uint32_t channelBase) const;
 		bool ReadGuest32(uint32_t guestAddress, uint32_t& value) const;
