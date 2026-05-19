@@ -144,6 +144,9 @@ size_t ChannelIndex(uint32_t channelBase)
 	}
 }
 
+// PIV reports the next descriptor the controller can prefetch. When CIV already
+// points at the last valid descriptor, hardware has no later valid entry to
+// prefetch, so PIV remains aligned with the current descriptor index.
 uint8_t GetPrefetchedIndexValue(uint8_t currentIndex, uint8_t lastValidIndex)
 {
 	return currentIndex == lastValidIndex
