@@ -331,7 +331,7 @@ XBSYSAPI EXPORTNUM(64) xbox::OBJECT_TYPE xbox::IoCompletionObjectType =
 	NULL,
 	IopDeleteIoCompletion,
 	NULL,
-	&xbox::ObpDefaultObject,
+	(PVOID)offsetof(xbox::KQUEUE, Header),
 	'pmoC' // = first four characters of "Completion" in reverse
 };
 
@@ -1216,9 +1216,21 @@ XBSYSAPI EXPORTNUM(70) xbox::OBJECT_TYPE xbox::IoDeviceObjectType =
 	NULL,
 	NULL,
 	xbox::IopParseDevice,
-	&xbox::ObpDefaultObject,
+	(PVOID)offsetof(xbox::DEVICE_OBJECT, DeviceLock),
 	'iveD' // = first four characters of "Device" in reverse
 };
+
+// ******************************************************************
+// * IopCloseFile - FILE_OBJECT close procedure
+// ******************************************************************
+static xbox::void_xt NTAPI IopCloseFile(IN xbox::PVOID Object, IN xbox::ulong_xt SystemHandleCount)
+{
+	if (SystemHandleCount == 1) {
+		xbox::PFILE_OBJECT FileObject = reinterpret_cast<xbox::PFILE_OBJECT>(Object);
+		FileObject->Flags |= xbox::FO_HANDLE_CREATED;
+	}
+}
+
 // ******************************************************************
 // * IopDeleteFile - FILE_OBJECT delete procedure
 // ******************************************************************
@@ -1246,7 +1258,7 @@ XBSYSAPI EXPORTNUM(71) xbox::OBJECT_TYPE xbox::IoFileObjectType =
 {
 	xbox::ExAllocatePoolWithTag,
 	xbox::ExFreePool,
-	NULL, // TODO : xbox::IopCloseFile,
+	IopCloseFile,
 	IopDeleteFile,
 	xbox::IopParseFile,
 	(PVOID)offsetof(xbox::FILE_OBJECT, Event.Header),
