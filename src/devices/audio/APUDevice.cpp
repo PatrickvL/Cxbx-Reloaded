@@ -231,6 +231,11 @@ constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH = 0xFFFF0000;
 constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE = 0x00000FFF;
 constexpr uint32_t NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_MISC_FMODE = 0x00030000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_FCA = 0x00000074;
+constexpr uint32_t NV_PAVS_VOICE_TAR_FCB = 0x00000078;
+constexpr uint32_t NV_PAVS_VOICE_TAR_FCA_FC0 = 0x0000FFFF;
+constexpr uint32_t NV_PAVS_VOICE_TAR_FCA_FC1 = 0xFFFF0000;
 
 constexpr uint32_t APU_VOICE_LIST_INHERIT = 0;
 constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
@@ -248,6 +253,25 @@ constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
 constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_MIXBIN_COUNT = 32;
+constexpr uint32_t APU_MAX_3D_VOICES = 64;
+constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
+constexpr float APU_FILTER_MIN_Q = 0.079407f;
+constexpr float APU_FILTER_Q_NORMALIZER = 32768.0f;
+
+float ClampUnitSample(float value)
+{
+	return std::clamp(value, -1.0f, 1.0f);
+}
+
+float RunLowPassFilter(float& high, float& band, float& low, float cutoff, float resonance, float input)
+{
+	const float normalizedInput = std::sqrt(resonance / 2.0f + 0.01f) * input;
+	band -= band * band * band * 0.001f;
+	high = normalizedInput - low - resonance * band;
+	band += cutoff * high;
+	low += cutoff * band;
+	return low;
+}
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -1304,11 +1328,13 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t endOffset = 0;
 	uint32_t loopOffset = 0;
 	uint32_t pitch = 0;
+	uint32_t filterMode = 0;
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START, NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE, NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK, NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH, pitch);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_FMODE, filterMode);
 
 	if (!multipass && !streaming && !loop && currentOffset > endOffset) {
 		return;
@@ -1325,6 +1351,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		playbackState.offset = currentOffset;
 		playbackState.fraction = 0.0;
 		playbackState.valid = true;
+		m_VPLowPassState[voiceHandle] = {};
 	}
 	uint32_t cachedADPCMBlockIndex = 0;
 	uint32_t cachedADPCMBaseAddress = 0;
@@ -1335,6 +1362,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	auto sslData = m_VPSSLData[voiceHandle];
 	auto stopVoice = [&]() {
 		playbackState = PlaybackState{};
+		m_VPLowPassState[voiceHandle] = {};
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 	};
@@ -1356,6 +1384,38 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			const float sample = channelSamples[binIndex % channels];
 			mixBins[bins[binIndex] * frameCount + frame] += static_cast<int32_t>(sample * gain * 32767.0f);
 		}
+	};
+	const bool lowPassEnabled = voiceHandle < APU_MAX_3D_VOICES
+		? filterMode == 1
+		: (stereo ? filterMode == 1 : (filterMode & 1u) != 0);
+	float lowPassCutoff[2]{};
+	float lowPassResonance[2]{};
+	if (lowPassEnabled) {
+		for (uint32_t channel = 0; channel < channels; ++channel) {
+			const uint32_t registerOffset = channel == 0 ? NV_PAVS_VOICE_TAR_FCA : NV_PAVS_VOICE_TAR_FCB;
+			uint32_t cutoff = 0;
+			uint32_t resonance = 0;
+			ReadVoiceMask(voiceHandle, registerOffset, NV_PAVS_VOICE_TAR_FCA_FC0, cutoff);
+			ReadVoiceMask(voiceHandle, registerOffset, NV_PAVS_VOICE_TAR_FCA_FC1, resonance);
+			lowPassCutoff[channel] = std::clamp(std::pow(2.0f, static_cast<float>(static_cast<int16_t>(cutoff)) / 4096.0f),
+				APU_FILTER_MIN_FREQUENCY, 1.0f);
+			lowPassResonance[channel] = std::clamp(static_cast<float>(resonance) / APU_FILTER_Q_NORMALIZER,
+				APU_FILTER_MIN_Q, 1.0f);
+		}
+		if (channels == 1) {
+			lowPassCutoff[1] = lowPassCutoff[0];
+			lowPassResonance[1] = lowPassResonance[0];
+		}
+	}
+	auto applyLowPass = [&](float& sampleLeft, float& sampleRight) {
+		if (!lowPassEnabled) {
+			return;
+		}
+		auto& filterState = m_VPLowPassState[voiceHandle];
+		sampleLeft = ClampUnitSample(RunLowPassFilter(filterState[0].high, filterState[0].band, filterState[0].low,
+			lowPassCutoff[0], lowPassResonance[0], sampleLeft));
+		sampleRight = ClampUnitSample(RunLowPassFilter(filterState[1].high, filterState[1].band, filterState[1].low,
+			lowPassCutoff[1], lowPassResonance[1], sampleRight));
 	};
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		return streaming ? ReadGuestBytes(sampleAddress, dest, size) : ReadVoiceBufferBytes(sampleAddress, dest, size);
@@ -1588,6 +1648,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			return;
 		}
 		if (multipass) {
+			applyLowPass(currentLeft, currentRight);
 			mixSamples(currentLeft, currentRight, envelopeGain, frame);
 			continue;
 		}
@@ -1605,8 +1666,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		}
 
 		const float interpolation = static_cast<float>(playbackState.fraction);
-		const float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
-		const float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
+		float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
+		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
+		applyLowPass(sampleLeft, sampleRight);
 
 		mixSamples(sampleLeft, sampleRight, envelopeGain, frame);
 

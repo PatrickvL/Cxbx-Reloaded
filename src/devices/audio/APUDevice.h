@@ -63,6 +63,12 @@ private:
 		bool valid = false;
 	};
 
+	struct LowPassFilterState {
+		float high = 0.0f;
+		float band = 0.0f;
+		float low = 0.0f;
+	};
+
 	uint32_t GPRead(uint32_t addr, unsigned size);
 	void GPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t EPRead(uint32_t addr, unsigned size);
@@ -107,6 +113,7 @@ private:
 	uint32_t m_VPSSLBasePage = 0;
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
+	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};
 	bool m_LoggedXADPCMDecodeFailure = false;
 };
 
