@@ -1099,6 +1099,7 @@ XBSYSAPI EXPORTNUM(110) xbox::void_xt NTAPI xbox::KeInitializeMutant
 	else {
 		Mutant->Header.SignalState = 1;
 		Mutant->OwnerThread = NULL;
+		InitializeListHead(&Mutant->MutantListEntry);
 	}
 }
 
