@@ -710,7 +710,8 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 
 	const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
 	const uint8_t lastValidIndex = static_cast<uint8_t>(ReadRegister(lviAddr, sizeof(uint8_t)) & 0x1F);
-	if ((control & CR_RPBM) == 0 || ReadRegister16(picbAddr) == 0 || currentIndex == lastValidIndex) {
+	// CELV reflects descriptor position, not whether DMA is currently running.
+	if (currentIndex == lastValidIndex) {
 		status |= SR_CELV;
 	} else {
 		status &= ~SR_CELV;
