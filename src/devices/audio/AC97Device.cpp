@@ -33,7 +33,10 @@
 
 #include "SDL.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <vector>
 
 #define LOG_PREFIX CXBXR_MODULE::MCPX
 
@@ -44,7 +47,9 @@ constexpr uint32_t AC97_NABM_SIZE = 0x80;
 constexpr uint32_t AC97_MMIO_SIZE = AC97_NAM_SIZE + AC97_NABM_SIZE;
 
 constexpr uint32_t AC97_Reset = 0x00;
+constexpr uint32_t AC97_Master_Volume = 0x02;
 constexpr uint32_t AC97_Powerdown_Ctrl_Stat = 0x26;
+constexpr uint32_t AC97_PCM_Out_Volume = 0x18;
 constexpr uint32_t AC97_Extended_Audio_ID = 0x28;
 constexpr uint32_t AC97_Extended_Audio_Ctrl_Stat = 0x2A;
 constexpr uint32_t AC97_PCM_Front_DAC_Rate = 0x2C;
@@ -93,6 +98,11 @@ constexpr uint16_t AC97_VENDOR_SIGMATEL_2 = 0x7608;
 constexpr uint32_t AC97_OUTPUT_CHANNELS = 2;
 constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_CHANNELS;
 constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
+constexpr uint16_t AC97_VOLUME_MUTE = 0x8000;
+constexpr uint16_t AC97_VOLUME_LEFT_MASK = 0x1F00;
+constexpr uint16_t AC97_VOLUME_RIGHT_MASK = 0x001F;
+constexpr uint32_t AC97_VOLUME_LEFT_SHIFT = 8;
+constexpr float AC97_VOLUME_STEP_DB = 1.5f;
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -126,6 +136,23 @@ size_t ChannelIndex(uint32_t channelBase)
 bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
 {
 	return size > 0 && guestAddress <= PHYSICAL_MAP_SIZE && size <= (PHYSICAL_MAP_SIZE - guestAddress);
+}
+
+float DecodeOutputAttenuation(uint16_t volumeRegister, bool leftChannel)
+{
+	if ((volumeRegister & AC97_VOLUME_MUTE) != 0) {
+		return 0.0f;
+	}
+
+	const uint32_t attenuation = leftChannel
+		? ((volumeRegister & AC97_VOLUME_LEFT_MASK) >> AC97_VOLUME_LEFT_SHIFT)
+		: (volumeRegister & AC97_VOLUME_RIGHT_MASK);
+	return std::pow(10.0f, -(static_cast<float>(attenuation) * AC97_VOLUME_STEP_DB) / 20.0f);
+}
+
+int16_t ClampToInt16(int32_t sample)
+{
+	return static_cast<int16_t>(std::clamp(sample, static_cast<int32_t>(INT16_MIN), static_cast<int32_t>(INT16_MAX)));
 }
 
 }
@@ -232,7 +259,22 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	}
 	m_LoggedQueueFull = false;
 
-	SDL_QueueAudio(device, samples, static_cast<Uint32>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME));
+	const uint16_t masterVolume = ReadRegister16(AC97_Master_Volume);
+	const uint16_t pcmOutVolume = ReadRegister16(AC97_PCM_Out_Volume);
+	const float leftGain = DecodeOutputAttenuation(masterVolume, true) * DecodeOutputAttenuation(pcmOutVolume, true);
+	const float rightGain = DecodeOutputAttenuation(masterVolume, false) * DecodeOutputAttenuation(pcmOutVolume, false);
+	if (leftGain == 1.0f && rightGain == 1.0f) {
+		SDL_QueueAudio(device, samples, static_cast<Uint32>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME));
+		return;
+	}
+
+	std::vector<int16_t> adjustedSamples(frameCount * AC97_OUTPUT_CHANNELS);
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
+		adjustedSamples[sampleIndex] = ClampToInt16(static_cast<int32_t>(std::lround(static_cast<double>(samples[sampleIndex]) * leftGain)));
+		adjustedSamples[sampleIndex + 1] = ClampToInt16(static_cast<int32_t>(std::lround(static_cast<double>(samples[sampleIndex + 1]) * rightGain)));
+	}
+	SDL_QueueAudio(device, adjustedSamples.data(), static_cast<Uint32>(adjustedSamples.size() * sizeof(int16_t)));
 }
 
 uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
