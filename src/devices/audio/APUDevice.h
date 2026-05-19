@@ -37,6 +37,8 @@ class APUDevice : public PCIDevice {
 public:
 	using PCIDevice::PCIDevice;
 
+	static constexpr size_t MAX_VOICE_HANDLES = 0xFFFF;
+
 	// PCI Functions
 	void Init();
 	void Reset();
@@ -48,6 +50,13 @@ public:
 	void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
 	void SynchronizeAudio();
 private:
+	struct SSLData {
+		uint32_t base[2]{};
+		uint8_t count[2]{};
+		int ssl_index = 0;
+		int ssl_seg = 0;
+	};
+
 	uint32_t GPRead(uint32_t addr, unsigned size);
 	void GPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t EPRead(uint32_t addr, unsigned size);
@@ -63,11 +72,13 @@ private:
 	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_t frameCount);
 	bool ReadGuestWord(uint32_t guestAddress, uint32_t& value) const;
 	bool ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const;
+	bool WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size);
 	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
 	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
 	bool ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const;
 	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
 	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
+	void WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status);
 	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;
 	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
 
@@ -82,6 +93,8 @@ private:
 	uint32_t m_LastAudioUpdate = 0;
 	uint32_t m_VPInputSgeHandle = 0;
 	uint32_t m_VPOutputSgeHandle = 0;
+	uint32_t m_VPSSLBasePage = 0;
+	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 };
 
 #endif
