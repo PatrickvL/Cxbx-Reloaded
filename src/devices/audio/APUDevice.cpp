@@ -53,6 +53,8 @@ constexpr uint32_t NV_PAPU_IEN = 0x00001004;
 constexpr uint32_t NV_PAPU_FECTL = 0x00001100;
 constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE = 0x000000E0;
 constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE_TRAPPED = 0x000000E0;
+constexpr uint32_t NV_PAPU_FECTL_FETRAPREASON = 0x00000F00;
+constexpr uint32_t NV_PAPU_FECTL_FETRAPREASON_REQUESTED = 0x00000F00;
 constexpr uint32_t NV_PAPU_FECV = 0x00001110;
 constexpr uint32_t NV_PAPU_FEAV = 0x00001118;
 constexpr uint32_t NV_PAPU_FENADDR = 0x0000115C;
@@ -62,6 +64,7 @@ constexpr uint32_t NV_PAPU_FEMEMADDR = 0x00001324;
 constexpr uint32_t NV_PAPU_FEMEMDATA = 0x00001334;
 constexpr uint32_t NV_PAPU_FETFORCE0 = 0x00001500;
 constexpr uint32_t NV_PAPU_FETFORCE1 = 0x00001504;
+constexpr uint32_t NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE = 1 << 15;
 constexpr uint32_t NV_PAPU_SECTL = 0x00002000;
 constexpr uint32_t NV_PAPU_XGSCNT = 0x0000200C;
 constexpr uint32_t NV_PAPU_VPVADDR = 0x0000202C;
@@ -109,6 +112,7 @@ constexpr uint32_t NV1BA0_PIO_SET_OUTBUF_BA = 0x00001000;
 constexpr uint32_t NV1BA0_PIO_SET_OUTBUF_LEN = 0x00001004;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE = 0x00001800;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_OFFSET = 0x00001808;
+constexpr uint32_t SE2FE_IDLE_VOICE = 0x00008000;
 
 constexpr uint32_t NV1BA0_PIO_VOICE_ON_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_ON_ENVF = 0x0F000000;
@@ -558,6 +562,15 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		return;
 	case NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_OFFSET:
 		WriteVPScatterGatherEntry(m_VPOutputSgeHandle, value & NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_OFFSET_PARAMETER);
+		return;
+	case SE2FE_IDLE_VOICE:
+		if ((GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0) {
+			uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+			fectl &= ~(NV_PAPU_FECTL_FEMETHMODE | NV_PAPU_FECTL_FETRAPREASON);
+			fectl |= NV_PAPU_FECTL_FEMETHMODE_TRAPPED | NV_PAPU_FECTL_FETRAPREASON_REQUESTED;
+			SetRegister32(NV_PAPU_FECTL, fectl);
+			RefreshInterruptStatus();
+		}
 		return;
 	default:
 		if ((addr >= NV1BA0_PIO_SET_OUTBUF_BA && addr < NV1BA0_PIO_SET_OUTBUF_BA + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_BA) % 8) == 0) ||
