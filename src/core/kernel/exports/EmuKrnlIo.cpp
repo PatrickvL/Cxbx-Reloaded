@@ -36,6 +36,7 @@
 #include "EmuKrnlLogging.h"
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxrAbort
 #include "core\kernel\support\Emu.h" // For EmuLog(LOG_LEVEL::WARNING, )
+#include "EmuKrnl.h" // For InsertHeadList
 #include "core\kernel\support\EmuFile.h" // For CxbxCreateSymbolicLink(), etc.
 #include "core/kernel/support/NativeHandle.h" // For Xbox objects to native handle and back
 #include "CxbxDebugger.h"
@@ -1440,7 +1441,11 @@ XBSYSAPI EXPORTNUM(77) xbox::void_xt NTAPI xbox::IoQueueThreadIrp
 {
 	LOG_FUNC_ONE_ARG(Irp);
 
-	LOG_UNIMPLEMENTED();
+	// Set the IRP's thread to the current thread and insert into
+	// the thread's IRP list for tracking outstanding I/O.
+	PETHREAD Thread = (PETHREAD)KeGetCurrentThread();
+	Irp->Tail.Overlay.Thread = Thread;
+	InsertHeadList(&Thread->IrpList, &Irp->ThreadListEntry);
 }
 
 // ******************************************************************

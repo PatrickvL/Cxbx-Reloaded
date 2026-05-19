@@ -729,6 +729,8 @@ void EmuGenerateFS(xbox::PETHREAD Ethread, unsigned Host2XbStackBaseReserved, un
 		xbox::NtAllocateVirtualMemory(&base, 0, &size, XBOX_MEM_RESERVE | XBOX_MEM_COMMIT, XBOX_PAGE_READWRITE);
 		Ethread = (xbox::PETHREAD)base;
 		xbox::RtlZeroMemory(Ethread, sizeof(xbox::ETHREAD)); // Clear, to prevent side-effects on random contents
+		// Initialize the IRP tracking list for this thread
+		InitializeListHead(&Ethread->IrpList);
 		// Emulate kernel stack size as we can't use exact size.
 		xbox::ulong_xt KernelStackSize = Host2XbStackBaseReserved - reinterpret_cast<xbox::ulong_xt>(hTib->StackLimit);
 		// Since the cxbxr's kernel initialization occur there, we do not create a new thread

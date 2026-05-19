@@ -2931,7 +2931,7 @@ typedef struct _IRP
 			union {
 				KDEVICE_QUEUE_ENTRY DeviceQueueEntry;
 				struct {
-					PVOID DriverContext[4];
+					PVOID DriverContext[5];
 				};
 			};
 			PETHREAD Thread;
