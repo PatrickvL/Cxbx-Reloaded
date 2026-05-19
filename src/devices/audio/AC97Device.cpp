@@ -26,8 +26,11 @@
 // ******************************************************************
 
 #include "AC97Device.h"
+#include "APUDevice.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
+
+#include "SDL.h"
 
 #include <cstring>
 
@@ -84,6 +87,9 @@ constexpr uint16_t AC97_POWER_READY = 0x000F;
 constexpr uint16_t AC97_RATE_48KHZ = 48000;
 constexpr uint16_t AC97_VENDOR_SIGMATEL_1 = 0x8384;
 constexpr uint16_t AC97_VENDOR_SIGMATEL_2 = 0x7608;
+constexpr uint32_t AC97_OUTPUT_CHANNELS = 2;
+constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_CHANNELS;
+constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -120,6 +126,8 @@ bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
 }
 
 }
+
+extern APUDevice* g_APU;
 
 void AC97Device::Init()
 {
@@ -159,12 +167,62 @@ void AC97Device::Reset()
 	WriteRegister16(AC97_Vendor_ID2, AC97_VENDOR_SIGMATEL_2);
 	m_ChannelLastUpdate.fill(GetAPUTime());
 	m_ChannelSampleRemainder.fill(0);
+	if (m_OutputDevice != 0) {
+		SDL_ClearQueuedAudio(static_cast<SDL_AudioDeviceID>(m_OutputDevice));
+	}
 
 	ResetBusMasterChannel(NABM_PI_BASE);
 	ResetBusMasterChannel(NABM_PO_BASE);
 	ResetBusMasterChannel(NABM_MC_BASE);
 	WriteRegister(AC97_NAM_SIZE + NABM_GLOB_CNT, 0, sizeof(uint32_t));
 	WriteRegister(AC97_NAM_SIZE + NABM_GLOB_STA, 0, sizeof(uint32_t));
+}
+
+bool AC97Device::EnsureOutputDevice()
+{
+	if (m_OutputDevice != 0) {
+		return true;
+	}
+
+	if (m_OutputDeviceFailed) {
+		return false;
+	}
+
+	if ((SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+		m_OutputDeviceFailed = true;
+		return false;
+	}
+
+	SDL_AudioSpec desired{};
+	desired.freq = APU_TIMER_FREQUENCY;
+	desired.format = AUDIO_S16SYS;
+	desired.channels = static_cast<Uint8>(AC97_OUTPUT_CHANNELS);
+	desired.samples = 1024;
+
+	SDL_AudioSpec obtained{};
+	const SDL_AudioDeviceID device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+	if (device == 0) {
+		m_OutputDeviceFailed = true;
+		return false;
+	}
+
+	m_OutputDevice = static_cast<uint32_t>(device);
+	SDL_PauseAudioDevice(device, 0);
+	return true;
+}
+
+void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
+{
+	if (samples == nullptr || frameCount == 0 || !EnsureOutputDevice()) {
+		return;
+	}
+
+	const SDL_AudioDeviceID device = static_cast<SDL_AudioDeviceID>(m_OutputDevice);
+	if (SDL_GetQueuedAudioSize(device) >= AC97_MAX_QUEUED_AUDIO_BYTES) {
+		return;
+	}
+
+	SDL_QueueAudio(device, samples, static_cast<Uint32>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME));
 }
 
 uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
@@ -281,6 +339,9 @@ void AC97Device::WriteRegister16(uint32_t addr, uint16_t value)
 
 void AC97Device::UpdateBusMasterChannels()
 {
+	if (g_APU != nullptr) {
+		g_APU->SynchronizeAudio();
+	}
 	UpdateBusMasterStatus(NABM_PI_BASE);
 	UpdateBusMasterStatus(NABM_PO_BASE);
 	UpdateBusMasterStatus(NABM_MC_BASE);

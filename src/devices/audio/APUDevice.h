@@ -29,6 +29,8 @@
 #define _APU_H_
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 
 #include "../PCIDevice.h"
 class APUDevice : public PCIDevice {
@@ -44,6 +46,7 @@ public:
 
 	uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
 	void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
+	void SynchronizeAudio();
 private:
 	uint32_t GPRead(uint32_t addr, unsigned size);
 	void GPWrite(uint32_t addr, uint32_t value, unsigned size);
@@ -55,12 +58,18 @@ private:
 	void UpdateVPFifo();
 	void RefreshVPStatus();
 	void RefreshInterruptStatus();
+	void RenderBasicAudioChunk(size_t frameCount);
+	void RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBuffer, size_t frameCount);
+	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_t frameCount);
 	bool ReadGuestWord(uint32_t guestAddress, uint32_t& value) const;
+	bool ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const;
 	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
 	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
 	bool ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const;
 	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
 	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
+	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;
+	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
 
 	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -70,6 +79,7 @@ private:
 	std::array<uint8_t, APU_SIZE> m_Registers{};
 	uint32_t m_VPFifoLevel = 0;
 	uint32_t m_VPFifoLastUpdate = 0;
+	uint32_t m_LastAudioUpdate = 0;
 	uint32_t m_VPInputSgeHandle = 0;
 	uint32_t m_VPOutputSgeHandle = 0;
 };

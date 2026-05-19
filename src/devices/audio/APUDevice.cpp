@@ -26,10 +26,14 @@
 // ******************************************************************
 
 #include "APUDevice.h"
+#include "AC97Device.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -128,7 +132,26 @@ constexpr uint32_t NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_OFFSET_PARAMETER = 0xFFFFF0
 
 constexpr uint32_t NV_PAVS_SIZE = 0x00000080;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN = 0x00000000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V0BIN = 0x0000001F;
+constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V1BIN = 0x000003E0;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT = 0x00000004;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_V6BIN = 0x0000001F;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_V7BIN = 0x000003E0;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK = 0x001F0000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_MULTIPASS = 1 << 21;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_DATA_TYPE = 1 << 24;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_LOOP = 1 << 25;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_STEREO = 1 << 27;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE = 0x30000000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE = 0xC0000000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_U8 = 0;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S16 = 1;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S24 = 2;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S32 = 3;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B8 = 0;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B16 = 1;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM = 2;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B32 = 3;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV0 = 0x00000008;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA = 0x0000000C;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1 = 0x00000010;
@@ -144,6 +167,8 @@ constexpr uint32_t NV_PAVS_VOICE_TAR_VOLB = 0x00000064;
 constexpr uint32_t NV_PAVS_VOICE_TAR_VOLC = 0x00000068;
 constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_ENV = 0x0000006C;
 constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK = 0x0000007C;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLA_VOLUME0 = 0x0000FFF0;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLA_VOLUME1 = 0xFFF00000;
 
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_PAUSED = 1 << 18;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_NEW_VOICE = 1 << 20;
@@ -158,6 +183,8 @@ constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH = 0xFFFF0000;
 
 constexpr uint32_t APU_VOICE_LIST_INHERIT = 0;
+constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
+constexpr size_t APU_AUDIO_CHUNK_FRAMES = 256;
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -200,7 +227,47 @@ bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
 	return size > 0 && guestAddress <= PHYSICAL_MAP_SIZE && size <= (PHYSICAL_MAP_SIZE - guestAddress);
 }
 
+float AttenuateVoiceVolume(uint32_t volume)
+{
+	const uint32_t clamped = volume & 0x0FFF;
+	return clamped == 0x0FFF ? 0.0f : std::pow(10.0f, static_cast<float>(clamped) / (64.0f * -20.0f));
 }
+
+float ConvertUnsigned8(uint8_t value)
+{
+	return (static_cast<float>(value) - 128.0f) / 128.0f;
+}
+
+float ConvertSigned16(int16_t value)
+{
+	return static_cast<float>(value) / 32768.0f;
+}
+
+float ConvertSigned24(uint32_t value)
+{
+	const int32_t extended = (static_cast<int32_t>(value << 8)) >> 8;
+	return static_cast<float>(extended) / 8388608.0f;
+}
+
+float ConvertSigned32(int32_t value)
+{
+	return static_cast<float>(value) / 2147483648.0f;
+}
+
+int16_t ClampToInt16(int32_t value)
+{
+	if (value > 32767) {
+		return 32767;
+	}
+	if (value < -32768) {
+		return -32768;
+	}
+	return static_cast<int16_t>(value);
+}
+
+}
+
+extern AC97Device* g_AC97;
 
 // TODO: Everything :P
 // TODO: Audio Processing/Thread
@@ -223,6 +290,7 @@ void APUDevice::Reset()
 	std::memset(m_Registers.data(), 0, m_Registers.size());
 	m_VPFifoLevel = 0;
 	m_VPFifoLastUpdate = GetAPUTime();
+	m_LastAudioUpdate = m_VPFifoLastUpdate;
 	m_VPInputSgeHandle = 0;
 	m_VPOutputSgeHandle = 0;
 
@@ -250,6 +318,9 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_GPFMAXSGE, 0);
 	SetRegister32(NV_PAPU_EPSMAXSGE, 0);
 	SetRegister32(NV_PAPU_EPFMAXSGE, 0);
+	SetRegister32(NV_PAPU_TVL2D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_TVL3D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_TVLMP, APU_VP_VOICE_MAX_HANDLE);
 	RefreshVPStatus();
 }
 
@@ -272,6 +343,7 @@ void APUDevice::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned si
 uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 {
 	(void)barIndex;
+	SynchronizeAudio();
 
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		return VPRead(addr - APU_VP_BASE, size);
@@ -295,6 +367,7 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
 	(void)barIndex;
+	SynchronizeAudio();
 
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		VPWrite(addr - APU_VP_BASE, value, size);
@@ -583,11 +656,19 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 
 bool APUDevice::ReadGuestWord(uint32_t guestAddress, uint32_t& value) const
 {
-	if (!IsGuestRangeAccessible(guestAddress, sizeof(uint32_t))) {
+	if (!ReadGuestBytes(guestAddress, &value, sizeof(value))) {
+		return false;
+	}
+	return true;
+}
+
+bool APUDevice::ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const
+{
+	if (dest == nullptr || !IsGuestRangeAccessible(guestAddress, static_cast<uint32_t>(size))) {
 		return false;
 	}
 
-	std::memcpy(&value, reinterpret_cast<const void*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress)), sizeof(value));
+	std::memcpy(dest, reinterpret_cast<const void*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress)), size);
 	return true;
 }
 
@@ -664,6 +745,232 @@ bool APUDevice::WriteVPScatterGatherEntry(uint32_t handle, uint32_t value)
 
 	const uint32_t sgeBase = sgeTableBase + handle * 8;
 	return WriteGuestWord(sgeBase, value);
+}
+
+bool APUDevice::ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const
+{
+	const uint32_t sgeTableBase = GetRegister32(NV_PAPU_VPSGEADDR);
+	if (sgeTableBase == 0) {
+		guestAddress = linearAddress;
+		return IsGuestRangeAccessible(guestAddress, 1);
+	}
+
+	const uint32_t entry = linearAddress / APU_SGE_PAGE_SIZE;
+	uint32_t pageBase = 0;
+	if (!ReadGuestWord(sgeTableBase + entry * 8, pageBase)) {
+		return false;
+	}
+
+	guestAddress = pageBase + (linearAddress & (APU_SGE_PAGE_SIZE - 1));
+	return IsGuestRangeAccessible(guestAddress, 1);
+}
+
+bool APUDevice::ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const
+{
+	auto* out = static_cast<uint8_t*>(dest);
+	if (out == nullptr) {
+		return false;
+	}
+
+	for (size_t i = 0; i < size; ++i) {
+		uint32_t guestAddress = 0;
+		if (!ResolveVoiceAddress(linearAddress + static_cast<uint32_t>(i), guestAddress) ||
+			!ReadGuestBytes(guestAddress, out + i, 1)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void APUDevice::SynchronizeAudio()
+{
+	if (g_AC97 == nullptr) {
+		m_LastAudioUpdate = GetAPUTime();
+		return;
+	}
+
+	const uint32_t now = GetAPUTime();
+	uint32_t remaining = now - m_LastAudioUpdate;
+	while (remaining > 0) {
+		const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
+		RenderBasicAudioChunk(chunk);
+		m_LastAudioUpdate += static_cast<uint32_t>(chunk);
+		remaining -= static_cast<uint32_t>(chunk);
+	}
+}
+
+void APUDevice::RenderBasicAudioChunk(size_t frameCount)
+{
+	if (frameCount == 0 || g_AC97 == nullptr) {
+		return;
+	}
+
+	std::vector<int32_t> mixBuffer(frameCount * 2, 0);
+	RenderBasicVoiceList(NV_PAPU_TVL2D, mixBuffer.data(), frameCount);
+	RenderBasicVoiceList(NV_PAPU_TVL3D, mixBuffer.data(), frameCount);
+	RenderBasicVoiceList(NV_PAPU_TVLMP, mixBuffer.data(), frameCount);
+
+	std::vector<int16_t> output(frameCount * 2);
+	for (size_t i = 0; i < output.size(); ++i) {
+		output[i] = ClampToInt16(mixBuffer[i]);
+	}
+
+	g_AC97->SubmitPCMFrames(output.data(), frameCount);
+}
+
+void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBuffer, size_t frameCount)
+{
+	uint32_t voiceHandle = GetRegister32(topRegister);
+	for (size_t visited = 0; visited < 1024 && voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
+		uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
+			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
+		RenderBasicVoice(voiceHandle, mixBuffer, frameCount);
+		if (nextHandle == voiceHandle) {
+			break;
+		}
+		voiceHandle = nextHandle;
+	}
+}
+
+void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_t frameCount)
+{
+	uint32_t state = 0;
+	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
+		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
+		(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0) {
+		return;
+	}
+
+	uint32_t format = 0;
+	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, 0xFFFFFFFF, format)) {
+		return;
+	}
+
+	if ((format & NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) != 0 ||
+		(format & NV_PAVS_VOICE_CFG_FMT_MULTIPASS) != 0) {
+		return;
+	}
+
+	const uint32_t samplesPerBlock = ((format & NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK)) + 1;
+	if (samplesPerBlock != 1) {
+		return;
+	}
+
+	const bool stereo = (format & NV_PAVS_VOICE_CFG_FMT_STEREO) != 0;
+	const uint32_t channels = stereo ? 2u : 1u;
+	const uint32_t sampleSize = (format & NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE);
+	const uint32_t containerSizeMode = (format & NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE);
+	uint32_t containerSize = 0;
+	switch (containerSizeMode) {
+	case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B8:
+		containerSize = 1;
+		break;
+	case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B16:
+		containerSize = 2;
+		break;
+	case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B32:
+		containerSize = 4;
+		break;
+	default:
+		return;
+	}
+
+	uint32_t baseAddress = 0;
+	uint32_t currentOffset = 0;
+	uint32_t endOffset = 0;
+	uint32_t loopOffset = 0;
+	uint32_t volumeLeft = 0;
+	uint32_t volumeRight = 0;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START, NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE, NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME0, volumeLeft);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME1, volumeRight);
+
+	if (currentOffset > endOffset) {
+		return;
+	}
+
+	const bool loop = (format & NV_PAVS_VOICE_CFG_FMT_LOOP) != 0;
+	const float leftGain = AttenuateVoiceVolume(volumeLeft);
+	const float rightGain = AttenuateVoiceVolume(volumeRight);
+	const uint32_t bytesPerFrame = containerSize * channels;
+
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		if (currentOffset > endOffset) {
+			if (loop) {
+				currentOffset = loopOffset;
+			} else {
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+				break;
+			}
+		}
+
+		const uint32_t linearAddress = baseAddress + currentOffset * bytesPerFrame;
+		float sampleLeft = 0.0f;
+		float sampleRight = 0.0f;
+
+		for (uint32_t channel = 0; channel < channels; ++channel) {
+			const uint32_t sampleAddress = linearAddress + channel * containerSize;
+			float sample = 0.0f;
+			switch (sampleSize) {
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_U8: {
+				uint8_t raw = 0;
+				if (!ReadVoiceBufferBytes(sampleAddress, &raw, sizeof(raw))) {
+					return;
+				}
+				sample = ConvertUnsigned8(raw);
+				break;
+			}
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S16: {
+				int16_t raw = 0;
+				if (!ReadVoiceBufferBytes(sampleAddress, &raw, sizeof(raw))) {
+					return;
+				}
+				sample = ConvertSigned16(raw);
+				break;
+			}
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S24: {
+				uint8_t raw[4]{};
+				if (!ReadVoiceBufferBytes(sampleAddress, raw, 3)) {
+					return;
+				}
+				const uint32_t packed = static_cast<uint32_t>(raw[0]) |
+					(static_cast<uint32_t>(raw[1]) << 8) |
+					(static_cast<uint32_t>(raw[2]) << 16);
+				sample = ConvertSigned24(packed);
+				break;
+			}
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S32: {
+				int32_t raw = 0;
+				if (!ReadVoiceBufferBytes(sampleAddress, &raw, sizeof(raw))) {
+					return;
+				}
+				sample = ConvertSigned32(raw);
+				break;
+			}
+			default:
+				return;
+			}
+
+			if (channel == 0) {
+				sampleLeft = sample;
+				sampleRight = sample;
+			} else {
+				sampleRight = sample;
+			}
+		}
+
+		mixBuffer[frame * 2] += static_cast<int32_t>(sampleLeft * leftGain * 32767.0f);
+		mixBuffer[frame * 2 + 1] += static_cast<int32_t>(sampleRight * rightGain * 32767.0f);
+		++currentOffset;
+	}
+
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 }
 
 void APUDevice::UpdateVPFifo()

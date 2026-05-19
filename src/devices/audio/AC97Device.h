@@ -29,6 +29,8 @@
 #define _AC97_H_
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 
 #include "../PCIDevice.h"
 class AC97Device : public PCIDevice {
@@ -44,7 +46,9 @@ class AC97Device : public PCIDevice {
 
 		uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
 		void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
+		void SubmitPCMFrames(const int16_t* samples, size_t frameCount);
 	private:
+		bool EnsureOutputDevice();
 		uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 		void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
 		uint16_t ReadRegister16(uint32_t addr) const;
@@ -59,6 +63,8 @@ class AC97Device : public PCIDevice {
 		std::array<uint8_t, 0x180> m_Registers{};
 		std::array<uint32_t, 3> m_ChannelLastUpdate{};
 		std::array<uint32_t, 3> m_ChannelSampleRemainder{};
+		uint32_t m_OutputDevice = 0;
+		bool m_OutputDeviceFailed = false;
 };
 
 #endif
