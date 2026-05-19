@@ -148,13 +148,19 @@ constexpr uint32_t NV_PAVS_SIZE = 0x00000080;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN = 0x00000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V0BIN = 0x0000001F;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V1BIN = 0x000003E0;
+constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V2BIN = 0x00007C00;
+constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V3BIN = 0x001F0000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V4BIN = 0x03E00000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V5BIN = 0x7C000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT = 0x00000004;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_V6BIN = 0x0000001F;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_V7BIN = 0x000003E0;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK = 0x001F0000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN = 0x001F0000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_MULTIPASS = 1 << 21;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_DATA_TYPE = 1 << 24;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_LOOP = 1 << 25;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CLEAR_MIX = 1 << 26;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_STEREO = 1 << 27;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE = 0x30000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE = 0xC0000000;
@@ -187,8 +193,18 @@ constexpr uint32_t NV_PAVS_VOICE_TAR_VOLB = 0x00000064;
 constexpr uint32_t NV_PAVS_VOICE_TAR_VOLC = 0x00000068;
 constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_ENV = 0x0000006C;
 constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK = 0x0000007C;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLA_VOLUME6_B3_0 = 0x0000000F;
 constexpr uint32_t NV_PAVS_VOICE_TAR_VOLA_VOLUME0 = 0x0000FFF0;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLA_VOLUME7_B3_0 = 0x000F0000;
 constexpr uint32_t NV_PAVS_VOICE_TAR_VOLA_VOLUME1 = 0xFFF00000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLB_VOLUME6_B7_4 = 0x0000000F;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLB_VOLUME2 = 0x0000FFF0;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLB_VOLUME7_B7_4 = 0x000F0000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLB_VOLUME3 = 0xFFF00000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLC_VOLUME6_B11_8 = 0x0000000F;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLC_VOLUME4 = 0x0000FFF0;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLC_VOLUME7_B11_8 = 0x000F0000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_VOLC_VOLUME5 = 0xFFF00000;
 
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_PAUSED = 1 << 18;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_NEW_VOICE = 1 << 20;
@@ -231,6 +247,7 @@ constexpr size_t APU_XADPCM_PCM_SAMPLES_PER_BLOCK = XBOX_ADPCM_DSTSIZE / sizeof(
 constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
 constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
+constexpr size_t APU_MIXBIN_COUNT = 32;
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -1160,27 +1177,28 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		return;
 	}
 
-	std::vector<int32_t> mixBuffer(frameCount * 2, 0);
-	RenderBasicVoiceList(NV_PAPU_TVL2D, mixBuffer.data(), frameCount);
-	RenderBasicVoiceList(NV_PAPU_TVL3D, mixBuffer.data(), frameCount);
-	RenderBasicVoiceList(NV_PAPU_TVLMP, mixBuffer.data(), frameCount);
+	std::vector<int32_t> mixBins(frameCount * APU_MIXBIN_COUNT, 0);
+	RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
+	RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
+	RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
 
 	std::vector<int16_t> output(frameCount * 2);
-	for (size_t i = 0; i < output.size(); ++i) {
-		output[i] = ClampToInt16(mixBuffer[i]);
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		output[frame * 2] = ClampToInt16(mixBins[frame]);
+		output[frame * 2 + 1] = ClampToInt16(mixBins[frameCount + frame]);
 	}
 
 	g_AC97->SubmitPCMFrames(output.data(), frameCount);
 }
 
-void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBuffer, size_t frameCount)
+void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount)
 {
 	uint32_t voiceHandle = GetRegister32(topRegister);
 	for (size_t visited = 0; visited < 1024 && voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
 		uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
 			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
-		RenderBasicVoice(voiceHandle, mixBuffer, frameCount);
+		RenderBasicVoice(voiceHandle, mixBins, frameCount);
 		if (nextHandle == voiceHandle) {
 			break;
 		}
@@ -1188,7 +1206,7 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBuffer, s
 	}
 }
 
-void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_t frameCount)
+void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount)
 {
 	uint32_t state = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
@@ -1203,10 +1221,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 	}
 
 	const bool streaming = (format & NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) != 0;
-	if ((format & NV_PAVS_VOICE_CFG_FMT_MULTIPASS) != 0) {
-		return;
-	}
-
+	const bool multipass = (format & NV_PAVS_VOICE_CFG_FMT_MULTIPASS) != 0;
+	const bool clearMix = (format & NV_PAVS_VOICE_CFG_FMT_CLEAR_MIX) != 0;
+	const uint32_t multipassBin = (format & NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN);
 	const uint32_t samplesPerBlock = ((format & NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK)) + 1;
 
 	const bool loop = (format & NV_PAVS_VOICE_CFG_FMT_LOOP) != 0;
@@ -1215,7 +1232,11 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 	const uint32_t sampleSize = (format & NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE);
 	const uint32_t containerSizeMode = (format & NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE);
 	const bool adpcm = containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM;
-	if (adpcm) {
+	if (multipass) {
+		if (multipassBin >= APU_MIXBIN_COUNT) {
+			return;
+		}
+	} else if (adpcm) {
 		if (samplesPerBlock != APU_XADPCM_PCM_SAMPLES_PER_BLOCK) {
 			return;
 		}
@@ -1241,30 +1262,61 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		return;
 	}
 
+	uint32_t bins[8]{};
+	bins[0] = 0;
+	bins[1] = 1;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN, bins[0]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V1BIN, bins[1]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V2BIN, bins[2]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V3BIN, bins[3]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V4BIN, bins[4]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V5BIN, bins[5]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_V6BIN, bins[6]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_V7BIN, bins[7]);
+	if (bins[0] == 0 && bins[1] == 0) {
+		bins[1] = 1;
+	}
+
+	uint32_t volumes[8]{};
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME0, volumes[0]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME1, volumes[1]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLB, NV_PAVS_VOICE_TAR_VOLB_VOLUME2, volumes[2]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLB, NV_PAVS_VOICE_TAR_VOLB_VOLUME3, volumes[3]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLC, NV_PAVS_VOICE_TAR_VOLC_VOLUME4, volumes[4]);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLC, NV_PAVS_VOICE_TAR_VOLC_VOLUME5, volumes[5]);
+	uint32_t volume6 = 0;
+	uint32_t volume7 = 0;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME6_B3_0, volume6);
+	volumes[6] |= volume6;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLB, NV_PAVS_VOICE_TAR_VOLB_VOLUME6_B7_4, volume6);
+	volumes[6] |= volume6 << 4;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLC, NV_PAVS_VOICE_TAR_VOLC_VOLUME6_B11_8, volume6);
+	volumes[6] |= volume6 << 8;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME7_B3_0, volume7);
+	volumes[7] |= volume7;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLB, NV_PAVS_VOICE_TAR_VOLB_VOLUME7_B7_4, volume7);
+	volumes[7] |= volume7 << 4;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLC, NV_PAVS_VOICE_TAR_VOLC_VOLUME7_B11_8, volume7);
+	volumes[7] |= volume7 << 8;
+
 	uint32_t baseAddress = 0;
 	uint32_t currentOffset = 0;
 	uint32_t endOffset = 0;
 	uint32_t loopOffset = 0;
-	uint32_t volumeLeft = 0;
-	uint32_t volumeRight = 0;
 	uint32_t pitch = 0;
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START, NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE, NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
-	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME0, volumeLeft);
-	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME1, volumeRight);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK, NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH, pitch);
 
-	if (!streaming && !loop && currentOffset > endOffset) {
+	if (!multipass && !streaming && !loop && currentOffset > endOffset) {
 		return;
 	}
-	if (!streaming && loop && loopOffset > endOffset) {
+	if (!multipass && !streaming && loop && loopOffset > endOffset) {
 		return;
 	}
 
-	const float leftGain = AttenuateVoiceVolume(volumeLeft);
-	const float rightGain = AttenuateVoiceVolume(volumeRight);
 	const double pitchStep = DecodePitchStep(pitch);
 	const uint32_t bytesPerFrame = adpcm ? 0u : containerSize * channels;
 	const uint32_t bytesPerBlock = containerSize * channels;
@@ -1285,6 +1337,25 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		playbackState = PlaybackState{};
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	};
+	std::vector<int32_t> multipassSource;
+	if (multipass && clearMix) {
+		multipassSource.assign(mixBins + multipassBin * frameCount, mixBins + (multipassBin + 1) * frameCount);
+		std::fill_n(mixBins + multipassBin * frameCount, frameCount, 0);
+	}
+	auto mixSamples = [&](float sampleLeft, float sampleRight, float envelopeGain, size_t frame) {
+		const float channelSamples[2]{ sampleLeft, sampleRight };
+		for (size_t binIndex = 0; binIndex < 8; ++binIndex) {
+			if (bins[binIndex] >= APU_MIXBIN_COUNT || volumes[binIndex] == 0) {
+				continue;
+			}
+			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain;
+			if (gain == 0.0f) {
+				continue;
+			}
+			const float sample = channelSamples[binIndex % channels];
+			mixBins[bins[binIndex] * frameCount + frame] += static_cast<int32_t>(sample * gain * 32767.0f);
+		}
 	};
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		return streaming ? ReadGuestBytes(sampleAddress, dest, size) : ReadVoiceBufferBytes(sampleAddress, dest, size);
@@ -1373,6 +1444,14 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 	auto decodeFrame = [&](uint32_t segmentBaseAddress, uint32_t segmentCurrentOffset, float& sampleLeft, float& sampleRight) -> bool {
 		sampleLeft = 0.0f;
 		sampleRight = 0.0f;
+		if (multipass) {
+			const int32_t mixedSample = multipassSource.empty()
+				? mixBins[multipassBin * frameCount + segmentCurrentOffset]
+				: multipassSource[segmentCurrentOffset];
+			sampleLeft = static_cast<float>(mixedSample) / 32767.0f;
+			sampleRight = sampleLeft;
+			return true;
+		}
 		if (adpcm) {
 			const uint32_t blockIndex = segmentCurrentOffset / samplesPerBlock;
 			const uint32_t sampleIndexInBlock = segmentCurrentOffset % samplesPerBlock;
@@ -1473,12 +1552,12 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		}
 		return true;
 	};
-	if (streaming && !loadStreamingSegment(sslData, baseAddress, endOffset, currentOffset, true)) {
+	if (!multipass && streaming && !loadStreamingSegment(sslData, baseAddress, endOffset, currentOffset, true)) {
 		return;
 	}
 
 	for (size_t frame = 0; frame < frameCount; ++frame) {
-		if (!advancePlaybackPosition(sslData, baseAddress, endOffset, currentOffset, true)) {
+		if (!multipass && !advancePlaybackPosition(sslData, baseAddress, endOffset, currentOffset, true)) {
 			break;
 		}
 
@@ -1504,8 +1583,13 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 
 		float currentLeft = 0.0f;
 		float currentRight = 0.0f;
-		if (!decodeFrame(baseAddress, currentOffset, currentLeft, currentRight)) {
+		const uint32_t frameOffset = multipass ? static_cast<uint32_t>(frame) : currentOffset;
+		if (!decodeFrame(baseAddress, frameOffset, currentLeft, currentRight)) {
 			return;
+		}
+		if (multipass) {
+			mixSamples(currentLeft, currentRight, envelopeGain, frame);
+			continue;
 		}
 
 		float nextLeft = currentLeft;
@@ -1524,8 +1608,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		const float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		const float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
 
-		mixBuffer[frame * 2] += static_cast<int32_t>(sampleLeft * leftGain * envelopeGain * 32767.0f);
-		mixBuffer[frame * 2 + 1] += static_cast<int32_t>(sampleRight * rightGain * envelopeGain * 32767.0f);
+		mixSamples(sampleLeft, sampleRight, envelopeGain, frame);
 
 		const double nextPlaybackPosition = playbackState.fraction + pitchStep;
 		const uint32_t wholeFrames = static_cast<uint32_t>(nextPlaybackPosition);
@@ -1537,6 +1620,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 				break;
 			}
 		}
+	}
+
+	if (multipass) {
+		return;
 	}
 
 	m_VPSSLData[voiceHandle] = sslData;

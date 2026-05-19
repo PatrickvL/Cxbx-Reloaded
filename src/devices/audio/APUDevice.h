@@ -74,8 +74,8 @@ private:
 	void RefreshVPStatus();
 	void RefreshInterruptStatus();
 	void RenderBasicAudioChunk(size_t frameCount);
-	void RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBuffer, size_t frameCount);
-	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_t frameCount);
+	void RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount);
+	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount);
 	void InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue);
 	void BeginVoiceRelease(uint32_t voiceHandle);
 	float StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
