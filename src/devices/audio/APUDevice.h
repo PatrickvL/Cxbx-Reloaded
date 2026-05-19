@@ -57,6 +57,12 @@ private:
 		uint32_t ssl_seg = 0;
 	};
 
+	struct PlaybackState {
+		uint32_t offset = 0;
+		double fraction = 0.0;
+		bool valid = false;
+	};
+
 	uint32_t GPRead(uint32_t addr, unsigned size);
 	void GPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t EPRead(uint32_t addr, unsigned size);
@@ -95,6 +101,7 @@ private:
 	uint32_t m_VPOutputSgeHandle = 0;
 	uint32_t m_VPSSLBasePage = 0;
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
+	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
 };
 
 #endif

@@ -203,6 +203,7 @@ constexpr uint32_t MCPX_HW_NOTIFIER_SSLA_DONE = 0;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0xFF;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
+constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -272,6 +273,12 @@ float ConvertSigned32(int32_t value)
 	return static_cast<float>(value) / 2147483648.0f;
 }
 
+double DecodePitchStep(uint32_t pitch)
+{
+	const int16_t signedPitch = static_cast<int16_t>(pitch & 0xFFFF);
+	return std::exp2(static_cast<double>(signedPitch) / APU_PITCH_STEP_EXPONENT);
+}
+
 int16_t ClampToInt16(int32_t value)
 {
 	if (value > 32767) {
@@ -313,6 +320,7 @@ void APUDevice::Reset()
 	m_VPOutputSgeHandle = 0;
 	m_VPSSLBasePage = 0;
 	m_VPSSLData.fill(APUDevice::SSLData{});
+	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
 
 	SetRegister32(NV_PAPU_ISTS, 0);
 	SetRegister32(NV_PAPU_IEN, 0);
@@ -579,12 +587,16 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
+		m_VPPlaybackState[selectedHandle] = PlaybackState{};
 		return;
 	}
 	case NV1BA0_PIO_VOICE_OFF: {
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		if (voiceHandle < m_VPPlaybackState.size()) {
+			m_VPPlaybackState[voiceHandle] = PlaybackState{};
+		}
 		return;
 	}
 	case NV1BA0_PIO_VOICE_PAUSE: {
@@ -652,18 +664,30 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	case NV1BA0_PIO_SET_VOICE_CFG_BUF_BASE:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_CUR_PSL_START,
 			NV_PAVS_VOICE_CUR_PSL_START_BA, value);
+		if (currentVoice() < m_VPPlaybackState.size()) {
+			m_VPPlaybackState[currentVoice()].valid = false;
+		}
 		return;
 	case NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_CUR_PSH_SAMPLE,
 			NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, value);
+		if (currentVoice() < m_VPPlaybackState.size()) {
+			m_VPPlaybackState[currentVoice()].valid = false;
+		}
 		return;
 	case NV1BA0_PIO_SET_VOICE_BUF_CBO:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_PAR_OFFSET,
 			NV_PAVS_VOICE_PAR_OFFSET_CBO, value);
+		if (currentVoice() < m_VPPlaybackState.size()) {
+			m_VPPlaybackState[currentVoice()] = PlaybackState{};
+		}
 		return;
 	case NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_PAR_NEXT,
 			NV_PAVS_VOICE_PAR_NEXT_EBO, value);
+		if (currentVoice() < m_VPPlaybackState.size()) {
+			m_VPPlaybackState[currentVoice()].valid = false;
+		}
 		return;
 	case NV1BA0_PIO_SET_CURRENT_INBUF_SGE:
 		m_VPInputSgeHandle = value & NV1BA0_PIO_SET_CURRENT_INBUF_SGE_HANDLE;
@@ -924,6 +948,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 		return;
 	}
 
+	const bool loop = (format & NV_PAVS_VOICE_CFG_FMT_LOOP) != 0;
 	const bool stereo = (format & NV_PAVS_VOICE_CFG_FMT_STEREO) != 0;
 	const uint32_t channels = stereo ? 2u : 1u;
 	const uint32_t sampleSize = (format & NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE);
@@ -949,46 +974,63 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 	uint32_t loopOffset = 0;
 	uint32_t volumeLeft = 0;
 	uint32_t volumeRight = 0;
+	uint32_t pitch = 0;
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START, NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE, NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME0, volumeLeft);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME1, volumeRight);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK, NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH, pitch);
 
-	if (!streaming && currentOffset > endOffset) {
+	if (!streaming && !loop && currentOffset > endOffset) {
+		return;
+	}
+	if (!streaming && loop && loopOffset > endOffset) {
 		return;
 	}
 
-	const bool loop = (format & NV_PAVS_VOICE_CFG_FMT_LOOP) != 0;
 	const float leftGain = AttenuateVoiceVolume(volumeLeft);
 	const float rightGain = AttenuateVoiceVolume(volumeRight);
+	const double pitchStep = DecodePitchStep(pitch);
 	const uint32_t bytesPerFrame = containerSize * channels;
+	auto& playbackState = m_VPPlaybackState[voiceHandle];
+	if (!playbackState.valid || playbackState.offset != currentOffset) {
+		playbackState.offset = currentOffset;
+		playbackState.fraction = 0.0;
+		playbackState.valid = true;
+	}
+
+	auto sslData = m_VPSSLData[voiceHandle];
 	auto stopVoice = [&]() {
+		playbackState = PlaybackState{};
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 	};
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		return streaming ? ReadGuestBytes(sampleAddress, dest, size) : ReadVoiceBufferBytes(sampleAddress, dest, size);
 	};
-	auto loadStreamingSegment = [&]() -> bool {
-		auto& sslData = m_VPSSLData[voiceHandle];
+	auto loadStreamingSegment = [&](SSLData& voiceSSLData, uint32_t& segmentBaseAddress, uint32_t& segmentEndOffset, uint32_t& segmentCurrentOffset, bool commit) -> bool {
 		for (size_t attempts = 0; attempts < 4; ++attempts) {
-			if (sslData.ssl_index > 1) {
-				sslData.ssl_index = 0;
+			if (voiceSSLData.ssl_index > 1) {
+				voiceSSLData.ssl_index = 0;
 			}
-			const uint32_t sslIndex = sslData.ssl_index;
-			if (sslData.count[sslIndex] == 0) {
-				stopVoice();
+			const uint32_t sslIndex = voiceSSLData.ssl_index;
+			if (voiceSSLData.count[sslIndex] == 0) {
+				if (commit) {
+					stopVoice();
+				}
 				return false;
 			}
-			if (sslData.ssl_seg >= sslData.count[sslIndex]) {
-				WriteNotifierStatus(voiceHandle,
-					sslIndex == 0 ? MCPX_HW_NOTIFIER_SSLA_DONE : MCPX_HW_NOTIFIER_SSLB_DONE,
-					NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
-				sslData.ssl_index = 1 - sslData.ssl_index;
-				sslData.ssl_seg = 0;
-				currentOffset = 0;
+			if (voiceSSLData.ssl_seg >= voiceSSLData.count[sslIndex]) {
+				if (commit) {
+					WriteNotifierStatus(voiceHandle,
+						sslIndex == 0 ? MCPX_HW_NOTIFIER_SSLA_DONE : MCPX_HW_NOTIFIER_SSLB_DONE,
+						NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+				}
+				voiceSSLData.ssl_index = 1 - voiceSSLData.ssl_index;
+				voiceSSLData.ssl_seg = 0;
+				segmentCurrentOffset = 0;
 				continue;
 			}
 
@@ -997,7 +1039,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 				return false;
 			}
 
-			const uint32_t segmentPage = sslData.base[sslIndex] + static_cast<uint32_t>(sslData.ssl_seg);
+			const uint32_t segmentPage = voiceSSLData.base[sslIndex] + static_cast<uint32_t>(voiceSSLData.ssl_seg);
 			uint32_t segmentOffset = 0;
 			uint32_t segmentLength = 0;
 			if (!ReadGuestWord(sslTableBase + segmentPage * 8, segmentOffset) ||
@@ -1010,8 +1052,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 			const uint32_t segmentSamplesPerBlock = ((segmentLength >> 18) & 0x1F) + 1;
 			const bool segmentStereo = ((segmentLength >> 23) & 1u) != 0;
 			if (segmentSamples == 0) {
-				++sslData.ssl_seg;
-				currentOffset = 0;
+				++voiceSSLData.ssl_seg;
+				segmentCurrentOffset = 0;
 				continue;
 			}
 			if (segmentContainerSizeMode != containerSizeMode ||
@@ -1020,38 +1062,39 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 				return false;
 			}
 
-			baseAddress = segmentOffset;
-			endOffset = segmentSamples - 1;
+			segmentBaseAddress = segmentOffset;
+			segmentEndOffset = segmentSamples - 1;
 			return true;
 		}
 
-		stopVoice();
+		if (commit) {
+			stopVoice();
+		}
 		return false;
 	};
-	if (streaming && !loadStreamingSegment()) {
-		return;
-	}
-
-	for (size_t frame = 0; frame < frameCount; ++frame) {
-		if (currentOffset > endOffset) {
+	auto advancePlaybackPosition = [&](SSLData& voiceSSLData, uint32_t& segmentBaseAddress, uint32_t& segmentEndOffset, uint32_t& segmentCurrentOffset, bool commit) -> bool {
+		while (segmentCurrentOffset > segmentEndOffset) {
 			if (streaming) {
-				++m_VPSSLData[voiceHandle].ssl_seg;
-				currentOffset = 0;
-				if (!loadStreamingSegment()) {
-					break;
+				++voiceSSLData.ssl_seg;
+				segmentCurrentOffset = 0;
+				if (!loadStreamingSegment(voiceSSLData, segmentBaseAddress, segmentEndOffset, segmentCurrentOffset, commit)) {
+					return false;
 				}
 			} else if (loop) {
-				currentOffset = loopOffset;
+				segmentCurrentOffset = loopOffset;
 			} else {
-				stopVoice();
-				break;
+				if (commit) {
+					stopVoice();
+				}
+				return false;
 			}
 		}
-
-		const uint32_t linearAddress = baseAddress + currentOffset * bytesPerFrame;
-		float sampleLeft = 0.0f;
-		float sampleRight = 0.0f;
-
+		return true;
+	};
+	auto decodeFrame = [&](uint32_t segmentBaseAddress, uint32_t segmentCurrentOffset, float& sampleLeft, float& sampleRight) -> bool {
+		const uint32_t linearAddress = segmentBaseAddress + segmentCurrentOffset * bytesPerFrame;
+		sampleLeft = 0.0f;
+		sampleRight = 0.0f;
 		for (uint32_t channel = 0; channel < channels; ++channel) {
 			const uint32_t sampleAddress = linearAddress + channel * containerSize;
 			float sample = 0.0f;
@@ -1059,7 +1102,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_U8: {
 				uint8_t raw = 0;
 				if (!readSampleBytes(sampleAddress, &raw, sizeof(raw))) {
-					return;
+					return false;
 				}
 				sample = ConvertUnsigned8(raw);
 				break;
@@ -1067,7 +1110,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S16: {
 				int16_t raw = 0;
 				if (!readSampleBytes(sampleAddress, &raw, sizeof(raw))) {
-					return;
+					return false;
 				}
 				sample = ConvertSigned16(raw);
 				break;
@@ -1075,7 +1118,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S24: {
 				uint8_t raw[4]{};
 				if (!readSampleBytes(sampleAddress, raw, 3)) {
-					return;
+					return false;
 				}
 				const uint32_t packed = static_cast<uint32_t>(raw[0]) |
 					(static_cast<uint32_t>(raw[1]) << 8) |
@@ -1086,13 +1129,13 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S32: {
 				int32_t raw = 0;
 				if (!readSampleBytes(sampleAddress, &raw, sizeof(raw))) {
-					return;
+					return false;
 				}
 				sample = ConvertSigned32(raw);
 				break;
 			}
 			default:
-				return;
+				return false;
 			}
 
 			if (channel == 0) {
@@ -1102,12 +1145,56 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBuffer, size_
 				sampleRight = sample;
 			}
 		}
+		return true;
+	};
+	if (streaming && !loadStreamingSegment(sslData, baseAddress, endOffset, currentOffset, true)) {
+		return;
+	}
+
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		if (!advancePlaybackPosition(sslData, baseAddress, endOffset, currentOffset, true)) {
+			break;
+		}
+
+		float currentLeft = 0.0f;
+		float currentRight = 0.0f;
+		if (!decodeFrame(baseAddress, currentOffset, currentLeft, currentRight)) {
+			return;
+		}
+
+		float nextLeft = currentLeft;
+		float nextRight = currentRight;
+		auto previewSSLData = sslData;
+		uint32_t previewBaseAddress = baseAddress;
+		uint32_t previewEndOffset = endOffset;
+		uint32_t previewOffset = currentOffset + 1;
+		if (advancePlaybackPosition(previewSSLData, previewBaseAddress, previewEndOffset, previewOffset, false)) {
+			if (!decodeFrame(previewBaseAddress, previewOffset, nextLeft, nextRight)) {
+				return;
+			}
+		}
+
+		const float interpolation = static_cast<float>(playbackState.fraction);
+		const float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
+		const float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
 
 		mixBuffer[frame * 2] += static_cast<int32_t>(sampleLeft * leftGain * 32767.0f);
 		mixBuffer[frame * 2 + 1] += static_cast<int32_t>(sampleRight * rightGain * 32767.0f);
-		++currentOffset;
+
+		const double nextPlaybackPosition = playbackState.fraction + pitchStep;
+		const uint32_t wholeFrames = static_cast<uint32_t>(nextPlaybackPosition);
+		playbackState.fraction = nextPlaybackPosition - static_cast<double>(wholeFrames);
+		for (uint32_t step = 0; step < wholeFrames; ++step) {
+			++currentOffset;
+			if (!advancePlaybackPosition(sslData, baseAddress, endOffset, currentOffset, true)) {
+				frame = frameCount;
+				break;
+			}
+		}
 	}
 
+	m_VPSSLData[voiceHandle] = sslData;
+	playbackState.offset = currentOffset;
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 }
 
