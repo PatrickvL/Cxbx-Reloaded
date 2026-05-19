@@ -185,6 +185,7 @@ constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH = 0xFFFF0000;
 constexpr uint32_t APU_VOICE_LIST_INHERIT = 0;
 constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
 constexpr size_t APU_AUDIO_CHUNK_FRAMES = 256;
+constexpr float APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -230,7 +231,7 @@ bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
 float AttenuateVoiceVolume(uint32_t volume)
 {
 	const uint32_t clamped = volume & 0x0FFF;
-	return clamped == 0x0FFF ? 0.0f : std::pow(10.0f, static_cast<float>(clamped) / (64.0f * -20.0f));
+	return clamped == 0x0FFF ? 0.0f : std::pow(10.0f, static_cast<float>(clamped) / APU_VOLUME_DECIBEL_DIVISOR);
 }
 
 float ConvertUnsigned8(uint8_t value)
