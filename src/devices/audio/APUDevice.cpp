@@ -30,7 +30,7 @@
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
 #include "common/audio/XADPCM.h"
-#include "core\kernel\support\Emu.h"
+#include "core/kernel/support/Emu.h"
 
 #include <algorithm>
 #include <cmath>

@@ -29,7 +29,7 @@
 #include "APUDevice.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
-#include "core\kernel\support\Emu.h"
+#include "core/kernel/support/Emu.h"
 
 #include "SDL.h"
 
