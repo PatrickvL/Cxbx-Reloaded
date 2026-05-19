@@ -31,6 +31,7 @@
 #include "Logging.h"
 #include "core\kernel\exports\EmuKrnl.h" // For InitializeListHead(), etc.
 #include <assert.h>
+#include <intrin.h>
 
 
 PoolManager g_PoolManager;
@@ -263,8 +264,9 @@ void PoolManager::DeallocatePool(VAddr addr)
 	if (PageOffset < POOL_OVERHEAD || ((PageOffset - POOL_OVERHEAD) % POOL_SMALLEST_BLOCK) != 0) {
 		CxbxrAbort("DeallocatePool: address 0x%08X is not a valid pool allocation! "
 			"Page offset 0x%X is misaligned (expected 0x%X + N*0x%X). "
-			"Caller may be freeing a stack or global address.",
-			addr, PageOffset, POOL_OVERHEAD, POOL_SMALLEST_BLOCK);
+			"Caller may be freeing a stack or global address. ReturnAddress=0x%08X",
+			addr, PageOffset, POOL_OVERHEAD, POOL_SMALLEST_BLOCK,
+			(uint32_t)(uintptr_t)_ReturnAddress());
 	}
 
 	assert((Entry->PoolType & POOL_TYPE_MASK) != 0);
