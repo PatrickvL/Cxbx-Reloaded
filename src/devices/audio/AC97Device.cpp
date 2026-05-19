@@ -147,14 +147,9 @@ size_t ChannelIndex(uint32_t channelBase)
 	}
 }
 
-// PIV reports the next descriptor the controller can prefetch. When CIV already
-// points at the last valid descriptor, hardware has no later valid entry to
-// prefetch, so PIV remains aligned with the current descriptor index.
-uint8_t GetPrefetchedIndexValue(uint8_t currentIndex, uint8_t lastValidIndex)
+uint8_t GetNextDescriptorIndex(uint8_t currentIndex)
 {
-	return currentIndex == lastValidIndex
-		? currentIndex
-		: static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
+	return static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
 }
 
 bool HasBusMasterInterrupt(uint16_t status, uint8_t control)
@@ -630,17 +625,17 @@ AC97Device::PrimeResult AC97Device::PrimeBusMasterChannel(uint32_t channelBase)
 		if (descriptorLength != 0) {
 			WriteRegister(baseAddr + BM_CIV, currentIndex, sizeof(uint8_t));
 			WriteRegister16(baseAddr + BM_PICB, descriptorLength);
-			WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
+			WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(channelBase, currentIndex, lastValidIndex));
 			return PrimeResult::Ready;
 		}
 
 		if (currentIndex == lastValidIndex) {
 			WriteRegister(baseAddr + BM_CIV, currentIndex, sizeof(uint8_t));
-			WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
+			WriteRegister16(baseAddr + BM_PIV, GetPrefetchedIndexValue(channelBase, currentIndex, lastValidIndex));
 			return PrimeResult::EndOfList;
 		}
 
-		currentIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
+		currentIndex = GetNextDescriptorIndex(currentIndex);
 	}
 
 	return PrimeResult::DescriptorError;
@@ -732,7 +727,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 				break;
 			}
 
-			const uint8_t nextIndex = static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
+			const uint8_t nextIndex = GetNextDescriptorIndex(currentIndex);
 			WriteRegister(civAddr, nextIndex, sizeof(uint8_t));
 			m_ChannelAdvanceOnRestart[channelIndex] = false;
 			if (!primeChannel()) {
@@ -756,9 +751,45 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 		status &= ~SR_CELV;
 	}
 
-	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, GetPrefetchedIndexValue(currentIndex, lastValidIndex));
+	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, GetPrefetchedIndexValue(channelBase, currentIndex, lastValidIndex));
 	WriteRegister16(srAddr, status);
 	UpdateGlobalStatus();
+}
+
+uint8_t AC97Device::GetPrefetchedIndexValue(uint32_t channelBase, uint8_t currentIndex, uint8_t lastValidIndex) const
+{
+	// PIV reports the next descriptor the controller can actually prefetch. If
+	// later queued entries are zero-length, hardware skips them and exposes the
+	// next non-empty descriptor instead. If no later valid entry remains, PIV
+	// stays aligned with CIV.
+	if (currentIndex == lastValidIndex) {
+		return currentIndex;
+	}
+
+	const uint32_t descriptorBase = ReadRegister(AC97_NAM_SIZE + channelBase + BM_BDBAR, sizeof(uint32_t)) & ~0x7u;
+	if (descriptorBase == 0) {
+		return currentIndex;
+	}
+
+	uint8_t nextIndex = GetNextDescriptorIndex(currentIndex);
+	for (uint32_t descriptorCount = 0; descriptorCount < AC97_DESCRIPTOR_COUNT - 1; ++descriptorCount) {
+		uint32_t descriptorControl = 0;
+		if (!ReadGuest32(descriptorBase + nextIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl)) {
+			return currentIndex;
+		}
+
+		if ((descriptorControl & AC97_DESCRIPTOR_LENGTH_MASK) != 0) {
+			return nextIndex;
+		}
+
+		if (nextIndex == lastValidIndex) {
+			return currentIndex;
+		}
+
+		nextIndex = GetNextDescriptorIndex(nextIndex);
+	}
+
+	return currentIndex;
 }
 
 uint32_t AC97Device::GetBusMasterSampleRate(uint32_t channelBase) const

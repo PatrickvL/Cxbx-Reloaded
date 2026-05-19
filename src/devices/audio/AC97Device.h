@@ -66,6 +66,7 @@ class AC97Device : public PCIDevice {
 		PrimeResult PrimeBusMasterChannel(uint32_t channelBase);
 		void UpdateBusMasterStatus(uint32_t channelBase);
 		uint32_t GetBusMasterSampleRate(uint32_t channelBase) const;
+		uint8_t GetPrefetchedIndexValue(uint32_t channelBase, uint8_t currentIndex, uint8_t lastValidIndex) const;
 		bool ReadGuest32(uint32_t guestAddress, uint32_t& value) const;
 
 		std::array<uint8_t, 0x180> m_Registers{};
