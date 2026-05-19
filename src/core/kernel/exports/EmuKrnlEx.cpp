@@ -285,14 +285,12 @@ XBSYSAPI EXPORTNUM(18) xbox::void_xt NTAPI xbox::ExInitializeReadWriteLock
 XBSYSAPI EXPORTNUM(19) xbox::LARGE_INTEGER NTAPI xbox::ExInterlockedAddLargeInteger
 (
 	IN OUT PLARGE_INTEGER Addend,
-	IN LARGE_INTEGER Increment,
-	IN OUT PKSPIN_LOCK Lock
+	IN LARGE_INTEGER Increment
 )
 {
 	LOG_FUNC_BEGIN
 		LOG_FUNC_ARG(Addend)
 // TODO : operator<<(LARGE_INTERGER) enables 		LOG_FUNC_ARG(Increment)
-		LOG_FUNC_ARG(Lock)
 		LOG_FUNC_END;
 
 	LARGE_INTEGER OldValue;

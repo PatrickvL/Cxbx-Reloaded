@@ -78,8 +78,7 @@ XBSYSAPI EXPORTNUM(18) void_xt NTAPI ExInitializeReadWriteLock
 XBSYSAPI EXPORTNUM(19) LARGE_INTEGER NTAPI ExInterlockedAddLargeInteger
 (
 	IN OUT PLARGE_INTEGER Addend,
-	IN LARGE_INTEGER Increment,
-	IN OUT PKSPIN_LOCK Lock
+	IN LARGE_INTEGER Increment
 );
 
 // Source:ReactOS

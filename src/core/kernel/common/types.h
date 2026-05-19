@@ -560,10 +560,6 @@ typedef struct _OBJECT_HEADER {
 	quad_xt Body;
 } OBJECT_HEADER, *POBJECT_HEADER;
 
-// Source : DXBX
-typedef ulong_ptr_xt KSPIN_LOCK;
-typedef KSPIN_LOCK *PKSPIN_LOCK;
-
 // ******************************************************************
 // * FILETIME
 // ******************************************************************
