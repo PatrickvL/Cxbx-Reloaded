@@ -659,8 +659,9 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 			m_ChannelAdvanceOnRestart[channelIndex] = false;
 			status |= SR_FIFOE;
 			return false;
+		default:
+			return false;
 		}
-		return false;
 	};
 
 	if (control & CR_RPBM) {
