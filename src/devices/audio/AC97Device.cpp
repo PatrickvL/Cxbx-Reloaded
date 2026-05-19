@@ -35,6 +35,8 @@
 
 #include <cstring>
 
+#define LOG_PREFIX CXBXR_MODULE::MCPX
+
 namespace {
 
 constexpr uint32_t AC97_NAM_SIZE = 0x100;

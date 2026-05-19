@@ -37,6 +37,8 @@
 #include <cstring>
 #include <vector>
 
+#define LOG_PREFIX CXBXR_MODULE::MCPX
+
 namespace {
 
 constexpr uint32_t APU_VP_BASE = 0x20000;
