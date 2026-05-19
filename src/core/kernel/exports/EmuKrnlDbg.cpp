@@ -112,7 +112,7 @@ XBSYSAPI EXPORTNUM(8) xbox::ulong_xt _cdecl xbox::DbgPrint
 		auto size = vsnprintf(nullptr, 0, Format, argp_copy);
 		va_end(argp_copy);
 
-        auto buffer = (char*)malloc(size);
+        auto buffer = (char*)malloc(size + 1);
         if (buffer == nullptr) {
             // Prevent a crash if we can't allocate enough memory
             // We want this to be transparent to the running Xbox application
@@ -121,7 +121,7 @@ XBSYSAPI EXPORTNUM(8) xbox::ulong_xt _cdecl xbox::DbgPrint
         }
 
         // Perform the actual print operation
-		vsnprintf(buffer, size, Format, argp);
+		vsnprintf(buffer, size + 1, Format, argp);
 		va_end(argp);
 
 		// Allow DbgPrint to be disabled
