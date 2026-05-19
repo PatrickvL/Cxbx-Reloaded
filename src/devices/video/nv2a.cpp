@@ -469,6 +469,7 @@ void NV2ADevice::Init()
 	
 	m_DeviceId = 0x02A5;
 	m_VendorId = PCI_VENDOR_ID_NVIDIA;
+	m_RevisionAndClassCode = 0x030000A1; // VGA-compatible display controller, rev A1
 
 	NV2AState *d = m_nv2a_state; // glue
 

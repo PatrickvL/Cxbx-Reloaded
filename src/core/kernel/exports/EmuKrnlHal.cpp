@@ -358,12 +358,13 @@ XBSYSAPI EXPORTNUM(46) xbox::void_xt NTAPI xbox::HalReadWritePCISpace
 		int ByteOffset = RegisterNumber % sizeof(ULONG);
 		int Size = RegisterDataSizes[RegisterNumber % sizeof(ULONG)][Length % sizeof(ULONG)];
 
+		CfgBits.u.bits.RegisterNumber = RegisterNumber / sizeof(ULONG);
 		EmuX86_IOWrite((xbox::addr_xt)PCI_TYPE1_ADDR_PORT, CfgBits.u.AsULONG, sizeof(uint32_t));
 
 		if (WritePCISpace) {
-			EmuX86_IOWrite(PCI_TYPE1_DATA_PORT, *((PUCHAR)Buffer), Size);
+			EmuX86_IOWrite(PCI_TYPE1_DATA_PORT + ByteOffset, *((PUCHAR)Buffer), Size);
 		} else {
-			uint32_t value = EmuX86_IORead(PCI_TYPE1_DATA_PORT, Size);
+			uint32_t value = EmuX86_IORead(PCI_TYPE1_DATA_PORT + ByteOffset, Size);
 			// TODO : Could memcpy(Buffer, &value, Size) the following (for all endianesses)?
 			switch (Size) {
 			case sizeof(uint8_t): // Byte

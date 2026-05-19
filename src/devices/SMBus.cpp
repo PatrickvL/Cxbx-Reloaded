@@ -38,6 +38,7 @@ void SMBus::Init()
 
 	m_DeviceId = 0x01B4;
 	m_VendorId = PCI_VENDOR_ID_NVIDIA;
+	m_RevisionAndClassCode = 0x0C0500A1; // Serial bus controller, SMBus, rev A1
 }
 	
 void SMBus::Reset()
