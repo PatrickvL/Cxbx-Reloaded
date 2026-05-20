@@ -1853,9 +1853,13 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 		// Associate with new queue
 		InsertTailList(&Queue->ThreadListHead, &Thread->QueueListEntry);
 		Thread->Queue = Queue;
-	} else {
+	} else if (Thread->QueueListEntry.Blink->Flink == &Thread->QueueListEntry) {
 		// Re-entering the same queue — decrement CurrentCount (was bumped on wake)
 		Queue->CurrentCount--;
+	} else {
+		// Stale association — queue was re-initialized at the same address.
+		// Re-associate the thread with this fresh queue.
+		InsertTailList(&Queue->ThreadListHead, &Thread->QueueListEntry);
 	}
 
 	// Fast-path: entry available and concurrency not exceeded
@@ -1869,6 +1873,7 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 
 	// Zero-timeout: return immediately if no entry is available
 	if (Timeout != zeroptr && !(Timeout->u.LowPart | Timeout->u.HighPart)) {
+		Queue->CurrentCount++;
 		KiUnlockDispatcherDatabase(orig_irql);
 		RETURN((PLIST_ENTRY)X_STATUS_TIMEOUT);
 	}
@@ -1915,6 +1920,7 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 			KiWaitListUnlock();
 			Thread->WaitBlockList = zeroptr;
 			Thread->State = Running;
+			Queue->CurrentCount++;
 			KiUnlockDispatcherDatabase(orig_irql);
 			RETURN((PLIST_ENTRY)X_STATUS_TIMEOUT);
 		}
