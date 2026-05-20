@@ -367,12 +367,15 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		if (bufferIndexIt == m_OutputBufferIndex.end()) {
 			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL unqueued unknown buffer, resetting stream");
 			ResetOutputStream();
-			break;
+			return;
 		}
 		const size_t bufferIndex = bufferIndexIt->second;
-		m_QueuedAudioBytes = m_QueuedAudioBytes >= m_OutputBufferBytes[bufferIndex]
-			? (m_QueuedAudioBytes - m_OutputBufferBytes[bufferIndex])
-			: 0;
+		if (m_QueuedAudioBytes < m_OutputBufferBytes[bufferIndex]) {
+			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL queue byte accounting underflow, resetting counter");
+			m_QueuedAudioBytes = 0;
+		} else {
+			m_QueuedAudioBytes -= m_OutputBufferBytes[bufferIndex];
+		}
 		m_OutputBufferBytes[bufferIndex] = 0;
 		m_FreeOutputBuffers.push_back(buffer);
 		--processed;
@@ -413,17 +416,25 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	const ALuint buffer = m_FreeOutputBuffers.back();
 	m_FreeOutputBuffers.pop_back();
 	const uint32_t queuedBytes = static_cast<uint32_t>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME);
-	const size_t bufferIndex = m_OutputBufferIndex.at(buffer);
+	const auto bufferIndexIt = m_OutputBufferIndex.find(buffer);
+	if (bufferIndexIt == m_OutputBufferIndex.end()) {
+		EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL selected unknown free buffer, dropping PCM frames");
+		m_FreeOutputBuffers.push_back(buffer);
+		return;
+	}
+	const size_t bufferIndex = bufferIndexIt->second;
 	alBufferData(buffer, AL_FORMAT_STEREO16, output,
 		static_cast<ALsizei>(queuedBytes),
 		static_cast<ALsizei>(APU_TIMER_FREQUENCY));
 	if (alGetError() != AL_NO_ERROR) {
+		m_OutputBufferBytes[bufferIndex] = 0;
 		m_FreeOutputBuffers.push_back(buffer);
 		return;
 	}
 
 	alSourceQueueBuffers(m_OutputSource, 1, &buffer);
 	if (alGetError() != AL_NO_ERROR) {
+		m_OutputBufferBytes[bufferIndex] = 0;
 		m_FreeOutputBuffers.push_back(buffer);
 		return;
 	}
