@@ -31,6 +31,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "../PCIDevice.h"
 class APUDevice : public PCIDevice {
@@ -166,6 +167,7 @@ private:
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
 	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};
 	std::array<HRTFFilterState, MAX_HRTF_VOICES> m_VPHRTFFilterState{};
+	std::vector<int16_t> m_VP3DVoiceCaptureScratch{};
 	bool m_LoggedXADPCMDecodeFailure = false;
 };
 

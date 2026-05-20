@@ -350,30 +350,30 @@ void AC97Device::ResetOutputStream()
 	m_QueuedAudioBytes = 0;
 }
 
-void AC97Device::Begin3DVoiceFrameBatch(size_t frameCount)
+void AC97Device::Begin3DVoiceFrameBatch()
 {
-	(void)frameCount;
 	for (auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
 		(void)voiceHandle;
 		voiceState.active = false;
 	}
 }
 
-void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, bool stereo,
+void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, bool sourceStereo,
 	const std::array<uint8_t, 4>& hrtfSubmix, uint8_t hrtfHeadroom,
-	const int16_t* samples, size_t frameCount)
+	const int16_t* stereoSamples, size_t frameCount)
 {
-	if (samples == nullptr || frameCount == 0) {
+	if (stereoSamples == nullptr || frameCount == 0) {
 		return;
 	}
 
 	auto& voiceState = m_Pending3DVoices[voiceHandle];
 	voiceState.active = true;
-	voiceState.stereo = stereo;
+	voiceState.sourceStereo = sourceStereo;
 	voiceState.hrtfEntryIndex = hrtfEntryIndex;
 	voiceState.hrtfSubmix = hrtfSubmix;
 	voiceState.hrtfHeadroom = hrtfHeadroom;
-	voiceState.samples.assign(samples, samples + frameCount * AC97_OUTPUT_CHANNELS);
+	voiceState.samples.resize(frameCount * AC97_OUTPUT_CHANNELS);
+	std::copy_n(stereoSamples, frameCount * AC97_OUTPUT_CHANNELS, voiceState.samples.begin());
 }
 
 void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
