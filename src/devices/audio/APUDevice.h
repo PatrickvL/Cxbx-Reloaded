@@ -101,6 +101,8 @@ private:
 	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
 	bool WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
 		const void* src, size_t size);
+	uint32_t ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
+	void WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
 
 	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -114,6 +116,13 @@ private:
 	uint32_t m_VPInputSgeHandle = 0;
 	uint32_t m_VPOutputSgeHandle = 0;
 	uint32_t m_VPSSLBasePage = 0;
+	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPXMem{};
+	std::array<uint8_t, 0x400 * sizeof(uint32_t)> m_GPMixBuf{};
+	std::array<uint8_t, 0x800 * sizeof(uint32_t)> m_GPYMem{};
+	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPPMem{};
+	std::array<uint8_t, 0x0C00 * sizeof(uint32_t)> m_EPXMem{};
+	std::array<uint8_t, 0x0100 * sizeof(uint32_t)> m_EPYMem{};
+	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_EPPMem{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};

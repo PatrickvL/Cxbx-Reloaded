@@ -50,9 +50,18 @@ constexpr uint32_t APU_VP_VOICE_MAX_HANDLE = 0xFFFF;
 
 constexpr uint32_t APU_GP_BASE = 0x30000;
 constexpr uint32_t APU_GP_SIZE = 0x10000;
+constexpr uint32_t NV_PAPU_GPXMEM = 0x00000000;
+constexpr uint32_t NV_PAPU_GPMIXBUF = 0x00005000;
+constexpr uint32_t NV_PAPU_GPYMEM = 0x00006000;
+constexpr uint32_t NV_PAPU_GPPMEM = 0x0000A000;
+constexpr uint32_t NV_PAPU_GPRST = 0x0000FFFC;
 
 constexpr uint32_t APU_EP_BASE = 0x50000;
 constexpr uint32_t APU_EP_SIZE = 0x10000;
+constexpr uint32_t NV_PAPU_EPXMEM = 0x00000000;
+constexpr uint32_t NV_PAPU_EPYMEM = 0x00006000;
+constexpr uint32_t NV_PAPU_EPPMEM = 0x0000A000;
+constexpr uint32_t NV_PAPU_EPRST = 0x0000FFFC;
 
 constexpr uint32_t NV_PAPU_ISTS = 0x00001000;
 constexpr uint32_t NV_PAPU_ISTS_GINTSTS = 1 << 0;
@@ -91,6 +100,8 @@ constexpr uint32_t NV_PAPU_GPSMAXSGE = 0x000020D4;
 constexpr uint32_t NV_PAPU_GPFMAXSGE = 0x000020D8;
 constexpr uint32_t NV_PAPU_EPSMAXSGE = 0x000020DC;
 constexpr uint32_t NV_PAPU_EPFMAXSGE = 0x000020E0;
+
+constexpr uint32_t NV_PAPU_GPRST_GPRST = 1 << 0;
 
 constexpr uint32_t NV_PAPU_FEAV_VALUE = 0x0000FFFF;
 constexpr uint32_t NV_PAPU_FEAV_LST = 0x00030000;
@@ -371,8 +382,8 @@ int16_t ClampToInt16(int32_t value)
 
 extern AC97Device* g_AC97;
 
-// TODO: Everything :P
-// TODO: Audio Processing/Thread
+// Basic VP playback and guest-visible buffer plumbing exist here, but full
+// GP/EP DSP execution and threaded audio scheduling are still incomplete.
 
 void APUDevice::Init()
 {
@@ -396,6 +407,13 @@ void APUDevice::Reset()
 	m_VPInputSgeHandle = 0;
 	m_VPOutputSgeHandle = 0;
 	m_VPSSLBasePage = 0;
+	m_GPXMem.fill(0);
+	m_GPMixBuf.fill(0);
+	m_GPYMem.fill(0);
+	m_GPPMem.fill(0);
+	m_EPXMem.fill(0);
+	m_EPYMem.fill(0);
+	m_EPPMem.fill(0);
 	m_VPOutBufferCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
@@ -434,18 +452,12 @@ void APUDevice::Reset()
 
 uint32_t APUDevice::IORead(int barIndex, uint32_t addr, unsigned size)
 {
-	(void)barIndex;
-	(void)addr;
-	(void)size;
-	return 0;
+	return MMIORead(barIndex, addr, size);
 }
 
 void APUDevice::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
-	(void)barIndex;
-	(void)addr;
-	(void)value;
-	(void)size;
+	MMIOWrite(barIndex, addr, value, size);
 }
 
 uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
@@ -518,12 +530,47 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 
 uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 {
+	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
+		return ReadMemoryWindow(m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, size);
+	}
+	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
+		return ReadMemoryWindow(m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, size);
+	}
+	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
+		return ReadMemoryWindow(m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, size);
+	}
+	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
+		return ReadMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, size);
+	}
 	return ReadRegister(APU_GP_BASE + addr, size);
 }
 
 void APUDevice::GPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
+	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
+		WriteMemoryWindow(m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, value, size);
+		return;
+	}
+	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
+		WriteMemoryWindow(m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, value, size);
+		return;
+	}
+	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
+		WriteMemoryWindow(m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, value, size);
+		return;
+	}
+	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
+		WriteMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, value, size);
+		return;
+	}
 	WriteRegister(APU_GP_BASE + addr, value, size);
+	if (addr == NV_PAPU_GPRST && size == sizeof(uint32_t) &&
+		(value & NV_PAPU_GPRST_GPRST) == 0) {
+		m_GPXMem.fill(0);
+		m_GPMixBuf.fill(0);
+		m_GPYMem.fill(0);
+		m_GPPMem.fill(0);
+	}
 }
 
 
@@ -560,12 +607,39 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 
 uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 {
+	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
+		return ReadMemoryWindow(m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, size);
+	}
+	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
+		return ReadMemoryWindow(m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, size);
+	}
+	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
+		return ReadMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, size);
+	}
 	return ReadRegister(APU_EP_BASE + addr, size);
 }
 
 void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
+	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
+		WriteMemoryWindow(m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, value, size);
+		return;
+	}
+	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
+		WriteMemoryWindow(m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, value, size);
+		return;
+	}
+	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
+		WriteMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, value, size);
+		return;
+	}
 	WriteRegister(APU_EP_BASE + addr, value, size);
+	if (addr == NV_PAPU_EPRST && size == sizeof(uint32_t) &&
+		(value & NV_PAPU_GPRST_GPRST) == 0) {
+		m_EPXMem.fill(0);
+		m_EPYMem.fill(0);
+		m_EPPMem.fill(0);
+	}
 }
 
 uint32_t APUDevice::ReadRegister(uint32_t addr, unsigned size) const
@@ -986,6 +1060,24 @@ bool APUDevice::WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length,
 	}
 
 	return true;
+}
+
+uint32_t APUDevice::ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const
+{
+	if (data == nullptr || size == 0 || addr + size > length) {
+		return 0;
+	}
+
+	return ReadLE(data, addr, size);
+}
+
+void APUDevice::WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size)
+{
+	if (data == nullptr || size == 0 || addr + size > length) {
+		return;
+	}
+
+	WriteLE(data, addr, value, size);
 }
 
 void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue)
