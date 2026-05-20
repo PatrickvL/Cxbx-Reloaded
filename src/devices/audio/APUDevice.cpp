@@ -296,6 +296,7 @@ constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XA
 constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_MIXBIN_COUNT = 32;
 constexpr uint32_t APU_MAX_3D_VOICES = 64;
+constexpr size_t APU_HRTF_SUBMIX_COUNT = 4;
 constexpr size_t APU_HRTF_ENTRY_COUNT = 128;
 constexpr size_t APU_HRTF_COEFFICIENT_COUNT = 31;
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
@@ -1657,10 +1658,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_V6BIN, bins[6]);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_V7BIN, bins[7]);
 	if (voiceHandle < APU_MAX_3D_VOICES) {
-		bins[0] = m_VPHRTFSubmix[0];
-		bins[1] = m_VPHRTFSubmix[1];
-		bins[2] = m_VPHRTFSubmix[2];
-		bins[3] = m_VPHRTFSubmix[3];
+		// MCPX 3D voices override bins 0-3 with the global HRTF submix destinations.
+		for (size_t binIndex = 0; binIndex < APU_HRTF_SUBMIX_COUNT; ++binIndex) {
+			bins[binIndex] = m_VPHRTFSubmix[binIndex];
+		}
 	}
 	if (bins[0] == 0 && bins[1] == 0) {
 		bins[1] = 1;
@@ -1743,13 +1744,14 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				continue;
 			}
 			uint8_t headroom = 0;
-			if (voiceHandle < APU_MAX_3D_VOICES && binIndex < 4) {
+			if (voiceHandle < APU_MAX_3D_VOICES && binIndex < APU_HRTF_SUBMIX_COUNT) {
 				headroom = m_VPHRTFHeadroom;
 			} else if (bins[binIndex] < m_VPSubmixHeadroom.size()) {
 				headroom = m_VPSubmixHeadroom[bins[binIndex]];
 			}
+			const float headroomDivisor = static_cast<float>(1u << headroom);
 			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain /
-				static_cast<float>(1u << headroom);
+				headroomDivisor;
 			if (gain == 0.0f) {
 				continue;
 			}
