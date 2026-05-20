@@ -38,6 +38,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 #define LOG_PREFIX CXBXR_MODULE::MCPX
@@ -121,11 +122,20 @@ constexpr uint16_t AC97_VOLUME_RIGHT_MASK = 0x001F;
 constexpr uint32_t AC97_VOLUME_LEFT_SHIFT = 8;
 constexpr float AC97_VOLUME_STEP_DB = 1.5f;
 constexpr const char* AC97_OPENAL_DEVICE_ENV = "CXBXR_OPENAL_DEVICE";
+constexpr size_t AC97_OPENAL_DEVICE_NAME_LIMIT = 4096;
+constexpr size_t AC97_OPENAL_DEVICE_COUNT_LIMIT = 256;
 
 const char* GetRequestedOpenALDevice()
 {
-	const char* requestedDevice = std::getenv(AC97_OPENAL_DEVICE_ENV);
-	return (requestedDevice != nullptr && requestedDevice[0] != '\0') ? requestedDevice : nullptr;
+	static std::once_flag requestedDeviceOnce;
+	static std::string requestedDevice;
+	std::call_once(requestedDeviceOnce, []() {
+		const char* environmentValue = std::getenv(AC97_OPENAL_DEVICE_ENV);
+		if (environmentValue != nullptr && environmentValue[0] != '\0') {
+			requestedDevice = environmentValue;
+		}
+	});
+	return requestedDevice.empty() ? nullptr : requestedDevice.c_str();
 }
 
 std::vector<std::string> GetAvailableOpenALDevices()
@@ -142,8 +152,14 @@ std::vector<std::string> GetAvailableOpenALDevices()
 		return devices;
 	}
 
-	for (const ALCchar* current = deviceList; *current != '\0'; current += std::strlen(current) + 1) {
-		devices.emplace_back(current);
+	for (const ALCchar* current = deviceList; *current != '\0' && devices.size() < AC97_OPENAL_DEVICE_COUNT_LIMIT;) {
+		const size_t nameLength = strnlen(current, AC97_OPENAL_DEVICE_NAME_LIMIT);
+		if (nameLength == AC97_OPENAL_DEVICE_NAME_LIMIT) {
+			EmuLog(LOG_LEVEL::WARNING, "OpenAL device enumeration stopped after an unexpectedly long device name");
+			break;
+		}
+		devices.emplace_back(current, nameLength);
+		current += nameLength + 1;
 	}
 	return devices;
 }
@@ -357,12 +373,15 @@ bool AC97Device::EnsureOutputDevice()
 	}
 
 	const char* openedDeviceName = GetOpenedOpenALDeviceName(m_OutputDevice);
-	if (openedRequestedDevice) {
-		EmuLog(LOG_LEVEL::INFO, "Opened OpenAL output device '%s' (requested via %s)", openedDeviceName != nullptr ? openedDeviceName : requestedDevice, AC97_OPENAL_DEVICE_ENV);
-	} else if (requestedDevice != nullptr && openedDeviceName != nullptr) {
-		EmuLog(LOG_LEVEL::INFO, "Opened default OpenAL output device '%s' after requested-device fallback", openedDeviceName);
-	} else if (openedDeviceName != nullptr) {
-		EmuLog(LOG_LEVEL::INFO, "Opened default OpenAL output device '%s'", openedDeviceName);
+	if (openedDeviceName != nullptr) {
+		if (openedRequestedDevice) {
+			EmuLog(LOG_LEVEL::INFO, "Opened OpenAL output device '%s' (requested via %s)", openedDeviceName, AC97_OPENAL_DEVICE_ENV);
+		} else {
+			const char* logMessage = (requestedDevice != nullptr)
+				? "Opened default OpenAL output device '%s' after requested-device fallback"
+				: "Opened default OpenAL output device '%s'";
+			EmuLog(LOG_LEVEL::INFO, logMessage, openedDeviceName);
+		}
 	}
 
 	m_OutputContext = alcCreateContext(m_OutputDevice, nullptr);
