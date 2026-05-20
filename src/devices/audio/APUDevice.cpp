@@ -314,19 +314,6 @@ constexpr float APU_FILTER_MIN_Q = 0.079407f;
 // FC1 is a 16-bit fixed-point resonance value normalized against 0x8000.
 constexpr float APU_FILTER_Q_NORMALIZER = 32768.0f;
 
-uint32_t PeakAbsoluteMixAmplitude(const int32_t* samples, size_t sampleCount)
-{
-	uint32_t peak = 0;
-	for (size_t i = 0; i < sampleCount; ++i) {
-		const int64_t signedSample = static_cast<int64_t>(samples[i]);
-		const uint64_t magnitude = signedSample < 0
-			? static_cast<uint64_t>(-signedSample)
-			: static_cast<uint64_t>(signedSample);
-		peak = std::max(peak, static_cast<uint32_t>(magnitude));
-	}
-	return peak;
-}
-
 uint32_t AbsoluteMixMagnitude(int32_t value)
 {
 	const int64_t signedSample = static_cast<int64_t>(value);
@@ -334,6 +321,15 @@ uint32_t AbsoluteMixMagnitude(int32_t value)
 		? static_cast<uint64_t>(-signedSample)
 		: static_cast<uint64_t>(signedSample);
 	return static_cast<uint32_t>(magnitude);
+}
+
+uint32_t PeakAbsoluteMixAmplitude(const int32_t* samples, size_t sampleCount)
+{
+	uint32_t peak = 0;
+	for (size_t i = 0; i < sampleCount; ++i) {
+		peak = std::max(peak, AbsoluteMixMagnitude(samples[i]));
+	}
+	return peak;
 }
 
 uint32_t PeakAbsoluteMixBinAmplitude(const int32_t* mixBins, size_t frameCount, size_t slot)
@@ -1811,6 +1807,10 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, siz
 	size_t nonStereoOnlyCount = 0;
 	std::vector<BasicVoiceDiagnosticSummary> interestingVoices;
 	const auto isInterestingVoice = [](const BasicVoiceDiagnosticSummary& diagnostics) {
+		// Capture the main failure modes we are tracing:
+		// 1) decode produced signal but none of it reached stereo bins,
+		// 2) the active voice stayed silent all the way through decode,
+		// 3) frames rendered without any offset advance despite a positive pitch step.
 		return diagnostics.active &&
 			((diagnostics.decodedNonZero && !diagnostics.stereoContribution) ||
 			 !diagnostics.decodedNonZero ||
