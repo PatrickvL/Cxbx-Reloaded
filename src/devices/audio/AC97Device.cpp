@@ -559,7 +559,10 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 
 	while (!m_FreeOutputBuffers.empty() && !m_StagedOutputFrames.empty()) {
 		const size_t stagedFrameCount = m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS;
-		if (stagedFrameCount < AC97_STREAM_BUFFER_FRAMES) {
+		const size_t minimumFramesToQueue = (m_QueuedAudioBytes == 0)
+			? static_cast<size_t>(AC97_STREAM_BUFFER_FRAMES / 2)
+			: static_cast<size_t>(AC97_STREAM_BUFFER_FRAMES);
+		if (stagedFrameCount < minimumFramesToQueue) {
 			break;
 		}
 
@@ -600,8 +603,13 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 			m_StagedOutputFrames.begin() + (framesToQueue * AC97_OUTPUT_CHANNELS));
 	}
 
-	if (m_QueuedAudioBytes >= AC97_MAX_QUEUED_AUDIO_BYTES || !m_FreeOutputBuffers.empty()) {
+	if (!m_FreeOutputBuffers.empty() && m_QueuedAudioBytes < AC97_MAX_QUEUED_AUDIO_BYTES) {
 		m_LoggedQueueFull = false;
+	} else if (m_QueuedAudioBytes >= AC97_MAX_QUEUED_AUDIO_BYTES) {
+		if (!m_LoggedQueueFull) {
+			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL queue full, dropping PCM frames");
+			m_LoggedQueueFull = true;
+		}
 	} else if (!m_LoggedQueueFull) {
 		EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL buffer pool exhausted, dropping PCM frames");
 		m_LoggedQueueFull = true;
