@@ -418,9 +418,11 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					if (size >= sizeof(uint32_t)) {
 						WriteRegister(addr, value & ~0x7u, sizeof(uint32_t));
 						const size_t channelIndex = ChannelIndex(channelBase);
+						const uint8_t control = static_cast<uint8_t>(ReadRegister(AC97_NAM_SIZE + channelBase + BM_CR, sizeof(uint8_t)));
 						m_ChannelAdvanceOnRestart[channelIndex] = false;
 						m_ChannelQueuedAfterHalt[channelIndex] = false;
-						if (IsDescriptorErrorAcknowledged(channelBase)) {
+						if ((control & CR_RPBM) == 0 &&
+							IsDescriptorErrorAcknowledged(channelBase)) {
 							m_ChannelDescriptorError[channelIndex] = false;
 						}
 						UpdateBusMasterStatus(channelBase);
@@ -436,12 +438,13 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					const uint32_t baseAddr = AC97_NAM_SIZE + channelBase;
 					const uint8_t previousLastValid = static_cast<uint8_t>(ReadRegister(baseAddr + BM_LVI, sizeof(uint8_t)) & 0x1F);
 					const uint8_t newLastValid = static_cast<uint8_t>(value & 0x1F);
+					const uint8_t control = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CR, sizeof(uint8_t)));
 					WriteRegister(addr, newLastValid, sizeof(uint8_t));
-					if (IsDescriptorErrorAcknowledged(channelBase)) {
+					if ((control & CR_RPBM) == 0 &&
+						IsDescriptorErrorAcknowledged(channelBase)) {
 						m_ChannelDescriptorError[channelIndex] = false;
 					}
 
-					const uint8_t control = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CR, sizeof(uint8_t)));
 					const uint16_t status = ReadRegister16(baseAddr + BM_SR);
 					const uint16_t remaining = ReadRegister16(baseAddr + BM_PICB);
 					const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CIV, sizeof(uint8_t)) & 0x1F);
