@@ -352,12 +352,10 @@ void AC97Device::ResetOutputStream()
 
 void AC97Device::Begin3DVoiceFrameBatch(size_t frameCount)
 {
+	(void)frameCount;
 	for (auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
 		(void)voiceHandle;
 		voiceState.active = false;
-		if (voiceState.samples.size() != frameCount * AC97_OUTPUT_CHANNELS) {
-			voiceState.samples.clear();
-		}
 	}
 }
 

@@ -66,7 +66,7 @@ class AC97Device : public PCIDevice {
 		struct SpatialVoiceState {
 			bool active = false;
 			bool stereo = false;
-			uint32_t hrtfEntryIndex = 0xFFFF;
+			uint32_t hrtfEntryIndex = 0xFFFFFFFF;
 			std::array<uint8_t, 4> hrtfSubmix{};
 			uint8_t hrtfHeadroom = 0;
 			std::vector<int16_t> samples{};
