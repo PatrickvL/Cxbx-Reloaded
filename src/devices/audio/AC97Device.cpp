@@ -118,6 +118,7 @@ constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_C
 constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
 constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 2048;
 constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_OUTPUT_BYTES_PER_FRAME;
+constexpr uint32_t AC97_STARTUP_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES / 2;
 constexpr uint32_t AC97_MAX_BUFFERED_AUDIO_BYTES = AC97_MAX_QUEUED_AUDIO_BYTES * 2;
 constexpr uint16_t AC97_VOLUME_MUTE = 0x8000;
 constexpr uint16_t AC97_VOLUME_LEFT_MASK = 0x1F00;
@@ -533,7 +534,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		pendingBytes > AC97_MAX_BUFFERED_AUDIO_BYTES - incomingBytes ||
 		m_QueuedAudioBytes > AC97_MAX_BUFFERED_AUDIO_BYTES - pendingBytes - incomingBytes) {
 		if (!m_LoggedQueueFull) {
-			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL buffered audio full, dropping PCM frames");
+			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL staged audio backlog full, dropping PCM frames");
 			m_LoggedQueueFull = true;
 		}
 		return;
@@ -560,7 +561,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	while (!m_FreeOutputBuffers.empty() && !m_StagedOutputFrames.empty()) {
 		const size_t stagedFrameCount = m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS;
 		const size_t minimumFramesToQueue = (m_QueuedAudioBytes == 0)
-			? static_cast<size_t>(AC97_STREAM_BUFFER_FRAMES / 2)
+			? static_cast<size_t>(AC97_STARTUP_BUFFER_FRAMES)
 			: static_cast<size_t>(AC97_STREAM_BUFFER_FRAMES);
 		if (stagedFrameCount < minimumFramesToQueue) {
 			break;
