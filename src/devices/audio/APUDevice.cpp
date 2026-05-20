@@ -306,7 +306,9 @@ constexpr float APU_HRTF_ITD_SCALE = 512.0f;
 constexpr float APU_HRTF_PARAM_SMOOTH_ALPHA = 0.01f;
 constexpr float APU_HRTF_NORMALIZATION_EPSILON = 0.000001f;
 constexpr float APU_HRTF_MAX_DELAY_SAMPLES_FLOAT = static_cast<float>(APUDevice::HRTF_FILTER_DELAY_SAMPLES);
+// Scale normalized floating-point samples to signed 16-bit PCM amplitude.
 constexpr float APU_SAMPLE_SCALE_FACTOR = 32767.0f;
+constexpr size_t APU_DIAGNOSTIC_MAX_VOICES_TO_LOG = 4;
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
 // Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
@@ -318,7 +320,7 @@ uint32_t AbsoluteMixMagnitude(int32_t value)
 {
 	const int64_t signedSample = static_cast<int64_t>(value);
 	const uint64_t magnitude = signedSample < 0
-		? static_cast<uint64_t>(-signedSample)
+		? static_cast<uint64_t>(0 - signedSample)
 		: static_cast<uint64_t>(signedSample);
 	return static_cast<uint32_t>(magnitude);
 }
@@ -1806,7 +1808,7 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, siz
 	size_t stereoContributionCount = 0;
 	size_t nonStereoOnlyCount = 0;
 	std::vector<BasicVoiceDiagnosticSummary> interestingVoices;
-	const auto isInterestingVoice = [](const BasicVoiceDiagnosticSummary& diagnostics) {
+	const auto requiresDiagnosticAttention = [](const BasicVoiceDiagnosticSummary& diagnostics) {
 		// Capture the main failure modes we are tracing:
 		// 1) decode produced signal but none of it reached stereo bins,
 		// 2) the active voice stayed silent all the way through decode,
@@ -1839,7 +1841,8 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, siz
 			if (diagnostics.nonStereoContribution && !diagnostics.stereoContribution) {
 				++nonStereoOnlyCount;
 			}
-			if (interestingVoices.size() < 4 && isInterestingVoice(diagnostics)) {
+			if (interestingVoices.size() < APU_DIAGNOSTIC_MAX_VOICES_TO_LOG &&
+				requiresDiagnosticAttention(diagnostics)) {
 				interestingVoices.push_back(diagnostics);
 			}
 		}
@@ -1892,6 +1895,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		diagnostics->voiceHandle = voiceHandle;
 		diagnostics->visited = true;
 	}
+	const bool captureVoiceDiagnostics = diagnostics != nullptr;
 
 	uint32_t state = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
@@ -1904,7 +1908,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, 0xFFFFFFFF, format)) {
 		return;
 	}
-	if (diagnostics != nullptr) {
+	if (captureVoiceDiagnostics) {
 		diagnostics->active = true;
 	}
 
@@ -1995,7 +1999,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	std::array<uint32_t, APU_HRTF_SUBMIX_COUNT> hrtfSubmixVolumes{};
 	// MCPX 3D voices route HRTF output through volumes[0..3], which feed the four global HRTF submix slots.
 	std::copy_n(volumes, APU_HRTF_SUBMIX_COUNT, hrtfSubmixVolumes.begin());
-	if (diagnostics != nullptr) {
+	if (captureVoiceDiagnostics) {
 		std::copy_n(bins, 8, diagnostics->bins);
 		std::copy_n(volumes, 8, diagnostics->volumes);
 	}
@@ -2021,7 +2025,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	}
 
 	const double pitchStep = DecodePitchStep(pitch);
-	if (diagnostics != nullptr) {
+	if (captureVoiceDiagnostics) {
 		diagnostics->startOffset = currentOffset;
 		diagnostics->pitchStep = pitchStep;
 	}
@@ -2055,7 +2059,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		std::fill_n(mixBins + multipassBin * frameCount, frameCount, 0);
 	}
 	auto recordDecodedPeak = [&](float sampleLeft, float sampleRight) {
-		if (diagnostics == nullptr) {
+		if (!captureVoiceDiagnostics) {
 			return;
 		}
 		const float peakSample = std::max(std::fabs(sampleLeft), std::fabs(sampleRight));
@@ -2078,7 +2082,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			} else if (bins[binIndex] < m_VPSubmixHeadroom.size()) {
 				headroom = m_VPSubmixHeadroom[bins[binIndex]];
 			}
-			if (diagnostics != nullptr) {
+			if (captureVoiceDiagnostics) {
 				diagnostics->headroom[binIndex] = headroom;
 			}
 			const float headroomDivisor = static_cast<float>(1u << headroom);
@@ -2090,7 +2094,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			const float sample = channelSamples[binIndex % channels];
 			const int32_t contribution = static_cast<int32_t>(sample * gain * APU_SAMPLE_SCALE_FACTOR);
 			mixBins[bins[binIndex] * frameCount + frame] += contribution;
-			if (diagnostics != nullptr && contribution != 0) {
+			if (captureVoiceDiagnostics && contribution != 0) {
 				const uint32_t magnitude = AbsoluteMixMagnitude(contribution);
 				diagnostics->mixed = true;
 				diagnostics->mixedPeak = std::max(diagnostics->mixedPeak, magnitude);
@@ -2368,7 +2372,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			NV_PAVS_VOICE_TAR_LFO_ENV, NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE,
 			NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_EALVL,
 			NV_PAVS_VOICE_CUR_ECNT_EACOUNT, NV_PAVS_VOICE_PAR_STATE_EACUR);
-		if (diagnostics != nullptr) {
+		if (captureVoiceDiagnostics) {
 			diagnostics->maxEnvelopeGain = std::max(diagnostics->maxEnvelopeGain, envelopeGain);
 		}
 		(void)StepVoiceEnvelope(
@@ -2399,7 +2403,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				ProcessHRTFSample(voiceHandle, currentLeft, currentRight);
 			}
 			mixSamples(currentLeft, currentRight, envelopeGain, frame);
-			if (diagnostics != nullptr) {
+			if (captureVoiceDiagnostics) {
 				++diagnostics->framesRendered;
 			}
 			continue;
@@ -2429,7 +2433,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		}
 
 		mixSamples(sampleLeft, sampleRight, envelopeGain, frame);
-		if (diagnostics != nullptr) {
+		if (captureVoiceDiagnostics) {
 			++diagnostics->framesRendered;
 		}
 
@@ -2438,7 +2442,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		playbackState.fraction = nextPlaybackPosition - static_cast<double>(wholeFrames);
 		for (uint32_t step = 0; step < wholeFrames; ++step) {
 			++currentOffset;
-			if (diagnostics != nullptr) {
+			if (captureVoiceDiagnostics) {
 				++diagnostics->offsetAdvance;
 			}
 			if (!advancePlaybackPosition(sslData, baseAddress, endOffset, currentOffset, true)) {
