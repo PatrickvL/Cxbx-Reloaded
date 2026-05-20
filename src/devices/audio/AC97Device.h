@@ -58,6 +58,8 @@ class AC97Device : public PCIDevice {
 			const int16_t* stereoSamples, size_t frameCount);
 		void SubmitPCMFrames(const int16_t* samples, size_t frameCount);
 	private:
+		static constexpr size_t OUTPUT_BUFFER_COUNT = 128;
+
 		enum class PrimeResult : uint8_t {
 			Ready,
 			EndOfList,
@@ -103,8 +105,8 @@ class AC97Device : public PCIDevice {
 		ALCdevice* m_OutputDevice = nullptr;
 		ALCcontext* m_OutputContext = nullptr;
 		ALuint m_OutputSource = 0;
-		std::array<ALuint, 16> m_OutputBuffers{};
-		std::array<uint32_t, 16> m_OutputBufferBytes{};
+		std::array<ALuint, OUTPUT_BUFFER_COUNT> m_OutputBuffers{};
+		std::array<uint32_t, OUTPUT_BUFFER_COUNT> m_OutputBufferBytes{};
 		uint32_t m_QueuedAudioBytes = 0;
 		bool m_OutputDeviceFailed = false;
 		bool m_LoggedQueueFull = false;
