@@ -1805,7 +1805,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	volumes[7] |= volume7 << 8;
 	std::array<uint32_t, APU_HRTF_SUBMIX_COUNT> hrtfSubmixVolumes{};
 	// MCPX 3D voices route HRTF output through volumes[0..3], which feed the four global HRTF submix slots.
-	std::copy_n(volumes.begin(), APU_HRTF_SUBMIX_COUNT, hrtfSubmixVolumes.begin());
+	std::copy_n(volumes, APU_HRTF_SUBMIX_COUNT, hrtfSubmixVolumes.begin());
 
 	uint32_t baseAddress = 0;
 	uint32_t currentOffset = 0;
