@@ -359,7 +359,8 @@ void AC97Device::Begin3DVoiceFrameBatch()
 }
 
 void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, bool sourceStereo,
-	const std::array<uint8_t, 4>& hrtfSubmix, uint8_t hrtfHeadroom,
+	const std::array<uint8_t, 4>& hrtfSubmix, const std::array<uint32_t, 4>& hrtfSubmixVolumes,
+	uint8_t hrtfHeadroom,
 	const int16_t* stereoSamples, size_t frameCount)
 {
 	if (stereoSamples == nullptr || frameCount == 0) {
@@ -371,6 +372,7 @@ void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryInd
 	voiceState.sourceStereo = sourceStereo;
 	voiceState.hrtfEntryIndex = hrtfEntryIndex;
 	voiceState.hrtfSubmix = hrtfSubmix;
+	voiceState.hrtfSubmixVolumes = hrtfSubmixVolumes;
 	voiceState.hrtfHeadroom = hrtfHeadroom;
 	voiceState.samples.resize(frameCount * AC97_OUTPUT_CHANNELS);
 	std::copy_n(stereoSamples, frameCount * AC97_OUTPUT_CHANNELS, voiceState.samples.begin());

@@ -1796,6 +1796,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	volumes[7] |= volume7 << 4;
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLC, NV_PAVS_VOICE_TAR_VOLC_VOLUME7_B11_8, volume7);
 	volumes[7] |= volume7 << 8;
+	std::array<uint32_t, APU_HRTF_SUBMIX_COUNT> hrtfSubmixVolumes{};
+	for (size_t binIndex = 0; binIndex < hrtfSubmixVolumes.size(); ++binIndex) {
+		hrtfSubmixVolumes[binIndex] = volumes[binIndex];
+	}
 
 	uint32_t baseAddress = 0;
 	uint32_t currentOffset = 0;
@@ -2146,10 +2150,12 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		if (multipass) {
 			applyLowPass(currentLeft, currentRight);
 			if (capture3DForOpenAL) {
+				const float captureLeft = ClampUnitSample(currentLeft * envelopeGain);
+				const float captureRight = ClampUnitSample(currentRight * envelopeGain);
 				m_VP3DVoiceCaptureScratch[frame * 2] = ClampToInt16(static_cast<int32_t>(std::lrint(
-					static_cast<double>(ClampUnitSample(currentLeft)) * 32767.0)));
+					static_cast<double>(captureLeft) * 32767.0)));
 				m_VP3DVoiceCaptureScratch[frame * 2 + 1] = ClampToInt16(static_cast<int32_t>(std::lrint(
-					static_cast<double>(ClampUnitSample(currentRight)) * 32767.0)));
+					static_cast<double>(captureRight) * 32767.0)));
 			}
 			if (hrtfEnabled) {
 				ProcessHRTFSample(voiceHandle, currentLeft, currentRight);
@@ -2175,10 +2181,12 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
 		applyLowPass(sampleLeft, sampleRight);
 		if (capture3DForOpenAL) {
+			const float captureLeft = ClampUnitSample(sampleLeft * envelopeGain);
+			const float captureRight = ClampUnitSample(sampleRight * envelopeGain);
 			m_VP3DVoiceCaptureScratch[frame * 2] = ClampToInt16(static_cast<int32_t>(std::lrint(
-				static_cast<double>(ClampUnitSample(sampleLeft)) * 32767.0)));
+				static_cast<double>(captureLeft) * 32767.0)));
 			m_VP3DVoiceCaptureScratch[frame * 2 + 1] = ClampToInt16(static_cast<int32_t>(std::lrint(
-				static_cast<double>(ClampUnitSample(sampleRight)) * 32767.0)));
+				static_cast<double>(captureRight) * 32767.0)));
 		}
 		if (hrtfEnabled) {
 			ProcessHRTFSample(voiceHandle, sampleLeft, sampleRight);
@@ -2200,7 +2208,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 	if (capture3DForOpenAL) {
 		g_AC97->Submit3DVoiceFrames(voiceHandle, hrtfEntryIndex, stereo,
-			m_VPHRTFSubmix, m_VPHRTFHeadroom,
+			m_VPHRTFSubmix, hrtfSubmixVolumes, m_VPHRTFHeadroom,
 			m_VP3DVoiceCaptureScratch.data(), frameCount);
 	}
 
