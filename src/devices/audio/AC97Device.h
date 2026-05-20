@@ -31,6 +31,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 #include <AL/al.h>
@@ -82,6 +83,7 @@ class AC97Device : public PCIDevice {
 		std::array<bool, 3> m_ChannelDescriptorError{};
 		std::vector<int16_t> m_OutputScratch{};
 		std::vector<ALuint> m_FreeOutputBuffers{};
+		std::unordered_map<ALuint, size_t> m_OutputBufferIndex{};
 		ALCdevice* m_OutputDevice = nullptr;
 		ALCcontext* m_OutputContext = nullptr;
 		ALuint m_OutputSource = 0;
