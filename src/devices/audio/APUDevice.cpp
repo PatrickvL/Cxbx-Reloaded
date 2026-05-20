@@ -369,9 +369,18 @@ float AttenuateVoiceVolume(uint32_t volume)
 	return clamped == 0x0FFF ? 0.0f : std::pow(10.0f, static_cast<float>(clamped) / APU_VOLUME_DECIBEL_DIVISOR);
 }
 
-float AttenuateHeadroom(uint8_t headroom)
+static int32_t ApplyHeadroomToMixSample(int32_t sample, uint8_t headroom)
 {
-	return std::ldexp(1.0f, -static_cast<int>(headroom));
+	if (headroom == 0) {
+		return sample;
+	}
+
+	const int32_t rounding = 1 << (headroom - 1);
+	if (sample >= 0) {
+		return (sample + rounding) >> headroom;
+	}
+
+	return -(((-sample) + rounding) >> headroom);
 }
 
 float ConvertUnsigned8(uint8_t value)
@@ -1525,16 +1534,16 @@ void APUDevice::ApplySubmixHeadroom(int32_t* mixBins, size_t frameCount)
 		return;
 	}
 
-	for (size_t slot = 0; slot < APU_MIXBIN_COUNT && slot < m_VPSubmixHeadroom.size(); ++slot) {
+	const size_t maxSlot = std::min(APU_MIXBIN_COUNT, m_VPSubmixHeadroom.size());
+	for (size_t slot = 0; slot < maxSlot; ++slot) {
 		const uint8_t headroom = m_VPSubmixHeadroom[slot];
 		if (headroom == 0) {
 			continue;
 		}
 
-		const float gain = AttenuateHeadroom(headroom);
 		int32_t* slotMix = mixBins + slot * frameCount;
 		for (size_t frame = 0; frame < frameCount; ++frame) {
-			slotMix[frame] = static_cast<int32_t>(std::lround(static_cast<float>(slotMix[frame]) * gain));
+			slotMix[frame] = ApplyHeadroomToMixSample(slotMix[frame], headroom);
 		}
 	}
 }
