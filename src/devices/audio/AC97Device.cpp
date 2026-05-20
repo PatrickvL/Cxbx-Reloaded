@@ -36,7 +36,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 
 #define LOG_PREFIX CXBXR_MODULE::MCPX
 
@@ -118,6 +120,65 @@ constexpr uint16_t AC97_VOLUME_LEFT_MASK = 0x1F00;
 constexpr uint16_t AC97_VOLUME_RIGHT_MASK = 0x001F;
 constexpr uint32_t AC97_VOLUME_LEFT_SHIFT = 8;
 constexpr float AC97_VOLUME_STEP_DB = 1.5f;
+constexpr const char* AC97_OPENAL_DEVICE_ENV = "CXBXR_OPENAL_DEVICE";
+
+const char* GetRequestedOpenALDevice()
+{
+	const char* requestedDevice = std::getenv(AC97_OPENAL_DEVICE_ENV);
+	return (requestedDevice != nullptr && requestedDevice[0] != '\0') ? requestedDevice : nullptr;
+}
+
+std::vector<std::string> GetAvailableOpenALDevices()
+{
+	const ALCchar* deviceList = nullptr;
+	if (alcIsExtensionPresent(nullptr, "ALC_ENUMERATE_ALL_EXT") == ALC_TRUE) {
+		deviceList = alcGetString(nullptr, ALC_ALL_DEVICES_SPECIFIER);
+	} else if (alcIsExtensionPresent(nullptr, "ALC_ENUMERATION_EXT") == ALC_TRUE) {
+		deviceList = alcGetString(nullptr, ALC_DEVICE_SPECIFIER);
+	}
+
+	std::vector<std::string> devices;
+	if (deviceList == nullptr) {
+		return devices;
+	}
+
+	for (const ALCchar* current = deviceList; *current != '\0'; current += std::strlen(current) + 1) {
+		devices.emplace_back(current);
+	}
+	return devices;
+}
+
+std::string JoinOpenALDeviceNames(const std::vector<std::string>& devices)
+{
+	if (devices.empty()) {
+		return "<not reported>";
+	}
+
+	std::string joinedNames;
+	for (size_t i = 0; i < devices.size(); ++i) {
+		if (i != 0) {
+			joinedNames += ", ";
+		}
+		joinedNames += devices[i];
+	}
+	return joinedNames;
+}
+
+const char* GetOpenedOpenALDeviceName(ALCdevice* device)
+{
+	if (device == nullptr) {
+		return nullptr;
+	}
+
+	const ALCchar* deviceName = nullptr;
+	if (alcIsExtensionPresent(device, "ALC_ENUMERATE_ALL_EXT") == ALC_TRUE) {
+		deviceName = alcGetString(device, ALC_ALL_DEVICES_SPECIFIER);
+	}
+	if (deviceName == nullptr || deviceName[0] == '\0') {
+		deviceName = alcGetString(device, ALC_DEVICE_SPECIFIER);
+	}
+	return (deviceName != nullptr && deviceName[0] != '\0') ? deviceName : nullptr;
+}
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
@@ -265,11 +326,43 @@ bool AC97Device::EnsureOutputDevice()
 		return false;
 	}
 
-	m_OutputDevice = alcOpenDevice(nullptr);
+	const char* requestedDevice = GetRequestedOpenALDevice();
+	const std::vector<std::string> availableDevices = GetAvailableOpenALDevices();
+	const std::string availableDeviceList = JoinOpenALDeviceNames(availableDevices);
+	bool openedRequestedDevice = false;
+
+	if (requestedDevice != nullptr) {
+		m_OutputDevice = alcOpenDevice(requestedDevice);
+		openedRequestedDevice = (m_OutputDevice != nullptr);
+		if (m_OutputDevice == nullptr) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"Failed to open requested OpenAL device '%s' from %s; falling back to the default device. Available devices: %s",
+				requestedDevice, AC97_OPENAL_DEVICE_ENV, availableDeviceList.c_str());
+		}
+	}
+
 	if (m_OutputDevice == nullptr) {
-		EmuLog(LOG_LEVEL::WARNING, "Failed to open OpenAL device");
+		m_OutputDevice = alcOpenDevice(nullptr);
+	}
+	if (m_OutputDevice == nullptr) {
+		if (requestedDevice != nullptr) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"Failed to open both the requested OpenAL device '%s' and the default OpenAL device. Available devices: %s",
+				requestedDevice, availableDeviceList.c_str());
+		} else {
+			EmuLog(LOG_LEVEL::WARNING, "Failed to open OpenAL device. Available devices: %s", availableDeviceList.c_str());
+		}
 		m_OutputDeviceFailed = true;
 		return false;
+	}
+
+	const char* openedDeviceName = GetOpenedOpenALDeviceName(m_OutputDevice);
+	if (openedRequestedDevice) {
+		EmuLog(LOG_LEVEL::INFO, "Opened OpenAL output device '%s' (requested via %s)", openedDeviceName != nullptr ? openedDeviceName : requestedDevice, AC97_OPENAL_DEVICE_ENV);
+	} else if (requestedDevice != nullptr && openedDeviceName != nullptr) {
+		EmuLog(LOG_LEVEL::INFO, "Opened default OpenAL output device '%s' after requested-device fallback", openedDeviceName);
+	} else if (openedDeviceName != nullptr) {
+		EmuLog(LOG_LEVEL::INFO, "Opened default OpenAL output device '%s'", openedDeviceName);
 	}
 
 	m_OutputContext = alcCreateContext(m_OutputDevice, nullptr);
