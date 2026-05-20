@@ -1412,12 +1412,12 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 // ******************************************************************
 // * 0x0079 - KeIsExecutingDpc()
 // ******************************************************************
-XBSYSAPI EXPORTNUM(121) xbox::boolean_xt NTAPI xbox::KeIsExecutingDpc
+XBSYSAPI EXPORTNUM(121) xbox::ulong_xt NTAPI xbox::KeIsExecutingDpc
 ()
 {
 	LOG_FUNC();
 
-	BOOLEAN ret = (BOOLEAN)KeGetCurrentPrcb()->DpcRoutineActive;
+	ulong_xt ret = KeGetCurrentPrcb()->DpcRoutineActive;
 
 	RETURN(ret);
 }
