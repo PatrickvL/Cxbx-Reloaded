@@ -657,13 +657,13 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		if (sourceError != AL_NO_ERROR) {
 			ALint state = AL_INITIAL;
 			ALint queued = 0;
-			ALint processedBuffers = 0;
+			ALint processed = 0;
 			ALenum snapshotError = AL_NO_ERROR;
-			if (QueryOutputSourceSnapshot(state, queued, processedBuffers, snapshotError)) {
+			if (QueryOutputSourceSnapshot(state, queued, processed, snapshotError)) {
 				EmuLog(LOG_LEVEL::WARNING,
 					"AC97 OpenAL alBufferData failed: %s (0x%04x), state=%s queuedBuffers=%d processedBuffers=%d queuedBytes=%u stagedFrames=%zu",
 					GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError),
-					GetOpenALSourceStateName(state), queued, processedBuffers,
+					GetOpenALSourceStateName(state), queued, processed,
 					m_QueuedAudioBytes, m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS);
 			} else {
 				EmuLog(LOG_LEVEL::WARNING,
@@ -682,13 +682,13 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		if (sourceError != AL_NO_ERROR) {
 			ALint state = AL_INITIAL;
 			ALint queued = 0;
-			ALint processedBuffers = 0;
+			ALint processed = 0;
 			ALenum snapshotError = AL_NO_ERROR;
-			if (QueryOutputSourceSnapshot(state, queued, processedBuffers, snapshotError)) {
+			if (QueryOutputSourceSnapshot(state, queued, processed, snapshotError)) {
 				EmuLog(LOG_LEVEL::WARNING,
 					"AC97 OpenAL alSourceQueueBuffers failed: %s (0x%04x), state=%s queuedBuffers=%d processedBuffers=%d queuedBytes=%u stagedFrames=%zu",
 					GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError),
-					GetOpenALSourceStateName(state), queued, processedBuffers,
+					GetOpenALSourceStateName(state), queued, processed,
 					m_QueuedAudioBytes, m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS);
 			} else {
 				EmuLog(LOG_LEVEL::WARNING,
