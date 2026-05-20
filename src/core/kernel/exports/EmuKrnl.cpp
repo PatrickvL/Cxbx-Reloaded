@@ -160,10 +160,7 @@ void CallSoftwareInterrupt(const xbox::KIRQL SoftwareIrql)
 		xbox::KiExecuteKernelApc();
 		break;
 	case DISPATCH_LEVEL: // = 2
-		// This can be recursively called by KiUnlockDispatcherDatabase and KfLowerIrql, so avoid calling DPCs again if the current one has queued yet another one
-		if (!g_DpcRoutineActive) {
-			ExecuteDpcQueue();
-		}
+		ExecuteDpcQueue();
 		break;
 	case APC_LEVEL | DISPATCH_LEVEL: // = 3
 		KiUnexpectedInterrupt();

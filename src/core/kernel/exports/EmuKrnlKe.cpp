@@ -491,11 +491,11 @@ void ExecuteDpcQueue(bool inline_dispatch)
 	// While we're working with the DpcQueue, we need to be thread-safe :
 	EnterCriticalSection(&(g_DpcData.Lock));
 
-	// On real Xbox, DPC dispatch is suppressed when DpcRoutineActive is set.
-	// The background DPC thread checks this to respect suppression set by the
-	// game thread. When inline_dispatch is true, the caller already holds the
-	// reservation (g_DpcRoutineActive == TRUE) so we skip this guard.
-	if (!inline_dispatch && g_DpcRoutineActive) {
+	// Suppress dispatch if the current thread is already dispatching DPCs
+	// (re-entrancy via KiUnlockDispatcherDatabase -> KfLowerIrql) or if
+	// game code has explicitly suppressed via fs:0x58 (g_DpcRoutineActive).
+	// When inline_dispatch is true, the caller holds the reservation.
+	if (!inline_dispatch && (g_DpcRoutineActive || KeGetCurrentPrcb()->DpcRoutineActive)) {
 		LeaveCriticalSection(&(g_DpcData.Lock));
 		return;
 	}
@@ -507,8 +507,10 @@ void ExecuteDpcQueue(bool inline_dispatch)
 		pkdpc = CONTAINING_RECORD(RemoveHeadList(&(g_DpcData.DpcQueue)), xbox::KDPC, DpcListEntry);
 		// Mark it as no longer linked into the DpcQueue
 		pkdpc->Inserted = FALSE;
-		// Set DpcRoutineActive: global for suppression, KPRCB for per-thread reporting
-		g_DpcRoutineActive = TRUE;
+		// Set per-thread DpcRoutineActive for re-entrancy protection and
+		// KeIsExecutingDpc reporting. Don't touch g_DpcRoutineActive here —
+		// it's reserved for game-level suppression (fs:0x58 writes) and the
+		// KeInsertQueueDpc inline reservation.
 		KeGetCurrentPrcb()->DpcRoutineActive = TRUE;
 		LeaveCriticalSection(&(g_DpcData.Lock));
 
@@ -523,7 +525,6 @@ void ExecuteDpcQueue(bool inline_dispatch)
 
 		EnterCriticalSection(&(g_DpcData.Lock));
 		KeGetCurrentPrcb()->DpcRoutineActive = FALSE;
-		g_DpcRoutineActive = FALSE;
 	}
 
 	// NOTE: IsDpcPending is now cleared at the start of the DPC loop iteration
@@ -1398,11 +1399,11 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 
 		// On real Xbox (single CPU), after queuing a DPC at PASSIVE_LEVEL,
 		// the DPC fires synchronously before KeInsertQueueDpc returns (via
-		// KfLowerIrql on the trap return path). Suppress the background DPC
-		// thread from stealing this DPC by setting g_DpcRoutineActive while
-		// we still hold the lock — ExecuteDpcQueue checks this flag.
+		// KfLowerIrql on the trap return path). Use per-thread DpcRoutineActive
+		// to decide — the background DPC thread's activity doesn't affect us
+		// (it's a separate "processor" in our emulation model).
 		volatile KPCR* Pcr = EmuKeGetPcr();
-		bool dispatch_now = (!g_DpcRoutineActive && Pcr->Irql < DISPATCH_LEVEL);
+		bool dispatch_now = (!Pcr->PrcbData.DpcRoutineActive && Pcr->Irql < DISPATCH_LEVEL);
 		if (dispatch_now) {
 			g_DpcRoutineActive = TRUE;
 		}
@@ -1412,6 +1413,8 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 			// Dispatch inline with g_DpcRoutineActive still TRUE from the
 			// reservation above — no race window for the background thread.
 			ExecuteDpcQueue(true);
+			// Release the reservation now that inline dispatch is complete.
+			g_DpcRoutineActive = FALSE;
 		} else {
 			// Signal the background DPC thread to dispatch later
 			HalRequestSoftwareInterrupt(DISPATCH_LEVEL);

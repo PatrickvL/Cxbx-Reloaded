@@ -1457,8 +1457,10 @@ static void CxbxrKrnlInitHacks()
 
 			// Dispatch all pending DPCs. This thread is the primary DPC
 			// dispatcher — timer expirations (KiTimerExpiration) and other
-			// system DPCs rely on it. The g_DpcRoutineActive suppression in
-			// ExecuteDpcQueue prevents re-entrant dispatch from game threads.
+			// system DPCs rely on it. The combined g_DpcRoutineActive /
+			// per-thread PRCB guard inside ExecuteDpcQueue prevents dispatch
+			// when game code has set DpcRoutineActive (via fs:0x58 writes)
+			// or when we're already dispatching on this thread.
 			ExecuteDpcQueue();
 
 			// Re-check: if NV2A interrupts are still pending after ISR+DPC processing,
