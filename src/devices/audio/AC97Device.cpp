@@ -153,6 +153,16 @@ uint8_t GetNextDescriptorIndex(uint8_t currentIndex)
 	return static_cast<uint8_t>((currentIndex + 1) & (AC97_DESCRIPTOR_COUNT - 1));
 }
 
+size_t FindBufferIndexById(const std::array<ALuint, 16>& buffers, ALuint buffer)
+{
+	for (size_t i = 0; i < buffers.size(); ++i) {
+		if (buffers[i] == buffer) {
+			return i;
+		}
+	}
+	return buffers.size();
+}
+
 bool HasBusMasterInterrupt(uint16_t status, uint8_t control)
 {
 	return ((status & SR_FIFOE) != 0 && (control & CR_FEIE) != 0) ||
@@ -312,6 +322,8 @@ bool AC97Device::EnsureOutputDevice()
 	}
 
 	m_FreeOutputBuffers.assign(m_OutputBuffers.begin(), m_OutputBuffers.end());
+	m_OutputBufferBytes.fill(0);
+	m_QueuedAudioBytes = 0;
 	alSourcef(m_OutputSource, AL_GAIN, 1.0f);
 	return true;
 }
@@ -340,6 +352,8 @@ void AC97Device::ResetOutputStream()
 	}
 
 	m_FreeOutputBuffers.assign(m_OutputBuffers.begin(), m_OutputBuffers.end());
+	m_OutputBufferBytes.fill(0);
+	m_QueuedAudioBytes = 0;
 }
 
 void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
@@ -356,15 +370,18 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		if (alGetError() != AL_NO_ERROR) {
 			break;
 		}
+		const size_t bufferIndex = FindBufferIndexById(m_OutputBuffers, buffer);
+		if (bufferIndex < m_OutputBufferBytes.size()) {
+			m_QueuedAudioBytes = std::max(0u, m_QueuedAudioBytes - m_OutputBufferBytes[bufferIndex]);
+			m_OutputBufferBytes[bufferIndex] = 0;
+		}
 		m_FreeOutputBuffers.push_back(buffer);
 		--processed;
 	}
 
 	ALint queued = 0;
 	alGetSourcei(m_OutputSource, AL_BUFFERS_QUEUED, &queued);
-	const uint32_t queuedAudioBytes = static_cast<uint32_t>(queued) *
-		static_cast<uint32_t>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME);
-	if (queuedAudioBytes >= AC97_MAX_QUEUED_AUDIO_BYTES ||
+	if (m_QueuedAudioBytes >= AC97_MAX_QUEUED_AUDIO_BYTES ||
 		m_FreeOutputBuffers.empty()) {
 		if (!m_LoggedQueueFull) {
 			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL queue full, dropping PCM frames");
@@ -392,8 +409,10 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 
 	const ALuint buffer = m_FreeOutputBuffers.back();
 	m_FreeOutputBuffers.pop_back();
+	const size_t bufferIndex = FindBufferIndexById(m_OutputBuffers, buffer);
+	const uint32_t queuedBytes = static_cast<uint32_t>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME);
 	alBufferData(buffer, AL_FORMAT_STEREO16, output,
-		static_cast<ALsizei>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME),
+		static_cast<ALsizei>(queuedBytes),
 		static_cast<ALsizei>(APU_TIMER_FREQUENCY));
 	if (alGetError() != AL_NO_ERROR) {
 		m_FreeOutputBuffers.push_back(buffer);
@@ -404,6 +423,10 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	if (alGetError() != AL_NO_ERROR) {
 		m_FreeOutputBuffers.push_back(buffer);
 		return;
+	}
+	if (bufferIndex < m_OutputBufferBytes.size()) {
+		m_OutputBufferBytes[bufferIndex] = queuedBytes;
+		m_QueuedAudioBytes += queuedBytes;
 	}
 
 	ALint state = 0;

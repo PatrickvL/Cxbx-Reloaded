@@ -86,6 +86,8 @@ class AC97Device : public PCIDevice {
 		ALCcontext* m_OutputContext = nullptr;
 		ALuint m_OutputSource = 0;
 		std::array<ALuint, 16> m_OutputBuffers{};
+		std::array<uint32_t, 16> m_OutputBufferBytes{};
+		uint32_t m_QueuedAudioBytes = 0;
 		bool m_OutputDeviceFailed = false;
 		bool m_LoggedQueueFull = false;
 };
