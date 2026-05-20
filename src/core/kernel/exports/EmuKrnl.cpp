@@ -570,7 +570,7 @@ XBSYSAPI EXPORTNUM(363) xbox::int_xt CDECL xbox::RtlVsnprintf
 	IN PCHAR string,
 	IN size_xt count,
 	IN LPCCH format,
-	...
+	IN va_list arglist
 )
 {
 	LOG_FUNC_BEGIN
@@ -579,12 +579,7 @@ XBSYSAPI EXPORTNUM(363) xbox::int_xt CDECL xbox::RtlVsnprintf
 		LOG_FUNC_ARG(format)
 		LOG_FUNC_END;
 
-	// UNTESTED. Possible test-case : debugchannel.xbe
-
-	va_list ap;
-	va_start(ap, format);
-	INT Result = vsnprintf(string, count, format, ap);
-	va_end(ap);
+	INT Result = vsnprintf(string, count, format, arglist);
 
 	RETURN(Result);
 }
@@ -596,7 +591,7 @@ XBSYSAPI EXPORTNUM(364) xbox::int_xt CDECL xbox::RtlVsprintf
 (
 	IN PCHAR string,
 	IN LPCCH format,
-	...
+	IN va_list arglist
 )
 {
 	LOG_FUNC_BEGIN
@@ -604,12 +599,7 @@ XBSYSAPI EXPORTNUM(364) xbox::int_xt CDECL xbox::RtlVsprintf
 		LOG_FUNC_ARG(format)
 		LOG_FUNC_END;
 
-	// UNTESTED. Possible test-case : debugchannel.xbe
-
-	va_list ap;
-	va_start(ap, format);
-	INT Result = vsprintf(string, format, ap);
-	va_end(ap);
+	INT Result = vsprintf(string, format, arglist);
 
 	RETURN(Result);
 }
