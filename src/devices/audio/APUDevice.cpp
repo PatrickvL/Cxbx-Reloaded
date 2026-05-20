@@ -113,6 +113,9 @@ constexpr uint32_t NV1BA0_PIO_VOICE_RELEASE = 0x0000012C;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE = 0x00000140;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY = 0x00000160;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_SSL = 0x00000190;
+constexpr uint32_t NV1BA0_PIO_SET_SUBMIX_HEADROOM = 0x00000200;
+constexpr uint32_t NV1BA0_PIO_SET_HRTF_HEADROOM = 0x00000280;
+constexpr uint32_t NV1BA0_PIO_SET_HRTF_SUBMIXES = 0x000002C0;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_VOICE = 0x000002F8;
 constexpr uint32_t NV1BA0_PIO_VOICE_LOCK = 0x000002FC;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_VBIN = 0x00000300;
@@ -155,6 +158,8 @@ constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE_ACTION = 1 << 18;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_SSL_BASE_PAGE = 0x003FFFC0;
+constexpr uint32_t NV1BA0_PIO_SET_SUBMIX_HEADROOM_AMOUNT = 0x00000007;
+constexpr uint32_t NV1BA0_PIO_SET_HRTF_HEADROOM_AMOUNT = 0x00000007;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_HRTF_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_SSL_A_COUNT = 0x000000FF;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_SSL_A_BASE = 0xFFFFFF00;
@@ -436,6 +441,9 @@ void APUDevice::Reset()
 	m_EPYMem.fill(0);
 	m_EPPMem.fill(0);
 	m_VPHRTFEntries.fill(HRTFEntryState{});
+	m_VPHRTFSubmix.fill(0);
+	m_VPHRTFHeadroom = 0;
+	m_VPSubmixHeadroom.fill(0);
 	m_VPVoiceLocked.fill(0);
 	m_VPOutBufferCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
@@ -793,6 +801,15 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	case NV1BA0_PIO_SET_CURRENT_SSL:
 		m_VPSSLBasePage = value & NV1BA0_PIO_SET_CURRENT_SSL_BASE_PAGE;
 		return;
+	case NV1BA0_PIO_SET_HRTF_SUBMIXES:
+		m_VPHRTFSubmix[0] = static_cast<uint8_t>((value >> 0) & 0x1Fu);
+		m_VPHRTFSubmix[1] = static_cast<uint8_t>((value >> 8) & 0x1Fu);
+		m_VPHRTFSubmix[2] = static_cast<uint8_t>((value >> 16) & 0x1Fu);
+		m_VPHRTFSubmix[3] = static_cast<uint8_t>((value >> 24) & 0x1Fu);
+		return;
+	case NV1BA0_PIO_SET_HRTF_HEADROOM:
+		m_VPHRTFHeadroom = static_cast<uint8_t>(value & NV1BA0_PIO_SET_HRTF_HEADROOM_AMOUNT);
+		return;
 	case NV1BA0_PIO_SET_VOICE_CFG_VBIN:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_CFG_VBIN, 0xFFFFFFFF, value);
 		return;
@@ -947,6 +964,15 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		}
 		return;
 	default:
+		if (addr >= NV1BA0_PIO_SET_SUBMIX_HEADROOM &&
+			addr < NV1BA0_PIO_SET_SUBMIX_HEADROOM + sizeof(uint32_t) * APU_MIXBIN_COUNT &&
+			((addr - NV1BA0_PIO_SET_SUBMIX_HEADROOM) % sizeof(uint32_t)) == 0) {
+			const size_t slot = (addr - NV1BA0_PIO_SET_SUBMIX_HEADROOM) / sizeof(uint32_t);
+			if (slot < m_VPSubmixHeadroom.size()) {
+				m_VPSubmixHeadroom[slot] = static_cast<uint8_t>(value & NV1BA0_PIO_SET_SUBMIX_HEADROOM_AMOUNT);
+			}
+			return;
+		}
 		if (addr >= NV1BA0_PIO_SET_SSL_SEGMENT_OFFSET && addr < 0x00000800) {
 			const uint32_t sslTableBase = GetRegister32(NV_PAPU_VPSSLADDR);
 			if (sslTableBase != 0) {

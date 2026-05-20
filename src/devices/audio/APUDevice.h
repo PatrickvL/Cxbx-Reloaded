@@ -133,6 +133,9 @@ private:
 	std::array<uint8_t, 0x0100 * sizeof(uint32_t)> m_EPYMem{};
 	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_EPPMem{};
 	std::array<HRTFEntryState, 128> m_VPHRTFEntries{};
+	std::array<uint8_t, 4> m_VPHRTFSubmix{};
+	uint8_t m_VPHRTFHeadroom = 0;
+	std::array<uint8_t, 32> m_VPSubmixHeadroom{};
 	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPVoiceLocked{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
