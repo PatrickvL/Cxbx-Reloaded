@@ -297,6 +297,7 @@ constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLO
 constexpr size_t APU_MIXBIN_COUNT = 32;
 constexpr uint32_t APU_MAX_3D_VOICES = static_cast<uint32_t>(APUDevice::MAX_HRTF_VOICES);
 constexpr size_t APU_HRTF_SUBMIX_COUNT = 4;
+static_assert(APU_HRTF_SUBMIX_COUNT <= 8, "HRTF submix handoff expects no more than eight voice volumes");
 constexpr size_t APU_HRTF_ENTRY_COUNT = 128;
 constexpr size_t APU_HRTF_COEFFICIENT_COUNT = APUDevice::HRTF_FILTER_TAPS;
 constexpr uint32_t APU_INVALID_HRTF_ENTRY_INDEX = 0xFFFF;
@@ -425,6 +426,12 @@ int16_t ClampToInt16(int32_t value)
 		return -32768;
 	}
 	return static_cast<int16_t>(value);
+}
+
+int16_t ConvertFloatSampleToInt16(float sample)
+{
+	return ClampToInt16(static_cast<int32_t>(std::lrint(
+		static_cast<double>(ClampUnitSample(sample)) * 32767.0)));
 }
 
 }
@@ -1797,9 +1804,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLC, NV_PAVS_VOICE_TAR_VOLC_VOLUME7_B11_8, volume7);
 	volumes[7] |= volume7 << 8;
 	std::array<uint32_t, APU_HRTF_SUBMIX_COUNT> hrtfSubmixVolumes{};
-	for (size_t submixIndex = 0; submixIndex < std::min(hrtfSubmixVolumes.size(), std::size(volumes)); ++submixIndex) {
-		hrtfSubmixVolumes[submixIndex] = volumes[submixIndex];
-	}
+	// MCPX 3D voices route HRTF output through volumes[0..3], which feed the four global HRTF submix slots.
+	std::copy_n(volumes.begin(), APU_HRTF_SUBMIX_COUNT, hrtfSubmixVolumes.begin());
 
 	uint32_t baseAddress = 0;
 	uint32_t currentOffset = 0;
@@ -1915,12 +1921,12 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		m_VP3DVoiceCaptureScratch.assign(frameCount * 2, 0);
 	}
 	auto storeCaptured3DSample = [&](size_t frame, float sampleLeft, float sampleRight, float envelopeGain) {
-		const float captureLeft = ClampUnitSample(sampleLeft * envelopeGain);
-		const float captureRight = ClampUnitSample(sampleRight * envelopeGain);
-		m_VP3DVoiceCaptureScratch[frame * 2] = ClampToInt16(static_cast<int32_t>(std::lrint(
-			static_cast<double>(captureLeft) * 32767.0)));
-		m_VP3DVoiceCaptureScratch[frame * 2 + 1] = ClampToInt16(static_cast<int32_t>(std::lrint(
-			static_cast<double>(captureRight) * 32767.0)));
+		const size_t sampleIndex = frame * 2;
+		if (sampleIndex >= m_VP3DVoiceCaptureScratch.size() || (sampleIndex + 1) >= m_VP3DVoiceCaptureScratch.size()) {
+			return;
+		}
+		m_VP3DVoiceCaptureScratch[sampleIndex] = ConvertFloatSampleToInt16(sampleLeft * envelopeGain);
+		m_VP3DVoiceCaptureScratch[sampleIndex + 1] = ConvertFloatSampleToInt16(sampleRight * envelopeGain);
 	};
 	if (hrtfEnabled) {
 		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
