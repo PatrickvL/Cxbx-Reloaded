@@ -634,8 +634,8 @@ bool Settings::Save(std::string file_path)
 		m_si.Delete(section_audio, sect_audio_keys.output_device, true);
 	}
 	else {
-		const std::string quotedAudioDevice = AppendQuoteToString(m_audio_output_device);
-		m_si.SetValue(section_audio, sect_audio_keys.output_device, quotedAudioDevice.c_str(), nullptr, true);
+		const std::string quoted_audio_device = AppendQuoteToString(m_audio_output_device);
+		m_si.SetValue(section_audio, sect_audio_keys.output_device, quoted_audio_device.c_str(), nullptr, true);
 	}
 
 	// ==== Audio End ===========
