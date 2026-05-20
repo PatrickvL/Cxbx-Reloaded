@@ -1203,8 +1203,17 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 
 	NTSTATUS ret;
 
-	if (FileInformationClass != FileDirectoryInformation)   // Due to unicode->string conversion
-		CxbxrAbort("Unsupported FileInformationClass");
+	// Xbox uses FILE_DIRECTORY_INFORMATION for all directory listing classes
+	// (FileBothDirectoryInformation, FileFullDirectoryInformation, FileNamesInformation).
+	// Validate that the class is a directory-listing class, then always query the host
+	// with FileDirectoryInformation since the host structs for other classes differ in layout.
+	if (FileInformationClass != FileDirectoryInformation &&
+		FileInformationClass != FileFullDirectoryInformation &&
+		FileInformationClass != FileBothDirectoryInformation &&
+		FileInformationClass != FileNamesInformation) {
+		EmuLog(LOG_LEVEL::WARNING, "NtQueryDirectoryFile: unsupported FileInformationClass %d", FileInformationClass);
+		RETURN(X_STATUS_INVALID_INFO_CLASS);
+	}
 
 	/* Get File Object */
 	PFILE_OBJECT FileObject;
@@ -1285,7 +1294,7 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 			(NtDll::IO_STATUS_BLOCK*)IoStatusBlock, 
 			/*FileInformation=*/NtFileDirInfo,
 			NtFileDirectoryInformationSize + NtPathBufferSize,
-			(NtDll::FILE_INFORMATION_CLASS)FileInformationClass, 
+			(NtDll::FILE_INFORMATION_CLASS)NtDll::FileDirectoryInformation,
 			/*ReturnSingleEntry=*/TRUE,
 			&NtFileMask,
 			RestartScan
