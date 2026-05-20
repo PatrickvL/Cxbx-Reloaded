@@ -116,6 +116,9 @@ constexpr uint16_t AC97_VENDOR_SIGMATEL_2 = 0x7608;
 constexpr uint32_t AC97_OUTPUT_CHANNELS = 2;
 constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_CHANNELS;
 constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
+constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 4096;
+constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_OUTPUT_BYTES_PER_FRAME;
+constexpr uint32_t AC97_MAX_BUFFERED_AUDIO_BYTES = AC97_MAX_QUEUED_AUDIO_BYTES * 2;
 constexpr uint16_t AC97_VOLUME_MUTE = 0x8000;
 constexpr uint16_t AC97_VOLUME_LEFT_MASK = 0x1F00;
 constexpr uint16_t AC97_VOLUME_RIGHT_MASK = 0x001F;
@@ -430,6 +433,7 @@ bool AC97Device::EnsureOutputDevice()
 	m_FreeOutputBuffers.assign(m_OutputBuffers.begin(), m_OutputBuffers.end());
 	m_OutputBufferBytes.fill(0);
 	m_QueuedAudioBytes = 0;
+	m_StagedOutputFrames.clear();
 	alSourcef(m_OutputSource, AL_GAIN, 1.0f);
 	return true;
 }
@@ -460,6 +464,7 @@ void AC97Device::ResetOutputStream()
 	m_FreeOutputBuffers.assign(m_OutputBuffers.begin(), m_OutputBuffers.end());
 	m_OutputBufferBytes.fill(0);
 	m_QueuedAudioBytes = 0;
+	m_StagedOutputFrames.clear();
 }
 
 void AC97Device::Begin3DVoiceFrameBatch()
@@ -522,21 +527,17 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		--processed;
 	}
 
-	if (m_QueuedAudioBytes >= AC97_MAX_QUEUED_AUDIO_BYTES) {
+	const uint32_t pendingBytes = static_cast<uint32_t>(m_StagedOutputFrames.size() * sizeof(int16_t));
+	const uint32_t incomingBytes = static_cast<uint32_t>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME);
+	if (incomingBytes > AC97_MAX_BUFFERED_AUDIO_BYTES ||
+		pendingBytes > AC97_MAX_BUFFERED_AUDIO_BYTES - incomingBytes ||
+		m_QueuedAudioBytes > AC97_MAX_BUFFERED_AUDIO_BYTES - pendingBytes - incomingBytes) {
 		if (!m_LoggedQueueFull) {
-			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL queue full, dropping PCM frames");
+			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL buffered audio full, dropping PCM frames");
 			m_LoggedQueueFull = true;
 		}
 		return;
 	}
-	if (m_FreeOutputBuffers.empty()) {
-		if (!m_LoggedQueueFull) {
-			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL buffer pool exhausted, dropping PCM frames");
-			m_LoggedQueueFull = true;
-		}
-		return;
-	}
-	m_LoggedQueueFull = false;
 
 	const uint16_t masterVolume = ReadRegister16(AC97_Master_Volume);
 	const uint16_t pcmOutVolume = ReadRegister16(AC97_PCM_Out_Volume);
@@ -554,37 +555,61 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		output = m_OutputScratch.data();
 	}
 
-	const ALuint buffer = m_FreeOutputBuffers.back();
-	m_FreeOutputBuffers.pop_back();
-	const uint32_t queuedBytes = static_cast<uint32_t>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME);
-	const auto bufferIndexIt = m_OutputBufferIndex.find(buffer);
-	if (bufferIndexIt == m_OutputBufferIndex.end()) {
-		EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL selected unknown free buffer, dropping PCM frames");
-		m_FreeOutputBuffers.push_back(buffer);
-		return;
-	}
-	const size_t bufferIndex = bufferIndexIt->second;
-	alBufferData(buffer, AL_FORMAT_STEREO16, output,
-		static_cast<ALsizei>(queuedBytes),
-		static_cast<ALsizei>(APU_TIMER_FREQUENCY));
-	if (alGetError() != AL_NO_ERROR) {
-		m_OutputBufferBytes[bufferIndex] = 0;
-		m_FreeOutputBuffers.push_back(buffer);
-		return;
+	m_StagedOutputFrames.insert(m_StagedOutputFrames.end(), output, output + (frameCount * AC97_OUTPUT_CHANNELS));
+
+	while (!m_FreeOutputBuffers.empty() && !m_StagedOutputFrames.empty()) {
+		const size_t stagedFrameCount = m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS;
+		if (stagedFrameCount < AC97_STREAM_BUFFER_FRAMES && m_QueuedAudioBytes != 0) {
+			break;
+		}
+
+		const size_t framesToQueue = std::min(stagedFrameCount, static_cast<size_t>(AC97_STREAM_BUFFER_FRAMES));
+		const uint32_t queuedBytes = static_cast<uint32_t>(framesToQueue * AC97_OUTPUT_BYTES_PER_FRAME);
+		if (m_QueuedAudioBytes > AC97_MAX_QUEUED_AUDIO_BYTES - queuedBytes) {
+			break;
+		}
+
+		const ALuint buffer = m_FreeOutputBuffers.back();
+		m_FreeOutputBuffers.pop_back();
+		const auto bufferIndexIt = m_OutputBufferIndex.find(buffer);
+		if (bufferIndexIt == m_OutputBufferIndex.end()) {
+			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL selected unknown free buffer, dropping PCM frames");
+			m_FreeOutputBuffers.push_back(buffer);
+			return;
+		}
+		const size_t bufferIndex = bufferIndexIt->second;
+		alBufferData(buffer, AL_FORMAT_STEREO16, m_StagedOutputFrames.data(),
+			static_cast<ALsizei>(queuedBytes),
+			static_cast<ALsizei>(APU_TIMER_FREQUENCY));
+		if (alGetError() != AL_NO_ERROR) {
+			m_OutputBufferBytes[bufferIndex] = 0;
+			m_FreeOutputBuffers.push_back(buffer);
+			return;
+		}
+
+		alSourceQueueBuffers(m_OutputSource, 1, &buffer);
+		if (alGetError() != AL_NO_ERROR) {
+			m_OutputBufferBytes[bufferIndex] = 0;
+			m_FreeOutputBuffers.push_back(buffer);
+			return;
+		}
+
+		m_OutputBufferBytes[bufferIndex] = queuedBytes;
+		m_QueuedAudioBytes += queuedBytes;
+		m_StagedOutputFrames.erase(m_StagedOutputFrames.begin(),
+			m_StagedOutputFrames.begin() + (framesToQueue * AC97_OUTPUT_CHANNELS));
 	}
 
-	alSourceQueueBuffers(m_OutputSource, 1, &buffer);
-	if (alGetError() != AL_NO_ERROR) {
-		m_OutputBufferBytes[bufferIndex] = 0;
-		m_FreeOutputBuffers.push_back(buffer);
-		return;
+	if (m_QueuedAudioBytes >= AC97_MAX_QUEUED_AUDIO_BYTES || !m_FreeOutputBuffers.empty()) {
+		m_LoggedQueueFull = false;
+	} else if (!m_LoggedQueueFull) {
+		EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL buffer pool exhausted, dropping PCM frames");
+		m_LoggedQueueFull = true;
 	}
-	m_OutputBufferBytes[bufferIndex] = queuedBytes;
-	m_QueuedAudioBytes += queuedBytes;
 
 	ALint state = 0;
 	alGetSourcei(m_OutputSource, AL_SOURCE_STATE, &state);
-	if (state != AL_PLAYING) {
+	if (state != AL_PLAYING && m_QueuedAudioBytes != 0) {
 		alSourcePlay(m_OutputSource);
 	}
 }

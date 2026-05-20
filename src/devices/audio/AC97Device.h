@@ -99,6 +99,7 @@ class AC97Device : public PCIDevice {
 		std::array<bool, 3> m_ChannelQueuedAfterHalt{};
 		std::array<bool, 3> m_ChannelDescriptorError{};
 		std::vector<int16_t> m_OutputScratch{};
+		std::vector<int16_t> m_StagedOutputFrames{};
 		std::unordered_map<uint32_t, SpatialVoiceState> m_Pending3DVoices{};
 		std::vector<ALuint> m_FreeOutputBuffers{};
 		std::unordered_map<ALuint, size_t> m_OutputBufferIndex{};
