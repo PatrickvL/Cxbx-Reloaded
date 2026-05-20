@@ -659,7 +659,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		if (size == sizeof(uint32_t)) {
 			if (const char* name = GetAPURegisterTraceName(addr)) {
 				EmuLog(LOG_LEVEL::INFO,
-					"APU MMIO register write %s addr=0x%08x old=0x%08x new=0x%08x",
+					"APU MMIO register write %s register=0x%08x old=0x%08x new=0x%08x",
 					name,
 					addr,
 					GetRegister32(addr),
@@ -1271,6 +1271,8 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
 	value = mask == 0xFFFFFFFF ? current : ((current & mask) >> shift);
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		// A successful read means the voice table is reachable again, so allow a future
+		// access regression to emit a fresh one-shot diagnostic.
 		m_LoggedVoiceTableReadFailure = false;
 	}
 	return true;
