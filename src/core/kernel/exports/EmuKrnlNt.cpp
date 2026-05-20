@@ -478,7 +478,7 @@ XBSYSAPI EXPORTNUM(193) xbox::ntstatus_xt NTAPI xbox::NtCreateSemaphore
 		LOG_FUNC_ARG(MaximumCount)
 		LOG_FUNC_END;
 
-	if (MaximumCount <= 0 || InitialCount > (ulong_xt)MaximumCount) {
+	if ((long_xt)MaximumCount <= 0 || (long_xt)InitialCount < 0 || InitialCount > MaximumCount) {
 		RETURN(STATUS_INVALID_PARAMETER);
 	}
 
@@ -736,6 +736,7 @@ namespace xbox {
 			default:
 				EmuLog(LOG_LEVEL::DEBUG, "NtDeviceIoControlFile: unhandled IoControlCode 0x%X for device type %d",
 					IoControlCode, DeviceObject->DeviceType);
+				result = X_STATUS_INVALID_DEVICE_REQUEST;
 				LOG_UNIMPLEMENTED();
 			}
 		}
@@ -791,6 +792,10 @@ namespace xbox {
 			}
 			break;
 
+			default:
+				result = X_STATUS_INVALID_DEVICE_REQUEST;
+				LOG_UNIMPLEMENTED();
+				break;
 			}
 
 			LOG_INCOMPLETE();
@@ -2254,6 +2259,10 @@ XBSYSAPI EXPORTNUM(222) xbox::ntstatus_xt NTAPI xbox::NtReleaseSemaphore
 		LOG_FUNC_ARG(ReleaseCount)
 		LOG_FUNC_ARG_OUT(PreviousCount)
 		LOG_FUNC_END;
+
+	if ((long_xt)ReleaseCount <= 0) {
+		RETURN(STATUS_INVALID_PARAMETER);
+	}
 
 	PKSEMAPHORE Semaphore;
 	ntstatus_xt result = ObReferenceObjectByHandle(SemaphoreHandle, &ExSemaphoreObjectType, reinterpret_cast<PVOID *>(&Semaphore));
