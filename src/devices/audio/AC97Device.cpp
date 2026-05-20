@@ -116,7 +116,7 @@ constexpr uint16_t AC97_VENDOR_SIGMATEL_2 = 0x7608;
 constexpr uint32_t AC97_OUTPUT_CHANNELS = 2;
 constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_CHANNELS;
 constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
-constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 4096;
+constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 2048;
 constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_OUTPUT_BYTES_PER_FRAME;
 constexpr uint32_t AC97_MAX_BUFFERED_AUDIO_BYTES = AC97_MAX_QUEUED_AUDIO_BYTES * 2;
 constexpr uint16_t AC97_VOLUME_MUTE = 0x8000;
@@ -559,7 +559,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 
 	while (!m_FreeOutputBuffers.empty() && !m_StagedOutputFrames.empty()) {
 		const size_t stagedFrameCount = m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS;
-		if (stagedFrameCount < AC97_STREAM_BUFFER_FRAMES && m_QueuedAudioBytes != 0) {
+		if (stagedFrameCount < AC97_STREAM_BUFFER_FRAMES) {
 			break;
 		}
 
