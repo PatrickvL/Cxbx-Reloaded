@@ -569,7 +569,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 
 		const size_t framesToQueue = std::min(stagedFrameCount, static_cast<size_t>(AC97_STREAM_BUFFER_FRAMES));
 		const uint32_t queuedBytes = static_cast<uint32_t>(framesToQueue * AC97_OUTPUT_BYTES_PER_FRAME);
-		if (m_QueuedAudioBytes > AC97_MAX_QUEUED_AUDIO_BYTES - queuedBytes) {
+		if (static_cast<uint64_t>(m_QueuedAudioBytes) + queuedBytes > AC97_MAX_QUEUED_AUDIO_BYTES) {
 			break;
 		}
 
