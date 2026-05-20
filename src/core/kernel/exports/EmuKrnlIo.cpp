@@ -1436,11 +1436,73 @@ XBSYSAPI EXPORTNUM(76) xbox::ntstatus_xt NTAPI xbox::IoQueryVolumeInformation
 		LOG_FUNC_ARG_OUT(ReturnedLength)
 		LOG_FUNC_END;
 
-	// Dxbx note : This is almost identical to NtQueryVolumeInformationFile
-	// DxbxPC2XB_FS_INFORMATION
-	LOG_UNIMPLEMENTED();
+	ntstatus_xt result;
 
-	RETURN(X_STATUS_NOT_IMPLEMENTED);
+	if (FsInformationClass == FileFsSizeInformation) {
+		if (Length < sizeof(FILE_FS_SIZE_INFORMATION)) {
+			RETURN(X_STATUS_INFO_LENGTH_MISMATCH);
+		}
+
+		PFILE_FS_SIZE_INFORMATION SizeInfo = (PFILE_FS_SIZE_INFORMATION)FsInformation;
+
+		switch (FileObject->DeviceObject->DeviceType) {
+		case FILE_DEVICE_DISK2: {
+			XboxPartitionTable partitionTable = CxbxGetPartitionTable();
+			PIDE_DISK_EXTENSION DeviceExtension = reinterpret_cast<PIDE_DISK_EXTENSION>(FileObject->DeviceObject->DeviceExtension);
+			int partitionNumber = DeviceExtension->PartitionInformation.PartitionNumber;
+			FATX_SUPERBLOCK superBlock = CxbxGetFatXSuperBlock(partitionNumber);
+
+			SizeInfo->BytesPerSector = 512;
+			SizeInfo->SectorsPerAllocationUnit = 32;
+			if (superBlock.ClusterSize > 0) {
+				SizeInfo->SectorsPerAllocationUnit = superBlock.ClusterSize;
+			}
+			SizeInfo->TotalAllocationUnits.QuadPart = partitionTable.TableEntries[partitionNumber - 1].LBASize / SizeInfo->SectorsPerAllocationUnit;
+			SizeInfo->AvailableAllocationUnits.QuadPart = SizeInfo->TotalAllocationUnits.QuadPart;
+
+			if (ReturnedLength) {
+				*ReturnedLength = sizeof(FILE_FS_SIZE_INFORMATION);
+			}
+			result = X_STATUS_SUCCESS;
+			break;
+		}
+		case FILE_DEVICE_CD_ROM2:
+			SizeInfo->BytesPerSector = 2048;
+			SizeInfo->SectorsPerAllocationUnit = 1;
+			SizeInfo->TotalAllocationUnits.QuadPart = 3820880;
+			SizeInfo->AvailableAllocationUnits.QuadPart = 0;
+
+			if (ReturnedLength) {
+				*ReturnedLength = sizeof(FILE_FS_SIZE_INFORMATION);
+			}
+			result = X_STATUS_SUCCESS;
+			break;
+
+		default:
+			EmuLog(LOG_LEVEL::WARNING, "IoQueryVolumeInformation: unrecognized DeviceType %d", FileObject->DeviceObject->DeviceType);
+			result = X_STATUS_INVALID_PARAMETER;
+			break;
+		}
+	} else {
+		// Forward other classes to the host via the native handle
+		const auto& nFileHandle = GetObjectNativeHandle(FileObject);
+		if (!nFileHandle) {
+			RETURN(X_STATUS_INVALID_HANDLE);
+		}
+
+		NtDll::IO_STATUS_BLOCK iosb;
+		result = NtDll::NtQueryVolumeInformationFile(
+			*nFileHandle,
+			&iosb,
+			(NtDll::PFILE_FS_SIZE_INFORMATION)FsInformation, Length,
+			(NtDll::FS_INFORMATION_CLASS)FsInformationClass);
+
+		if (ReturnedLength && X_NT_SUCCESS(result)) {
+			*ReturnedLength = (ULONG)iosb.Information;
+		}
+	}
+
+	RETURN(result);
 }
 
 // ******************************************************************
