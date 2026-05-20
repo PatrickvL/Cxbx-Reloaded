@@ -123,8 +123,11 @@ private:
 	uint32_t m_LastAudioUpdate = 0;
 	uint32_t m_VPInputSgeHandle = 0;
 	uint32_t m_VPOutputSgeHandle = 0;
+	uint32_t m_VPNotifyContextDMA = 0;
+	uint32_t m_VPCurrentSSLContextDMA = 0;
 	uint32_t m_VPSSLBasePage = 0;
 	uint32_t m_VPCurrentHRTFEntry = 0;
+	uint32_t m_VPLastVoicePositionHandle = 0;
 	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPXMem{};
 	std::array<uint8_t, 0x400 * sizeof(uint32_t)> m_GPMixBuf{};
 	std::array<uint8_t, 0x800 * sizeof(uint32_t)> m_GPYMem{};

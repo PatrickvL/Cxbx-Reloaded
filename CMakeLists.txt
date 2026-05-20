@@ -24,6 +24,12 @@ add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/import/SDL2" EXCLUDE_FROM_ALL)
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/import/mio" EXCLUDE_FROM_ALL)
 
+set(ALSOFT_INSTALL OFF)
+set(ALSOFT_EXAMPLES OFF)
+set(ALSOFT_UTILS OFF)
+set(ALSOFT_TESTS OFF)
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/import/openal-soft" EXCLUDE_FROM_ALL)
+
 # Optional: detect Vulkan SDK for future backend work
 find_package(Vulkan QUIET)
 if(Vulkan_FOUND)

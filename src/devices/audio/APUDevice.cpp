@@ -110,8 +110,11 @@ constexpr uint32_t NV1BA0_PIO_SET_ANTECEDENT_VOICE = 0x00000120;
 constexpr uint32_t NV1BA0_PIO_VOICE_ON = 0x00000124;
 constexpr uint32_t NV1BA0_PIO_VOICE_OFF = 0x00000128;
 constexpr uint32_t NV1BA0_PIO_VOICE_RELEASE = 0x0000012C;
+constexpr uint32_t NV1BA0_PIO_GET_VOICE_POSITION = 0x00000130;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE = 0x00000140;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY = 0x00000160;
+constexpr uint32_t NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY = 0x00000180;
+constexpr uint32_t NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA = 0x0000018C;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_SSL = 0x00000190;
 constexpr uint32_t NV1BA0_PIO_SET_SUBMIX_HEADROOM = 0x00000200;
 constexpr uint32_t NV1BA0_PIO_SET_HRTF_HEADROOM = 0x00000280;
@@ -154,6 +157,7 @@ constexpr uint32_t NV1BA0_PIO_VOICE_ON_ENVF = 0x0F000000;
 constexpr uint32_t NV1BA0_PIO_VOICE_ON_ENVA = 0xF0000000;
 constexpr uint32_t NV1BA0_PIO_VOICE_OFF_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_RELEASE_HANDLE = 0x0000FFFF;
+constexpr uint32_t NV1BA0_PIO_GET_VOICE_POSITION_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE_ACTION = 1 << 18;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY_HANDLE = 0x0000FFFF;
@@ -431,8 +435,11 @@ void APUDevice::Reset()
 	m_LastAudioUpdate = m_VPFifoLastUpdate;
 	m_VPInputSgeHandle = 0;
 	m_VPOutputSgeHandle = 0;
+	m_VPNotifyContextDMA = 0;
+	m_VPCurrentSSLContextDMA = 0;
 	m_VPSSLBasePage = 0;
 	m_VPCurrentHRTFEntry = 0;
+	m_VPLastVoicePositionHandle = 0;
 	m_GPXMem.fill(0);
 	m_GPMixBuf.fill(0);
 	m_GPYMem.fill(0);
@@ -798,6 +805,17 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		BeginVoiceRelease(voiceHandle);
 		return;
 	}
+	case NV1BA0_PIO_GET_VOICE_POSITION:
+		m_VPLastVoicePositionHandle = value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE;
+		return;
+	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY:
+		m_VPNotifyContextDMA = value;
+		WriteRegister(APU_VP_BASE + addr, value, sizeof(uint32_t));
+		return;
+	case NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA:
+		m_VPCurrentSSLContextDMA = value;
+		WriteRegister(APU_VP_BASE + addr, value, sizeof(uint32_t));
+		return;
 	case NV1BA0_PIO_SET_CURRENT_SSL:
 		m_VPSSLBasePage = value & NV1BA0_PIO_SET_CURRENT_SSL_BASE_PAGE;
 		return;
