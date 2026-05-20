@@ -1270,7 +1270,9 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 
 	const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
 	value = mask == 0xFFFFFFFF ? current : ((current & mask) >> shift);
-	m_LoggedVoiceTableReadFailure = false;
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		m_LoggedVoiceTableReadFailure = false;
+	}
 	return true;
 }
 
