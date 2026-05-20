@@ -242,9 +242,9 @@ XBSYSAPI EXPORTNUM(185) xbox::ntstatus_xt NTAPI xbox::NtCancelTimer
 		PETIMER Timer = (PETIMER)Object;
 
 		Timer->Lock.lock();
+		// Read the inserted state before cancelling — CurrentState reports whether the timer was set
+		BOOLEAN State = (BOOLEAN)Timer->KeTimer.Header.Inserted;
 		ExpCancelTimer(Timer);
-		// Read the signal state
-		BOOLEAN State = (BOOLEAN)Timer->KeTimer.Header.SignalState;
 		Timer->Lock.unlock();
 
 		ObfDereferenceObject(Timer);

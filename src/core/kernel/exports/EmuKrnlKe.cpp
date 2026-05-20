@@ -2431,6 +2431,9 @@ XBSYSAPI EXPORTNUM(150) xbox::boolean_xt NTAPI xbox::KeSetTimerEx
 		// Do some unlinking if already inserted in the linked list
 		KxRemoveTreeTimer(Timer);
 	}
+
+	// Return TRUE if the timer was either in the queue or signaled
+	BOOLEAN PreviousState = Inserted || (Timer->Header.SignalState != 0);
 	
 	/* Set Default Timer Data */
 	Timer->Dpc = Dpc;
@@ -2456,7 +2459,7 @@ XBSYSAPI EXPORTNUM(150) xbox::boolean_xt NTAPI xbox::KeSetTimerEx
 	KiTimerUnlock();
 	KiUnlockDispatcherDatabase(OldIrql);
 
-	RETURN(Inserted);
+	RETURN(PreviousState);
 }
 
 // ******************************************************************
