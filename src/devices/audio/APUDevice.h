@@ -85,6 +85,7 @@ private:
 	void RefreshVPStatus();
 	void RefreshInterruptStatus();
 	void RenderBasicAudioChunk(size_t frameCount);
+	void ApplySubmixHeadroom(int32_t* mixBins, size_t frameCount);
 	void WriteOutputBuffers(const int32_t* mixBins, size_t frameCount);
 	void RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount);
 	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount);

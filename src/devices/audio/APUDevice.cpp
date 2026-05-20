@@ -369,6 +369,11 @@ float AttenuateVoiceVolume(uint32_t volume)
 	return clamped == 0x0FFF ? 0.0f : std::pow(10.0f, static_cast<float>(clamped) / APU_VOLUME_DECIBEL_DIVISOR);
 }
 
+float AttenuateHeadroom(uint8_t headroom)
+{
+	return std::ldexp(1.0f, -static_cast<int>(headroom));
+}
+
 float ConvertUnsigned8(uint8_t value)
 {
 	return (static_cast<float>(value) - 128.0f) / 128.0f;
@@ -1499,6 +1504,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
 	RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
+	ApplySubmixHeadroom(mixBins.data(), frameCount);
 	WriteOutputBuffers(mixBins.data(), frameCount);
 	if (g_AC97 == nullptr) {
 		return;
@@ -1511,6 +1517,26 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 
 	g_AC97->SubmitPCMFrames(output.data(), frameCount);
+}
+
+void APUDevice::ApplySubmixHeadroom(int32_t* mixBins, size_t frameCount)
+{
+	if (mixBins == nullptr || frameCount == 0) {
+		return;
+	}
+
+	for (size_t slot = 0; slot < APU_MIXBIN_COUNT && slot < m_VPSubmixHeadroom.size(); ++slot) {
+		const uint8_t headroom = m_VPSubmixHeadroom[slot];
+		if (headroom == 0) {
+			continue;
+		}
+
+		const float gain = AttenuateHeadroom(headroom);
+		int32_t* slotMix = mixBins + slot * frameCount;
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			slotMix[frame] = static_cast<int32_t>(std::lround(static_cast<float>(slotMix[frame]) * gain));
+		}
+	}
 }
 
 void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
