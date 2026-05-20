@@ -130,6 +130,7 @@ static struct {
 	const char* codec_xadpcm = "XADPCM";
 	const char* codec_unknown = "UnknownCodec";
 	const char* mute_on_unfocus = "MuteOnUnfocus";
+	const char* output_device = "OutputDevice";
 } sect_audio_keys;
 
 static const char* section_network = "network";
@@ -232,6 +233,11 @@ std::string TrimQuoteFromString(const char* data)
 }
 
 #define AppendQuoteToString(d) "\"" + std::string(d) + "\""
+
+static void ApplyAudioOutputDeviceEnvironment(const std::string& device_name)
+{
+	SetEnvironmentVariableA("CXBXR_OPENAL_DEVICE", device_name.empty() ? nullptr : device_name.c_str());
+}
 
 bool Settings::Init()
 {
@@ -435,6 +441,8 @@ bool Settings::LoadConfig()
 	m_audio.codec_unknown = m_si.GetBoolValue(section_audio, sect_audio_keys.codec_unknown, /*Default=*/true, nullptr);
 
 	m_audio.mute_on_unfocus = m_si.GetBoolValue(section_audio, sect_audio_keys.mute_on_unfocus, /*Default=*/true, nullptr);
+	si_data = m_si.GetValue(section_audio, sect_audio_keys.output_device, /*Default=*/nullptr);
+	SetAudioOutputDevice(TrimQuoteFromString(si_data));
 
 	// ==== Audio End ===========
 
@@ -622,6 +630,13 @@ bool Settings::Save(std::string file_path)
 	m_si.SetBoolValue(section_audio, sect_audio_keys.codec_xadpcm, m_audio.codec_xadpcm, nullptr, true);
 	m_si.SetBoolValue(section_audio, sect_audio_keys.codec_unknown, m_audio.codec_unknown, nullptr, true);
 	m_si.SetBoolValue(section_audio, sect_audio_keys.mute_on_unfocus, m_audio.mute_on_unfocus, nullptr, true);
+	if (m_audio_output_device.empty()) {
+		m_si.Delete(section_audio, sect_audio_keys.output_device, true);
+	}
+	else {
+		const std::string quotedAudioDevice = AppendQuoteToString(m_audio_output_device);
+		m_si.SetValue(section_audio, sect_audio_keys.output_device, quotedAudioDevice.c_str(), nullptr, true);
+	}
 
 	// ==== Audio End ===========
 
@@ -759,6 +774,12 @@ bool Settings::Save(std::string file_path)
 void Settings::Delete()
 {
     std::filesystem::remove(m_file_path);
+}
+
+void Settings::SetAudioOutputDevice(const std::string& device_name)
+{
+	m_audio_output_device = device_name;
+	ApplyAudioOutputDeviceEnvironment(m_audio_output_device);
 }
 
 // Universal update to EmuShared from both standalone kernel, and GUI process.
