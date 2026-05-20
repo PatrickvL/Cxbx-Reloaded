@@ -442,7 +442,7 @@ bool Settings::LoadConfig()
 
 	m_audio.mute_on_unfocus = m_si.GetBoolValue(section_audio, sect_audio_keys.mute_on_unfocus, /*Default=*/true, nullptr);
 	si_data = m_si.GetValue(section_audio, sect_audio_keys.output_device, /*Default=*/nullptr);
-	SetAudioOutputDevice(TrimQuoteFromString(si_data));
+	SetAudioOutputDevice(si_data != nullptr ? TrimQuoteFromString(si_data) : "");
 
 	// ==== Audio End ===========
 

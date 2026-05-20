@@ -75,6 +75,9 @@ std::vector<std::string> GetAvailableOpenALDevices()
         }
         devices.emplace_back(current, nameLength);
         current += nameLength + 1;
+        if (*current == '\0') {
+            break;
+        }
     }
     return devices;
 }
