@@ -309,6 +309,7 @@ constexpr float APU_HRTF_MAX_DELAY_SAMPLES_FLOAT = static_cast<float>(APUDevice:
 // Scale normalized floating-point samples to signed 16-bit PCM amplitude.
 constexpr float APU_SAMPLE_SCALE_FACTOR = 32767.0f;
 constexpr size_t APU_DIAGNOSTIC_MAX_VOICES_TO_LOG = 4;
+constexpr size_t APU_DIAGNOSTIC_MAX_ACTIVE_VOICES_TO_LOG = 4;
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
 // Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
@@ -531,6 +532,7 @@ void APUDevice::Reset()
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
 	m_VPHRTFFilterState.fill(APUDevice::HRTFFilterState{});
 	m_LoggedXADPCMDecodeFailure = false;
+	m_LoggedEmptyVoiceTableDiagnostics = false;
 
 	SetRegister32(NV_PAPU_ISTS, 0);
 	SetRegister32(NV_PAPU_IEN, 0);
@@ -799,6 +801,14 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	switch (addr) {
 	case NV1BA0_PIO_SET_ANTECEDENT_VOICE:
 		SetRegister32(NV_PAPU_FEAV, value);
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU SET_ANTECEDENT_VOICE value=0x%08x list=%u antecedent=0x%04x",
+				value,
+				(value & NV_PAPU_FEAV_LST) >> Ctz32(NV_PAPU_FEAV_LST),
+				value & NV_PAPU_FEAV_VALUE);
+		}
+		m_LoggedEmptyVoiceTableDiagnostics = false;
 		return;
 	case NV1BA0_PIO_SET_CURRENT_VOICE:
 		SetRegister32(NV_PAPU_FECV, value);
@@ -811,8 +821,11 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 
 		const uint32_t feav = GetRegister32(NV_PAPU_FEAV);
 		const uint32_t list = (feav & NV_PAPU_FEAV_LST) >> Ctz32(NV_PAPU_FEAV_LST);
+		const uint32_t antecedentVoice = feav & NV_PAPU_FEAV_VALUE;
+		uint32_t topRegister = 0;
+		uint32_t topBefore = APU_VP_VOICE_MAX_HANDLE;
+		bool inserted = false;
 		if (list != APU_VOICE_LIST_INHERIT) {
-			uint32_t topRegister = 0;
 			switch (list) {
 			case 1: topRegister = NV_PAPU_TVL2D; break;
 			case 2: topRegister = NV_PAPU_TVL3D; break;
@@ -820,13 +833,14 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			default: break;
 			}
 			if (topRegister != 0) {
+				topBefore = GetRegister32(topRegister);
 				WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
 					NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE,
-					GetRegister32(topRegister));
+					topBefore);
 				SetRegister32(topRegister, selectedHandle);
+				inserted = true;
 			}
 		} else {
-			const uint32_t antecedentVoice = feav & NV_PAPU_FEAV_VALUE;
 			if (antecedentVoice < APU_VP_VOICE_MAX_HANDLE) {
 				uint32_t nextHandle = 0;
 				if (ReadVoiceMask(antecedentVoice, NV_PAVS_VOICE_TAR_PITCH_LINK,
@@ -835,8 +849,20 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 						NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
 					WriteVoiceMask(antecedentVoice, NV_PAVS_VOICE_TAR_PITCH_LINK,
 						NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, selectedHandle);
+					inserted = true;
 				}
 			}
+		}
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU VOICE_ON handle=%u feav=0x%08x list=%u antecedent=0x%04x topRegister=0x%08x topBefore=0x%08x inserted=%d",
+				selectedHandle,
+				feav,
+				list,
+				antecedentVoice,
+				topRegister,
+				topBefore,
+				inserted ? 1 : 0);
 		}
 
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
@@ -850,6 +876,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
 		ClearHRTFFilterState(selectedHandle);
 		InitializeVoiceEnvelopes(selectedHandle, value);
+		m_LoggedEmptyVoiceTableDiagnostics = false;
 		return;
 	}
 	case NV1BA0_PIO_VOICE_OFF: {
@@ -860,6 +887,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			m_VPPlaybackState[voiceHandle] = PlaybackState{};
 		}
 		ClearHRTFFilterState(voiceHandle);
+		m_LoggedEmptyVoiceTableDiagnostics = false;
 		return;
 	}
 	case NV1BA0_PIO_VOICE_PAUSE: {
@@ -1673,9 +1701,19 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 
 	std::vector<int32_t> mixBins(frameCount * APU_MIXBIN_COUNT, 0);
-	RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
-	RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
-	RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
+	const size_t visited2D = RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
+	const size_t visited3D = RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
+	const size_t visitedMP = RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		if ((visited2D + visited3D + visitedMP) == 0) {
+			if (!m_LoggedEmptyVoiceTableDiagnostics) {
+				LogVoiceTableDiagnostics();
+				m_LoggedEmptyVoiceTableDiagnostics = true;
+			}
+		} else {
+			m_LoggedEmptyVoiceTableDiagnostics = false;
+		}
+	}
 
 	uint32_t preHeadroomStereoPeak[2]{};
 	uint32_t preHeadroomDominantPeak = 0;
@@ -1798,9 +1836,10 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 	}
 }
 
-void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount)
+size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount)
 {
 	uint32_t voiceHandle = GetRegister32(topRegister);
+	const uint32_t listHead = voiceHandle;
 	size_t visitedVoiceCount = 0;
 	size_t activeVoiceCount = 0;
 	size_t mixedVoiceCount = 0;
@@ -1853,8 +1892,9 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, siz
 	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		EmuLog(LOG_LEVEL::INFO,
-			"APU voice list diagnostics top=0x%08x visited=%zu active=%zu decodedNonZero=%zu mixed=%zu stereoContrib=%zu nonStereoOnly=%zu frames=%zu",
+			"APU voice list diagnostics top=0x%08x head=0x%08x visited=%zu active=%zu decodedNonZero=%zu mixed=%zu stereoContrib=%zu nonStereoOnly=%zu frames=%zu",
 			topRegister,
+			listHead,
 			visitedVoiceCount,
 			activeVoiceCount,
 			decodedNonZeroCount,
@@ -1885,6 +1925,65 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, siz
 				static_cast<unsigned>(diagnostics.headroom[6]), static_cast<unsigned>(diagnostics.headroom[7]));
 		}
 	}
+	return visitedVoiceCount;
+}
+
+void APUDevice::LogVoiceTableDiagnostics() const
+{
+	if constexpr (!audio_diagnostics::kEnableDiagnosticLogging) {
+		return;
+	}
+
+	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
+	if (voiceTableBase == 0) {
+		EmuLog(LOG_LEVEL::INFO,
+			"APU voice table diagnostics voiceTableBase=0x00000000 active=0 paused=0 new=0 handles=[none]");
+		return;
+	}
+
+	size_t activeVoiceCount = 0;
+	size_t pausedVoiceCount = 0;
+	size_t newVoiceCount = 0;
+	std::array<uint32_t, APU_DIAGNOSTIC_MAX_ACTIVE_VOICES_TO_LOG> activeHandles{};
+	size_t loggedActiveHandles = 0;
+	for (uint32_t voiceHandle = 0; voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++voiceHandle) {
+		uint32_t state = 0;
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
+			(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+			continue;
+		}
+		++activeVoiceCount;
+		if ((state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0) {
+			++pausedVoiceCount;
+		}
+		if ((state & NV_PAVS_VOICE_PAR_STATE_NEW_VOICE) != 0) {
+			++newVoiceCount;
+		}
+		if (loggedActiveHandles < activeHandles.size()) {
+			activeHandles[loggedActiveHandles++] = voiceHandle;
+		}
+	}
+
+	if (loggedActiveHandles == 0) {
+		EmuLog(LOG_LEVEL::INFO,
+			"APU voice table diagnostics voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[none]",
+			voiceTableBase,
+			activeVoiceCount,
+			pausedVoiceCount,
+			newVoiceCount);
+		return;
+	}
+
+	EmuLog(LOG_LEVEL::INFO,
+		"APU voice table diagnostics voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[%u,%u,%u,%u]",
+		voiceTableBase,
+		activeVoiceCount,
+		pausedVoiceCount,
+		newVoiceCount,
+		activeHandles[0],
+		loggedActiveHandles > 1 ? activeHandles[1] : APU_VP_VOICE_MAX_HANDLE,
+		loggedActiveHandles > 2 ? activeHandles[2] : APU_VP_VOICE_MAX_HANDLE,
+		loggedActiveHandles > 3 ? activeHandles[3] : APU_VP_VOICE_MAX_HANDLE);
 }
 
 void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,

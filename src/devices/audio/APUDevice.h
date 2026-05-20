@@ -105,10 +105,11 @@ private:
 	void RenderBasicAudioChunk(size_t frameCount);
 	void ApplySubmixHeadroom(int32_t* mixBins, size_t frameCount);
 	void WriteOutputBuffers(const int32_t* mixBins, size_t frameCount);
-	void RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount);
+	size_t RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount);
 	struct BasicVoiceDiagnosticSummary;
 	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,
 		BasicVoiceDiagnosticSummary* diagnostics = nullptr);
+	void LogVoiceTableDiagnostics() const;
 	void InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue);
 	void BeginVoiceRelease(uint32_t voiceHandle);
 	float StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
@@ -171,6 +172,7 @@ private:
 	std::array<HRTFFilterState, MAX_HRTF_VOICES> m_VPHRTFFilterState{};
 	std::vector<int16_t> m_VP3DVoiceCaptureScratch{};
 	bool m_LoggedXADPCMDecodeFailure = false;
+	bool m_LoggedEmptyVoiceTableDiagnostics = false;
 };
 
 #endif
