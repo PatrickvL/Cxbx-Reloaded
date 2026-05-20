@@ -1492,7 +1492,15 @@ XBSYSAPI EXPORTNUM(301) xbox::ulong_xt NTAPI xbox::RtlNtStatusToDosError
 {
 	LOG_FUNC_ONE_ARG(Status);
 
-	ULONG ret = NtDll::RtlNtStatusToDosError(Status);
+	ULONG ret;
+
+	// Xbox kernel maps STATUS_TIMEOUT to WAIT_TIMEOUT directly,
+	// while Windows host maps it to ERROR_TIMEOUT (0x5B4)
+	if (Status == STATUS_TIMEOUT) {
+		ret = WAIT_TIMEOUT;
+	} else {
+		ret = NtDll::RtlNtStatusToDosError(Status);
+	}
 /* https://doxygen.reactos.org/de/ddc/sdk_2lib_2rtl_2error_8c.html#aaad43f3dbf8784c2ca1ef07748199f20
 	struct error_table {
 		DWORD       start;
