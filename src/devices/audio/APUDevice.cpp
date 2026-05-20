@@ -27,6 +27,7 @@
 
 #include "APUDevice.h"
 #include "AC97Device.h"
+#include "AudioDiagnostics.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
 #include "common/audio/XADPCM.h"
@@ -119,15 +120,6 @@ constexpr uint32_t NV1BA0_PIO_SET_CURRENT_SSL = 0x00000190;
 constexpr uint32_t NV1BA0_PIO_SET_SUBMIX_HEADROOM = 0x00000200;
 constexpr uint32_t NV1BA0_PIO_SET_HRTF_HEADROOM = 0x00000280;
 
-uint16_t PeakAbsoluteSampleAmplitude(const int16_t* samples, size_t sampleCount)
-{
-	uint32_t peak = 0;
-	for (size_t i = 0; i < sampleCount; ++i) {
-		const uint32_t magnitude = static_cast<uint32_t>(std::abs(static_cast<int32_t>(samples[i])));
-		peak = std::max(peak, magnitude);
-	}
-	return static_cast<uint16_t>(std::min<uint32_t>(peak, static_cast<uint32_t>(INT16_MAX) + 1));
-}
 constexpr uint32_t NV1BA0_PIO_SET_HRTF_SUBMIXES = 0x000002C0;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_VOICE = 0x000002F8;
 constexpr uint32_t NV1BA0_PIO_VOICE_LOCK = 0x000002FC;
@@ -1651,10 +1643,12 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		output[frame * 2 + 1] = ClampToInt16(mixBins[frameCount + frame]);
 	}
 
-	EmuLog(LOG_LEVEL::INFO,
-		"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu",
-		static_cast<unsigned>(PeakAbsoluteSampleAmplitude(output.data(), output.size())),
-		frameCount);
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		EmuLog(LOG_LEVEL::INFO,
+			"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu",
+			static_cast<unsigned>(audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size())),
+			frameCount);
+	}
 
 	g_AC97->SubmitPCMFrames(output.data(), frameCount);
 }

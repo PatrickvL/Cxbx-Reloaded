@@ -27,6 +27,7 @@
 
 #include "AC97Device.h"
 #include "APUDevice.h"
+#include "AudioDiagnostics.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
 #include "core/kernel/support/Emu.h"
@@ -306,16 +307,6 @@ int32_t ScaleSample(int16_t sample, float gain)
 {
 	const float scaled = static_cast<float>(sample) * gain;
 	return static_cast<int32_t>(scaled >= 0.0f ? (scaled + 0.5f) : (scaled - 0.5f));
-}
-
-uint16_t PeakAbsoluteSampleAmplitude(const int16_t* samples, size_t sampleCount)
-{
-	uint32_t peak = 0;
-	for (size_t i = 0; i < sampleCount; ++i) {
-		const uint32_t magnitude = static_cast<uint32_t>(std::abs(static_cast<int32_t>(samples[i])));
-		peak = std::max(peak, magnitude);
-	}
-	return static_cast<uint16_t>(std::min<uint32_t>(peak, static_cast<uint32_t>(INT16_MAX) + 1));
 }
 
 uint16_t ClampSampleRateRegister(uint16_t value)
@@ -658,14 +649,16 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		output = m_OutputScratch.data();
 	}
 
-	EmuLog(LOG_LEVEL::INFO,
-		"AC97 volume registers master=0x%04x pcm_out=0x%04x gains L=%.3f R=%.3f post-gain peak=%u frames=%zu",
-		static_cast<unsigned>(masterVolume),
-		static_cast<unsigned>(pcmOutVolume),
-		leftGain,
-		rightGain,
-		static_cast<unsigned>(PeakAbsoluteSampleAmplitude(output, frameCount * AC97_OUTPUT_CHANNELS)),
-		frameCount);
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		EmuLog(LOG_LEVEL::INFO,
+			"AC97 volume registers master=0x%04x pcm_out=0x%04x gains L=%.3f R=%.3f post-gain peak=%u frames=%zu",
+			static_cast<unsigned>(masterVolume),
+			static_cast<unsigned>(pcmOutVolume),
+			leftGain,
+			rightGain,
+			static_cast<unsigned>(audio_diagnostics::PeakAbsoluteSampleAmplitude(output, frameCount * AC97_OUTPUT_CHANNELS)),
+			frameCount);
+	}
 
 	m_StagedOutputFrames.insert(m_StagedOutputFrames.end(), output, output + (frameCount * AC97_OUTPUT_CHANNELS));
 
