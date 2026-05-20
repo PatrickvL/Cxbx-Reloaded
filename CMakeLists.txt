@@ -488,7 +488,7 @@ add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/projects/cxbxr-emu")
 set(cxbxr_INSTALL_files "COPYING" "README.md")
 
 # Cxbx-Reloaded project with third-party libraries
-set_target_properties(cxbx cxbxr-ldr cxbxr-emu misc-batch SDL2 subhook libXbSymbolDatabase libtommath libtomcrypt imgui libusb
+set_target_properties(cxbx cxbxr-ldr cxbxr-emu misc-batch SDL2 OpenAL subhook libXbSymbolDatabase libtommath libtomcrypt imgui libusb
  PROPERTIES FOLDER Cxbx-Reloaded
 )
 
@@ -710,5 +710,9 @@ install(PROGRAMS $<TARGET_FILE_DIR:cxbx>/${CMAKE_SHARED_LIBRARY_PREFIX}subhook${
 )
 
 install(PROGRAMS $<TARGET_FILE_DIR:cxbx>/${CMAKE_SHARED_LIBRARY_PREFIX}SDL2${CMAKE_SHARED_LIBRARY_SUFFIX}
+  DESTINATION bin
+)
+
+install(PROGRAMS $<TARGET_FILE:OpenAL>
   DESTINATION bin
 )

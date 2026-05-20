@@ -188,6 +188,7 @@ target_link_libraries(${PROJECT_NAME}
  subhook
  libtomcrypt
  SDL2
+ OpenAL::OpenAL
  imgui
  libusb
  nv2a_vsh_emulator

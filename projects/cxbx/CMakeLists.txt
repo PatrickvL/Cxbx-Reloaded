@@ -174,6 +174,7 @@ target_link_libraries(${PROJECT_NAME}
  subhook
  libtomcrypt
  SDL2
+ OpenAL::OpenAL
  imgui
  libusb
  mio::mio_min_winapi
