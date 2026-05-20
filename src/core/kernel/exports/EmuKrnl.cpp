@@ -524,11 +524,12 @@ XBSYSAPI EXPORTNUM(361) xbox::int_xt CDECL xbox::RtlSnprintf
 		LOG_FUNC_ARG(format)
 		LOG_FUNC_END;
 
-	// UNTESTED. Possible test-case : debugchannel.xbe
+	// Xbox uses old MSVC _snprintf semantics: returns -1 on truncation,
+	// writes count chars without null-terminator when truncated.
 
 	va_list ap;
 	va_start(ap, format);
-	INT Result = vsnprintf(string, count, format, ap);
+	INT Result = _vsnprintf(string, count, format, ap);
 	va_end(ap);
 
 	RETURN(Result);
@@ -576,7 +577,9 @@ XBSYSAPI EXPORTNUM(363) xbox::int_xt CDECL xbox::RtlVsnprintf
 		LOG_FUNC_ARG(format)
 		LOG_FUNC_END;
 
-	INT Result = vsnprintf(string, count, format, arglist);
+	// Xbox uses old MSVC _vsnprintf semantics: returns -1 on truncation,
+	// writes count chars without null-terminator when truncated.
+	INT Result = _vsnprintf(string, count, format, arglist);
 
 	RETURN(Result);
 }
