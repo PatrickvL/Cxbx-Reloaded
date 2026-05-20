@@ -111,8 +111,10 @@ constexpr uint32_t NV1BA0_PIO_VOICE_ON = 0x00000124;
 constexpr uint32_t NV1BA0_PIO_VOICE_OFF = 0x00000128;
 constexpr uint32_t NV1BA0_PIO_VOICE_RELEASE = 0x0000012C;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE = 0x00000140;
+constexpr uint32_t NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY = 0x00000160;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_SSL = 0x00000190;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_VOICE = 0x000002F8;
+constexpr uint32_t NV1BA0_PIO_VOICE_LOCK = 0x000002FC;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_VBIN = 0x00000300;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_FMT = 0x00000304;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_ENV0 = 0x00000308;
@@ -120,12 +122,15 @@ constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_ENVA = 0x0000030C;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_ENV1 = 0x00000310;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_ENVF = 0x00000314;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_MISC = 0x00000318;
+constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_HRTF = 0x0000031C;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_SSL_A = 0x00000320;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_SSL_B = 0x0000035C;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLA = 0x00000360;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLB = 0x00000364;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLC = 0x00000368;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_LFO_ENV = 0x0000036C;
+constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_FCA = 0x00000374;
+constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_FCB = 0x00000378;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_PITCH = 0x0000037C;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_BUF_BASE = 0x000003A0;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO = 0x000003A4;
@@ -146,7 +151,9 @@ constexpr uint32_t NV1BA0_PIO_VOICE_OFF_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_RELEASE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_VOICE_PAUSE_ACTION = 1 << 18;
+constexpr uint32_t NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_SSL_BASE_PAGE = 0x003FFFC0;
+constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_HRTF_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_SSL_A_COUNT = 0x000000FF;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_SSL_A_BASE = 0xFFFFFF00;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_PITCH_STEP = 0xFFFF0000;
@@ -187,6 +194,7 @@ constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B8 = 0;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B16 = 1;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM = 2;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B32 = 3;
+constexpr uint32_t NV_PAVS_VOICE_CFG_HRTF_TARGET_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV0 = 0x00000008;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV0_EA_ATTACKRATE = 0x00000FFF;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV0_EA_DELAYTIME = 0x00FFF000;
@@ -197,6 +205,7 @@ constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1 = 0x00000010;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF = 0x00000014;
 constexpr uint32_t NV_PAVS_VOICE_CFG_MISC = 0x00000018;
+constexpr uint32_t NV_PAVS_VOICE_CFG_HRTF_TARGET = 0x0000001C;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSL_START = 0x00000020;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSH_SAMPLE = 0x00000024;
 constexpr uint32_t NV_PAVS_VOICE_CUR_ECNT = 0x00000034;
@@ -407,6 +416,7 @@ void APUDevice::Reset()
 	m_VPInputSgeHandle = 0;
 	m_VPOutputSgeHandle = 0;
 	m_VPSSLBasePage = 0;
+	m_VPCurrentHRTFEntry = 0;
 	m_GPXMem.fill(0);
 	m_GPMixBuf.fill(0);
 	m_GPYMem.fill(0);
@@ -414,6 +424,7 @@ void APUDevice::Reset()
 	m_EPXMem.fill(0);
 	m_EPYMem.fill(0);
 	m_EPPMem.fill(0);
+	m_VPVoiceLocked.fill(0);
 	m_VPOutBufferCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
@@ -753,6 +764,12 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			(value & NV1BA0_PIO_VOICE_PAUSE_ACTION) != 0 ? 1u : 0u);
 		return;
 	}
+	case NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY:
+		m_VPCurrentHRTFEntry = value & NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY_HANDLE;
+		return;
+	case NV1BA0_PIO_VOICE_LOCK:
+		SetVoiceLocked(currentVoice(), (value & 1u) != 0);
+		return;
 	case NV1BA0_PIO_VOICE_RELEASE: {
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_RELEASE_HANDLE;
 		if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
@@ -785,6 +802,11 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	case NV1BA0_PIO_SET_VOICE_CFG_MISC:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_CFG_MISC, 0xFFFFFFFF, value);
 		return;
+	case NV1BA0_PIO_SET_VOICE_TAR_HRTF:
+		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_CFG_HRTF_TARGET,
+			NV_PAVS_VOICE_CFG_HRTF_TARGET_HANDLE,
+			value & NV1BA0_PIO_SET_VOICE_TAR_HRTF_HANDLE);
+		return;
 	case NV1BA0_PIO_SET_VOICE_SSL_A:
 		if (currentVoice() < m_VPSSLData.size()) {
 			m_VPSSLData[currentVoice()].base[0] = (value & NV1BA0_PIO_SET_VOICE_SSL_A_BASE) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_BASE);
@@ -808,6 +830,12 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		return;
 	case NV1BA0_PIO_SET_VOICE_LFO_ENV:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_LFO_ENV, 0xFFFFFFFF, value);
+		return;
+	case NV1BA0_PIO_SET_VOICE_TAR_FCA:
+		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_FCA, 0xFFFFFFFF, value);
+		return;
+	case NV1BA0_PIO_SET_VOICE_TAR_FCB:
+		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_FCB, 0xFFFFFFFF, value);
 		return;
 	case NV1BA0_PIO_SET_VOICE_TAR_PITCH:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_PITCH_LINK,
@@ -1000,6 +1028,30 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 
 	SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
 	RefreshInterruptStatus();
+}
+
+bool APUDevice::IsVoiceLocked(uint32_t voiceHandle) const
+{
+	if (voiceHandle >= MAX_VOICE_HANDLES) {
+		return false;
+	}
+
+	const uint64_t mask = uint64_t{1} << (voiceHandle % 64);
+	return (m_VPVoiceLocked[voiceHandle / 64] & mask) != 0;
+}
+
+void APUDevice::SetVoiceLocked(uint32_t voiceHandle, bool locked)
+{
+	if (voiceHandle >= MAX_VOICE_HANDLES) {
+		return;
+	}
+
+	const uint64_t mask = uint64_t{1} << (voiceHandle % 64);
+	if (locked) {
+		m_VPVoiceLocked[voiceHandle / 64] |= mask;
+	} else {
+		m_VPVoiceLocked[voiceHandle / 64] &= ~mask;
+	}
 }
 
 bool APUDevice::ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const

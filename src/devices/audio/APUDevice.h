@@ -97,6 +97,8 @@ private:
 	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
 	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
 	void WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status);
+	bool IsVoiceLocked(uint32_t voiceHandle) const;
+	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
 	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;
 	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
 	bool WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
@@ -116,6 +118,7 @@ private:
 	uint32_t m_VPInputSgeHandle = 0;
 	uint32_t m_VPOutputSgeHandle = 0;
 	uint32_t m_VPSSLBasePage = 0;
+	uint32_t m_VPCurrentHRTFEntry = 0;
 	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPXMem{};
 	std::array<uint8_t, 0x400 * sizeof(uint32_t)> m_GPMixBuf{};
 	std::array<uint8_t, 0x800 * sizeof(uint32_t)> m_GPYMem{};
@@ -123,6 +126,7 @@ private:
 	std::array<uint8_t, 0x0C00 * sizeof(uint32_t)> m_EPXMem{};
 	std::array<uint8_t, 0x0100 * sizeof(uint32_t)> m_EPYMem{};
 	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_EPPMem{};
+	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPVoiceLocked{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
