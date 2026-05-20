@@ -51,12 +51,25 @@ class AC97Device : public PCIDevice {
 
 		uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
 		void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
+		void Begin3DVoiceFrameBatch(size_t frameCount);
+		void Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, bool stereo,
+			const std::array<uint8_t, 4>& hrtfSubmix, uint8_t hrtfHeadroom,
+			const int16_t* samples, size_t frameCount);
 		void SubmitPCMFrames(const int16_t* samples, size_t frameCount);
 	private:
 		enum class PrimeResult : uint8_t {
 			Ready,
 			EndOfList,
 			DescriptorError,
+		};
+
+		struct SpatialVoiceState {
+			bool active = false;
+			bool stereo = false;
+			uint32_t hrtfEntryIndex = 0xFFFF;
+			std::array<uint8_t, 4> hrtfSubmix{};
+			uint8_t hrtfHeadroom = 0;
+			std::vector<int16_t> samples{};
 		};
 
 		bool EnsureOutputDevice();
@@ -82,6 +95,7 @@ class AC97Device : public PCIDevice {
 		std::array<bool, 3> m_ChannelQueuedAfterHalt{};
 		std::array<bool, 3> m_ChannelDescriptorError{};
 		std::vector<int16_t> m_OutputScratch{};
+		std::unordered_map<uint32_t, SpatialVoiceState> m_Pending3DVoices{};
 		std::vector<ALuint> m_FreeOutputBuffers{};
 		std::unordered_map<ALuint, size_t> m_OutputBufferIndex{};
 		ALCdevice* m_OutputDevice = nullptr;
