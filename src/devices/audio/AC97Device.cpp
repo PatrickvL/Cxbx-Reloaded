@@ -420,7 +420,9 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 						const size_t channelIndex = ChannelIndex(channelBase);
 						m_ChannelAdvanceOnRestart[channelIndex] = false;
 						m_ChannelQueuedAfterHalt[channelIndex] = false;
-						m_ChannelDescriptorError[channelIndex] = false;
+						if (IsDescriptorErrorAcknowledged(channelBase)) {
+							m_ChannelDescriptorError[channelIndex] = false;
+						}
 						UpdateBusMasterStatus(channelBase);
 					}
 					return;
@@ -435,7 +437,9 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					const uint8_t previousLastValid = static_cast<uint8_t>(ReadRegister(baseAddr + BM_LVI, sizeof(uint8_t)) & 0x1F);
 					const uint8_t newLastValid = static_cast<uint8_t>(value & 0x1F);
 					WriteRegister(addr, newLastValid, sizeof(uint8_t));
-					m_ChannelDescriptorError[channelIndex] = false;
+					if (IsDescriptorErrorAcknowledged(channelBase)) {
+						m_ChannelDescriptorError[channelIndex] = false;
+					}
 
 					const uint8_t control = static_cast<uint8_t>(ReadRegister(baseAddr + BM_CR, sizeof(uint8_t)));
 					const uint16_t status = ReadRegister16(baseAddr + BM_SR);
@@ -479,7 +483,8 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 						ResetBusMasterChannel(channelBase);
 					} else {
 						if ((previousControl & CR_RPBM) == 0 &&
-							(control & CR_RPBM) != 0) {
+							(control & CR_RPBM) != 0 &&
+							IsDescriptorErrorAcknowledged(channelBase)) {
 							m_ChannelDescriptorError[channelIndex] = false;
 						}
 						if ((previousControl & CR_RPBM) == 0 &&
@@ -560,6 +565,11 @@ void AC97Device::WriteRegister(uint32_t addr, uint32_t value, unsigned size)
 uint16_t AC97Device::ReadRegister16(uint32_t addr) const
 {
 	return static_cast<uint16_t>(ReadRegister(addr, sizeof(uint16_t)));
+}
+
+bool AC97Device::IsDescriptorErrorAcknowledged(uint32_t channelBase) const
+{
+	return (ReadRegister16(AC97_NAM_SIZE + channelBase + BM_SR) & SR_FIFOE) == 0;
 }
 
 void AC97Device::WriteRegister16(uint32_t addr, uint16_t value)
