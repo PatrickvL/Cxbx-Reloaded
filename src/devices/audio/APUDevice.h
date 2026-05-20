@@ -173,6 +173,9 @@ private:
 	std::vector<int16_t> m_VP3DVoiceCaptureScratch{};
 	bool m_LoggedXADPCMDecodeFailure = false;
 	bool m_LoggedEmptyVoiceTableDiagnostics = false;
+	mutable bool m_LoggedVoiceTableReadFailure = false;
+	bool m_LoggedVoiceTableWriteFailure = false;
+	bool m_LoggedScatterGatherWriteFailure = false;
 };
 
 #endif

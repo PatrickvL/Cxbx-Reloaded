@@ -185,6 +185,19 @@ constexpr uint32_t NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_OFFSET_PARAMETER = 0xFFFFF0
 constexpr uint32_t NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS = 0x007FFF00;
 constexpr uint32_t NV1BA0_PIO_SET_OUTBUF_LEN_VALUE = 0x007FFF00;
 
+const char* GetAPURegisterTraceName(uint32_t addr)
+{
+	switch (addr) {
+	case NV_PAPU_VPVADDR: return "NV_PAPU_VPVADDR";
+	case NV_PAPU_VPSGEADDR: return "NV_PAPU_VPSGEADDR";
+	case NV_PAPU_VPSSLADDR: return "NV_PAPU_VPSSLADDR";
+	case NV_PAPU_TVL2D: return "NV_PAPU_TVL2D";
+	case NV_PAPU_TVL3D: return "NV_PAPU_TVL3D";
+	case NV_PAPU_TVLMP: return "NV_PAPU_TVLMP";
+	default: return nullptr;
+	}
+}
+
 constexpr uint32_t NV_PAVS_SIZE = 0x00000080;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN = 0x00000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V0BIN = 0x0000001F;
@@ -533,6 +546,9 @@ void APUDevice::Reset()
 	m_VPHRTFFilterState.fill(APUDevice::HRTFFilterState{});
 	m_LoggedXADPCMDecodeFailure = false;
 	m_LoggedEmptyVoiceTableDiagnostics = false;
+	m_LoggedVoiceTableReadFailure = false;
+	m_LoggedVoiceTableWriteFailure = false;
+	m_LoggedScatterGatherWriteFailure = false;
 
 	SetRegister32(NV_PAPU_ISTS, 0);
 	SetRegister32(NV_PAPU_IEN, 0);
@@ -637,6 +653,30 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		WriteRegister(addr, value, size);
 		WriteGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
 		return;
+	}
+
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		if (size == sizeof(uint32_t)) {
+			if (const char* name = GetAPURegisterTraceName(addr)) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU MMIO register write %s addr=0x%08x old=0x%08x new=0x%08x",
+					name,
+					addr,
+					GetRegister32(addr),
+					value);
+				switch (addr) {
+				case NV_PAPU_VPVADDR:
+					m_LoggedVoiceTableReadFailure = false;
+					m_LoggedVoiceTableWriteFailure = false;
+					break;
+				case NV_PAPU_VPSGEADDR:
+					m_LoggedScatterGatherWriteFailure = false;
+					break;
+				default:
+					break;
+				}
+			}
+		}
 	}
 
 	WriteRegister(addr, value, size);
@@ -812,6 +852,15 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		return;
 	case NV1BA0_PIO_SET_CURRENT_VOICE:
 		SetRegister32(NV_PAPU_FECV, value);
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU SET_CURRENT_VOICE value=0x%08x voice=0x%04x vpvaddr=0x%08x vpsgeaddr=0x%08x vpssladdr=0x%08x",
+				value,
+				value & APU_VP_VOICE_MAX_HANDLE,
+				GetRegister32(NV_PAPU_VPVADDR),
+				GetRegister32(NV_PAPU_VPSGEADDR),
+				GetRegister32(NV_PAPU_VPSSLADDR));
+		}
 		return;
 	case NV1BA0_PIO_VOICE_ON: {
 		const uint32_t selectedHandle = value & NV1BA0_PIO_VOICE_ON_HANDLE;
@@ -855,14 +904,17 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		}
 		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU VOICE_ON handle=%u feav=0x%08x list=%u antecedent=0x%04x topRegister=0x%08x topBefore=0x%08x inserted=%d",
+				"APU VOICE_ON handle=%u feav=0x%08x list=%u antecedent=0x%04x topRegister=0x%08x topBefore=0x%08x inserted=%d vpvaddr=0x%08x vpsgeaddr=0x%08x vpssladdr=0x%08x",
 				selectedHandle,
 				feav,
 				list,
 				antecedentVoice,
 				topRegister,
 				topBefore,
-				inserted ? 1 : 0);
+				inserted ? 1 : 0,
+				GetRegister32(NV_PAPU_VPVADDR),
+				GetRegister32(NV_PAPU_VPSGEADDR),
+				GetRegister32(NV_PAPU_VPSSLADDR));
 		}
 
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
@@ -1185,17 +1237,40 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			if (!m_LoggedVoiceTableReadFailure) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU ReadVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x",
+					voiceHandle,
+					offset,
+					mask);
+				m_LoggedVoiceTableReadFailure = true;
+			}
+		}
 		return false;
 	}
 
 	const uint32_t voiceBase = voiceTableBase + voiceHandle * NV_PAVS_SIZE + offset;
 	uint32_t current = 0;
 	if (!ReadGuestWord(voiceBase, current)) {
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			if (!m_LoggedVoiceTableReadFailure) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU ReadVoiceMask failed voiceTableBase=0x%08x voiceBase=0x%08x handle=%u offset=0x%08x mask=0x%08x",
+					voiceTableBase,
+					voiceBase,
+					voiceHandle,
+					offset,
+					mask);
+				m_LoggedVoiceTableReadFailure = true;
+			}
+		}
 		return false;
 	}
 
 	const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
 	value = mask == 0xFFFFFFFF ? current : ((current & mask) >> shift);
+	m_LoggedVoiceTableReadFailure = false;
 	return true;
 }
 
@@ -1207,22 +1282,76 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			if (!m_LoggedVoiceTableWriteFailure) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU WriteVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x value=0x%08x",
+					voiceHandle,
+					offset,
+					mask,
+					value);
+				m_LoggedVoiceTableWriteFailure = true;
+			}
+		}
 		return false;
 	}
 
 	const uint32_t voiceBase = voiceTableBase + voiceHandle * NV_PAVS_SIZE + offset;
-	return WriteGuestWordMasked(voiceBase, mask, value);
+	const bool success = WriteGuestWordMasked(voiceBase, mask, value);
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		if (!success) {
+			if (!m_LoggedVoiceTableWriteFailure) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU WriteVoiceMask failed voiceTableBase=0x%08x voiceBase=0x%08x handle=%u offset=0x%08x mask=0x%08x value=0x%08x",
+					voiceTableBase,
+					voiceBase,
+					voiceHandle,
+					offset,
+					mask,
+					value);
+				m_LoggedVoiceTableWriteFailure = true;
+			}
+		} else {
+			m_LoggedVoiceTableWriteFailure = false;
+		}
+	}
+	return success;
 }
 
 bool APUDevice::WriteVPScatterGatherEntry(uint32_t handle, uint32_t value)
 {
 	const uint32_t sgeTableBase = GetRegister32(NV_PAPU_VPSGEADDR);
 	if (sgeTableBase == 0) {
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			if (!m_LoggedScatterGatherWriteFailure) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU WriteVPScatterGatherEntry blocked sgeTableBase=0x00000000 handle=%u value=0x%08x",
+					handle,
+					value);
+				m_LoggedScatterGatherWriteFailure = true;
+			}
+		}
 		return false;
 	}
 
 	const uint32_t sgeBase = sgeTableBase + handle * 8;
-	return WriteGuestWord(sgeBase, value);
+	const bool success = WriteGuestWord(sgeBase, value);
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		if (!success) {
+			if (!m_LoggedScatterGatherWriteFailure) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU WriteVPScatterGatherEntry failed sgeTableBase=0x%08x sgeBase=0x%08x handle=%u value=0x%08x",
+					sgeTableBase,
+					sgeBase,
+					handle,
+					value);
+				m_LoggedScatterGatherWriteFailure = true;
+			}
+		} else {
+			m_LoggedScatterGatherWriteFailure = false;
+		}
+	}
+	return success;
 }
 
 void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status)
