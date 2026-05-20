@@ -69,6 +69,11 @@ private:
 		float low = 0.0f;
 	};
 
+	struct HRTFEntryState {
+		std::array<std::array<int8_t, 31>, 2> coeffs{};
+		int16_t itd = 0;
+	};
+
 	uint32_t GPRead(uint32_t addr, unsigned size);
 	void GPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t EPRead(uint32_t addr, unsigned size);
@@ -105,6 +110,7 @@ private:
 		const void* src, size_t size);
 	uint32_t ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
 	void WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
+	void WriteHRTFCoefficient(uint32_t entryIndex, size_t channel, size_t coefficientIndex, int8_t value);
 
 	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -126,6 +132,7 @@ private:
 	std::array<uint8_t, 0x0C00 * sizeof(uint32_t)> m_EPXMem{};
 	std::array<uint8_t, 0x0100 * sizeof(uint32_t)> m_EPYMem{};
 	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_EPPMem{};
+	std::array<HRTFEntryState, 128> m_VPHRTFEntries{};
 	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPVoiceLocked{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};

@@ -136,6 +136,8 @@ constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_BUF_BASE = 0x000003A0;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO = 0x000003A4;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_BUF_CBO = 0x000003D8;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO = 0x000003DC;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR = 0x00000400;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR_X = 0x0000043C;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_INBUF_SGE = 0x00000804;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_INBUF_SGE_OFFSET = 0x00000808;
 constexpr uint32_t NV1BA0_PIO_SET_OUTBUF_BA = 0x00001000;
@@ -157,6 +159,13 @@ constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_HRTF_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_SSL_A_COUNT = 0x000000FF;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_SSL_A_BASE = 0xFFFFFF00;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_PITCH_STEP = 0xFFFF0000;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR_LEFT0 = 0x000000FF;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR_RIGHT0 = 0x0000FF00;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR_LEFT1 = 0x00FF0000;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR_RIGHT1 = 0xFF000000;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR_X_LEFT30 = 0x000000FF;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR_X_RIGHT30 = 0x0000FF00;
+constexpr uint32_t NV1BA0_PIO_SET_HRIR_X_ITD = 0xFFFF0000;
 constexpr uint32_t NV1BA0_PIO_SET_SSL_SEGMENT_OFFSET = 0x00000600;
 constexpr uint32_t NV1BA0_PIO_SET_SSL_SEGMENT_LENGTH = 0x00000604;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_INBUF_SGE_HANDLE = 0xFFFFFFFF;
@@ -278,6 +287,8 @@ constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XA
 constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_MIXBIN_COUNT = 32;
 constexpr uint32_t APU_MAX_3D_VOICES = 64;
+constexpr size_t APU_HRTF_ENTRY_COUNT = 128;
+constexpr size_t APU_HRTF_COEFFICIENT_COUNT = 31;
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
 // Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
@@ -424,6 +435,7 @@ void APUDevice::Reset()
 	m_EPXMem.fill(0);
 	m_EPYMem.fill(0);
 	m_EPPMem.fill(0);
+	m_VPHRTFEntries.fill(HRTFEntryState{});
 	m_VPVoiceLocked.fill(0);
 	m_VPOutBufferCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
@@ -870,6 +882,49 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			m_VPPlaybackState[currentVoice()].valid = false;
 		}
 		return;
+	case NV1BA0_PIO_SET_HRIR:
+	case NV1BA0_PIO_SET_HRIR + 0x04:
+	case NV1BA0_PIO_SET_HRIR + 0x08:
+	case NV1BA0_PIO_SET_HRIR + 0x0C:
+	case NV1BA0_PIO_SET_HRIR + 0x10:
+	case NV1BA0_PIO_SET_HRIR + 0x14:
+	case NV1BA0_PIO_SET_HRIR + 0x18:
+	case NV1BA0_PIO_SET_HRIR + 0x1C:
+	case NV1BA0_PIO_SET_HRIR + 0x20:
+	case NV1BA0_PIO_SET_HRIR + 0x24:
+	case NV1BA0_PIO_SET_HRIR + 0x28:
+	case NV1BA0_PIO_SET_HRIR + 0x2C:
+	case NV1BA0_PIO_SET_HRIR + 0x30:
+	case NV1BA0_PIO_SET_HRIR + 0x34:
+	case NV1BA0_PIO_SET_HRIR + 0x38: {
+		if (m_VPCurrentHRTFEntry >= APU_HRTF_ENTRY_COUNT) {
+			return;
+		}
+
+		const size_t slot = (addr - NV1BA0_PIO_SET_HRIR) / sizeof(uint32_t);
+		const size_t coefficientIndex = slot * 2;
+		WriteHRTFCoefficient(m_VPCurrentHRTFEntry, 0, coefficientIndex,
+			static_cast<int8_t>((value & NV1BA0_PIO_SET_HRIR_LEFT0) >> Ctz32(NV1BA0_PIO_SET_HRIR_LEFT0)));
+		WriteHRTFCoefficient(m_VPCurrentHRTFEntry, 1, coefficientIndex,
+			static_cast<int8_t>((value & NV1BA0_PIO_SET_HRIR_RIGHT0) >> Ctz32(NV1BA0_PIO_SET_HRIR_RIGHT0)));
+		WriteHRTFCoefficient(m_VPCurrentHRTFEntry, 0, coefficientIndex + 1,
+			static_cast<int8_t>((value & NV1BA0_PIO_SET_HRIR_LEFT1) >> Ctz32(NV1BA0_PIO_SET_HRIR_LEFT1)));
+		WriteHRTFCoefficient(m_VPCurrentHRTFEntry, 1, coefficientIndex + 1,
+			static_cast<int8_t>((value & NV1BA0_PIO_SET_HRIR_RIGHT1) >> Ctz32(NV1BA0_PIO_SET_HRIR_RIGHT1)));
+		return;
+	}
+	case NV1BA0_PIO_SET_HRIR_X:
+		if (m_VPCurrentHRTFEntry >= APU_HRTF_ENTRY_COUNT) {
+			return;
+		}
+
+		WriteHRTFCoefficient(m_VPCurrentHRTFEntry, 0, APU_HRTF_COEFFICIENT_COUNT - 1,
+			static_cast<int8_t>((value & NV1BA0_PIO_SET_HRIR_X_LEFT30) >> Ctz32(NV1BA0_PIO_SET_HRIR_X_LEFT30)));
+		WriteHRTFCoefficient(m_VPCurrentHRTFEntry, 1, APU_HRTF_COEFFICIENT_COUNT - 1,
+			static_cast<int8_t>((value & NV1BA0_PIO_SET_HRIR_X_RIGHT30) >> Ctz32(NV1BA0_PIO_SET_HRIR_X_RIGHT30)));
+		m_VPHRTFEntries[m_VPCurrentHRTFEntry].itd =
+			static_cast<int16_t>((value & NV1BA0_PIO_SET_HRIR_X_ITD) >> Ctz32(NV1BA0_PIO_SET_HRIR_X_ITD));
+		return;
 	case NV1BA0_PIO_SET_CURRENT_INBUF_SGE:
 		m_VPInputSgeHandle = value & NV1BA0_PIO_SET_CURRENT_INBUF_SGE_HANDLE;
 		return;
@@ -1130,6 +1185,16 @@ void APUDevice::WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, u
 	}
 
 	WriteLE(data, addr, value, size);
+}
+
+void APUDevice::WriteHRTFCoefficient(uint32_t entryIndex, size_t channel, size_t coefficientIndex, int8_t value)
+{
+	if (entryIndex >= m_VPHRTFEntries.size() || channel >= m_VPHRTFEntries[entryIndex].coeffs.size() ||
+		coefficientIndex >= m_VPHRTFEntries[entryIndex].coeffs[channel].size()) {
+		return;
+	}
+
+	m_VPHRTFEntries[entryIndex].coeffs[channel][coefficientIndex] = value;
 }
 
 void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue)
