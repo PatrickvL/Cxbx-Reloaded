@@ -1226,11 +1226,6 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 
 void APUDevice::SynchronizeAudio()
 {
-	if (g_AC97 == nullptr) {
-		m_LastAudioUpdate = GetAPUTime();
-		return;
-	}
-
 	const uint32_t now = GetAPUTime();
 	uint32_t remaining = now - m_LastAudioUpdate;
 	while (remaining > 0) {
@@ -1243,7 +1238,7 @@ void APUDevice::SynchronizeAudio()
 
 void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 {
-	if (frameCount == 0 || g_AC97 == nullptr) {
+	if (frameCount == 0) {
 		return;
 	}
 
@@ -1252,6 +1247,9 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
 	WriteOutputBuffers(mixBins.data(), frameCount);
+	if (g_AC97 == nullptr) {
+		return;
+	}
 
 	std::vector<int16_t> output(frameCount * 2);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
