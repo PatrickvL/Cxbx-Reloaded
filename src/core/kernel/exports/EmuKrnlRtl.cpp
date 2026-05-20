@@ -1342,9 +1342,13 @@ XBSYSAPI EXPORTNUM(295) xbox::void_xt NTAPI xbox::RtlLeaveCriticalSectionAndRegi
 
     RtlLeaveCriticalSection(CriticalSection);
 
-	// KeLeaveCriticalRegion must be called unconditionally to pair 1:1
-	// with KeLeaveCriticalRegion in RtlEnterCriticalSectionAndRegion.
-	KeLeaveCriticalRegion();
+	// Only leave the critical region when the critical section is fully released
+	// (RecursionCount dropped to 0). This pairs with the unconditional
+	// KeEnterCriticalRegion in RtlEnterCriticalSectionAndRegion, but defers the
+	// matching leave until the lock is no longer held.
+	if (CriticalSection->RecursionCount == 0) {
+		KeLeaveCriticalRegion();
+	}
 }
 
 // ******************************************************************
