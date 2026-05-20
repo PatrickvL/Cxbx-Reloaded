@@ -118,7 +118,7 @@ constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_C
 constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
 constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 2048;
 constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_OUTPUT_BYTES_PER_FRAME;
-// Prime roughly 43 ms of audio before starting playback so the 256-frame
+// Prime four 512-frame buffers before starting playback so the 256-frame
 // producer cadence does not immediately underrun the OpenAL queue.
 constexpr uint32_t AC97_STARTUP_BUFFER_CHUNKS = 4;
 constexpr uint32_t AC97_STARTUP_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES * AC97_STARTUP_BUFFER_CHUNKS;
