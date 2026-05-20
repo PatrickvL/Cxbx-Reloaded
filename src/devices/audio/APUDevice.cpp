@@ -306,6 +306,7 @@ constexpr float APU_HRTF_ITD_SCALE = 512.0f;
 constexpr float APU_HRTF_PARAM_SMOOTH_ALPHA = 0.01f;
 constexpr float APU_HRTF_NORMALIZATION_EPSILON = 0.000001f;
 constexpr float APU_HRTF_MAX_DELAY_SAMPLES_FLOAT = static_cast<float>(APUDevice::HRTF_FILTER_DELAY_SAMPLES);
+constexpr float APU_SAMPLE_SCALE_FACTOR = 32767.0f;
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
 // Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
@@ -318,12 +319,21 @@ uint32_t PeakAbsoluteMixAmplitude(const int32_t* samples, size_t sampleCount)
 	uint32_t peak = 0;
 	for (size_t i = 0; i < sampleCount; ++i) {
 		const int64_t signedSample = static_cast<int64_t>(samples[i]);
-		const uint32_t magnitude = signedSample < 0
-			? static_cast<uint32_t>(-signedSample)
-			: static_cast<uint32_t>(signedSample);
-		peak = std::max(peak, magnitude);
+		const uint64_t magnitude = signedSample < 0
+			? static_cast<uint64_t>(-signedSample)
+			: static_cast<uint64_t>(signedSample);
+		peak = std::max(peak, static_cast<uint32_t>(magnitude));
 	}
 	return peak;
+}
+
+uint32_t AbsoluteMixMagnitude(int32_t value)
+{
+	const int64_t signedSample = static_cast<int64_t>(value);
+	const uint64_t magnitude = signedSample < 0
+		? static_cast<uint64_t>(-signedSample)
+		: static_cast<uint64_t>(signedSample);
+	return static_cast<uint32_t>(magnitude);
 }
 
 uint32_t PeakAbsoluteMixBinAmplitude(const int32_t* mixBins, size_t frameCount, size_t slot)
@@ -1800,6 +1810,12 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, siz
 	size_t stereoContributionCount = 0;
 	size_t nonStereoOnlyCount = 0;
 	std::vector<BasicVoiceDiagnosticSummary> interestingVoices;
+	const auto isInterestingVoice = [](const BasicVoiceDiagnosticSummary& diagnostics) {
+		return diagnostics.active &&
+			((diagnostics.decodedNonZero && !diagnostics.stereoContribution) ||
+			 !diagnostics.decodedNonZero ||
+			 (diagnostics.framesRendered != 0 && diagnostics.offsetAdvance == 0 && diagnostics.pitchStep > 0.0));
+	};
 	for (size_t visited = 0; visited < 1024 && voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
 		uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
@@ -1823,11 +1839,7 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, siz
 			if (diagnostics.nonStereoContribution && !diagnostics.stereoContribution) {
 				++nonStereoOnlyCount;
 			}
-			if (interestingVoices.size() < 4 &&
-				diagnostics.active &&
-				((diagnostics.decodedNonZero && !diagnostics.stereoContribution) ||
-				 !diagnostics.decodedNonZero ||
-				 (diagnostics.framesRendered != 0 && diagnostics.offsetAdvance == 0 && diagnostics.pitchStep > 0.0))) {
+			if (interestingVoices.size() < 4 && isInterestingVoice(diagnostics)) {
 				interestingVoices.push_back(diagnostics);
 			}
 		}
@@ -2052,7 +2064,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		}
 		diagnostics->decodedNonZero = true;
 		diagnostics->decodedPeak = std::max(diagnostics->decodedPeak,
-			static_cast<uint32_t>(peakSample * 32767.0f));
+			static_cast<uint32_t>(peakSample * APU_SAMPLE_SCALE_FACTOR));
 	};
 	auto mixSamples = [&](float sampleLeft, float sampleRight, float envelopeGain, size_t frame) {
 		const float channelSamples[2]{ sampleLeft, sampleRight };
@@ -2076,12 +2088,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				continue;
 			}
 			const float sample = channelSamples[binIndex % channels];
-			const int32_t contribution = static_cast<int32_t>(sample * gain * 32767.0f);
+			const int32_t contribution = static_cast<int32_t>(sample * gain * APU_SAMPLE_SCALE_FACTOR);
 			mixBins[bins[binIndex] * frameCount + frame] += contribution;
 			if (diagnostics != nullptr && contribution != 0) {
-				const uint32_t magnitude = contribution < 0
-					? static_cast<uint32_t>(-static_cast<int64_t>(contribution))
-					: static_cast<uint32_t>(contribution);
+				const uint32_t magnitude = AbsoluteMixMagnitude(contribution);
 				diagnostics->mixed = true;
 				diagnostics->mixedPeak = std::max(diagnostics->mixedPeak, magnitude);
 				if (bins[binIndex] <= 1) {
@@ -2235,7 +2245,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			const int32_t mixedSample = multipassSource.empty()
 				? mixBins[multipassBin * frameCount + segmentCurrentOffset]
 				: multipassSource[segmentCurrentOffset];
-			sampleLeft = static_cast<float>(mixedSample) / 32767.0f;
+			sampleLeft = static_cast<float>(mixedSample) / APU_SAMPLE_SCALE_FACTOR;
 			sampleRight = sampleLeft;
 			recordDecodedPeak(sampleLeft, sampleRight);
 			return true;
