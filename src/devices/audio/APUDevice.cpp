@@ -320,7 +320,7 @@ uint32_t AbsoluteMixMagnitude(int32_t value)
 {
 	const int64_t signedSample = static_cast<int64_t>(value);
 	const uint64_t magnitude = signedSample < 0
-		? static_cast<uint64_t>(0 - signedSample)
+		? static_cast<uint64_t>(-signedSample)
 		: static_cast<uint64_t>(signedSample);
 	return static_cast<uint32_t>(magnitude);
 }
@@ -1890,12 +1890,12 @@ void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, siz
 void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,
 	BasicVoiceDiagnosticSummary* diagnostics)
 {
-	if (diagnostics != nullptr) {
+	const bool captureVoiceDiagnostics = diagnostics != nullptr;
+	if (captureVoiceDiagnostics) {
 		*diagnostics = {};
 		diagnostics->voiceHandle = voiceHandle;
 		diagnostics->visited = true;
 	}
-	const bool captureVoiceDiagnostics = diagnostics != nullptr;
 
 	uint32_t state = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
