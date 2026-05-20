@@ -97,7 +97,6 @@ namespace NtDll
 // TODO : Move towards thread-simulation based Dpc emulation
 typedef struct _DpcData {
 	CRITICAL_SECTION Lock;
-	std::atomic_flag IsDpcActive;
 	std::atomic_flag IsDpcPending;
 	xbox::LIST_ENTRY DpcQueue; // TODO : Use KeGetCurrentPrcb()->DpcListHead instead
 } DpcData;
@@ -504,8 +503,7 @@ void ExecuteDpcQueue()
 		// Mark it as no longer linked into the DpcQueue
 		pkdpc->Inserted = FALSE;
 		// Set DpcRoutineActive to support KeIsExecutingDpc:
-		g_DpcData.IsDpcActive.test_and_set();
-		KeGetCurrentPrcb()->DpcRoutineActive = TRUE; // Experimental
+		KeGetCurrentPrcb()->DpcRoutineActive = TRUE;
 		LeaveCriticalSection(&(g_DpcData.Lock));
 
 		EmuLog(LOG_LEVEL::DEBUG, "Global DpcQueue, calling DPC object 0x%.8X at 0x%.8X", pkdpc, pkdpc->DeferredRoutine);
@@ -518,8 +516,7 @@ void ExecuteDpcQueue()
 			pkdpc->SystemArgument2);
 
 		EnterCriticalSection(&(g_DpcData.Lock));
-		KeGetCurrentPrcb()->DpcRoutineActive = FALSE; // Experimental
-		g_DpcData.IsDpcActive.clear();
+		KeGetCurrentPrcb()->DpcRoutineActive = FALSE;
 	}
 
 	// NOTE: IsDpcPending is now cleared at the start of the DPC loop iteration
@@ -537,11 +534,6 @@ void InitDpcData()
 	// here for now (should be called by our caller)
 	InitializeCriticalSection(&(g_DpcData.Lock));
 	InitializeListHead(&(g_DpcData.DpcQueue));
-}
-
-bool IsDpcActive()
-{
-	return g_DpcData.IsDpcActive.test();
 }
 
 static constexpr uint32_t XBOX_TSC_FREQUENCY = 733333333; // Xbox Time Stamp Counter Frequency = 733333333 (CPU Clock)
@@ -1401,18 +1393,11 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 		Dpc->SystemArgument2 = SystemArgument2;
 		InsertTailList(&(g_DpcData.DpcQueue), &(Dpc->DpcListEntry));
 		LeaveCriticalSection(&(g_DpcData.Lock));
-		g_DpcData.IsDpcPending.test_and_set();
-		g_DpcData.IsDpcPending.notify_one();
 
-		// TODO : Instead of DpcQueue, add the DPC to KeGetCurrentPrcb()->DpcListHead
 		// Signal the Dpc handling code there's work to do
-		if (!IsDpcActive()) {
+		if (!KeGetCurrentPrcb()->DpcRoutineActive) {
 			HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 		}
-
-		// OpenXbox has this instead:
-		// if (!pKPRCB->DpcRoutineActive && !pKPRCB->DpcInterruptRequested) {
-		//	pKPRCB->DpcInterruptRequested = TRUE;
 	}
 	else {
 		LeaveCriticalSection(&(g_DpcData.Lock));
@@ -1432,12 +1417,7 @@ XBSYSAPI EXPORTNUM(121) xbox::boolean_xt NTAPI xbox::KeIsExecutingDpc
 {
 	LOG_FUNC();
 
-#if 0
-	// This is the correct implementation, but it doesn't work because our Prcb is per-thread instead of being per-processor
 	BOOLEAN ret = (BOOLEAN)KeGetCurrentPrcb()->DpcRoutineActive;
-#else
-	BOOLEAN ret = (BOOLEAN)IsDpcActive();
-#endif
 
 	RETURN(ret);
 }

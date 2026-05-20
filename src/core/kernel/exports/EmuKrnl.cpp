@@ -127,6 +127,7 @@ xbox::PLIST_ENTRY RemoveTailList(xbox::PLIST_ENTRY pListHead)
 // Interrupts
 
 extern volatile DWORD HalInterruptRequestRegister;
+extern xbox::KPRCB *KeGetCurrentPrcb();
 
 volatile bool g_bInterruptsEnabled = true;
 
@@ -159,7 +160,7 @@ void CallSoftwareInterrupt(const xbox::KIRQL SoftwareIrql)
 		break;
 	case DISPATCH_LEVEL: // = 2
 		// This can be recursively called by KiUnlockDispatcherDatabase and KfLowerIrql, so avoid calling DPCs again if the current one has queued yet another one
-		if (!IsDpcActive()) { // Avoid KeIsExecutingDpc(), as that logs
+		if (!KeGetCurrentPrcb()->DpcRoutineActive) {
 			ExecuteDpcQueue();
 		}
 		break;
@@ -473,8 +474,6 @@ XBSYSAPI EXPORTNUM(161) xbox::void_xt FASTCALL xbox::KfLowerIrql
 // Source:ReactOS
 XBSYSAPI EXPORTNUM(162) xbox::ulong_ptr_xt xbox::KiBugCheckData[5] = { NULL, NULL, NULL, NULL, NULL };
 
-extern xbox::KPRCB *KeGetCurrentPrcb();
-
 // ******************************************************************
 // * 0x00A3 - KiUnlockDispatcherDatabase()
 // ******************************************************************
@@ -487,7 +486,7 @@ XBSYSAPI EXPORTNUM(163) xbox::void_xt FASTCALL xbox::KiUnlockDispatcherDatabase
 
 	// Wrong, this should only happen when OldIrql >= DISPATCH_LEVEL
 	// Checking DpcRoutineActive doesn't work because our Prcb is per-thread instead of being per-processor
-	if (!IsDpcActive()) { // Avoid KeIsExecutingDpc(), as that logs
+	if (!KeGetCurrentPrcb()->DpcRoutineActive) {
 		HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 	}
 
