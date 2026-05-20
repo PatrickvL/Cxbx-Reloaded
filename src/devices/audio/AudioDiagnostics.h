@@ -26,5 +26,4 @@ inline uint32_t PeakAbsoluteSampleAmplitude(const int16_t* samples, size_t sampl
 }
 
 }
-
 #endif
