@@ -80,6 +80,7 @@ private:
 	void RefreshVPStatus();
 	void RefreshInterruptStatus();
 	void RenderBasicAudioChunk(size_t frameCount);
+	void WriteOutputBuffers(const int32_t* mixBins, size_t frameCount);
 	void RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount);
 	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount);
 	void InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue);
@@ -98,6 +99,8 @@ private:
 	void WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status);
 	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;
 	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
+	bool WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
+		const void* src, size_t size);
 
 	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -111,6 +114,7 @@ private:
 	uint32_t m_VPInputSgeHandle = 0;
 	uint32_t m_VPOutputSgeHandle = 0;
 	uint32_t m_VPSSLBasePage = 0;
+	std::array<uint32_t, 4> m_VPOutBufferCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
 	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};

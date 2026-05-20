@@ -145,6 +145,8 @@ constexpr uint32_t NV1BA0_PIO_SET_CURRENT_INBUF_SGE_HANDLE = 0xFFFFFFFF;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_INBUF_SGE_OFFSET_PARAMETER = 0xFFFFF000;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_HANDLE = 0xFFFFFFFF;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_OFFSET_PARAMETER = 0xFFFFF000;
+constexpr uint32_t NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS = 0x007FFF00;
+constexpr uint32_t NV1BA0_PIO_SET_OUTBUF_LEN_VALUE = 0x007FFF00;
 
 constexpr uint32_t NV_PAVS_SIZE = 0x00000080;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN = 0x00000000;
@@ -394,6 +396,7 @@ void APUDevice::Reset()
 	m_VPInputSgeHandle = 0;
 	m_VPOutputSgeHandle = 0;
 	m_VPSSLBasePage = 0;
+	m_VPOutBufferCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
 	m_LoggedXADPCMDecodeFailure = false;
@@ -794,8 +797,20 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			}
 			return;
 		}
-		if ((addr >= NV1BA0_PIO_SET_OUTBUF_BA && addr < NV1BA0_PIO_SET_OUTBUF_BA + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_BA) % 8) == 0) ||
-			(addr >= NV1BA0_PIO_SET_OUTBUF_LEN && addr < NV1BA0_PIO_SET_OUTBUF_LEN + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_LEN) % 8) == 0)) {
+		if (addr >= NV1BA0_PIO_SET_OUTBUF_BA && addr < NV1BA0_PIO_SET_OUTBUF_BA + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_BA) % 8) == 0) {
+			const size_t slot = (addr - NV1BA0_PIO_SET_OUTBUF_BA) / 8;
+			WriteRegister(APU_VP_BASE + addr, value & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS, sizeof(uint32_t));
+			if (slot < m_VPOutBufferCursor.size()) {
+				m_VPOutBufferCursor[slot] = 0;
+			}
+			return;
+		}
+		if (addr >= NV1BA0_PIO_SET_OUTBUF_LEN && addr < NV1BA0_PIO_SET_OUTBUF_LEN + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_LEN) % 8) == 0) {
+			const size_t slot = (addr - NV1BA0_PIO_SET_OUTBUF_LEN) / 8;
+			WriteRegister(APU_VP_BASE + addr, value & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE, sizeof(uint32_t));
+			if (slot < m_VPOutBufferCursor.size()) {
+				m_VPOutBufferCursor[slot] = 0;
+			}
 			return;
 		}
 		return;
@@ -944,6 +959,30 @@ bool APUDevice::ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t 
 			!ReadGuestBytes(guestAddress, out + i, 1)) {
 			return false;
 		}
+	}
+
+	return true;
+}
+
+bool APUDevice::WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
+	const void* src, size_t size)
+{
+	if (src == nullptr || length == 0) {
+		return false;
+	}
+
+	const auto* bytes = static_cast<const uint8_t*>(src);
+	size_t remaining = size;
+	cursor %= length;
+	while (remaining > 0) {
+		const uint32_t chunkLength = std::min<uint32_t>(length - cursor, static_cast<uint32_t>(remaining));
+		if (!WriteGuestBytes(guestAddress + cursor, bytes, chunkLength)) {
+			return false;
+		}
+
+		bytes += chunkLength;
+		remaining -= chunkLength;
+		cursor = (cursor + chunkLength) % length;
 	}
 
 	return true;
@@ -1212,6 +1251,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
 	RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
+	WriteOutputBuffers(mixBins.data(), frameCount);
 
 	std::vector<int16_t> output(frameCount * 2);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
@@ -1220,6 +1260,32 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 
 	g_AC97->SubmitPCMFrames(output.data(), frameCount);
+}
+
+void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
+{
+	if (mixBins == nullptr || frameCount == 0) {
+		return;
+	}
+
+	std::vector<int16_t> output(frameCount);
+	for (size_t slot = 0; slot < m_VPOutBufferCursor.size() && slot < APU_MIXBIN_COUNT; ++slot) {
+		const uint32_t outBufferBaseRegister = GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferLengthRegister = GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
+		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
+			m_VPOutBufferCursor[slot] = 0;
+			continue;
+		}
+
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			output[frame] = ClampToInt16(mixBins[slot * frameCount + frame]);
+		}
+
+		WriteGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferCursor[slot],
+			output.data(), output.size() * sizeof(output[0]));
+	}
 }
 
 void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount)
