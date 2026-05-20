@@ -13,16 +13,17 @@ namespace audio_diagnostics {
 #endif
 
 inline constexpr bool kEnableDiagnosticLogging = CXBXR_ENABLE_AUDIO_DIAGNOSTIC_LOGGING != 0;
-inline constexpr uint32_t kInt16MagnitudeRange = static_cast<uint32_t>(INT16_MAX) + 1;
+inline constexpr uint32_t kInt16AbsoluteMax = static_cast<uint32_t>(INT16_MAX) + 1;
 
-inline uint16_t PeakAbsoluteSampleAmplitude(const int16_t* samples, size_t sampleCount)
+inline uint32_t PeakAbsoluteSampleAmplitude(const int16_t* samples, size_t sampleCount)
 {
 	uint32_t peak = 0;
 	for (size_t i = 0; i < sampleCount; ++i) {
-		const uint32_t magnitude = static_cast<uint32_t>(std::abs(static_cast<int32_t>(samples[i])));
+		const int32_t signedSample = static_cast<int32_t>(samples[i]);
+		const uint32_t magnitude = static_cast<uint32_t>(signedSample < 0 ? -signedSample : signedSample);
 		peak = std::max(peak, magnitude);
 	}
-	return static_cast<uint16_t>(std::min<uint32_t>(peak, kInt16MagnitudeRange));
+	return std::min<uint32_t>(peak, kInt16AbsoluteMax);
 }
 
 }
