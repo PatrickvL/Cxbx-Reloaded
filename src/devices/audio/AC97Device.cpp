@@ -651,7 +651,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		EmuLog(LOG_LEVEL::INFO,
-			"AC97 volume registers master=0x%04x pcm_out=0x%04x gains L=%.3f R=%.3f post-gain peak=%u frames=%zu",
+			"AC97 volume registers master=0x%04x pcm-out=0x%04x gains L=%.3f R=%.3f post-gain peak=%u frames=%zu",
 			static_cast<unsigned>(masterVolume),
 			static_cast<unsigned>(pcmOutVolume),
 			leftGain,
