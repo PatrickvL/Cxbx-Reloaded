@@ -33,6 +33,9 @@
 #include <cstdint>
 #include <vector>
 
+#include <AL/al.h>
+#include <AL/alc.h>
+
 #include "../PCIDevice.h"
 class AC97Device : public PCIDevice {
 	public:
@@ -56,6 +59,7 @@ class AC97Device : public PCIDevice {
 		};
 
 		bool EnsureOutputDevice();
+		void ResetOutputStream();
 		uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 		void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
 		uint16_t ReadRegister16(uint32_t addr) const;
@@ -77,7 +81,11 @@ class AC97Device : public PCIDevice {
 		std::array<bool, 3> m_ChannelQueuedAfterHalt{};
 		std::array<bool, 3> m_ChannelDescriptorError{};
 		std::vector<int16_t> m_OutputScratch{};
-		uint32_t m_OutputDevice = 0;
+		std::vector<ALuint> m_FreeOutputBuffers{};
+		ALCdevice* m_OutputDevice = nullptr;
+		ALCcontext* m_OutputContext = nullptr;
+		ALuint m_OutputSource = 0;
+		std::array<ALuint, 16> m_OutputBuffers{};
 		bool m_OutputDeviceFailed = false;
 		bool m_LoggedQueueFull = false;
 };

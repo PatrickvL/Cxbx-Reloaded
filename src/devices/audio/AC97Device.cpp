@@ -31,7 +31,8 @@
 #include "common/AddressRanges.h"
 #include "core/kernel/support/Emu.h"
 
-#include "SDL.h"
+#include <AL/al.h>
+#include <AL/alc.h>
 
 #include <algorithm>
 #include <cmath>
@@ -241,9 +242,7 @@ void AC97Device::Reset()
 	m_ChannelQueuedAfterHalt.fill(false);
 	m_ChannelDescriptorError.fill(false);
 	m_LoggedQueueFull = false;
-	if (m_OutputDevice != 0) {
-		SDL_ClearQueuedAudio(static_cast<SDL_AudioDeviceID>(m_OutputDevice));
-	}
+	ResetOutputStream();
 
 	ResetBusMasterChannel(NABM_PI_BASE);
 	ResetBusMasterChannel(NABM_PO_BASE);
@@ -254,7 +253,11 @@ void AC97Device::Reset()
 
 bool AC97Device::EnsureOutputDevice()
 {
-	if (m_OutputDevice != 0) {
+	if (m_OutputContext != nullptr) {
+		if (alcGetCurrentContext() != m_OutputContext && !alcMakeContextCurrent(m_OutputContext)) {
+			m_OutputDeviceFailed = true;
+			return false;
+		}
 		return true;
 	}
 
@@ -262,28 +265,81 @@ bool AC97Device::EnsureOutputDevice()
 		return false;
 	}
 
-	if ((SDL_WasInit(SDL_INIT_AUDIO) & SDL_INIT_AUDIO) == 0 && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+	m_OutputDevice = alcOpenDevice(nullptr);
+	if (m_OutputDevice == nullptr) {
+		EmuLog(LOG_LEVEL::WARNING, "Failed to open OpenAL device");
 		m_OutputDeviceFailed = true;
 		return false;
 	}
 
-	SDL_AudioSpec desired{};
-	desired.freq = APU_TIMER_FREQUENCY;
-	desired.format = AUDIO_S16SYS;
-	desired.channels = static_cast<Uint8>(AC97_OUTPUT_CHANNELS);
-	desired.samples = 1024;
-
-	SDL_AudioSpec obtained{};
-	const SDL_AudioDeviceID device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
-	if (device == 0) {
-		EmuLog(LOG_LEVEL::WARNING, "Failed to open audio device: %s", SDL_GetError());
+	m_OutputContext = alcCreateContext(m_OutputDevice, nullptr);
+	if (m_OutputContext == nullptr || !alcMakeContextCurrent(m_OutputContext)) {
+		EmuLog(LOG_LEVEL::WARNING, "Failed to create OpenAL context");
+		if (m_OutputContext != nullptr) {
+			alcDestroyContext(m_OutputContext);
+			m_OutputContext = nullptr;
+		}
+		alcCloseDevice(m_OutputDevice);
+		m_OutputDevice = nullptr;
 		m_OutputDeviceFailed = true;
 		return false;
 	}
 
-	m_OutputDevice = static_cast<uint32_t>(device);
-	SDL_PauseAudioDevice(device, 0);
+	alGenSources(1, &m_OutputSource);
+	if (alGetError() != AL_NO_ERROR || m_OutputSource == 0) {
+		EmuLog(LOG_LEVEL::WARNING, "Failed to create OpenAL source");
+		alcMakeContextCurrent(nullptr);
+		alcDestroyContext(m_OutputContext);
+		alcCloseDevice(m_OutputDevice);
+		m_OutputContext = nullptr;
+		m_OutputDevice = nullptr;
+		m_OutputDeviceFailed = true;
+		return false;
+	}
+
+	alGenBuffers(static_cast<ALsizei>(m_OutputBuffers.size()), m_OutputBuffers.data());
+	if (alGetError() != AL_NO_ERROR) {
+		EmuLog(LOG_LEVEL::WARNING, "Failed to create OpenAL stream buffers");
+		alDeleteSources(1, &m_OutputSource);
+		m_OutputSource = 0;
+		alcMakeContextCurrent(nullptr);
+		alcDestroyContext(m_OutputContext);
+		alcCloseDevice(m_OutputDevice);
+		m_OutputContext = nullptr;
+		m_OutputDevice = nullptr;
+		m_OutputDeviceFailed = true;
+		return false;
+	}
+
+	m_FreeOutputBuffers.assign(m_OutputBuffers.begin(), m_OutputBuffers.end());
+	alSourcef(m_OutputSource, AL_GAIN, 1.0f);
 	return true;
+}
+
+void AC97Device::ResetOutputStream()
+{
+	if (m_OutputContext == nullptr || m_OutputSource == 0) {
+		return;
+	}
+
+	if (alcGetCurrentContext() != m_OutputContext && !alcMakeContextCurrent(m_OutputContext)) {
+		return;
+	}
+
+	alSourceStop(m_OutputSource);
+
+	ALint queued = 0;
+	alGetSourcei(m_OutputSource, AL_BUFFERS_QUEUED, &queued);
+	while (queued > 0) {
+		ALuint buffer = 0;
+		alSourceUnqueueBuffers(m_OutputSource, 1, &buffer);
+		if (alGetError() != AL_NO_ERROR) {
+			break;
+		}
+		--queued;
+	}
+
+	m_FreeOutputBuffers.assign(m_OutputBuffers.begin(), m_OutputBuffers.end());
 }
 
 void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
@@ -292,10 +348,26 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		return;
 	}
 
-	const SDL_AudioDeviceID device = static_cast<SDL_AudioDeviceID>(m_OutputDevice);
-	if (SDL_GetQueuedAudioSize(device) >= AC97_MAX_QUEUED_AUDIO_BYTES) {
+	ALint processed = 0;
+	alGetSourcei(m_OutputSource, AL_BUFFERS_PROCESSED, &processed);
+	while (processed > 0) {
+		ALuint buffer = 0;
+		alSourceUnqueueBuffers(m_OutputSource, 1, &buffer);
+		if (alGetError() != AL_NO_ERROR) {
+			break;
+		}
+		m_FreeOutputBuffers.push_back(buffer);
+		--processed;
+	}
+
+	ALint queued = 0;
+	alGetSourcei(m_OutputSource, AL_BUFFERS_QUEUED, &queued);
+	const uint32_t queuedAudioBytes = static_cast<uint32_t>(queued) *
+		static_cast<uint32_t>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME);
+	if (queuedAudioBytes >= AC97_MAX_QUEUED_AUDIO_BYTES ||
+		m_FreeOutputBuffers.empty()) {
 		if (!m_LoggedQueueFull) {
-			EmuLog(LOG_LEVEL::WARNING, "AC97 output queue full, dropping PCM frames");
+			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL queue full, dropping PCM frames");
 			m_LoggedQueueFull = true;
 		}
 		return;
@@ -306,18 +378,39 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	const uint16_t pcmOutVolume = ReadRegister16(AC97_PCM_Out_Volume);
 	const float leftGain = DecodeOutputAttenuation(masterVolume, true) * DecodeOutputAttenuation(pcmOutVolume, true);
 	const float rightGain = DecodeOutputAttenuation(masterVolume, false) * DecodeOutputAttenuation(pcmOutVolume, false);
-	if (leftGain == 1.0f && rightGain == 1.0f) {
-		SDL_QueueAudio(device, samples, static_cast<Uint32>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME));
+
+	const int16_t* output = samples;
+	if (leftGain != 1.0f || rightGain != 1.0f) {
+		m_OutputScratch.resize(frameCount * AC97_OUTPUT_CHANNELS);
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
+			m_OutputScratch[sampleIndex] = ClampToInt16(ScaleSample(samples[sampleIndex], leftGain));
+			m_OutputScratch[sampleIndex + 1] = ClampToInt16(ScaleSample(samples[sampleIndex + 1], rightGain));
+		}
+		output = m_OutputScratch.data();
+	}
+
+	const ALuint buffer = m_FreeOutputBuffers.back();
+	m_FreeOutputBuffers.pop_back();
+	alBufferData(buffer, AL_FORMAT_STEREO16, output,
+		static_cast<ALsizei>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME),
+		static_cast<ALsizei>(APU_TIMER_FREQUENCY));
+	if (alGetError() != AL_NO_ERROR) {
+		m_FreeOutputBuffers.push_back(buffer);
 		return;
 	}
 
-	m_OutputScratch.resize(frameCount * AC97_OUTPUT_CHANNELS);
-	for (size_t frame = 0; frame < frameCount; ++frame) {
-		const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
-		m_OutputScratch[sampleIndex] = ClampToInt16(ScaleSample(samples[sampleIndex], leftGain));
-		m_OutputScratch[sampleIndex + 1] = ClampToInt16(ScaleSample(samples[sampleIndex + 1], rightGain));
+	alSourceQueueBuffers(m_OutputSource, 1, &buffer);
+	if (alGetError() != AL_NO_ERROR) {
+		m_FreeOutputBuffers.push_back(buffer);
+		return;
 	}
-	SDL_QueueAudio(device, m_OutputScratch.data(), static_cast<Uint32>(m_OutputScratch.size() * sizeof(int16_t)));
+
+	ALint state = 0;
+	alGetSourcei(m_OutputSource, AL_SOURCE_STATE, &state);
+	if (state != AL_PLAYING) {
+		alSourcePlay(m_OutputSource);
+	}
 }
 
 uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
