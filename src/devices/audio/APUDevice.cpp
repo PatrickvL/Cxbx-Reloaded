@@ -1656,6 +1656,12 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V5BIN, bins[5]);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_V6BIN, bins[6]);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_V7BIN, bins[7]);
+	if (voiceHandle < APU_MAX_3D_VOICES) {
+		bins[0] = m_VPHRTFSubmix[0];
+		bins[1] = m_VPHRTFSubmix[1];
+		bins[2] = m_VPHRTFSubmix[2];
+		bins[3] = m_VPHRTFSubmix[3];
+	}
 	if (bins[0] == 0 && bins[1] == 0) {
 		bins[1] = 1;
 	}
@@ -1736,7 +1742,14 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			if (bins[binIndex] >= APU_MIXBIN_COUNT || volumes[binIndex] == 0) {
 				continue;
 			}
-			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain;
+			uint8_t headroom = 0;
+			if (voiceHandle < APU_MAX_3D_VOICES && binIndex < 4) {
+				headroom = m_VPHRTFHeadroom;
+			} else if (bins[binIndex] < m_VPSubmixHeadroom.size()) {
+				headroom = m_VPSubmixHeadroom[bins[binIndex]];
+			}
+			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain /
+				static_cast<float>(1u << headroom);
 			if (gain == 0.0f) {
 				continue;
 			}
