@@ -1944,7 +1944,8 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	size_t activeVoiceCount = 0;
 	size_t pausedVoiceCount = 0;
 	size_t newVoiceCount = 0;
-	std::array<uint32_t, APU_DIAGNOSTIC_MAX_ACTIVE_VOICES_TO_LOG> activeHandles{};
+	std::array<uint32_t, APU_DIAGNOSTIC_MAX_ACTIVE_VOICES_TO_LOG> activeHandles;
+	activeHandles.fill(APU_VP_VOICE_MAX_HANDLE);
 	size_t loggedActiveHandles = 0;
 	for (uint32_t voiceHandle = 0; voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++voiceHandle) {
 		uint32_t state = 0;
