@@ -406,31 +406,29 @@ XBSYSAPI EXPORTNUM(181) xbox::ntstatus_xt NTAPI xbox::MmQueryStatistics
 		RETURN(STATUS_INVALID_PARAMETER);
 	}
 
-	// Accept any Length that covers at least the pre-ImagePagesCommitted fields (0x20).
-	// Older XDK versions used an MM_STATISTICS without the ImagePagesCommitted field.
-	if (MemoryStatistics->Length >= offsetof(MM_STATISTICS, ImagePagesCommitted))
+	if (MemoryStatistics->Length < sizeof(MM_STATISTICS))
 	{
-		g_VMManager.MemoryStatistics(MemoryStatistics);
-
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->Length                      = 0x%.08X", MemoryStatistics->Length);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->TotalPhysicalPages          = 0x%.08X", MemoryStatistics->TotalPhysicalPages);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->AvailablePages              = 0x%.08X", MemoryStatistics->AvailablePages);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->VirtualMemoryBytesCommitted = 0x%.08X", MemoryStatistics->VirtualMemoryBytesCommitted);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->VirtualMemoryBytesReserved  = 0x%.08X", MemoryStatistics->VirtualMemoryBytesReserved);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->CachePagesCommitted         = 0x%.08X", MemoryStatistics->CachePagesCommitted);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->PoolPagesCommitted          = 0x%.08X", MemoryStatistics->PoolPagesCommitted);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->StackPagesCommitted         = 0x%.08X", MemoryStatistics->StackPagesCommitted);
-		if (MemoryStatistics->Length >= sizeof(MM_STATISTICS)) {
-			EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->ImagePagesCommitted         = 0x%.08X", MemoryStatistics->ImagePagesCommitted);
-		}
-
-		ret = X_STATUS_SUCCESS;
+		EmuLog(LOG_LEVEL::WARNING, "MmQueryStatistics with invalid size -> 0x%.8X", MemoryStatistics->Length);
+		RETURN(STATUS_INVALID_PARAMETER);
 	}
-	else
-	{
-		EmuLog(LOG_LEVEL::WARNING, "MmQueryStatistics with unusual size -> 0x%.8X", MemoryStatistics->Length);
-		ret = STATUS_INVALID_PARAMETER;
+
+	if (MemoryStatistics->Length != sizeof(MM_STATISTICS)) {
+		EmuLog(LOG_LEVEL::DEBUG, "MmQueryStatistics: Length 0x%.8X > sizeof (game may have uninitialized struct), proceeding", MemoryStatistics->Length);
 	}
+
+	g_VMManager.MemoryStatistics(MemoryStatistics);
+
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->Length                      = 0x%.08X", MemoryStatistics->Length);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->TotalPhysicalPages          = 0x%.08X", MemoryStatistics->TotalPhysicalPages);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->AvailablePages              = 0x%.08X", MemoryStatistics->AvailablePages);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->VirtualMemoryBytesCommitted = 0x%.08X", MemoryStatistics->VirtualMemoryBytesCommitted);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->VirtualMemoryBytesReserved  = 0x%.08X", MemoryStatistics->VirtualMemoryBytesReserved);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->CachePagesCommitted         = 0x%.08X", MemoryStatistics->CachePagesCommitted);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->PoolPagesCommitted          = 0x%.08X", MemoryStatistics->PoolPagesCommitted);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->StackPagesCommitted         = 0x%.08X", MemoryStatistics->StackPagesCommitted);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->ImagePagesCommitted         = 0x%.08X", MemoryStatistics->ImagePagesCommitted);
+
+	ret = X_STATUS_SUCCESS;
 
 	RETURN(ret);
 }
