@@ -38,6 +38,10 @@ public:
 	using PCIDevice::PCIDevice;
 
 	static constexpr size_t MAX_VOICE_HANDLES = 0xFFFF;
+	static constexpr size_t MAX_HRTF_VOICES = 64;
+	static constexpr size_t HRTF_FILTER_TAPS = 31;
+	static constexpr size_t HRTF_FILTER_DELAY_SAMPLES = 42;
+	static constexpr size_t HRTF_FILTER_BUFFER_LENGTH = HRTF_FILTER_TAPS + HRTF_FILTER_DELAY_SAMPLES;
 
 	// PCI Functions
 	void Init();
@@ -70,8 +74,21 @@ private:
 	};
 
 	struct HRTFEntryState {
-		std::array<std::array<int8_t, 31>, 2> coeffs{};
+		std::array<std::array<int8_t, HRTF_FILTER_TAPS>, 2> coeffs{};
 		int16_t itd = 0;
+	};
+
+	struct HRTFFilterChannelState {
+		std::array<float, HRTF_FILTER_BUFFER_LENGTH> buf{};
+		std::array<float, HRTF_FILTER_TAPS> hrir_coeff_cur{};
+		std::array<float, HRTF_FILTER_TAPS> hrir_coeff_tar{};
+	};
+
+	struct HRTFFilterState {
+		size_t buf_pos = 0;
+		std::array<HRTFFilterChannelState, 2> ch{};
+		float itd_cur = 0.0f;
+		float itd_tar = 0.0f;
 	};
 
 	uint32_t GPRead(uint32_t addr, unsigned size);
@@ -112,6 +129,9 @@ private:
 	uint32_t ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
 	void WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
 	void WriteHRTFCoefficient(uint32_t entryIndex, size_t channel, size_t coefficientIndex, int8_t value);
+	void ClearHRTFFilterState(uint32_t voiceHandle);
+	void SetHRTFFilterTarget(uint32_t voiceHandle, const HRTFEntryState& entry);
+	void ProcessHRTFSample(uint32_t voiceHandle, float& sampleLeft, float& sampleRight);
 
 	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -145,6 +165,7 @@ private:
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
 	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};
+	std::array<HRTFFilterState, MAX_HRTF_VOICES> m_VPHRTFFilterState{};
 	bool m_LoggedXADPCMDecodeFailure = false;
 };
 

@@ -295,10 +295,15 @@ constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
 constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_MIXBIN_COUNT = 32;
-constexpr uint32_t APU_MAX_3D_VOICES = 64;
+constexpr uint32_t APU_MAX_3D_VOICES = static_cast<uint32_t>(APUDevice::MAX_HRTF_VOICES);
 constexpr size_t APU_HRTF_SUBMIX_COUNT = 4;
 constexpr size_t APU_HRTF_ENTRY_COUNT = 128;
-constexpr size_t APU_HRTF_COEFFICIENT_COUNT = 31;
+constexpr size_t APU_HRTF_COEFFICIENT_COUNT = APUDevice::HRTF_FILTER_TAPS;
+constexpr uint32_t APU_INVALID_HRTF_ENTRY_INDEX = 0xFFFF;
+constexpr float APU_HRTF_ITD_SCALE = 512.0f;
+constexpr float APU_HRTF_PARAM_SMOOTH_ALPHA = 0.01f;
+constexpr float APU_HRTF_NORMALIZATION_EPSILON = 0.000001f;
+constexpr float APU_HRTF_MAX_DELAY_SAMPLES_FLOAT = static_cast<float>(APUDevice::HRTF_FILTER_DELAY_SAMPLES);
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
 // Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
@@ -470,6 +475,7 @@ void APUDevice::Reset()
 	m_VPOutBufferCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
+	m_VPHRTFFilterState.fill(APUDevice::HRTFFilterState{});
 	m_LoggedXADPCMDecodeFailure = false;
 
 	SetRegister32(NV_PAPU_ISTS, 0);
@@ -788,6 +794,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
+		ClearHRTFFilterState(selectedHandle);
 		InitializeVoiceEnvelopes(selectedHandle, value);
 		return;
 	}
@@ -798,6 +805,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		if (voiceHandle < m_VPPlaybackState.size()) {
 			m_VPPlaybackState[voiceHandle] = PlaybackState{};
 		}
+		ClearHRTFFilterState(voiceHandle);
 		return;
 	}
 	case NV1BA0_PIO_VOICE_PAUSE: {
@@ -910,6 +918,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		if (currentVoice() < m_VPPlaybackState.size()) {
 			m_VPPlaybackState[currentVoice()].valid = false;
 		}
+		ClearHRTFFilterState(currentVoice());
 		return;
 	case NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_CUR_PSH_SAMPLE,
@@ -917,6 +926,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		if (currentVoice() < m_VPPlaybackState.size()) {
 			m_VPPlaybackState[currentVoice()].valid = false;
 		}
+		ClearHRTFFilterState(currentVoice());
 		return;
 	case NV1BA0_PIO_SET_VOICE_BUF_CBO:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_PAR_OFFSET,
@@ -924,6 +934,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		if (currentVoice() < m_VPPlaybackState.size()) {
 			m_VPPlaybackState[currentVoice()] = PlaybackState{};
 		}
+		ClearHRTFFilterState(currentVoice());
 		return;
 	case NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_PAR_NEXT,
@@ -931,6 +942,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		if (currentVoice() < m_VPPlaybackState.size()) {
 			m_VPPlaybackState[currentVoice()].valid = false;
 		}
+		ClearHRTFFilterState(currentVoice());
 		return;
 	case NV1BA0_PIO_SET_HRIR:
 	case NV1BA0_PIO_SET_HRIR + 0x04:
@@ -1254,6 +1266,98 @@ void APUDevice::WriteHRTFCoefficient(uint32_t entryIndex, size_t channel, size_t
 	}
 
 	m_VPHRTFEntries[entryIndex].coeffs[channel][coefficientIndex] = value;
+}
+
+void APUDevice::ClearHRTFFilterState(uint32_t voiceHandle)
+{
+	if (voiceHandle >= m_VPHRTFFilterState.size()) {
+		return;
+	}
+
+	m_VPHRTFFilterState[voiceHandle] = HRTFFilterState{};
+}
+
+void APUDevice::SetHRTFFilterTarget(uint32_t voiceHandle, const HRTFEntryState& entry)
+{
+	if (voiceHandle >= m_VPHRTFFilterState.size()) {
+		return;
+	}
+
+	auto& filter = m_VPHRTFFilterState[voiceHandle];
+	filter.itd_tar = std::clamp(static_cast<float>(entry.itd) / APU_HRTF_ITD_SCALE,
+		-APU_HRTF_MAX_DELAY_SAMPLES_FLOAT,
+		APU_HRTF_MAX_DELAY_SAMPLES_FLOAT);
+
+	for (size_t channel = 0; channel < filter.ch.size(); ++channel) {
+		float sum = 0.0f;
+		for (size_t coefficientIndex = 0; coefficientIndex < entry.coeffs[channel].size(); ++coefficientIndex) {
+			const float coefficient = static_cast<float>(entry.coeffs[channel][coefficientIndex]) / 127.0f;
+			filter.ch[channel].hrir_coeff_tar[coefficientIndex] = coefficient;
+			sum += std::fabs(coefficient);
+		}
+		if (sum > APU_HRTF_NORMALIZATION_EPSILON &&
+			std::fabs(sum - 1.0f) > APU_HRTF_NORMALIZATION_EPSILON) {
+			for (float& coefficient : filter.ch[channel].hrir_coeff_tar) {
+				coefficient /= sum;
+			}
+		}
+	}
+}
+
+void APUDevice::ProcessHRTFSample(uint32_t voiceHandle, float& sampleLeft, float& sampleRight)
+{
+	if (voiceHandle >= m_VPHRTFFilterState.size()) {
+		return;
+	}
+
+	auto& filter = m_VPHRTFFilterState[voiceHandle];
+	for (size_t channel = 0; channel < filter.ch.size(); ++channel) {
+		auto& currentCoefficients = filter.ch[channel].hrir_coeff_cur;
+		const auto& targetCoefficients = filter.ch[channel].hrir_coeff_tar;
+		for (size_t coefficientIndex = 0; coefficientIndex < currentCoefficients.size(); ++coefficientIndex) {
+			currentCoefficients[coefficientIndex] += APU_HRTF_PARAM_SMOOTH_ALPHA *
+				(targetCoefficients[coefficientIndex] - currentCoefficients[coefficientIndex]);
+		}
+	}
+	filter.itd_cur += APU_HRTF_PARAM_SMOOTH_ALPHA * (filter.itd_tar - filter.itd_cur);
+
+	const float inputSamples[2]{ sampleLeft, sampleRight };
+	float outputSamples[2]{};
+	const int bufferLength = static_cast<int>(HRTF_FILTER_BUFFER_LENGTH);
+	const int bufferPosition = static_cast<int>(filter.buf_pos);
+	for (size_t channel = 0; channel < filter.ch.size(); ++channel) {
+		auto& channelState = filter.ch[channel];
+		channelState.buf[filter.buf_pos] = inputSamples[channel];
+
+		float delay = 0.0f;
+		const float delayMagnitude = std::fabs(filter.itd_cur);
+		if ((filter.itd_cur >= 0.0f && channel == 0) || (filter.itd_cur < 0.0f && channel == 1)) {
+			delay = delayMagnitude;
+		}
+		const int delayInteger = static_cast<int>(delay);
+		const float delayFraction = delay - static_cast<float>(delayInteger);
+
+		float convolutionSum = 0.0f;
+		for (size_t coefficientIndex = 0; coefficientIndex < channelState.hrir_coeff_cur.size(); ++coefficientIndex) {
+			const int tapOffset = (delayInteger + static_cast<int>(coefficientIndex)) % bufferLength;
+			const int index1 = (bufferPosition - tapOffset + bufferLength) % bufferLength;
+			float delayedSample = channelState.buf[index1];
+			if (delayFraction > 0.0f) {
+				const int index2 = (index1 - 1 + bufferLength) % bufferLength;
+				delayedSample = delayedSample * (1.0f - delayFraction) + channelState.buf[index2] * delayFraction;
+			}
+			convolutionSum += channelState.hrir_coeff_cur[coefficientIndex] * delayedSample;
+		}
+
+		outputSamples[channel] = convolutionSum;
+	}
+
+	sampleLeft = outputSamples[0];
+	sampleRight = outputSamples[1];
+	++filter.buf_pos;
+	if (filter.buf_pos >= HRTF_FILTER_BUFFER_LENGTH) {
+		filter.buf_pos = 0;
+	}
 }
 
 void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue)
@@ -1718,6 +1822,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		playbackState.fraction = 0.0;
 		playbackState.valid = true;
 		m_VPLowPassState[voiceHandle] = {};
+		ClearHRTFFilterState(voiceHandle);
 	}
 	uint32_t cachedADPCMBlockIndex = 0;
 	uint32_t cachedADPCMBaseAddress = 0;
@@ -1729,6 +1834,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	auto stopVoice = [&]() {
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
+		ClearHRTFFilterState(voiceHandle);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 	};
@@ -1791,6 +1897,14 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		sampleRight = ClampUnitSample(RunLowPassFilter(filterState[1].high, filterState[1].band, filterState[1].low,
 			lowPassCutoff[1], lowPassResonance[1], sampleRight));
 	};
+	uint32_t hrtfEntryIndex = APU_INVALID_HRTF_ENTRY_INDEX;
+	const bool hrtfEnabled = voiceHandle < APU_MAX_3D_VOICES &&
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_HRTF_TARGET,
+			NV_PAVS_VOICE_CFG_HRTF_TARGET_HANDLE, hrtfEntryIndex) &&
+		hrtfEntryIndex < m_VPHRTFEntries.size();
+	if (hrtfEnabled) {
+		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
+	}
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		return streaming ? ReadGuestBytes(sampleAddress, dest, size) : ReadVoiceBufferBytes(sampleAddress, dest, size);
 	};
@@ -2023,6 +2137,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		}
 		if (multipass) {
 			applyLowPass(currentLeft, currentRight);
+			if (hrtfEnabled) {
+				ProcessHRTFSample(voiceHandle, currentLeft, currentRight);
+			}
 			mixSamples(currentLeft, currentRight, envelopeGain, frame);
 			continue;
 		}
@@ -2043,6 +2160,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
 		applyLowPass(sampleLeft, sampleRight);
+		if (hrtfEnabled) {
+			ProcessHRTFSample(voiceHandle, sampleLeft, sampleRight);
+		}
 
 		mixSamples(sampleLeft, sampleRight, envelopeGain, frame);
 
