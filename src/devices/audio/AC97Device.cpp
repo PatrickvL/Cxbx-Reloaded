@@ -760,7 +760,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		if (sourceError != AL_NO_ERROR || postState != AL_PLAYING) {
 			if (!m_LoggedPlaybackStartFailure) {
 				EmuLog(LOG_LEVEL::WARNING,
-					"AC97 OpenAL source failed to enter AL_PLAYING after alSourcePlay: playError=%s (0x%04x), state=%s queuedBuffers=%d processedBuffers=%d queuedBytes=%u",
+					"AC97 OpenAL source did not report AL_PLAYING after alSourcePlay: playResult=%s (0x%04x), postPlayState=%s queuedBuffers=%d processedBuffers=%d queuedBytes=%u",
 					GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError),
 					GetOpenALSourceStateName(postState), postQueued, postProcessed, m_QueuedAudioBytes);
 				m_LoggedPlaybackStartFailure = true;
