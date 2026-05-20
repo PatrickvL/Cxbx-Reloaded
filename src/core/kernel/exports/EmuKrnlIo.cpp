@@ -1877,9 +1877,11 @@ XBSYSAPI EXPORTNUM(359) xbox::cchar_xt NTAPI xbox::IoMarkIrpMustComplete
 {
 	LOG_FUNC_ONE_ARG(Irp);
 
-	xbox::cchar_xt ret = 0; // ShareAccess->OpenCount;
+	// Set the must-complete flag so IoCompleteRequest knows to process it
+	Irp->Flags |= 0x2000; // IRP_MUST_COMPLETE_REQUEST
 
-	LOG_UNIMPLEMENTED();
+	// Return and adjust CurrentLocation (advances the stack location)
+	xbox::cchar_xt ret = Irp->CurrentLocation;
 
 	RETURN(ret);
 }
