@@ -1314,10 +1314,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 					value);
 				m_LoggedVoiceTableWriteFailure = true;
 			}
-		}
-	}
-	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		if (success) {
+		} else {
 			m_LoggedVoiceTableWriteFailure = false;
 		}
 	}
@@ -1353,10 +1350,7 @@ bool APUDevice::WriteVPScatterGatherEntry(uint32_t handle, uint32_t value)
 					value);
 				m_LoggedScatterGatherWriteFailure = true;
 			}
-		}
-	}
-	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		if (success) {
+		} else {
 			m_LoggedScatterGatherWriteFailure = false;
 		}
 	}
