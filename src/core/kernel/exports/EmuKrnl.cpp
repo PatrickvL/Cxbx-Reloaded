@@ -127,7 +127,8 @@ xbox::PLIST_ENTRY RemoveTailList(xbox::PLIST_ENTRY pListHead)
 // Interrupts
 
 extern volatile DWORD HalInterruptRequestRegister;
-extern xbox::KPRCB *KeGetCurrentPrcb();
+extern volatile xbox::KPRCB *KeGetCurrentPrcb();
+extern volatile xbox::ulong_xt g_DpcRoutineActive;
 
 volatile bool g_bInterruptsEnabled = true;
 
@@ -160,7 +161,7 @@ void CallSoftwareInterrupt(const xbox::KIRQL SoftwareIrql)
 		break;
 	case DISPATCH_LEVEL: // = 2
 		// This can be recursively called by KiUnlockDispatcherDatabase and KfLowerIrql, so avoid calling DPCs again if the current one has queued yet another one
-		if (!KeGetCurrentPrcb()->DpcRoutineActive) {
+		if (!g_DpcRoutineActive) {
 			ExecuteDpcQueue();
 		}
 		break;
@@ -410,7 +411,7 @@ XBSYSAPI EXPORTNUM(160) xbox::KIRQL FASTCALL xbox::KfRaiseIrql
 	LOG_FUNC_ONE_ARG_TYPE(KIRQL_TYPE, NewIrql);
 
 	// Inlined KeGetCurrentIrql() :
-	PKPCR Pcr = EmuKeGetPcr();
+	volatile KPCR* Pcr = EmuKeGetPcr();
 	KIRQL OldIrql = (KIRQL)Pcr->Irql;
 
 	// Set new before check
@@ -438,7 +439,7 @@ XBSYSAPI EXPORTNUM(161) xbox::void_xt FASTCALL xbox::KfLowerIrql
 {
 	LOG_FUNC_ONE_ARG_TYPE(KIRQL_TYPE, NewIrql);
 
-	KPCR* Pcr = EmuKeGetPcr();
+	volatile KPCR* Pcr = EmuKeGetPcr();
 
 	if (g_bIsDebugKernel && NewIrql > Pcr->Irql) {
 		KIRQL OldIrql = Pcr->Irql;
@@ -484,9 +485,9 @@ XBSYSAPI EXPORTNUM(163) xbox::void_xt FASTCALL xbox::KiUnlockDispatcherDatabase
 {
 	LOG_FUNC_ONE_ARG_TYPE(KIRQL_TYPE, OldIrql);
 
-	// Wrong, this should only happen when OldIrql >= DISPATCH_LEVEL
-	// Checking DpcRoutineActive doesn't work because our Prcb is per-thread instead of being per-processor
-	if (!KeGetCurrentPrcb()->DpcRoutineActive) {
+	// Xbox has a single CPU, so DpcRoutineActive is a system-wide flag.
+	// Skip dispatch if DPCs are already active (prevents re-entrant dispatch).
+	if (!g_DpcRoutineActive) {
 		HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 	}
 

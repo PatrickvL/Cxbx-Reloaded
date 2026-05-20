@@ -102,6 +102,10 @@ typedef struct _DpcData {
 } DpcData;
 
 DpcData g_DpcData = { 0 }; // Note : g_DpcData is initialized in InitDpcData()
+// Xbox has a single CPU, so DpcRoutineActive is effectively a system-wide flag.
+// We store it globally (not per-thread) so that all threads—including the
+// background DPC dispatch thread—see the same suppression state.
+volatile xbox::ulong_xt g_DpcRoutineActive = 0;
 std::atomic_flag xbox::KeSystemTimeChanged;
 
 xbox::ulonglong_xt LARGE_INTEGER2ULONGLONG(xbox::LARGE_INTEGER value)
@@ -179,10 +183,10 @@ void KeSignalVBlankPending()
 // * NOTE: This is a macro on the Xbox, however we implement it 
 // * as a function so it can suit our emulated KPCR structure
 // ******************************************************************
-xbox::KPCR* WINAPI EmuKeGetPcr()
+volatile xbox::KPCR* WINAPI EmuKeGetPcr()
 {
 	// See EmuKeSetPcr()
-	xbox::PKPCR Pcr = (xbox::PKPCR)__readfsdword(TIB_ArbitraryDataSlot);
+	volatile xbox::PKPCR Pcr = (volatile xbox::PKPCR)__readfsdword(TIB_ArbitraryDataSlot);
 
 	// If this fails, it's a bug: it means we are executing xbox code from a host thread, and we have forgotten to initialize
 	// the xbox thread first
@@ -194,7 +198,7 @@ xbox::KPCR* WINAPI EmuKeGetPcr()
 // ******************************************************************
 // * KeGetCurrentPrcb()
 // ******************************************************************
-xbox::KPRCB *KeGetCurrentPrcb()
+volatile xbox::KPRCB *KeGetCurrentPrcb()
 {
 	return &(EmuKeGetPcr()->PrcbData);
 }
@@ -480,20 +484,21 @@ xbox::void_xt xbox::KeInitializeThread<false>(
 #define KeRaiseIrql(NewIrql, OldIrql) \
 	*(OldIrql) = KfRaiseIrql(NewIrql)
 
-void ExecuteDpcQueue()
+void ExecuteDpcQueue(bool inline_dispatch)
 {
 	xbox::PKDPC pkdpc;
 
 	// While we're working with the DpcQueue, we need to be thread-safe :
 	EnterCriticalSection(&(g_DpcData.Lock));
 
-//    if (g_DpcData._fShutdown)
-//        break; // while 
-
-//    Assert(g_DpcData._dwThreadId == GetCurrentThreadId());
-//    Assert(g_DpcData._dwDpcThreadId == 0);
-//    g_DpcData._dwDpcThreadId = g_DpcData._dwThreadId;
-//    Assert(g_DpcData._dwDpcThreadId != 0);
+	// On real Xbox, DPC dispatch is suppressed when DpcRoutineActive is set.
+	// The background DPC thread checks this to respect suppression set by the
+	// game thread. When inline_dispatch is true, the caller already holds the
+	// reservation (g_DpcRoutineActive == TRUE) so we skip this guard.
+	if (!inline_dispatch && g_DpcRoutineActive) {
+		LeaveCriticalSection(&(g_DpcData.Lock));
+		return;
+	}
 
 	// Are there entries in the DpqQueue?
 	while (!IsListEmpty(&(g_DpcData.DpcQueue)))
@@ -502,11 +507,12 @@ void ExecuteDpcQueue()
 		pkdpc = CONTAINING_RECORD(RemoveHeadList(&(g_DpcData.DpcQueue)), xbox::KDPC, DpcListEntry);
 		// Mark it as no longer linked into the DpcQueue
 		pkdpc->Inserted = FALSE;
-		// Set DpcRoutineActive to support KeIsExecutingDpc:
+		// Set DpcRoutineActive: global for suppression, KPRCB for per-thread reporting
+		g_DpcRoutineActive = TRUE;
 		KeGetCurrentPrcb()->DpcRoutineActive = TRUE;
 		LeaveCriticalSection(&(g_DpcData.Lock));
 
-		EmuLog(LOG_LEVEL::DEBUG, "Global DpcQueue, calling DPC object 0x%.8X at 0x%.8X", pkdpc, pkdpc->DeferredRoutine);
+		EmuLog(LOG_LEVEL::DEBUG, "DpcQueue: dispatching DPC 0x%.8X routine 0x%.8X", pkdpc, pkdpc->DeferredRoutine);
 
 		// Call the Deferred Procedure  :
 		pkdpc->DeferredRoutine(
@@ -517,14 +523,12 @@ void ExecuteDpcQueue()
 
 		EnterCriticalSection(&(g_DpcData.Lock));
 		KeGetCurrentPrcb()->DpcRoutineActive = FALSE;
+		g_DpcRoutineActive = FALSE;
 	}
 
 	// NOTE: IsDpcPending is now cleared at the start of the DPC loop iteration
 	// (in CxbxKrnlMain) to prevent lost-wake races. Do NOT clear it here.
 
-//    Assert(g_DpcData._dwThreadId == GetCurrentThreadId());
-//    Assert(g_DpcData._dwDpcThreadId == g_DpcData._dwThreadId);
-//    g_DpcData._dwDpcThreadId = 0;
 	LeaveCriticalSection(&(g_DpcData.Lock));
 }
 
@@ -894,7 +898,7 @@ XBSYSAPI EXPORTNUM(103) xbox::KIRQL NTAPI xbox::KeGetCurrentIrql(void)
 {
 	LOG_FUNC(); // TODO : Remove nested logging on this somehow, so we can call this (instead of inlining)
 
-	KPCR* Pcr = EmuKeGetPcr();
+	volatile KPCR* Pcr = EmuKeGetPcr();
 	KIRQL Irql = (KIRQL)Pcr->Irql;
 
 	RETURN_TYPE(KIRQL_TYPE, Irql);
@@ -1382,7 +1386,6 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 
 	// For thread safety, enter the Dpc lock:
 	EnterCriticalSection(&(g_DpcData.Lock));
-	// TODO : Instead, disable interrupts - use KeRaiseIrql(HIGH_LEVEL, &(KIRQL)OldIrql) ?
 
 	BOOLEAN NeedsInsertion = (Dpc->Inserted == FALSE);
 
@@ -1392,10 +1395,25 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 		Dpc->SystemArgument1 = SystemArgument1;
 		Dpc->SystemArgument2 = SystemArgument2;
 		InsertTailList(&(g_DpcData.DpcQueue), &(Dpc->DpcListEntry));
+
+		// On real Xbox (single CPU), after queuing a DPC at PASSIVE_LEVEL,
+		// the DPC fires synchronously before KeInsertQueueDpc returns (via
+		// KfLowerIrql on the trap return path). Suppress the background DPC
+		// thread from stealing this DPC by setting g_DpcRoutineActive while
+		// we still hold the lock — ExecuteDpcQueue checks this flag.
+		volatile KPCR* Pcr = EmuKeGetPcr();
+		bool dispatch_now = (!g_DpcRoutineActive && Pcr->Irql < DISPATCH_LEVEL);
+		if (dispatch_now) {
+			g_DpcRoutineActive = TRUE;
+		}
 		LeaveCriticalSection(&(g_DpcData.Lock));
 
-		// Signal the Dpc handling code there's work to do
-		if (!KeGetCurrentPrcb()->DpcRoutineActive) {
+		if (dispatch_now) {
+			// Dispatch inline with g_DpcRoutineActive still TRUE from the
+			// reservation above — no race window for the background thread.
+			ExecuteDpcQueue(true);
+		} else {
+			// Signal the background DPC thread to dispatch later
 			HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 		}
 	}
@@ -1403,15 +1421,14 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 		LeaveCriticalSection(&(g_DpcData.Lock));
 	}
 
-	// Thread-safety is no longer required anymore
-	// TODO : Instead, enable interrupts - use KeLowerIrql(OldIrql) ?
-
 	RETURN(NeedsInsertion);
 }
 
 // ******************************************************************
 // * 0x0079 - KeIsExecutingDpc()
 // ******************************************************************
+// On real Xbox, this reads KPRCB.DpcRoutineActive (at KPCR offset 0x58),
+// similar to how KeGetCurrentIrql reads KPCR.Irql (at offset 0x24).
 XBSYSAPI EXPORTNUM(121) xbox::ulong_xt NTAPI xbox::KeIsExecutingDpc
 ()
 {

@@ -461,22 +461,24 @@ XBSYSAPI EXPORTNUM(48) xbox::void_xt FASTCALL xbox::HalRequestSoftwareInterrupt
 	DWORD InterruptMask = 1 << Request;
 	bool interrupt_flag = DisableInterrupts();
 
-	// Set this interrupt request bit:
+	// Mark this software interrupt as pending
 	HalInterruptRequestRegister |= InterruptMask;
 
-	// Get current IRQL
-	PKPCR Pcr = EmuKeGetPcr();
-	KIRQL CurrentIrql = (KIRQL)Pcr->Irql;
+	// On real hardware, DPC dispatch is deferred until IRQL is lowered
+	// (via KfLowerIrql). It does NOT fire here. KeInsertQueueDpc handles
+	// synchronous DPC dispatch explicitly. For other interrupt levels
+	// (APC, hardware), dispatch immediately if IRQL allows — our emulation
+	// lacks the implicit check-points (trap returns, context switches) that
+	// real hardware uses to service these.
+	if (Request != DISPATCH_LEVEL) {
+		volatile KPCR* Pcr = EmuKeGetPcr();
+		KIRQL CurrentIrql = (KIRQL)Pcr->Irql;
+		uint8_t SoftwareInterrupt = HalInterruptRequestRegister & 7;
+		KIRQL SoftwareIrql = SoftwareInterruptLookupTable[SoftwareInterrupt];
 
-	// Get pending Software Interrupts (APC=bit1, DPC=bit2)
-	uint8_t SoftwareInterrupt = HalInterruptRequestRegister & 7;
-
-	// Get the highest pending software interrupt level
-	KIRQL SoftwareIrql = SoftwareInterruptLookupTable[SoftwareInterrupt];
-	
-	if (SoftwareIrql > CurrentIrql) {
-		// TODO: This is not completely correct, but it fixes an issue where DPCQueue's weren't running
-		CallSoftwareInterrupt(Request);
+		if (SoftwareIrql > CurrentIrql) {
+			CallSoftwareInterrupt(Request);
+		}
 	}
 
 	RestoreInterruptMode(interrupt_flag);

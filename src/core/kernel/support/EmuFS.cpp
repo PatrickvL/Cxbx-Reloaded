@@ -41,6 +41,9 @@
 #include <cstdio>
 #include <vector>
 
+// Global DpcRoutineActive flag (single-CPU emulation, defined in EmuKrnlKe.cpp)
+extern volatile xbox::ulong_xt g_DpcRoutineActive;
+
 #ifdef RtlZeroMemory
 #undef RtlZeroMemory
 #endif
@@ -195,7 +198,7 @@ void EmuKeSetPcr(xbox::KPCR *Pcr)
 void EmuKeFreePcr()
 {
 	using namespace xbox;
-	PVOID Pcr = EmuKeGetPcr();
+	PVOID Pcr = (PVOID)EmuKeGetPcr();
 	ulong_xt Size = zero;
 	ntstatus_xt Status = NtFreeVirtualMemory(&Pcr, &Size, XBOX_MEM_RELEASE); // free pcr
 	assert(Status == X_STATUS_SUCCESS);
@@ -267,6 +270,61 @@ __declspec(naked) void EmuFS_MovEaxFs20()
 	}
 }
 
+__declspec(naked) void EmuFS_MovEbxFs20()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov ebx, fs : [TIB_ArbitraryDataSlot]
+		mov ebx, [ebx + 20h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEcxFs20()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov ecx, fs : [TIB_ArbitraryDataSlot]
+		mov ecx, [ecx + 20h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEdxFs20()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov edx, fs : [TIB_ArbitraryDataSlot]
+		mov edx, [edx + 20h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEsiFs20()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov esi, fs : [TIB_ArbitraryDataSlot]
+		mov esi, [esi + 20h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEdiFs20()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov edi, fs : [TIB_ArbitraryDataSlot]
+		mov edi, [edi + 20h]
+		ret
+	}
+}
+
 __declspec(naked) void EmuFS_MovEaxFs28()
 {
 	__asm
@@ -278,13 +336,293 @@ __declspec(naked) void EmuFS_MovEaxFs28()
 	}
 }
 
+__declspec(naked) void EmuFS_MovEbxFs28()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov ebx, fs : [TIB_ArbitraryDataSlot]
+		mov ebx, [ebx + 28h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEcxFs28()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov ecx, fs : [TIB_ArbitraryDataSlot]
+		mov ecx, [ecx + 28h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEdxFs28()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov edx, fs : [TIB_ArbitraryDataSlot]
+		mov edx, [edx + 28h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEsiFs28()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov esi, fs : [TIB_ArbitraryDataSlot]
+		mov esi, [esi + 28h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEdiFs28()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov edi, fs : [TIB_ArbitraryDataSlot]
+		mov edi, [edi + 28h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs28Eax()
+{
+	// Note : ebx must be preserved here, hence the push/pop
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push ebx
+		mov ebx, fs : [TIB_ArbitraryDataSlot]
+		mov [ebx + 28h], eax
+		pop ebx
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs28Ebx()
+{
+	// Note : eax must be preserved here, hence the push/pop
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 28h], ebx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs28Ecx()
+{
+	// Note : eax must be preserved here, hence the push/pop
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 28h], ecx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs28Edx()
+{
+	// Note : eax must be preserved here, hence the push/pop
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 28h], edx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs28Esi()
+{
+	// Note : eax must be preserved here, hence the push/pop
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 28h], esi
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs28Edi()
+{
+	// Note : eax must be preserved here, hence the push/pop
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 28h], edi
+		pop eax
+		ret
+	}
+}
+
 __declspec(naked) void EmuFS_MovEaxFs58()
 {
+	// Read per-thread DpcRoutineActive for reporting (KeIsExecutingDpc semantics)
 	__asm
 	{
 		call EmuFS_RefreshKPCR
 		mov eax, fs : [TIB_ArbitraryDataSlot]
 		mov eax, [eax + 58h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEbxFs58()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov ebx, fs : [TIB_ArbitraryDataSlot]
+		mov ebx, [ebx + 58h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEcxFs58()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov ecx, fs : [TIB_ArbitraryDataSlot]
+		mov ecx, [ecx + 58h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEdxFs58()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov edx, fs : [TIB_ArbitraryDataSlot]
+		mov edx, [edx + 58h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEsiFs58()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov esi, fs : [TIB_ArbitraryDataSlot]
+		mov esi, [esi + 58h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovEdiFs58()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		mov edi, fs : [TIB_ArbitraryDataSlot]
+		mov edi, [edi + 58h]
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs58Eax()
+{
+	// Write to both global (suppression) and per-thread KPCR (reporting)
+	__asm
+	{
+		mov [g_DpcRoutineActive], eax
+		call EmuFS_RefreshKPCR
+		push ebx
+		mov ebx, fs : [TIB_ArbitraryDataSlot]
+		mov [ebx + 58h], eax
+		pop ebx
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs58Ebx()
+{
+	__asm
+	{
+		mov [g_DpcRoutineActive], ebx
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 58h], ebx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs58Ecx()
+{
+	__asm
+	{
+		mov [g_DpcRoutineActive], ecx
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 58h], ecx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs58Edx()
+{
+	__asm
+	{
+		mov [g_DpcRoutineActive], edx
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 58h], edx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs58Esi()
+{
+	__asm
+	{
+		mov [g_DpcRoutineActive], esi
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 58h], esi
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_MovFs58Edi()
+{
+	__asm
+	{
+		mov [g_DpcRoutineActive], edi
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov [eax + 58h], edi
+		pop eax
 		ret
 	}
 }
@@ -583,8 +921,35 @@ void EmuInitFS()
 	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs00 });					// mov eax, large fs:0
 	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x04, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs04 });					// mov eax, large fs:4
 	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x20, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs20 });					// mov eax, large fs:20
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x1D, 0x20, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEbxFs20 });			// mov ebx, large fs:20
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x0D, 0x20, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEcxFs20 });			// mov ecx, large fs:20
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x15, 0x20, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdxFs20 });			// mov edx, large fs:20
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x35, 0x20, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEsiFs20 });			// mov esi, large fs:20
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x3D, 0x20, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdiFs20 });			// mov edi, large fs:20
 	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs28 });					// mov eax, large fs:28
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x1D, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEbxFs28 });			// mov ebx, large fs:28
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x0D, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEcxFs28 });			// mov ecx, large fs:28
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x15, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdxFs28 });			// mov edx, large fs:28
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x35, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEsiFs28 });			// mov esi, large fs:28
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x3D, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdiFs28 });			// mov edi, large fs:28
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA3, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs28Eax });					// mov large fs:28, eax
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x1D, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs28Ebx });			// mov large fs:28, ebx
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x0D, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs28Ecx });			// mov large fs:28, ecx
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x15, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs28Edx });			// mov large fs:28, edx
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x35, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs28Esi });			// mov large fs:28, esi
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x3D, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs28Edi });			// mov large fs:28, edi
 	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs58 });					// mov eax, large fs:58
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x1D, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEbxFs58 });			// mov ebx, large fs:58
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x0D, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEcxFs58 });			// mov ecx, large fs:58
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x15, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdxFs58 });			// mov edx, large fs:58
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x35, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEsiFs58 });			// mov esi, large fs:58
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x3D, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdiFs58 });			// mov edi, large fs:58
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA3, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs58Eax });					// mov large fs:58, eax
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x1D, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs58Ebx });			// mov large fs:58, ebx
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x0D, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs58Ecx });			// mov large fs:58, ecx
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x15, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs58Edx });			// mov large fs:58, edx
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x35, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs58Esi });			// mov large fs:58, esi
+	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x3D, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs58Edi });			// mov large fs:58, edi
 	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA3, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs00Eax });					// mov large fs:0, eax 
 	EmuLogEx(CXBXR_MODULE::INIT, LOG_LEVEL::DEBUG, "Patching FS Register Accesses\n");
 	DWORD sizeOfImage = CxbxKrnl_XbeHeader->dwSizeofImage;

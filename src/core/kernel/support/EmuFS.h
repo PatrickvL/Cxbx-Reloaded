@@ -46,7 +46,7 @@ void EmuGenerateFS(xbox::PETHREAD Ethread, unsigned XboxThreadStackBaseReserved 
 void EmuKeFreePcr();
 
 void EmuKeSetPcr(xbox::KPCR *Pcr);
-xbox::KPCR *_stdcall EmuKeGetPcr();
+volatile xbox::KPCR *_stdcall EmuKeGetPcr();
 
 typedef struct
 {
