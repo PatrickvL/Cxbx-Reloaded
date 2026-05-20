@@ -1797,8 +1797,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLC, NV_PAVS_VOICE_TAR_VOLC_VOLUME7_B11_8, volume7);
 	volumes[7] |= volume7 << 8;
 	std::array<uint32_t, APU_HRTF_SUBMIX_COUNT> hrtfSubmixVolumes{};
-	for (size_t binIndex = 0; binIndex < std::min(hrtfSubmixVolumes.size(), std::size(volumes)); ++binIndex) {
-		hrtfSubmixVolumes[binIndex] = volumes[binIndex];
+	for (size_t submixIndex = 0; submixIndex < std::min(hrtfSubmixVolumes.size(), std::size(volumes)); ++submixIndex) {
+		hrtfSubmixVolumes[submixIndex] = volumes[submixIndex];
 	}
 
 	uint32_t baseAddress = 0;
