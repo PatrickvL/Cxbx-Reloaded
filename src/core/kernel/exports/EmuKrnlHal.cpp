@@ -468,8 +468,8 @@ XBSYSAPI EXPORTNUM(48) xbox::void_xt FASTCALL xbox::HalRequestSoftwareInterrupt
 	PKPCR Pcr = EmuKeGetPcr();
 	KIRQL CurrentIrql = (KIRQL)Pcr->Irql;
 
-	// Get pending Software Interrupts (by masking off the HW interrupt bits)
-	uint8_t SoftwareInterrupt = HalInterruptRequestRegister & 3;
+	// Get pending Software Interrupts (APC=bit1, DPC=bit2)
+	uint8_t SoftwareInterrupt = HalInterruptRequestRegister & 7;
 
 	// Get the highest pending software interrupt level
 	KIRQL SoftwareIrql = SoftwareInterruptLookupTable[SoftwareInterrupt];
