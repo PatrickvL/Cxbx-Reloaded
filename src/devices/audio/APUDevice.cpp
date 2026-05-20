@@ -313,6 +313,24 @@ constexpr float APU_FILTER_MIN_Q = 0.079407f;
 // FC1 is a 16-bit fixed-point resonance value normalized against 0x8000.
 constexpr float APU_FILTER_Q_NORMALIZER = 32768.0f;
 
+uint32_t PeakAbsoluteMixAmplitude(const int32_t* samples, size_t sampleCount)
+{
+	uint32_t peak = 0;
+	for (size_t i = 0; i < sampleCount; ++i) {
+		const int64_t signedSample = static_cast<int64_t>(samples[i]);
+		const uint32_t magnitude = signedSample < 0
+			? static_cast<uint32_t>(-signedSample)
+			: static_cast<uint32_t>(signedSample);
+		peak = std::max(peak, magnitude);
+	}
+	return peak;
+}
+
+uint32_t PeakAbsoluteMixBinAmplitude(const int32_t* mixBins, size_t frameCount, size_t slot)
+{
+	return PeakAbsoluteMixAmplitude(mixBins + slot * frameCount, frameCount);
+}
+
 float ClampUnitSample(float value)
 {
 	return std::clamp(value, -1.0f, 1.0f);
@@ -436,6 +454,26 @@ int16_t ConvertFloatSampleToInt16(float sample)
 }
 
 }
+
+struct APUDevice::BasicVoiceDiagnosticSummary {
+	uint32_t voiceHandle = 0;
+	uint32_t bins[8]{};
+	uint32_t volumes[8]{};
+	uint8_t headroom[8]{};
+	uint32_t startOffset = 0;
+	uint32_t offsetAdvance = 0;
+	size_t framesRendered = 0;
+	double pitchStep = 0.0;
+	float maxEnvelopeGain = 0.0f;
+	uint32_t decodedPeak = 0;
+	uint32_t mixedPeak = 0;
+	bool visited = false;
+	bool active = false;
+	bool mixed = false;
+	bool decodedNonZero = false;
+	bool stereoContribution = false;
+	bool nonStereoContribution = false;
+};
 
 extern AC97Device* g_AC97;
 
@@ -1630,8 +1668,62 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
 	RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
+
+	uint32_t preHeadroomStereoPeak[2]{};
+	uint32_t preHeadroomDominantPeak = 0;
+	size_t preHeadroomDominantBin = 0;
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		preHeadroomStereoPeak[0] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0);
+		preHeadroomStereoPeak[1] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1);
+		for (size_t slot = 2; slot < APU_MIXBIN_COUNT; ++slot) {
+			const uint32_t peak = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, slot);
+			if (peak > preHeadroomDominantPeak) {
+				preHeadroomDominantPeak = peak;
+				preHeadroomDominantBin = slot;
+			}
+		}
+	}
 	ApplySubmixHeadroom(mixBins.data(), frameCount);
 	WriteOutputBuffers(mixBins.data(), frameCount);
+
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		uint32_t postHeadroomStereoPeak[2]{
+			PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0),
+			PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1)
+		};
+		uint32_t postHeadroomDominantPeak = 0;
+		size_t postHeadroomDominantBin = 0;
+		for (size_t slot = 2; slot < APU_MIXBIN_COUNT; ++slot) {
+			const uint32_t peak = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, slot);
+			if (peak > postHeadroomDominantPeak) {
+				postHeadroomDominantPeak = peak;
+				postHeadroomDominantBin = slot;
+			}
+		}
+
+		std::array<uint32_t, 4> outBufferPeak{};
+		for (size_t slot = 0; slot < outBufferPeak.size() && slot < APU_MIXBIN_COUNT; ++slot) {
+			outBufferPeak[slot] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, slot);
+		}
+
+		EmuLog(LOG_LEVEL::INFO,
+			"APU chunk diagnostics frames=%zu preStereo=[%u,%u] preDominantBin=%zu:%u postStereo=[%u,%u] postDominantBin=%zu:%u stereoHeadroom=[%u,%u] outBuffers=[%u,%u,%u,%u]",
+			frameCount,
+			preHeadroomStereoPeak[0],
+			preHeadroomStereoPeak[1],
+			preHeadroomDominantBin,
+			preHeadroomDominantPeak,
+			postHeadroomStereoPeak[0],
+			postHeadroomStereoPeak[1],
+			postHeadroomDominantBin,
+			postHeadroomDominantPeak,
+			static_cast<unsigned>(m_VPSubmixHeadroom[0]),
+			static_cast<unsigned>(m_VPSubmixHeadroom[1]),
+			outBufferPeak[0],
+			outBufferPeak[1],
+			outBufferPeak[2],
+			outBufferPeak[3]);
+	}
 	if (g_AC97 == nullptr) {
 		return;
 	}
@@ -1701,20 +1793,94 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 void APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount)
 {
 	uint32_t voiceHandle = GetRegister32(topRegister);
+	size_t visitedVoiceCount = 0;
+	size_t activeVoiceCount = 0;
+	size_t mixedVoiceCount = 0;
+	size_t decodedNonZeroCount = 0;
+	size_t stereoContributionCount = 0;
+	size_t nonStereoOnlyCount = 0;
+	std::vector<BasicVoiceDiagnosticSummary> interestingVoices;
 	for (size_t visited = 0; visited < 1024 && voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
 		uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
 			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
-		RenderBasicVoice(voiceHandle, mixBins, frameCount);
+		BasicVoiceDiagnosticSummary diagnostics;
+		RenderBasicVoice(voiceHandle, mixBins, frameCount, &diagnostics);
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			++visitedVoiceCount;
+			if (diagnostics.active) {
+				++activeVoiceCount;
+			}
+			if (diagnostics.decodedNonZero) {
+				++decodedNonZeroCount;
+			}
+			if (diagnostics.mixed) {
+				++mixedVoiceCount;
+			}
+			if (diagnostics.stereoContribution) {
+				++stereoContributionCount;
+			}
+			if (diagnostics.nonStereoContribution && !diagnostics.stereoContribution) {
+				++nonStereoOnlyCount;
+			}
+			if (interestingVoices.size() < 4 &&
+				diagnostics.active &&
+				((diagnostics.decodedNonZero && !diagnostics.stereoContribution) ||
+				 !diagnostics.decodedNonZero ||
+				 (diagnostics.framesRendered != 0 && diagnostics.offsetAdvance == 0 && diagnostics.pitchStep > 0.0))) {
+				interestingVoices.push_back(diagnostics);
+			}
+		}
 		if (nextHandle == voiceHandle) {
 			break;
 		}
 		voiceHandle = nextHandle;
 	}
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		EmuLog(LOG_LEVEL::INFO,
+			"APU voice list diagnostics top=0x%08x visited=%zu active=%zu decodedNonZero=%zu mixed=%zu stereoContrib=%zu nonStereoOnly=%zu frames=%zu",
+			topRegister,
+			visitedVoiceCount,
+			activeVoiceCount,
+			decodedNonZeroCount,
+			mixedVoiceCount,
+			stereoContributionCount,
+			nonStereoOnlyCount,
+			frameCount);
+		for (const auto& diagnostics : interestingVoices) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU voice diag handle=%u offsets=%u+%u frames=%zu pitchStep=%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
+				diagnostics.voiceHandle,
+				diagnostics.startOffset,
+				diagnostics.offsetAdvance,
+				diagnostics.framesRendered,
+				diagnostics.pitchStep,
+				diagnostics.decodedPeak,
+				diagnostics.mixedPeak,
+				diagnostics.maxEnvelopeGain,
+				diagnostics.stereoContribution ? 1 : 0,
+				diagnostics.nonStereoContribution ? 1 : 0,
+				diagnostics.bins[0], diagnostics.bins[1], diagnostics.bins[2], diagnostics.bins[3],
+				diagnostics.bins[4], diagnostics.bins[5], diagnostics.bins[6], diagnostics.bins[7],
+				diagnostics.volumes[0], diagnostics.volumes[1], diagnostics.volumes[2], diagnostics.volumes[3],
+				diagnostics.volumes[4], diagnostics.volumes[5], diagnostics.volumes[6], diagnostics.volumes[7],
+				static_cast<unsigned>(diagnostics.headroom[0]), static_cast<unsigned>(diagnostics.headroom[1]),
+				static_cast<unsigned>(diagnostics.headroom[2]), static_cast<unsigned>(diagnostics.headroom[3]),
+				static_cast<unsigned>(diagnostics.headroom[4]), static_cast<unsigned>(diagnostics.headroom[5]),
+				static_cast<unsigned>(diagnostics.headroom[6]), static_cast<unsigned>(diagnostics.headroom[7]));
+		}
+	}
 }
 
-void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount)
+void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,
+	BasicVoiceDiagnosticSummary* diagnostics)
 {
+	if (diagnostics != nullptr) {
+		*diagnostics = {};
+		diagnostics->voiceHandle = voiceHandle;
+		diagnostics->visited = true;
+	}
+
 	uint32_t state = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
 		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
@@ -1725,6 +1891,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t format = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, 0xFFFFFFFF, format)) {
 		return;
+	}
+	if (diagnostics != nullptr) {
+		diagnostics->active = true;
 	}
 
 	const bool streaming = (format & NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) != 0;
@@ -1814,6 +1983,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	std::array<uint32_t, APU_HRTF_SUBMIX_COUNT> hrtfSubmixVolumes{};
 	// MCPX 3D voices route HRTF output through volumes[0..3], which feed the four global HRTF submix slots.
 	std::copy_n(volumes, APU_HRTF_SUBMIX_COUNT, hrtfSubmixVolumes.begin());
+	if (diagnostics != nullptr) {
+		std::copy_n(bins, 8, diagnostics->bins);
+		std::copy_n(volumes, 8, diagnostics->volumes);
+	}
 
 	uint32_t baseAddress = 0;
 	uint32_t currentOffset = 0;
@@ -1836,6 +2009,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	}
 
 	const double pitchStep = DecodePitchStep(pitch);
+	if (diagnostics != nullptr) {
+		diagnostics->startOffset = currentOffset;
+		diagnostics->pitchStep = pitchStep;
+	}
 	const uint32_t bytesPerFrame = adpcm ? 0u : containerSize * channels;
 	const uint32_t bytesPerBlock = containerSize * channels;
 	auto& playbackState = m_VPPlaybackState[voiceHandle];
@@ -1865,6 +2042,18 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		multipassSource.assign(mixBins + multipassBin * frameCount, mixBins + (multipassBin + 1) * frameCount);
 		std::fill_n(mixBins + multipassBin * frameCount, frameCount, 0);
 	}
+	auto recordDecodedPeak = [&](float sampleLeft, float sampleRight) {
+		if (diagnostics == nullptr) {
+			return;
+		}
+		const float peakSample = std::max(std::fabs(sampleLeft), std::fabs(sampleRight));
+		if (peakSample <= 0.0f) {
+			return;
+		}
+		diagnostics->decodedNonZero = true;
+		diagnostics->decodedPeak = std::max(diagnostics->decodedPeak,
+			static_cast<uint32_t>(peakSample * 32767.0f));
+	};
 	auto mixSamples = [&](float sampleLeft, float sampleRight, float envelopeGain, size_t frame) {
 		const float channelSamples[2]{ sampleLeft, sampleRight };
 		for (size_t binIndex = 0; binIndex < 8; ++binIndex) {
@@ -1877,6 +2066,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			} else if (bins[binIndex] < m_VPSubmixHeadroom.size()) {
 				headroom = m_VPSubmixHeadroom[bins[binIndex]];
 			}
+			if (diagnostics != nullptr) {
+				diagnostics->headroom[binIndex] = headroom;
+			}
 			const float headroomDivisor = static_cast<float>(1u << headroom);
 			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain /
 				headroomDivisor;
@@ -1884,7 +2076,20 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				continue;
 			}
 			const float sample = channelSamples[binIndex % channels];
-			mixBins[bins[binIndex] * frameCount + frame] += static_cast<int32_t>(sample * gain * 32767.0f);
+			const int32_t contribution = static_cast<int32_t>(sample * gain * 32767.0f);
+			mixBins[bins[binIndex] * frameCount + frame] += contribution;
+			if (diagnostics != nullptr && contribution != 0) {
+				const uint32_t magnitude = contribution < 0
+					? static_cast<uint32_t>(-static_cast<int64_t>(contribution))
+					: static_cast<uint32_t>(contribution);
+				diagnostics->mixed = true;
+				diagnostics->mixedPeak = std::max(diagnostics->mixedPeak, magnitude);
+				if (bins[binIndex] <= 1) {
+					diagnostics->stereoContribution = true;
+				} else {
+					diagnostics->nonStereoContribution = true;
+				}
+			}
 		}
 	};
 	const bool lowPassEnabled = voiceHandle < APU_MAX_3D_VOICES
@@ -2032,6 +2237,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				: multipassSource[segmentCurrentOffset];
 			sampleLeft = static_cast<float>(mixedSample) / 32767.0f;
 			sampleRight = sampleLeft;
+			recordDecodedPeak(sampleLeft, sampleRight);
 			return true;
 		}
 		if (adpcm) {
@@ -2078,6 +2284,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			} else {
 				sampleRight = sampleLeft;
 			}
+			recordDecodedPeak(sampleLeft, sampleRight);
 			return true;
 		}
 
@@ -2132,6 +2339,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				sampleRight = sample;
 			}
 		}
+		recordDecodedPeak(sampleLeft, sampleRight);
 		return true;
 	};
 	if (!multipass && streaming && !loadStreamingSegment(sslData, baseAddress, endOffset, currentOffset, true)) {
@@ -2150,6 +2358,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			NV_PAVS_VOICE_TAR_LFO_ENV, NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE,
 			NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_EALVL,
 			NV_PAVS_VOICE_CUR_ECNT_EACOUNT, NV_PAVS_VOICE_PAR_STATE_EACUR);
+		if (diagnostics != nullptr) {
+			diagnostics->maxEnvelopeGain = std::max(diagnostics->maxEnvelopeGain, envelopeGain);
+		}
 		(void)StepVoiceEnvelope(
 			voiceHandle,
 			NV_PAVS_VOICE_CFG_ENV1, NV_PAVS_VOICE_CFG_ENVF,
@@ -2178,6 +2389,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				ProcessHRTFSample(voiceHandle, currentLeft, currentRight);
 			}
 			mixSamples(currentLeft, currentRight, envelopeGain, frame);
+			if (diagnostics != nullptr) {
+				++diagnostics->framesRendered;
+			}
 			continue;
 		}
 
@@ -2205,12 +2419,18 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		}
 
 		mixSamples(sampleLeft, sampleRight, envelopeGain, frame);
+		if (diagnostics != nullptr) {
+			++diagnostics->framesRendered;
+		}
 
 		const double nextPlaybackPosition = playbackState.fraction + pitchStep;
 		const uint32_t wholeFrames = static_cast<uint32_t>(nextPlaybackPosition);
 		playbackState.fraction = nextPlaybackPosition - static_cast<double>(wholeFrames);
 		for (uint32_t step = 0; step < wholeFrames; ++step) {
 			++currentOffset;
+			if (diagnostics != nullptr) {
+				++diagnostics->offsetAdvance;
+			}
 			if (!advancePlaybackPosition(sslData, baseAddress, endOffset, currentOffset, true)) {
 				frame = frameCount;
 				break;
