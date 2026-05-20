@@ -52,6 +52,7 @@ typedef struct
 {
 	std::vector<uint8_t> data;
 	void* functionPtr;
+	int offsetBytePos;            // position of wildcard KPCR offset byte (-1 = exact match)
 }fs_instruction_t;
 
 #endif
