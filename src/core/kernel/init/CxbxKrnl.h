@@ -161,6 +161,10 @@ void ExecuteDpcQueue(bool inline_dispatch = false);
 /*! kernel thunk table */
 extern uint32_t CxbxKrnl_KernelThunkTable[379];
 
+/*! kernel thunk availability per system type */
+uint8_t CxbxKrnl_KernelThunkAvailability(int ordinal);
+uint8_t CxbxKrnl_GetCurrentSystemFlag();
+
 extern bool g_bClipCursor;
 extern bool g_CxbxPrintUEM;
 extern ULONG g_CxbxFatalErrorCode;

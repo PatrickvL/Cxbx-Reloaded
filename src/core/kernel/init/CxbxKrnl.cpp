@@ -325,12 +325,24 @@ void InitSoftwareInterrupts()
 void MapThunkTable(uint32_t* kt, uint32_t* pThunkTable)
 {
     const bool SendDebugReports = (pThunkTable == CxbxKrnl_KernelThunkTable) && CxbxDebugger::CanReport();
+	const bool IsKernelThunkTable = (pThunkTable == CxbxKrnl_KernelThunkTable);
+	const uint8_t systemFlag = CxbxKrnl_GetCurrentSystemFlag();
 
 	uint32_t* kt_tbl = (uint32_t*)kt;
 	int i = 0;
 	while (kt_tbl[i] != 0) {
 		int t = kt_tbl[i] & 0x7FFFFFFF;
-		kt_tbl[i] = pThunkTable[t];
+
+		// Check if this ordinal is available for the current system type
+		if (IsKernelThunkTable && !(CxbxKrnl_KernelThunkAvailability(t) & systemFlag)) {
+			EmuLogInit(LOG_LEVEL::WARNING, "Kernel import %d is not available on %s (devkit-only API)",
+				t, g_bIsChihiro ? "Chihiro" : "Retail");
+			kt_tbl[i] = pThunkTable[0]; // Map to zeroptr (undefined)
+		}
+		else {
+			kt_tbl[i] = pThunkTable[t];
+		}
+
         if (SendDebugReports) {
             // TODO: Update CxbxKrnl_KernelThunkTable to include symbol names
             std::string importName = "KernelImport_" + std::to_string(t);
