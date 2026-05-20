@@ -92,6 +92,7 @@ class AC97Device : public PCIDevice {
 		bool ReadGuest32(uint32_t guestAddress, uint32_t& value) const;
 		bool IsDescriptorErrorAcknowledged(uint32_t channelBase) const;
 		bool QueryOutputSourceSnapshot(ALint& state, ALint& queued, ALint& processed, ALenum& error) const;
+		void LogOutputOperationFailure(const char* operation, ALenum sourceError) const;
 
 		std::array<uint8_t, 0x180> m_Registers{};
 		std::array<uint32_t, 3> m_ChannelLastUpdate{};
