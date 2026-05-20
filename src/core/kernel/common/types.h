@@ -2123,7 +2123,7 @@ static_assert(sizeof(ETHREAD) == 0x140);
 // ******************************************************************
 // * PCREATE_THREAD_NOTIFY_ROUTINE
 // ******************************************************************
-typedef void_xt(*PCREATE_THREAD_NOTIFY_ROUTINE)
+typedef void_xt(NTAPI *PCREATE_THREAD_NOTIFY_ROUTINE)
 (
 	IN PETHREAD Thread,
 	IN HANDLE ThreadId,
