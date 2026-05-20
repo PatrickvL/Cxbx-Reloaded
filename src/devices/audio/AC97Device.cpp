@@ -200,6 +200,42 @@ const char* GetOpenedOpenALDeviceName(ALCdevice* device)
 	return (deviceName != nullptr && deviceName[0] != '\0') ? deviceName : nullptr;
 }
 
+const char* GetOpenALSourceStateName(ALint state)
+{
+	switch (state) {
+	case AL_INITIAL:
+		return "AL_INITIAL";
+	case AL_PLAYING:
+		return "AL_PLAYING";
+	case AL_PAUSED:
+		return "AL_PAUSED";
+	case AL_STOPPED:
+		return "AL_STOPPED";
+	default:
+		return "AL_UNKNOWN_STATE";
+	}
+}
+
+const char* GetOpenALErrorName(ALenum error)
+{
+	switch (error) {
+	case AL_NO_ERROR:
+		return "AL_NO_ERROR";
+	case AL_INVALID_NAME:
+		return "AL_INVALID_NAME";
+	case AL_INVALID_ENUM:
+		return "AL_INVALID_ENUM";
+	case AL_INVALID_VALUE:
+		return "AL_INVALID_VALUE";
+	case AL_INVALID_OPERATION:
+		return "AL_INVALID_OPERATION";
+	case AL_OUT_OF_MEMORY:
+		return "AL_OUT_OF_MEMORY";
+	default:
+		return "AL_UNKNOWN_ERROR";
+	}
+}
+
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
 	uint32_t value = 0;
@@ -324,6 +360,7 @@ void AC97Device::Reset()
 	m_ChannelDescriptorError.fill(false);
 	m_Pending3DVoices.clear();
 	m_LoggedQueueFull = false;
+	m_LoggedPlaybackStartFailure = false;
 	ResetOutputStream();
 
 	ResetBusMasterChannel(NABM_PI_BASE);
@@ -435,8 +472,34 @@ bool AC97Device::EnsureOutputDevice()
 	m_OutputBufferBytes.fill(0);
 	m_QueuedAudioBytes = 0;
 	m_StagedOutputFrames.clear();
+	m_LastOutputSourceState = -1;
+	m_LoggedPlaybackStartFailure = false;
 	alSourcef(m_OutputSource, AL_GAIN, 1.0f);
 	return true;
+}
+
+bool AC97Device::QueryOutputSourceSnapshot(ALint& state, ALint& queued, ALint& processed, ALenum& error) const
+{
+	state = 0;
+	queued = 0;
+	processed = 0;
+	error = AL_NO_ERROR;
+
+	alGetSourcei(m_OutputSource, AL_SOURCE_STATE, &state);
+	error = alGetError();
+	if (error != AL_NO_ERROR) {
+		return false;
+	}
+
+	alGetSourcei(m_OutputSource, AL_BUFFERS_QUEUED, &queued);
+	error = alGetError();
+	if (error != AL_NO_ERROR) {
+		return false;
+	}
+
+	alGetSourcei(m_OutputSource, AL_BUFFERS_PROCESSED, &processed);
+	error = alGetError();
+	return error == AL_NO_ERROR;
 }
 
 void AC97Device::ResetOutputStream()
@@ -466,6 +529,8 @@ void AC97Device::ResetOutputStream()
 	m_OutputBufferBytes.fill(0);
 	m_QueuedAudioBytes = 0;
 	m_StagedOutputFrames.clear();
+	m_LastOutputSourceState = -1;
+	m_LoggedPlaybackStartFailure = false;
 }
 
 void AC97Device::Begin3DVoiceFrameBatch()
@@ -504,6 +569,13 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 
 	ALint processed = 0;
 	alGetSourcei(m_OutputSource, AL_BUFFERS_PROCESSED, &processed);
+	ALenum sourceError = alGetError();
+	if (sourceError != AL_NO_ERROR) {
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 OpenAL failed to query processed buffers: %s (0x%04x)",
+			GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError));
+		return;
+	}
 	while (processed > 0) {
 		ALuint buffer = 0;
 		alSourceUnqueueBuffers(m_OutputSource, 1, &buffer);
@@ -584,14 +656,36 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		alBufferData(buffer, AL_FORMAT_STEREO16, m_StagedOutputFrames.data(),
 			static_cast<ALsizei>(queuedBytes),
 			static_cast<ALsizei>(APU_TIMER_FREQUENCY));
-		if (alGetError() != AL_NO_ERROR) {
+		sourceError = alGetError();
+		if (sourceError != AL_NO_ERROR) {
+			ALint state = 0;
+			ALint queued = 0;
+			ALint processedBuffers = 0;
+			ALenum snapshotError = AL_NO_ERROR;
+			QueryOutputSourceSnapshot(state, queued, processedBuffers, snapshotError);
+			EmuLog(LOG_LEVEL::WARNING,
+				"AC97 OpenAL alBufferData failed: %s (0x%04x), state=%s queuedBuffers=%d processedBuffers=%d queuedBytes=%u stagedFrames=%zu",
+				GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError),
+				GetOpenALSourceStateName(state), queued, processedBuffers,
+				m_QueuedAudioBytes, m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS);
 			m_OutputBufferBytes[bufferIndex] = 0;
 			m_FreeOutputBuffers.push_back(buffer);
 			return;
 		}
 
 		alSourceQueueBuffers(m_OutputSource, 1, &buffer);
-		if (alGetError() != AL_NO_ERROR) {
+		sourceError = alGetError();
+		if (sourceError != AL_NO_ERROR) {
+			ALint state = 0;
+			ALint queued = 0;
+			ALint processedBuffers = 0;
+			ALenum snapshotError = AL_NO_ERROR;
+			QueryOutputSourceSnapshot(state, queued, processedBuffers, snapshotError);
+			EmuLog(LOG_LEVEL::WARNING,
+				"AC97 OpenAL alSourceQueueBuffers failed: %s (0x%04x), state=%s queuedBuffers=%d processedBuffers=%d queuedBytes=%u stagedFrames=%zu",
+				GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError),
+				GetOpenALSourceStateName(state), queued, processedBuffers,
+				m_QueuedAudioBytes, m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS);
 			m_OutputBufferBytes[bufferIndex] = 0;
 			m_FreeOutputBuffers.push_back(buffer);
 			return;
@@ -622,9 +716,63 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	}
 
 	ALint state = 0;
-	alGetSourcei(m_OutputSource, AL_SOURCE_STATE, &state);
+	ALint queued = 0;
+	ALint processedBuffers = 0;
+	if (!QueryOutputSourceSnapshot(state, queued, processedBuffers, sourceError)) {
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 OpenAL failed to query source snapshot: %s (0x%04x)",
+			GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError));
+		return;
+	}
+	if (state != m_LastOutputSourceState) {
+		EmuLog(LOG_LEVEL::INFO,
+			"AC97 OpenAL source state -> %s, queuedBuffers=%d processedBuffers=%d queuedBytes=%u freeBuffers=%zu stagedFrames=%zu",
+			GetOpenALSourceStateName(state), queued, processedBuffers,
+			m_QueuedAudioBytes, m_FreeOutputBuffers.size(),
+			m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS);
+		m_LastOutputSourceState = state;
+	}
 	if (state != AL_PLAYING && m_QueuedAudioBytes != 0) {
+		EmuLog(LOG_LEVEL::INFO,
+			"AC97 OpenAL requesting playback start from %s, queuedBuffers=%d processedBuffers=%d queuedBytes=%u",
+			GetOpenALSourceStateName(state), queued, processedBuffers, m_QueuedAudioBytes);
 		alSourcePlay(m_OutputSource);
+		sourceError = alGetError();
+		ALint postState = state;
+		ALint postQueued = queued;
+		ALint postProcessed = processedBuffers;
+		ALenum postQueryError = AL_NO_ERROR;
+		if (!QueryOutputSourceSnapshot(postState, postQueued, postProcessed, postQueryError)) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"AC97 OpenAL failed to query source snapshot after alSourcePlay: %s (0x%04x)",
+				GetOpenALErrorName(postQueryError), static_cast<unsigned>(postQueryError));
+			m_LoggedPlaybackStartFailure = true;
+			return;
+		}
+		if (postState != m_LastOutputSourceState) {
+			EmuLog(LOG_LEVEL::INFO,
+				"AC97 OpenAL source state -> %s, queuedBuffers=%d processedBuffers=%d queuedBytes=%u freeBuffers=%zu stagedFrames=%zu",
+				GetOpenALSourceStateName(postState), postQueued, postProcessed,
+				m_QueuedAudioBytes, m_FreeOutputBuffers.size(),
+				m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS);
+			m_LastOutputSourceState = postState;
+		}
+		if (sourceError != AL_NO_ERROR || postState != AL_PLAYING) {
+			if (!m_LoggedPlaybackStartFailure) {
+				EmuLog(LOG_LEVEL::WARNING,
+					"AC97 OpenAL source failed to enter AL_PLAYING after alSourcePlay: playError=%s (0x%04x), state=%s queuedBuffers=%d processedBuffers=%d queuedBytes=%u",
+					GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError),
+					GetOpenALSourceStateName(postState), postQueued, postProcessed, m_QueuedAudioBytes);
+				m_LoggedPlaybackStartFailure = true;
+			}
+		} else {
+			EmuLog(LOG_LEVEL::INFO,
+				"AC97 OpenAL source entered AL_PLAYING, queuedBuffers=%d processedBuffers=%d queuedBytes=%u",
+				postQueued, postProcessed, m_QueuedAudioBytes);
+			m_LoggedPlaybackStartFailure = false;
+		}
+	} else if (state == AL_PLAYING) {
+		m_LoggedPlaybackStartFailure = false;
 	}
 }
 
