@@ -114,7 +114,7 @@ std::string GetSelectedAudioDevice(HWND hWndDlg)
     }
 
     const LRESULT textLength = SendMessage(deviceCombo, CB_GETLBTEXTLEN, selectedIndex, 0);
-    if (textLength <= 0) {
+    if (textLength < 0) {
         return "";
     }
 
