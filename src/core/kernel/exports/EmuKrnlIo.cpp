@@ -1649,7 +1649,20 @@ XBSYSAPI EXPORTNUM(83) xbox::void_xt NTAPI xbox::IoStartPacket
 		LOG_FUNC_ARG_OUT(Key)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	BOOLEAN Inserted;
+
+	if (Key != xbox::zeroptr) {
+		Inserted = KeInsertByKeyDeviceQueue(&DeviceObject->DeviceQueue, &Irp->Tail.Overlay.DeviceQueueEntry, *Key);
+	} else {
+		Inserted = KeInsertDeviceQueue(&DeviceObject->DeviceQueue, &Irp->Tail.Overlay.DeviceQueueEntry);
+	}
+
+	if (!Inserted) {
+		DeviceObject->CurrentIrp = Irp;
+		if (DeviceObject->DriverObject->DriverStartIo) {
+			DeviceObject->DriverObject->DriverStartIo(DeviceObject, Irp);
+		}
+	}
 }
 
 // ******************************************************************

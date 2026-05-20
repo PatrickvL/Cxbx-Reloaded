@@ -1201,6 +1201,18 @@ static void CxbxrKrnlInitHacks()
 
 	InitXboxHardware(hardwareModel);
 
+	// Allocate HalDiskModelNumber/SerialNumber buffers from Xbox pool memory
+	// so that MmIsAddressValid returns TRUE for the Buffer pointers.
+	{
+		PCHAR pModelBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskModelNumber.MaximumLength, 'dlaH');
+		memcpy(pModelBuf, xbox::HalDiskModelNumber.Buffer, xbox::HalDiskModelNumber.MaximumLength);
+		xbox::HalDiskModelNumber.Buffer = pModelBuf;
+
+		PCHAR pSerialBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskSerialNumber.MaximumLength, 'dlaH');
+		memcpy(pSerialBuf, xbox::HalDiskSerialNumber.Buffer, xbox::HalDiskSerialNumber.MaximumLength);
+		xbox::HalDiskSerialNumber.Buffer = pSerialBuf;
+	}
+
 	// Read Xbox video mode from the SMC, store it in HalBootSMCVideoMode
 	xbox::HalReadSMBusValue(SMBUS_ADDRESS_SYSTEM_MICRO_CONTROLLER, SMC_COMMAND_AV_PACK, FALSE, (xbox::PULONG)&xbox::HalBootSMCVideoMode);
 
