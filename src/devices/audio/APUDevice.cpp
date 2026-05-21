@@ -485,7 +485,13 @@ bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& ho
 		return false;
 	}
 
-	const uint64_t endAddress = static_cast<uint64_t>(guestAddress) + static_cast<uint64_t>(size) - 1;
+	const uint64_t startAddress = static_cast<uint64_t>(guestAddress);
+	const uint64_t span = static_cast<uint64_t>(size - 1);
+	if (span > UINT64_MAX - startAddress) {
+		return false;
+	}
+
+	const uint64_t endAddress = startAddress + span;
 	if (guestAddress >= PHYSICAL_MAP_BASE && endAddress <= PHYSICAL_MAP_END) {
 		// Xbox KSEG0/physical-map addresses are reserved directly in the host address
 		// space, so a guest physical-map VA can be dereferenced as-is here.
@@ -501,10 +507,15 @@ bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& ho
 	return false;
 }
 
-bool IsGuestRangeAccessible(uint32_t guestAddress, size_t size)
+bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size)
 {
 	uintptr_t hostAddress = 0;
 	return ResolveGuestMemoryPointer(guestAddress, size, hostAddress);
+}
+
+bool IsGuestRangeAccessible(uint32_t guestAddress, size_t size)
+{
+	return ResolveGuestMemoryPointer(guestAddress, size);
 }
 
 float AttenuateVoiceVolume(uint32_t volume)
