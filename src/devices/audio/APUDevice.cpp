@@ -358,17 +358,12 @@ uint32_t GetFEMethodTargetVoice(uint32_t addr, uint32_t value, uint32_t currentV
 	case NV1BA0_PIO_SET_CURRENT_VOICE:
 		return value & APU_VP_VOICE_MAX_HANDLE;
 	case NV1BA0_PIO_VOICE_ON:
-		return value & NV1BA0_PIO_VOICE_ON_HANDLE;
 	case NV1BA0_PIO_VOICE_OFF:
-		return value & NV1BA0_PIO_VOICE_OFF_HANDLE;
 	case NV1BA0_PIO_VOICE_RELEASE:
-		return value & NV1BA0_PIO_VOICE_RELEASE_HANDLE;
 	case NV1BA0_PIO_GET_VOICE_POSITION:
-		return value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE;
 	case NV1BA0_PIO_VOICE_PAUSE:
-		return value & NV1BA0_PIO_VOICE_PAUSE_HANDLE;
 	case NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY:
-		return value & NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY_HANDLE;
+		return value & APU_VP_VOICE_MAX_HANDLE;
 	case NV1BA0_PIO_VOICE_LOCK:
 	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY:
 	case NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA:
@@ -2217,8 +2212,10 @@ void APUDevice::LogRecentFEMethodDiagnostics() const
 		return;
 	}
 
-	const size_t startIndex =
-		m_RecentFEMethodCount == m_RecentFEMethods.size() ? m_RecentFEMethodNext : 0;
+	size_t startIndex = 0;
+	if (m_RecentFEMethodCount == m_RecentFEMethods.size()) {
+		startIndex = m_RecentFEMethodNext;
+	}
 	for (size_t i = 0; i < m_RecentFEMethodCount; ++i) {
 		const auto& event = m_RecentFEMethods[(startIndex + i) % m_RecentFEMethods.size()];
 		const char* name = GetAPUVPMethodTraceName(event.addr);
