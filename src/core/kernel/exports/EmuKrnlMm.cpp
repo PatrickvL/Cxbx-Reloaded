@@ -340,7 +340,9 @@ XBSYSAPI EXPORTNUM(177) xbox::PVOID NTAPI xbox::MmMapIoSpace
 		if (byteCount == 0) {
 			return false;
 		}
-		const uint64_t physicalEnd = physicalStart + byteCount;
+		const uint64_t physicalEnd = physicalStart > UINT64_MAX - byteCount
+			? UINT64_MAX
+			: physicalStart + byteCount;
 		return physicalStart < static_cast<uint64_t>(APU_BASE + APU_SIZE) &&
 			physicalEnd > static_cast<uint64_t>(APU_BASE);
 	};
