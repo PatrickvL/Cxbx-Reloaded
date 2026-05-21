@@ -1075,8 +1075,6 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
-			NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 1);
-		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_OFFSET,
 			NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
@@ -2220,7 +2218,14 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
 			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
 		BasicVoiceDiagnosticSummary diagnostics;
-		RenderBasicVoice(voiceHandle, mixBins, frameCount, &diagnostics);
+		uint32_t state = 0;
+		const bool hasState = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
+		const bool active = hasState && (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
+		if (!active) {
+			ConsumeVPMethod(SE2FE_IDLE_VOICE, voiceHandle, sizeof(uint32_t));
+		} else if (!IsVoiceLocked(voiceHandle)) {
+			RenderBasicVoice(voiceHandle, mixBins, frameCount, &diagnostics);
+		}
 		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 			++visitedVoiceCount;
 			if (diagnostics.active) {
@@ -2597,7 +2602,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	auto mixSamples = [&](float sampleLeft, float sampleRight, float envelopeGain, size_t frame) {
 		const float channelSamples[2]{ sampleLeft, sampleRight };
 		for (size_t binIndex = 0; binIndex < 8; ++binIndex) {
-			if (bins[binIndex] >= APU_MIXBIN_COUNT || volumes[binIndex] == 0) {
+			if (bins[binIndex] >= APU_MIXBIN_COUNT) {
 				continue;
 			}
 			uint8_t headroom = 0;
