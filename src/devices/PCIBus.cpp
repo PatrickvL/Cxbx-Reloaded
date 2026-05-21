@@ -140,7 +140,10 @@ bool PCIBus::MMIORead(uint32_t addr, uint32_t* data, unsigned size)
 
 bool PCIBus::MMIOWrite(uint32_t addr, uint32_t value, unsigned size)
 {
-	const bool traceAPUWrite = audio_diagnostics::kEnableDiagnosticLogging && IsAPUVPBaseRegisterTrace(addr, value);
+	bool traceAPUWrite = false;
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		traceAPUWrite = IsAPUVPBaseRegisterTrace(addr);
+	}
 
 	for (auto it = m_Devices.begin(); it != m_Devices.end(); ++it) {
 		PCIBar bar;

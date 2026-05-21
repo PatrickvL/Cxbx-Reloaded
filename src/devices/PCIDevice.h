@@ -72,9 +72,9 @@
 
 class PCIDevice;
 
-inline bool IsAPUVPBaseRegisterTrace(uint32_t addr, uint32_t value)
+inline bool IsAPUVPBaseRegisterTrace(uint32_t addr)
 {
-	if (addr < APU_BASE || addr >= APU_BASE + APU_SIZE || value == 0) {
+	if (addr < APU_BASE || addr >= APU_BASE + APU_SIZE) {
 		return false;
 	}
 
