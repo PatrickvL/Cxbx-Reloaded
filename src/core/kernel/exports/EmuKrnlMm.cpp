@@ -340,17 +340,19 @@ XBSYSAPI EXPORTNUM(177) xbox::PVOID NTAPI xbox::MmMapIoSpace
 		if (byteCount == 0) {
 			return false;
 		}
+		if (physicalStart >= static_cast<uint64_t>(APU_BASE + APU_SIZE)) {
+			return false;
+		}
 		const uint64_t physicalEnd = physicalStart > UINT64_MAX - byteCount
 			? UINT64_MAX
 			: physicalStart + byteCount;
-		return physicalStart < static_cast<uint64_t>(APU_BASE + APU_SIZE) &&
-			physicalEnd > static_cast<uint64_t>(APU_BASE);
+		return physicalEnd > static_cast<uint64_t>(APU_BASE);
 	};
 
 	if (OverlapsAPUWindow(PhysicalAddress, NumberOfBytes)) {
 		EmuLog(LOG_LEVEL::INFO,
-			"APU MmMapIoSpace physical=0x%08X bytes=0x%08X protection=0x%08X returned=%p",
-			PhysicalAddress,
+			"APU MmMapIoSpace physical=0x%016llX bytes=0x%08X protection=0x%08X returned=%p",
+			static_cast<unsigned long long>(PhysicalAddress),
 			NumberOfBytes,
 			ProtectionType,
 			pRet);
