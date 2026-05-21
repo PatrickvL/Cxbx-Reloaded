@@ -650,15 +650,19 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	}
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		const uint32_t outputPeak =
+			audio_diagnostics::PeakAbsoluteSampleAmplitude(output, frameCount * AC97_OUTPUT_CHANNELS);
 		// Log the final stream payload even when register gains leave the samples unchanged.
-		EmuLog(LOG_LEVEL::INFO,
-			"AC97 volume registers master=0x%04x pcm-out=0x%04x gains L=%.3f R=%.3f post-gain peak=%u frames=%zu",
-			static_cast<unsigned>(masterVolume),
-			static_cast<unsigned>(pcmOutVolume),
-			leftGain,
-			rightGain,
-			static_cast<unsigned>(audio_diagnostics::PeakAbsoluteSampleAmplitude(output, frameCount * AC97_OUTPUT_CHANNELS)),
-			frameCount);
+		if (outputPeak != 0 || leftGain != 1.0f || rightGain != 1.0f) {
+			EmuLog(LOG_LEVEL::INFO,
+				"AC97 volume registers master=0x%04x pcm-out=0x%04x gains L=%.3f R=%.3f post-gain peak=%u frames=%zu",
+				static_cast<unsigned>(masterVolume),
+				static_cast<unsigned>(pcmOutVolume),
+				leftGain,
+				rightGain,
+				static_cast<unsigned>(outputPeak),
+				frameCount);
+		}
 	}
 
 	m_StagedOutputFrames.insert(m_StagedOutputFrames.end(), output, output + (frameCount * AC97_OUTPUT_CHANNELS));

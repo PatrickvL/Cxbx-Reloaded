@@ -1953,8 +1953,9 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const size_t visited2D = RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
 	const size_t visited3D = RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	const size_t visitedMP = RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
+	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP) != 0;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		if ((visited2D + visited3D + visitedMP) == 0) {
+		if (!hasVoiceActivity) {
 			if (!m_LoggedEmptyVoiceTableDiagnostics) {
 				LogVoiceTableDiagnostics();
 				m_LoggedEmptyVoiceTableDiagnostics = true;
@@ -1967,6 +1968,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	uint32_t preHeadroomStereoPeak[2]{};
 	uint32_t preHeadroomDominantPeak = 0;
 	size_t preHeadroomDominantBin = 0;
+	bool shouldLogChunkDiagnostics = hasVoiceActivity;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		preHeadroomStereoPeak[0] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0);
 		preHeadroomStereoPeak[1] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1);
@@ -1977,6 +1979,10 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				preHeadroomDominantBin = slot;
 			}
 		}
+		shouldLogChunkDiagnostics = shouldLogChunkDiagnostics ||
+			preHeadroomStereoPeak[0] != 0 ||
+			preHeadroomStereoPeak[1] != 0 ||
+			preHeadroomDominantPeak != 0;
 	}
 	ApplySubmixHeadroom(mixBins.data(), frameCount);
 	WriteOutputBuffers(mixBins.data(), frameCount);
@@ -1995,29 +2001,36 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				postHeadroomDominantBin = slot;
 			}
 		}
+		shouldLogChunkDiagnostics = shouldLogChunkDiagnostics ||
+			postHeadroomStereoPeak[0] != 0 ||
+			postHeadroomStereoPeak[1] != 0 ||
+			postHeadroomDominantPeak != 0;
 
 		std::array<uint32_t, 4> outBufferPeak{};
 		for (size_t slot = 0; slot < outBufferPeak.size() && slot < APU_MIXBIN_COUNT; ++slot) {
 			outBufferPeak[slot] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, slot);
+			shouldLogChunkDiagnostics = shouldLogChunkDiagnostics || outBufferPeak[slot] != 0;
 		}
 
-		EmuLog(LOG_LEVEL::INFO,
-			"APU chunk diagnostics frames=%zu preStereo=[%u,%u] preDominantBin=%zu:%u postStereo=[%u,%u] postDominantBin=%zu:%u stereoHeadroom=[%u,%u] outBuffers=[%u,%u,%u,%u]",
-			frameCount,
-			preHeadroomStereoPeak[0],
-			preHeadroomStereoPeak[1],
-			preHeadroomDominantBin,
-			preHeadroomDominantPeak,
-			postHeadroomStereoPeak[0],
-			postHeadroomStereoPeak[1],
-			postHeadroomDominantBin,
-			postHeadroomDominantPeak,
-			static_cast<unsigned>(m_VPSubmixHeadroom[0]),
-			static_cast<unsigned>(m_VPSubmixHeadroom[1]),
-			outBufferPeak[0],
-			outBufferPeak[1],
-			outBufferPeak[2],
-			outBufferPeak[3]);
+		if (shouldLogChunkDiagnostics) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU chunk diagnostics frames=%zu preStereo=[%u,%u] preDominantBin=%zu:%u postStereo=[%u,%u] postDominantBin=%zu:%u stereoHeadroom=[%u,%u] outBuffers=[%u,%u,%u,%u]",
+				frameCount,
+				preHeadroomStereoPeak[0],
+				preHeadroomStereoPeak[1],
+				preHeadroomDominantBin,
+				preHeadroomDominantPeak,
+				postHeadroomStereoPeak[0],
+				postHeadroomStereoPeak[1],
+				postHeadroomDominantBin,
+				postHeadroomDominantPeak,
+				static_cast<unsigned>(m_VPSubmixHeadroom[0]),
+				static_cast<unsigned>(m_VPSubmixHeadroom[1]),
+				outBufferPeak[0],
+				outBufferPeak[1],
+				outBufferPeak[2],
+				outBufferPeak[3]);
+		}
 	}
 	if (g_AC97 == nullptr) {
 		return;
@@ -2029,11 +2042,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		output[frame * 2 + 1] = ClampToInt16(mixBins[frameCount + frame]);
 	}
 
+	uint32_t stereoPeak = 0;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		EmuLog(LOG_LEVEL::INFO,
-			"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu",
-			static_cast<unsigned>(audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size())),
-			frameCount);
+		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
+		if (hasVoiceActivity || stereoPeak != 0) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu",
+				static_cast<unsigned>(stereoPeak),
+				frameCount);
+		}
 	}
 
 	g_AC97->SubmitPCMFrames(output.data(), frameCount);
@@ -2140,38 +2157,40 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 		voiceHandle = nextHandle;
 	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		EmuLog(LOG_LEVEL::INFO,
-			"APU voice list diagnostics top=0x%08x head=0x%08x visited=%zu active=%zu decodedNonZero=%zu mixed=%zu stereoContrib=%zu nonStereoOnly=%zu frames=%zu",
-			topRegister,
-			listHead,
-			visitedVoiceCount,
-			activeVoiceCount,
-			decodedNonZeroCount,
-			mixedVoiceCount,
-			stereoContributionCount,
-			nonStereoOnlyCount,
-			frameCount);
-		for (const auto& diagnostics : interestingVoices) {
+		if (visitedVoiceCount != 0 || !interestingVoices.empty()) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU voice diag handle=%u offsets=%u+%u frames=%zu pitchStep=%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
-				diagnostics.voiceHandle,
-				diagnostics.startOffset,
-				diagnostics.offsetAdvance,
-				diagnostics.framesRendered,
-				diagnostics.pitchStep,
-				diagnostics.decodedPeak,
-				diagnostics.mixedPeak,
-				diagnostics.maxEnvelopeGain,
-				diagnostics.stereoContribution ? 1 : 0,
-				diagnostics.nonStereoContribution ? 1 : 0,
-				diagnostics.bins[0], diagnostics.bins[1], diagnostics.bins[2], diagnostics.bins[3],
-				diagnostics.bins[4], diagnostics.bins[5], diagnostics.bins[6], diagnostics.bins[7],
-				diagnostics.volumes[0], diagnostics.volumes[1], diagnostics.volumes[2], diagnostics.volumes[3],
-				diagnostics.volumes[4], diagnostics.volumes[5], diagnostics.volumes[6], diagnostics.volumes[7],
-				static_cast<unsigned>(diagnostics.headroom[0]), static_cast<unsigned>(diagnostics.headroom[1]),
-				static_cast<unsigned>(diagnostics.headroom[2]), static_cast<unsigned>(diagnostics.headroom[3]),
-				static_cast<unsigned>(diagnostics.headroom[4]), static_cast<unsigned>(diagnostics.headroom[5]),
-				static_cast<unsigned>(diagnostics.headroom[6]), static_cast<unsigned>(diagnostics.headroom[7]));
+				"APU voice list diagnostics top=0x%08x head=0x%08x visited=%zu active=%zu decodedNonZero=%zu mixed=%zu stereoContrib=%zu nonStereoOnly=%zu frames=%zu",
+				topRegister,
+				listHead,
+				visitedVoiceCount,
+				activeVoiceCount,
+				decodedNonZeroCount,
+				mixedVoiceCount,
+				stereoContributionCount,
+				nonStereoOnlyCount,
+				frameCount);
+			for (const auto& diagnostics : interestingVoices) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU voice diag handle=%u offsets=%u+%u frames=%zu pitchStep=%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
+					diagnostics.voiceHandle,
+					diagnostics.startOffset,
+					diagnostics.offsetAdvance,
+					diagnostics.framesRendered,
+					diagnostics.pitchStep,
+					diagnostics.decodedPeak,
+					diagnostics.mixedPeak,
+					diagnostics.maxEnvelopeGain,
+					diagnostics.stereoContribution ? 1 : 0,
+					diagnostics.nonStereoContribution ? 1 : 0,
+					diagnostics.bins[0], diagnostics.bins[1], diagnostics.bins[2], diagnostics.bins[3],
+					diagnostics.bins[4], diagnostics.bins[5], diagnostics.bins[6], diagnostics.bins[7],
+					diagnostics.volumes[0], diagnostics.volumes[1], diagnostics.volumes[2], diagnostics.volumes[3],
+					diagnostics.volumes[4], diagnostics.volumes[5], diagnostics.volumes[6], diagnostics.volumes[7],
+					static_cast<unsigned>(diagnostics.headroom[0]), static_cast<unsigned>(diagnostics.headroom[1]),
+					static_cast<unsigned>(diagnostics.headroom[2]), static_cast<unsigned>(diagnostics.headroom[3]),
+					static_cast<unsigned>(diagnostics.headroom[4]), static_cast<unsigned>(diagnostics.headroom[5]),
+					static_cast<unsigned>(diagnostics.headroom[6]), static_cast<unsigned>(diagnostics.headroom[7]));
+			}
 		}
 	}
 	return visitedVoiceCount;
