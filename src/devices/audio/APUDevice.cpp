@@ -1092,11 +1092,12 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
-		uint32_t isStream = 0;
-		if (ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_DATA_TYPE, isStream)) {
+		uint32_t dataType = 0;
+		if (ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_DATA_TYPE, dataType)) {
 			uint32_t notifier = MCPX_HW_NOTIFIER_SSLA_DONE;
-			if (isStream != 0 && voiceHandle < m_VPSSLData.size()) {
-				notifier += std::min<uint32_t>(m_VPSSLData[voiceHandle].ssl_index, MCPX_HW_NOTIFIER_SSLB_DONE);
+			if (dataType != 0 && voiceHandle < m_VPSSLData.size() &&
+				m_VPSSLData[voiceHandle].ssl_index != 0) {
+				notifier = MCPX_HW_NOTIFIER_SSLB_DONE;
 			}
 			WriteNotifierStatus(voiceHandle, notifier, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		}
