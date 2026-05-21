@@ -479,9 +479,30 @@ uint32_t Ctz32(uint32_t value)
 	return shift;
 }
 
+bool ResolveGuestMemoryPointer(uint32_t guestAddress, uint32_t size, uintptr_t& hostAddress)
+{
+	if (size == 0) {
+		return false;
+	}
+
+	const uint64_t endAddress = static_cast<uint64_t>(guestAddress) + static_cast<uint64_t>(size) - 1;
+	if (guestAddress >= PHYSICAL_MAP_BASE && endAddress <= PHYSICAL_MAP_END) {
+		hostAddress = static_cast<uintptr_t>(guestAddress);
+		return true;
+	}
+
+	if (guestAddress < PHYSICAL_MAP_SIZE && size <= (PHYSICAL_MAP_SIZE - guestAddress)) {
+		hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress);
+		return true;
+	}
+
+	return false;
+}
+
 bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
 {
-	return size > 0 && guestAddress <= PHYSICAL_MAP_SIZE && size <= (PHYSICAL_MAP_SIZE - guestAddress);
+	uintptr_t hostAddress = 0;
+	return ResolveGuestMemoryPointer(guestAddress, size, hostAddress);
 }
 
 float AttenuateVoiceVolume(uint32_t volume)
@@ -1322,11 +1343,12 @@ bool APUDevice::ReadGuestWord(uint32_t guestAddress, uint32_t& value) const
 
 bool APUDevice::ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const
 {
-	if (dest == nullptr || !IsGuestRangeAccessible(guestAddress, static_cast<uint32_t>(size))) {
+	uintptr_t hostAddress = 0;
+	if (dest == nullptr || !ResolveGuestMemoryPointer(guestAddress, static_cast<uint32_t>(size), hostAddress)) {
 		return false;
 	}
 
-	std::memcpy(dest, reinterpret_cast<const void*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress)), size);
+	std::memcpy(dest, reinterpret_cast<const void*>(hostAddress), size);
 	return true;
 }
 
@@ -1337,11 +1359,12 @@ bool APUDevice::WriteGuestWord(uint32_t guestAddress, uint32_t value)
 
 bool APUDevice::WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size)
 {
-	if (src == nullptr || !IsGuestRangeAccessible(guestAddress, static_cast<uint32_t>(size))) {
+	uintptr_t hostAddress = 0;
+	if (src == nullptr || !ResolveGuestMemoryPointer(guestAddress, static_cast<uint32_t>(size), hostAddress)) {
 		return false;
 	}
 
-	std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress)), src, size);
+	std::memcpy(reinterpret_cast<void*>(hostAddress), src, size);
 	return true;
 }
 
