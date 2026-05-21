@@ -1968,17 +1968,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const size_t visited3D = RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	const size_t visitedMP = RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
 	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP) != 0;
-	if (voiceTableBase != 0) {
-		if (!hasVoiceActivity) {
-			if (!m_LoggedEmptyVoiceListsDuringRender) {
-				EmuLog(LOG_LEVEL::WARNING,
-					"APU render found no active voices in TVL2D/TVL3D/TVLMP despite NV_PAPU_VPVADDR=0x%08x",
-					voiceTableBase);
-				m_LoggedEmptyVoiceListsDuringRender = true;
-			}
-		} else {
-			m_LoggedEmptyVoiceListsDuringRender = false;
+	if (!hasVoiceActivity) {
+		if (voiceTableBase != 0 && !m_LoggedEmptyVoiceListsDuringRender) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU render found no active voices in TVL2D/TVL3D/TVLMP despite NV_PAPU_VPVADDR=0x%08x",
+				voiceTableBase);
+			m_LoggedEmptyVoiceListsDuringRender = true;
 		}
+	} else {
+		m_LoggedEmptyVoiceListsDuringRender = false;
 	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (!hasVoiceActivity) {
