@@ -267,27 +267,17 @@ XBSYSAPI EXPORTNUM(174) xbox::boolean_xt NTAPI xbox::MmIsAddressValid
 	if (g_VMManager.IsValidVirtualAddress((VAddr)VirtualAddress)) {
 		Ret = TRUE;
 	}
-	else if ((VAddr)VirtualAddress < PHYSICAL_MAP_BASE) {
-		// Only use the host memory fallback for addresses below the Xbox kernel
-		// address space (< 0x80000000). Above that, all memory is managed by the
-		// Xbox memory manager (contiguous, system, devkit) or belongs to hardware
-		// device MMIO ranges (NV2A, APU, etc.) that should never be reported as
-		// valid unless explicitly mapped via MmMapIoSpace (which sets up PTEs).
-		//
-		// Within the user range, only fall back when the PDE is invalid — meaning
-		// the Xbox MM has no allocations in that 4 MB block. The address then
-		// belongs to host-only memory (emulator DLL code/data, host thread stacks)
-		// and VirtualQuery is appropriate. A valid PDE with an invalid PTE means
-		// the Xbox kernel specifically did not map that page.
-		xbox::PMMPTE PointerPde = GetPdeAddress((VAddr)VirtualAddress);
-		if (PointerPde->Hardware.Valid == 0) {
-			::MEMORY_BASIC_INFORMATION mbi;
-			if (::VirtualQuery(VirtualAddress, &mbi, sizeof(mbi)) != 0) {
-				if (mbi.State == MEM_COMMIT &&
-					(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0 &&
-					(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0) {
-					Ret = TRUE;
-				}
+	else if ((VAddr)VirtualAddress >= XBE_MAX_VA && (VAddr)VirtualAddress < PHYSICAL_MAP_BASE) {
+		// For addresses above the Xbox placeholder (>= XBE_MAX_VA) but below kernel space,
+		// use VirtualQuery as a fallback. This handles host-only memory such as emulator
+		// thread stacks and other Windows-managed allocations that are not tracked by the
+		// Xbox page tables.
+		::MEMORY_BASIC_INFORMATION mbi;
+		if (::VirtualQuery(VirtualAddress, &mbi, sizeof(mbi)) != 0) {
+			if (mbi.State == MEM_COMMIT &&
+				(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0 &&
+				(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0) {
+				Ret = TRUE;
 			}
 		}
 	}
