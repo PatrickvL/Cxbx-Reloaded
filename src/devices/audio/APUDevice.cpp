@@ -2153,6 +2153,8 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				}
 
 				const int32_t contribution = mixBins[bin * frameCount + frame];
+				// Fold the four global HRTF submix slots back to host stereo as L,R,L,R
+				// until the dedicated OpenAL 3D handoff consumes them directly.
 				if ((slot & 1u) == 0) {
 					left += contribution;
 				} else {
@@ -2161,8 +2163,8 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			}
 		}
 
-		output[frame * 2] = ClampToInt16(static_cast<int32_t>(std::clamp<int64_t>(left, INT16_MIN, INT16_MAX)));
-		output[frame * 2 + 1] = ClampToInt16(static_cast<int32_t>(std::clamp<int64_t>(right, INT16_MIN, INT16_MAX)));
+		output[frame * 2] = ClampToInt16(static_cast<int32_t>(left));
+		output[frame * 2 + 1] = ClampToInt16(static_cast<int32_t>(right));
 	}
 
 	uint32_t stereoPeak = 0;
