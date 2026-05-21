@@ -57,6 +57,8 @@
 #define APU_VPVADDR_OFFSET                      0x0000202C
 #define APU_VPSGEADDR_OFFSET                    0x00002030
 #define APU_VPSSLADDR_OFFSET                    0x00002034
+#define APU_VP_METHOD_WINDOW_OFFSET             0x00020000
+#define APU_VP_METHOD_WINDOW_END                0x00030000
 #define AC97_BASE                               0xFEC00000
 #define AC97_SIZE                               0x1000
 #define USB0_BASE                               0xFED00000
@@ -95,7 +97,7 @@ inline bool IsAPUVPMethodTrace(uint32_t addr)
 	}
 
 	const uint32_t offset = addr - APU_BASE;
-	return offset >= 0x00020000 && offset < 0x00030000;
+	return offset >= APU_VP_METHOD_WINDOW_OFFSET && offset < APU_VP_METHOD_WINDOW_END;
 }
 
 typedef struct
