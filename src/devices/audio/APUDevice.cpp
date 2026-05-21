@@ -2130,7 +2130,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
 		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0;
 	bool useHRTFStereoFallback = false;
-	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFFallbackStereoChannel{ 0, 1, 0, 1 };
+	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
 	if (stereoBinsSilent) {
 		for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 			const uint32_t bin = m_VPHRTFSubmix[slot];
@@ -2158,7 +2158,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				const int32_t contribution = mixBins[binBase + frame];
 				// Fold the four global HRTF submix slots back to host stereo as L,R,L,R
 				// until the dedicated OpenAL 3D handoff consumes them directly.
-				if (kHRTFFallbackStereoChannel[slot] == 0) {
+				if (kHRTFFallbackChannelMapping[slot] == 0) {
 					left += contribution;
 				} else {
 					right += contribution;
@@ -2166,8 +2166,8 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			}
 		}
 
-		output[frame * 2] = ClampToInt16(static_cast<int32_t>(left));
-		output[frame * 2 + 1] = ClampToInt16(static_cast<int32_t>(right));
+		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(left, INT16_MIN, INT16_MAX));
+		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(right, INT16_MIN, INT16_MAX));
 	}
 
 	uint32_t stereoPeak = 0;
