@@ -196,7 +196,8 @@ private:
 	bool m_LoggedVoiceTableWriteFailure = false;
 	bool m_LoggedScatterGatherWriteFailure = false;
 	bool m_LoggedVoiceListInsertFailure = false;
-	bool m_LoggedRenderStateFailure = false;
+	bool m_LoggedMissingVoiceTableDuringRender = false;
+	bool m_LoggedEmptyVoiceListsDuringRender = false;
 	bool m_LoggedAC97Missing = false;
 	bool m_LoggedStreamingSSLFailure = false;
 };

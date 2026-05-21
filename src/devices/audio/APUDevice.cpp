@@ -1949,11 +1949,13 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
-		if (!m_LoggedRenderStateFailure) {
+		if (!m_LoggedMissingVoiceTableDuringRender) {
 			EmuLog(LOG_LEVEL::WARNING,
 				"APU render blocked because NV_PAPU_VPVADDR is still zero; FE/VP voice state is not wired to guest memory yet");
-			m_LoggedRenderStateFailure = true;
+			m_LoggedMissingVoiceTableDuringRender = true;
 		}
+	} else {
+		m_LoggedMissingVoiceTableDuringRender = false;
 	}
 
 	if (g_AC97 != nullptr) {
@@ -1966,14 +1968,14 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const size_t visitedMP = RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
 	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP) != 0;
 	if (!hasVoiceActivity && voiceTableBase != 0) {
-		if (!m_LoggedRenderStateFailure) {
+		if (!m_LoggedEmptyVoiceListsDuringRender) {
 			EmuLog(LOG_LEVEL::WARNING,
 				"APU render found no active voices in TVL2D/TVL3D/TVLMP despite NV_PAPU_VPVADDR=0x%08x",
 				voiceTableBase);
-			m_LoggedRenderStateFailure = true;
+			m_LoggedEmptyVoiceListsDuringRender = true;
 		}
 	} else if (hasVoiceActivity) {
-		m_LoggedRenderStateFailure = false;
+		m_LoggedEmptyVoiceListsDuringRender = false;
 	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (!hasVoiceActivity) {
