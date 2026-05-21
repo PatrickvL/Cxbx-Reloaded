@@ -88,6 +88,16 @@ inline bool IsAPUVPBaseRegisterTrace(uint32_t addr)
 	}
 }
 
+inline bool IsAPUVPMethodTrace(uint32_t addr)
+{
+	if (addr < APU_BASE || addr >= APU_BASE + APU_SIZE) {
+		return false;
+	}
+
+	const uint32_t offset = addr - APU_BASE;
+	return offset >= 0x00020000 && offset < 0x00030000;
+}
+
 typedef struct
 {
 

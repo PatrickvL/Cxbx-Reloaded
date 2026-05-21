@@ -141,8 +141,15 @@ bool PCIBus::MMIORead(uint32_t addr, uint32_t* data, unsigned size)
 bool PCIBus::MMIOWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	bool traceAPUWrite = false;
+	const char* apuTraceType = nullptr;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		traceAPUWrite = IsAPUVPBaseRegisterTrace(addr);
+		if (IsAPUVPBaseRegisterTrace(addr)) {
+			traceAPUWrite = true;
+			apuTraceType = "VP base-register";
+		} else if (IsAPUVPMethodTrace(addr)) {
+			traceAPUWrite = true;
+			apuTraceType = "VP method-window";
+		}
 	}
 
 	for (auto it = m_Devices.begin(); it != m_Devices.end(); ++it) {
@@ -150,7 +157,8 @@ bool PCIBus::MMIOWrite(uint32_t addr, uint32_t value, unsigned size)
 		if (it->second->GetMMIOBar(addr, &bar)) {
 			if (traceAPUWrite) {
 				EmuLog(LOG_LEVEL::INFO,
-					"PCI MMIO write routed addr=0x%08x device=0x%08x bar=%d barBase=0x%08x offset=0x%08x value=0x%08x size=%u",
+					"PCI MMIO %s write routed addr=0x%08x device=0x%08x bar=%d barBase=0x%08x offset=0x%08x value=0x%08x size=%u",
+					apuTraceType,
 					addr,
 					it->second->ReadConfigRegister(PCI_CONFIG_DEVICE),
 					bar.index,
@@ -166,7 +174,8 @@ bool PCIBus::MMIOWrite(uint32_t addr, uint32_t value, unsigned size)
 
 	if (traceAPUWrite) {
 		EmuLog(LOG_LEVEL::INFO,
-			"PCI MMIO write was not routed addr=0x%08x value=0x%08x size=%u",
+			"PCI MMIO %s write was not routed addr=0x%08x value=0x%08x size=%u",
+			apuTraceType,
 			addr,
 			value,
 			size);

@@ -198,6 +198,21 @@ const char* GetAPURegisterTraceName(uint32_t addr)
 	}
 }
 
+const char* GetAPUVPMethodTraceName(uint32_t addr)
+{
+	switch (addr) {
+	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY: return "NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY";
+	case NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA: return "NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA";
+	case NV1BA0_PIO_SET_CURRENT_SSL: return "NV1BA0_PIO_SET_CURRENT_SSL";
+	case NV1BA0_PIO_SET_CURRENT_VOICE: return "NV1BA0_PIO_SET_CURRENT_VOICE";
+	default:
+		if (addr >= NV1BA0_PIO_SET_VOICE_CFG_VBIN && addr <= NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO) {
+			return "NV1BA0_PIO_SET_VOICE_*";
+		}
+		return nullptr;
+	}
+}
+
 constexpr uint32_t NV_PAVS_SIZE = 0x00000080;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN = 0x00000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_VBIN_V0BIN = 0x0000001F;
@@ -621,6 +636,17 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	SynchronizeAudio();
 
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			const uint32_t methodAddr = addr - APU_VP_BASE;
+			if (const char* name = GetAPUVPMethodTraceName(methodAddr)) {
+				EmuLog(LOG_LEVEL::INFO,
+					"APU MMIO VP method write %s method=0x%08x value=0x%08x size=%u",
+					name,
+					methodAddr,
+					value,
+					size);
+			}
+		}
 		VPWrite(addr - APU_VP_BASE, value, size);
 		return;
 	}
@@ -837,6 +863,18 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		return GetRegister32(NV_PAPU_FECV);
 	};
 
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		if (addr >= NV1BA0_PIO_SET_VOICE_CFG_VBIN && addr <= NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU SET_VOICE_* method=0x%08x value=0x%08x voice=0x%04x vpvaddr=0x%08x vpsgeaddr=0x%08x",
+				addr,
+				value,
+				currentVoice() & APU_VP_VOICE_MAX_HANDLE,
+				GetRegister32(NV_PAPU_VPVADDR),
+				GetRegister32(NV_PAPU_VPSGEADDR));
+		}
+	}
+
 	switch (addr) {
 	case NV1BA0_PIO_SET_ANTECEDENT_VOICE:
 		SetRegister32(NV_PAPU_FEAV, value);
@@ -965,10 +1003,22 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPLastVoicePositionHandle = value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE;
 		return;
 	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY:
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU SET_CONTEXT_DMA_NOTIFY value=0x%08x voice=0x%04x",
+				value,
+				currentVoice() & APU_VP_VOICE_MAX_HANDLE);
+		}
 		m_VPNotifyContextDMA = value;
 		WriteRegister(APU_VP_BASE + addr, value, sizeof(uint32_t));
 		return;
 	case NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA:
+		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU SET_CURRENT_SSL_CONTEXT_DMA value=0x%08x voice=0x%04x",
+				value,
+				currentVoice() & APU_VP_VOICE_MAX_HANDLE);
+		}
 		m_VPCurrentSSLContextDMA = value;
 		WriteRegister(APU_VP_BASE + addr, value, sizeof(uint32_t));
 		return;

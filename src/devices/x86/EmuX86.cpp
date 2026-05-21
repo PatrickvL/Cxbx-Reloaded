@@ -223,9 +223,12 @@ void EmuX86_Write(xbox::addr_xt addr, uint32_t value, int size)
 	}
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		if (IsAPUVPBaseRegisterTrace(addr)) {
+		const bool traceAPUBaseRegister = IsAPUVPBaseRegisterTrace(addr);
+		const bool traceAPUMethodWindow = IsAPUVPMethodTrace(addr);
+		if (traceAPUBaseRegister || traceAPUMethodWindow) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU guest MMIO write addr=0x%08X offset=0x%08X value=0x%08X size=%d",
+				"APU guest MMIO %s write addr=0x%08X offset=0x%08X value=0x%08X size=%d",
+				traceAPUBaseRegister ? "VP base-register" : "VP method-window",
 				addr,
 				addr - APU_BASE,
 				value,

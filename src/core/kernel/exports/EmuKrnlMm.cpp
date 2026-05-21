@@ -37,6 +37,7 @@
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxrAbort
 #include "core\kernel\support\Emu.h" // For EmuLog(LOG_LEVEL::WARNING, )
 #include "core\kernel\memory-manager\VMManager.h"
+#include "devices/PCIDevice.h"
 #include "EmuShared.h"
 #include <assert.h>
 
@@ -334,6 +335,18 @@ XBSYSAPI EXPORTNUM(177) xbox::PVOID NTAPI xbox::MmMapIoSpace
 	LOG_FUNC_END;
 
 	PVOID pRet = (PVOID)g_VMManager.MapDeviceMemory(PhysicalAddress, NumberOfBytes, ProtectionType);
+
+	const uint64_t physicalStart = PhysicalAddress;
+	const uint64_t physicalEnd = physicalStart + NumberOfBytes;
+	if (physicalStart < static_cast<uint64_t>(APU_BASE + APU_SIZE) &&
+		physicalEnd > static_cast<uint64_t>(APU_BASE)) {
+		EmuLog(LOG_LEVEL::INFO,
+			"APU MmMapIoSpace physical=0x%08X bytes=0x%08X protection=0x%08X returned=%p",
+			PhysicalAddress,
+			NumberOfBytes,
+			ProtectionType,
+			pRet);
+	}
 
 	RETURN(pRet);
 }
