@@ -337,6 +337,9 @@ XBSYSAPI EXPORTNUM(177) xbox::PVOID NTAPI xbox::MmMapIoSpace
 	PVOID pRet = (PVOID)g_VMManager.MapDeviceMemory(PhysicalAddress, NumberOfBytes, ProtectionType);
 
 	const auto OverlapsAPUWindow = [](uint64_t physicalStart, uint64_t byteCount) {
+		if (byteCount == 0) {
+			return false;
+		}
 		const uint64_t physicalEnd = physicalStart + byteCount;
 		return physicalStart < static_cast<uint64_t>(APU_BASE + APU_SIZE) &&
 			physicalEnd > static_cast<uint64_t>(APU_BASE);

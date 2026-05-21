@@ -143,6 +143,8 @@ constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_BUF_BASE = 0x000003A0;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO = 0x000003A4;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_BUF_CBO = 0x000003D8;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO = 0x000003DC;
+constexpr uint32_t NV1BA0_PIO_SET_VOICE_METHOD_FIRST = NV1BA0_PIO_SET_VOICE_CFG_VBIN;
+constexpr uint32_t NV1BA0_PIO_SET_VOICE_METHOD_LAST = NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO;
 constexpr uint32_t NV1BA0_PIO_SET_HRIR = 0x00000400;
 constexpr uint32_t NV1BA0_PIO_SET_HRIR_X = 0x0000043C;
 constexpr uint32_t NV1BA0_PIO_SET_CURRENT_INBUF_SGE = 0x00000804;
@@ -206,7 +208,7 @@ const char* GetAPUVPMethodTraceName(uint32_t addr)
 	case NV1BA0_PIO_SET_CURRENT_SSL: return "NV1BA0_PIO_SET_CURRENT_SSL";
 	case NV1BA0_PIO_SET_CURRENT_VOICE: return "NV1BA0_PIO_SET_CURRENT_VOICE";
 	default:
-		if (addr >= NV1BA0_PIO_SET_VOICE_CFG_VBIN && addr <= NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO) {
+		if (addr >= NV1BA0_PIO_SET_VOICE_METHOD_FIRST && addr <= NV1BA0_PIO_SET_VOICE_METHOD_LAST) {
 			return "NV1BA0_PIO_SET_VOICE_*";
 		}
 		return nullptr;
@@ -864,7 +866,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	};
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		if (addr >= NV1BA0_PIO_SET_VOICE_CFG_VBIN && addr <= NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO) {
+		if (addr >= NV1BA0_PIO_SET_VOICE_METHOD_FIRST && addr <= NV1BA0_PIO_SET_VOICE_METHOD_LAST) {
 			EmuLog(LOG_LEVEL::INFO,
 				"APU SET_VOICE_* method=0x%08x value=0x%08x voice=0x%04x vpvaddr=0x%08x vpsgeaddr=0x%08x",
 				addr,
