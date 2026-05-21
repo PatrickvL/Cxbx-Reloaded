@@ -479,7 +479,7 @@ uint32_t Ctz32(uint32_t value)
 	return shift;
 }
 
-bool ResolveGuestMemoryPointer(uint32_t guestAddress, uint32_t size, uintptr_t& hostAddress)
+bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& hostAddress)
 {
 	if (size == 0) {
 		return false;
@@ -487,11 +487,14 @@ bool ResolveGuestMemoryPointer(uint32_t guestAddress, uint32_t size, uintptr_t& 
 
 	const uint64_t endAddress = static_cast<uint64_t>(guestAddress) + static_cast<uint64_t>(size) - 1;
 	if (guestAddress >= PHYSICAL_MAP_BASE && endAddress <= PHYSICAL_MAP_END) {
+		// Xbox KSEG0/physical-map addresses are reserved directly in the host address
+		// space, so a guest physical-map VA can be dereferenced as-is here.
 		hostAddress = static_cast<uintptr_t>(guestAddress);
 		return true;
 	}
 
-	if (guestAddress < PHYSICAL_MAP_SIZE && size <= (PHYSICAL_MAP_SIZE - guestAddress)) {
+	if (guestAddress < PHYSICAL_MAP_SIZE &&
+		static_cast<uint64_t>(guestAddress) + static_cast<uint64_t>(size) <= PHYSICAL_MAP_SIZE) {
 		hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress);
 		return true;
 	}
@@ -499,7 +502,7 @@ bool ResolveGuestMemoryPointer(uint32_t guestAddress, uint32_t size, uintptr_t& 
 	return false;
 }
 
-bool IsGuestRangeAccessible(uint32_t guestAddress, uint32_t size)
+bool IsGuestRangeAccessible(uint32_t guestAddress, size_t size)
 {
 	uintptr_t hostAddress = 0;
 	return ResolveGuestMemoryPointer(guestAddress, size, hostAddress);
@@ -1344,7 +1347,7 @@ bool APUDevice::ReadGuestWord(uint32_t guestAddress, uint32_t& value) const
 bool APUDevice::ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const
 {
 	uintptr_t hostAddress = 0;
-	if (dest == nullptr || !ResolveGuestMemoryPointer(guestAddress, static_cast<uint32_t>(size), hostAddress)) {
+	if (dest == nullptr || !ResolveGuestMemoryPointer(guestAddress, size, hostAddress)) {
 		return false;
 	}
 
@@ -1360,7 +1363,7 @@ bool APUDevice::WriteGuestWord(uint32_t guestAddress, uint32_t value)
 bool APUDevice::WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size)
 {
 	uintptr_t hostAddress = 0;
-	if (src == nullptr || !ResolveGuestMemoryPointer(guestAddress, static_cast<uint32_t>(size), hostAddress)) {
+	if (src == nullptr || !ResolveGuestMemoryPointer(guestAddress, size, hostAddress)) {
 		return false;
 	}
 
