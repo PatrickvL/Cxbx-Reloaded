@@ -432,14 +432,10 @@ XBSYSAPI EXPORTNUM(181) xbox::ntstatus_xt NTAPI xbox::MmQueryStatistics
 		RETURN(STATUS_INVALID_PARAMETER);
 	}
 
-	if (MemoryStatistics->Length < sizeof(MM_STATISTICS))
+	if (MemoryStatistics->Length != sizeof(MM_STATISTICS))
 	{
 		EmuLog(LOG_LEVEL::WARNING, "MmQueryStatistics with invalid size -> 0x%.8X", MemoryStatistics->Length);
 		RETURN(STATUS_INVALID_PARAMETER);
-	}
-
-	if (MemoryStatistics->Length != sizeof(MM_STATISTICS)) {
-		EmuLog(LOG_LEVEL::DEBUG, "MmQueryStatistics: Length 0x%.8X > sizeof (game may have uninitialized struct), proceeding", MemoryStatistics->Length);
 	}
 
 	g_VMManager.MemoryStatistics(MemoryStatistics);
