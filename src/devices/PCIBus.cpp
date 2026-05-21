@@ -25,8 +25,33 @@
 // *
 // ******************************************************************
 
+#define LOG_PREFIX CXBXR_MODULE::X86
+
 #include "PCIBus.h"
 #include <cstdio>
+#include "common\AddressRanges.h"
+#include "common\Logging.h"
+#include "audio\AudioDiagnostics.h"
+
+namespace {
+
+bool IsAPUVPBaseRegisterTrace(uint32_t addr, uint32_t value)
+{
+	if (addr < APU_DEVICE_BASE || addr > APU_DEVICE_END || value == 0) {
+		return false;
+	}
+
+	switch (addr - APU_DEVICE_BASE) {
+	case 0x0000202C:
+	case 0x00002030:
+	case 0x00002034:
+		return true;
+	default:
+		return false;
+	}
+}
+
+}
 
 void PCIBus::ConnectDevice(uint32_t deviceId, PCIDevice *pDevice)
 {
@@ -136,12 +161,33 @@ bool PCIBus::MMIORead(uint32_t addr, uint32_t* data, unsigned size)
 
 bool PCIBus::MMIOWrite(uint32_t addr, uint32_t value, unsigned size)
 {
+	const bool traceAPUWrite = audio_diagnostics::kEnableDiagnosticLogging && IsAPUVPBaseRegisterTrace(addr, value);
+
 	for (auto it = m_Devices.begin(); it != m_Devices.end(); ++it) {
 		PCIBar bar;
 		if (it->second->GetMMIOBar(addr, &bar)) {
+			if (traceAPUWrite) {
+				EmuLog(LOG_LEVEL::INFO,
+					"PCI MMIO write routed addr=0x%08x device=0x%08x bar=%d barBase=0x%08x offset=0x%08x value=0x%08x size=%u",
+					addr,
+					it->second->ReadConfigRegister(PCI_CONFIG_DEVICE),
+					bar.index,
+					(bar.reg.Memory.address << 4),
+					addr - (bar.reg.Memory.address << 4),
+					value,
+					size);
+			}
 			it->second->MMIOWrite(bar.index, addr - (bar.reg.Memory.address << 4), value, size);
 			return true;
 		}
+	}
+
+	if (traceAPUWrite) {
+		EmuLog(LOG_LEVEL::INFO,
+			"PCI MMIO write was not routed addr=0x%08x value=0x%08x size=%u",
+			addr,
+			value,
+			size);
 	}
 
 	return false;
