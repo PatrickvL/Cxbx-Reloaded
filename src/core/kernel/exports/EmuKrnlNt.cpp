@@ -1368,9 +1368,80 @@ XBSYSAPI EXPORTNUM(208) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryObject
 		LOG_FUNC_ARG_OUT(ReturnedLength)
 	LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	ntstatus_xt result;
+	PVOID DirectoryObject;
 
-	RETURN(X_STATUS_NOT_IMPLEMENTED);
+	result = ObReferenceObjectByHandle(DirectoryHandle, &ObDirectoryObjectType, &DirectoryObject);
+	if (!X_NT_SUCCESS(result)) {
+		RETURN(result);
+	}
+
+	POBJECT_DIRECTORY Directory = (POBJECT_DIRECTORY)DirectoryObject;
+
+	// If RestartScan, reset context to 0
+	ULONG Index = RestartScan ? 0 : *Context;
+
+	// Walk hash buckets to find entry at the given index
+	ULONG CurrentIndex = 0;
+	POBJECT_HEADER_NAME_INFO FoundEntry = NULL;
+
+	for (ULONG Bucket = 0; Bucket < OB_NUMBER_HASH_BUCKETS; Bucket++) {
+		POBJECT_HEADER_NAME_INFO Entry = Directory->HashBuckets[Bucket];
+		while (Entry != NULL) {
+			if (CurrentIndex == Index) {
+				FoundEntry = Entry;
+				goto EntryFound;
+			}
+			CurrentIndex++;
+			Entry = Entry->ChainLink;
+		}
+	}
+
+EntryFound:
+	if (FoundEntry == NULL) {
+		ObfDereferenceObject(DirectoryObject);
+		if (ReturnedLength) {
+			*ReturnedLength = 0;
+		}
+		RETURN((ntstatus_xt)0x8000001AL); // STATUS_NO_MORE_ENTRIES
+	}
+
+	// Calculate required buffer size
+	ULONG NameLength = FoundEntry->Name.Length;
+	ULONG RequiredSize = sizeof(OBJECT_DIRECTORY_INFORMATION) + NameLength + 1;
+
+	if (Length < RequiredSize) {
+		ObfDereferenceObject(DirectoryObject);
+		if (ReturnedLength) {
+			*ReturnedLength = RequiredSize;
+		}
+		RETURN(X_STATUS_BUFFER_TOO_SMALL);
+	}
+
+	// Fill in the output buffer
+	POBJECT_DIRECTORY_INFORMATION DirInfo = (POBJECT_DIRECTORY_INFORMATION)Buffer;
+	char_xt *NameDest = (char_xt *)((PUCHAR)Buffer + sizeof(OBJECT_DIRECTORY_INFORMATION));
+
+	memcpy(NameDest, FoundEntry->Name.Buffer, NameLength);
+	NameDest[NameLength] = '\0';
+
+	DirInfo->Name.Length = (ushort_xt)NameLength;
+	DirInfo->Name.MaximumLength = (ushort_xt)(NameLength + 1);
+	DirInfo->Name.Buffer = NameDest;
+
+	// Type is the PoolTag from the object's OBJECT_TYPE
+	POBJECT_HEADER ObjectHeader = OBJECT_HEADER_NAME_INFO_TO_OBJECT_HEADER(FoundEntry);
+	DirInfo->Type = ObjectHeader->Type ? ObjectHeader->Type->PoolTag : 0;
+
+	// Advance context
+	*Context = Index + 1;
+
+	if (ReturnedLength) {
+		*ReturnedLength = RequiredSize;
+	}
+
+	ObfDereferenceObject(DirectoryObject);
+	RETURN(X_STATUS_SUCCESS);
 }
 
 // ******************************************************************
