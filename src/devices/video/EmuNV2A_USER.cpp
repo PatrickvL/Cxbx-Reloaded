@@ -142,7 +142,7 @@ DEVICE_WRITE32(USER)
 
 		if (channel_id == cur_channel_id) {
 			switch (addr & 0xFFFF) {
-			case NV_USER_DMA_PUT:
+			case NV_USER_DMA_PUT: {
 				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)] = value;
 				// Process commands inline immediately.  Native D3D runtime
 				// may wait for completion signals (FLIP_STALL, semaphore)
@@ -161,6 +161,7 @@ DEVICE_WRITE32(USER)
 					}
 				}
 				break;
+			}
 			case NV_USER_DMA_GET:
 				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = value;
 				break;

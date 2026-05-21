@@ -592,7 +592,7 @@ void pgraph_handle_method(NV2AState *d,
 				SET_MASK(pg->regs[RI(NV_PGRAPH_TRAPPED_ADDR)],
 					NV_PGRAPH_TRAPPED_ADDR_MTHD, method);
 				pg->regs[RI(NV_PGRAPH_TRAPPED_DATA_LOW)] = parameter;
-				pg->regs[RI(NV_PGRAPH_NSOURCE)] = NV_PGRAPH_NSOURCE_NOTIFICATION; /* TODO: check this */
+				pg->regs[RI(NV_PGRAPH_NSOURCE)] = NV_PGRAPH_NSOURCE_NOTIFICATION;
 				pg->pending_interrupts |= NV_PGRAPH_INTR_ERROR;
 
 				qemu_mutex_unlock(&pg->pgraph_lock);
@@ -648,7 +648,7 @@ void pgraph_handle_method(NV2AState *d,
 
 			break;
 		}
-		case NV097_FLIP_STALL:
+		case NV097_FLIP_STALL: {
 			// Title is using explicit flips — disable puller auto-present fallback.
 			g_pgraph_explicit_flip_stall_seen = true;
 
@@ -697,6 +697,7 @@ void pgraph_handle_method(NV2AState *d,
 
 			NV2A_DPRINTF("flip stall done\n");
 			break;
+		}
 
 		case NV097_SET_CONTEXT_DMA_SEMAPHORE:
 			pg->dma_semaphore = parameter;
@@ -1574,10 +1575,9 @@ void pgraph_handle_method(NV2AState *d,
 			}
 			break;
 		}
+		case NV097_SET_SEMAPHORE_OFFSET:
+			break;
 		case NV097_BACK_END_WRITE_SEMAPHORE_RELEASE: {
-			//qemu_mutex_unlock(&pg->pgraph_lock);
-			//qemu_mutex_lock_iothread();
-
 			uint32_t semaphore_offset = pg->regs[RI(NV_PGRAPH_SEMAPHOREOFFSET)];
 
 			xbox::addr_xt semaphore_dma_len;
@@ -1591,9 +1591,6 @@ void pgraph_handle_method(NV2AState *d,
 			semaphore_data += semaphore_offset;
 
 			stl_le_p((uint32_t*)semaphore_data, parameter);
-
-			//qemu_mutex_lock(&pg->pgraph_lock);
-			//qemu_mutex_unlock_iothread();
 
 			break;
 		}
