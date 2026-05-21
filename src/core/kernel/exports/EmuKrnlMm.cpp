@@ -384,7 +384,27 @@ XBSYSAPI EXPORTNUM(179) xbox::ulong_xt NTAPI xbox::MmQueryAddressProtect
 	LOG_FUNC_ONE_ARG(VirtualAddress);
 
 	ULONG Result = g_VMManager.QueryProtection((VAddr)VirtualAddress);
-	
+
+	if (Result == 0 && (VAddr)VirtualAddress < PHYSICAL_MAP_BASE) {
+		// Fallback: for host-backed memory (thread stacks, DLL code) not in Xbox
+		// page tables, query the Windows protection and convert to Xbox constants.
+		::MEMORY_BASIC_INFORMATION mbi;
+		if (::VirtualQuery(VirtualAddress, &mbi, sizeof(mbi)) != 0 && mbi.State == MEM_COMMIT) {
+			DWORD p = mbi.Protect & 0xFF; // strip modifier flags
+			if (p == PAGE_READONLY)                Result = XBOX_PAGE_READONLY;
+			else if (p == PAGE_READWRITE)          Result = XBOX_PAGE_READWRITE;
+			else if (p == PAGE_EXECUTE_READ)       Result = XBOX_PAGE_EXECUTE_READ;
+			else if (p == PAGE_EXECUTE_READWRITE)  Result = XBOX_PAGE_EXECUTE_READWRITE;
+			else if (p == PAGE_EXECUTE)            Result = XBOX_PAGE_EXECUTE;
+			else if (p == PAGE_WRITECOPY)          Result = XBOX_PAGE_READWRITE;
+			else if (p == PAGE_EXECUTE_WRITECOPY)  Result = XBOX_PAGE_EXECUTE_READWRITE;
+			// Preserve cache/guard modifiers
+			if (mbi.Protect & PAGE_NOCACHE)        Result |= XBOX_PAGE_NOCACHE;
+			if (mbi.Protect & PAGE_GUARD)          Result |= XBOX_PAGE_GUARD;
+			if (mbi.Protect & PAGE_WRITECOMBINE)   Result |= XBOX_PAGE_WRITECOMBINE;
+		}
+	}
+
 	RETURN(Result);
 }
 
