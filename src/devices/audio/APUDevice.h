@@ -43,6 +43,7 @@ public:
 	static constexpr size_t HRTF_FILTER_TAPS = 31;
 	static constexpr size_t HRTF_FILTER_DELAY_SAMPLES = 42;
 	static constexpr size_t HRTF_FILTER_BUFFER_LENGTH = HRTF_FILTER_TAPS + HRTF_FILTER_DELAY_SAMPLES;
+	static constexpr size_t MAX_RECENT_FE_METHODS = 16;
 
 	// PCI Functions
 	void Init();
@@ -92,6 +93,18 @@ private:
 		float itd_tar = 0.0f;
 	};
 
+	struct RecentFEMethodDiagnostic {
+		uint32_t sequence = 0;
+		uint32_t addr = 0;
+		uint32_t value = 0;
+		uint32_t currentVoice = 0;
+		uint32_t targetVoice = 0;
+		uint32_t feav = 0;
+		uint32_t vpvaddr = 0;
+		uint32_t vpsgeaddr = 0;
+		uint32_t vpssladdr = 0;
+	};
+
 	uint32_t GPRead(uint32_t addr, unsigned size);
 	void GPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t EPRead(uint32_t addr, unsigned size);
@@ -136,6 +149,8 @@ private:
 	void ClearHRTFFilterState(uint32_t voiceHandle);
 	void SetHRTFFilterTarget(uint32_t voiceHandle, const HRTFEntryState& entry);
 	void ProcessHRTFSample(uint32_t voiceHandle, float& sampleLeft, float& sampleRight);
+	void RecordRecentFEMethod(uint32_t addr, uint32_t value, uint32_t currentVoiceValue);
+	void LogRecentFEMethodDiagnostics() const;
 
 	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
@@ -170,6 +185,10 @@ private:
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
 	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};
 	std::array<HRTFFilterState, MAX_HRTF_VOICES> m_VPHRTFFilterState{};
+	std::array<RecentFEMethodDiagnostic, MAX_RECENT_FE_METHODS> m_RecentFEMethods{};
+	size_t m_RecentFEMethodCount = 0;
+	size_t m_RecentFEMethodNext = 0;
+	uint32_t m_RecentFEMethodSequence = 0;
 	std::vector<int16_t> m_VP3DVoiceCaptureScratch{};
 	bool m_LoggedXADPCMDecodeFailure = false;
 	bool m_LoggedEmptyVoiceTableDiagnostics = false;

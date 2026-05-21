@@ -203,10 +203,21 @@ const char* GetAPURegisterTraceName(uint32_t addr)
 const char* GetAPUVPMethodTraceName(uint32_t addr)
 {
 	switch (addr) {
+	case NV1BA0_PIO_SET_ANTECEDENT_VOICE: return "NV1BA0_PIO_SET_ANTECEDENT_VOICE";
+	case NV1BA0_PIO_VOICE_ON: return "NV1BA0_PIO_VOICE_ON";
+	case NV1BA0_PIO_VOICE_OFF: return "NV1BA0_PIO_VOICE_OFF";
+	case NV1BA0_PIO_VOICE_RELEASE: return "NV1BA0_PIO_VOICE_RELEASE";
+	case NV1BA0_PIO_GET_VOICE_POSITION: return "NV1BA0_PIO_GET_VOICE_POSITION";
+	case NV1BA0_PIO_VOICE_PAUSE: return "NV1BA0_PIO_VOICE_PAUSE";
+	case NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY: return "NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY";
 	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY: return "NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY";
 	case NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA: return "NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA";
 	case NV1BA0_PIO_SET_CURRENT_SSL: return "NV1BA0_PIO_SET_CURRENT_SSL";
+	case NV1BA0_PIO_SET_SUBMIX_HEADROOM: return "NV1BA0_PIO_SET_SUBMIX_HEADROOM";
+	case NV1BA0_PIO_SET_HRTF_HEADROOM: return "NV1BA0_PIO_SET_HRTF_HEADROOM";
+	case NV1BA0_PIO_SET_HRTF_SUBMIXES: return "NV1BA0_PIO_SET_HRTF_SUBMIXES";
 	case NV1BA0_PIO_SET_CURRENT_VOICE: return "NV1BA0_PIO_SET_CURRENT_VOICE";
+	case NV1BA0_PIO_VOICE_LOCK: return "NV1BA0_PIO_VOICE_LOCK";
 	default:
 		if (addr >= NV1BA0_PIO_SET_VOICE_METHOD_FIRST && addr <= NV1BA0_PIO_SET_VOICE_METHOD_LAST) {
 			return "NV1BA0_PIO_SET_VOICE_*";
@@ -340,6 +351,56 @@ constexpr float APU_HRTF_MAX_DELAY_SAMPLES_FLOAT = static_cast<float>(APUDevice:
 constexpr float APU_SAMPLE_SCALE_FACTOR = 32767.0f;
 constexpr size_t APU_DIAGNOSTIC_MAX_VOICES_TO_LOG = 4;
 constexpr size_t APU_DIAGNOSTIC_MAX_ACTIVE_VOICES_TO_LOG = 4;
+
+uint32_t GetFEMethodTargetVoice(uint32_t addr, uint32_t value, uint32_t currentVoiceValue)
+{
+	switch (addr) {
+	case NV1BA0_PIO_SET_CURRENT_VOICE:
+		return value & APU_VP_VOICE_MAX_HANDLE;
+	case NV1BA0_PIO_VOICE_ON:
+		return value & NV1BA0_PIO_VOICE_ON_HANDLE;
+	case NV1BA0_PIO_VOICE_OFF:
+		return value & NV1BA0_PIO_VOICE_OFF_HANDLE;
+	case NV1BA0_PIO_VOICE_RELEASE:
+		return value & NV1BA0_PIO_VOICE_RELEASE_HANDLE;
+	case NV1BA0_PIO_GET_VOICE_POSITION:
+		return value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE;
+	case NV1BA0_PIO_VOICE_PAUSE:
+		return value & NV1BA0_PIO_VOICE_PAUSE_HANDLE;
+	case NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY:
+		return value & NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY_HANDLE;
+	case NV1BA0_PIO_VOICE_LOCK:
+	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY:
+	case NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA:
+	case NV1BA0_PIO_SET_CURRENT_SSL:
+	case NV1BA0_PIO_SET_HRTF_SUBMIXES:
+	case NV1BA0_PIO_SET_HRTF_HEADROOM:
+	case NV1BA0_PIO_SET_VOICE_CFG_VBIN:
+	case NV1BA0_PIO_SET_VOICE_CFG_FMT:
+	case NV1BA0_PIO_SET_VOICE_CFG_ENV0:
+	case NV1BA0_PIO_SET_VOICE_CFG_ENVA:
+	case NV1BA0_PIO_SET_VOICE_CFG_ENV1:
+	case NV1BA0_PIO_SET_VOICE_CFG_ENVF:
+	case NV1BA0_PIO_SET_VOICE_CFG_MISC:
+	case NV1BA0_PIO_SET_VOICE_TAR_HRTF:
+	case NV1BA0_PIO_SET_VOICE_SSL_A:
+	case NV1BA0_PIO_SET_VOICE_SSL_B:
+	case NV1BA0_PIO_SET_VOICE_TAR_VOLA:
+	case NV1BA0_PIO_SET_VOICE_TAR_VOLB:
+	case NV1BA0_PIO_SET_VOICE_TAR_VOLC:
+	case NV1BA0_PIO_SET_VOICE_LFO_ENV:
+	case NV1BA0_PIO_SET_VOICE_TAR_FCA:
+	case NV1BA0_PIO_SET_VOICE_TAR_FCB:
+	case NV1BA0_PIO_SET_VOICE_TAR_PITCH:
+	case NV1BA0_PIO_SET_VOICE_CFG_BUF_BASE:
+	case NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO:
+	case NV1BA0_PIO_SET_VOICE_BUF_CBO:
+	case NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO:
+		return currentVoiceValue & APU_VP_VOICE_MAX_HANDLE;
+	default:
+		return APU_VP_VOICE_MAX_HANDLE;
+	}
+}
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
 // Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
@@ -561,6 +622,10 @@ void APUDevice::Reset()
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
 	m_VPHRTFFilterState.fill(APUDevice::HRTFFilterState{});
+	m_RecentFEMethods.fill(APUDevice::RecentFEMethodDiagnostic{});
+	m_RecentFEMethodCount = 0;
+	m_RecentFEMethodNext = 0;
+	m_RecentFEMethodSequence = 0;
 	m_LoggedXADPCMDecodeFailure = false;
 	m_LoggedEmptyVoiceTableDiagnostics = false;
 	m_LoggedVoiceTableReadFailure = false;
@@ -864,6 +929,11 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	const auto currentVoice = [this]() {
 		return GetRegister32(NV_PAPU_FECV);
 	};
+	const uint32_t currentVoiceValue = currentVoice();
+
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		RecordRecentFEMethod(addr, value, currentVoiceValue);
+	}
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (addr >= NV1BA0_PIO_SET_VOICE_METHOD_FIRST && addr <= NV1BA0_PIO_SET_VOICE_METHOD_LAST) {
@@ -871,7 +941,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 				"APU SET_VOICE_* method=0x%08x value=0x%08x voice=0x%04x vpvaddr=0x%08x vpsgeaddr=0x%08x",
 				addr,
 				value,
-				currentVoice() & APU_VP_VOICE_MAX_HANDLE,
+				currentVoiceValue & APU_VP_VOICE_MAX_HANDLE,
 				GetRegister32(NV_PAPU_VPVADDR),
 				GetRegister32(NV_PAPU_VPSGEADDR));
 		}
@@ -2112,6 +2182,66 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 	return visitedVoiceCount;
 }
 
+void APUDevice::RecordRecentFEMethod(uint32_t addr, uint32_t value, uint32_t currentVoiceValue)
+{
+	if constexpr (!audio_diagnostics::kEnableDiagnosticLogging) {
+		return;
+	}
+
+	RecentFEMethodDiagnostic event{};
+	event.sequence = ++m_RecentFEMethodSequence;
+	event.addr = addr;
+	event.value = value;
+	event.currentVoice = currentVoiceValue & APU_VP_VOICE_MAX_HANDLE;
+	event.targetVoice = GetFEMethodTargetVoice(addr, value, currentVoiceValue);
+	event.feav = GetRegister32(NV_PAPU_FEAV);
+	event.vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+	event.vpsgeaddr = GetRegister32(NV_PAPU_VPSGEADDR);
+	event.vpssladdr = GetRegister32(NV_PAPU_VPSSLADDR);
+
+	m_RecentFEMethods[m_RecentFEMethodNext] = event;
+	m_RecentFEMethodNext = (m_RecentFEMethodNext + 1) % m_RecentFEMethods.size();
+	if (m_RecentFEMethodCount < m_RecentFEMethods.size()) {
+		++m_RecentFEMethodCount;
+	}
+}
+
+void APUDevice::LogRecentFEMethodDiagnostics() const
+{
+	if constexpr (!audio_diagnostics::kEnableDiagnosticLogging) {
+		return;
+	}
+
+	if (m_RecentFEMethodCount == 0) {
+		EmuLog(LOG_LEVEL::INFO, "APU recent FE method diagnostics [none]");
+		return;
+	}
+
+	const size_t startIndex =
+		m_RecentFEMethodCount == m_RecentFEMethods.size() ? m_RecentFEMethodNext : 0;
+	for (size_t i = 0; i < m_RecentFEMethodCount; ++i) {
+		const auto& event = m_RecentFEMethods[(startIndex + i) % m_RecentFEMethods.size()];
+		const char* name = GetAPUVPMethodTraceName(event.addr);
+		const uint32_t list = (event.feav & NV_PAPU_FEAV_LST) >> Ctz32(NV_PAPU_FEAV_LST);
+		const uint32_t antecedentVoice = event.feav & NV_PAPU_FEAV_VALUE;
+		EmuLog(LOG_LEVEL::INFO,
+			"APU recent FE method[%zu/%zu] seq=%u name=%s addr=0x%08x value=0x%08x currentVoice=0x%04x targetVoice=0x%04x list=%u antecedent=0x%04x vpvaddr=0x%08x vpsgeaddr=0x%08x vpssladdr=0x%08x",
+			i + 1,
+			m_RecentFEMethodCount,
+			event.sequence,
+			name != nullptr ? name : "UNKNOWN",
+			event.addr,
+			event.value,
+			event.currentVoice,
+			event.targetVoice,
+			list,
+			antecedentVoice,
+			event.vpvaddr,
+			event.vpsgeaddr,
+			event.vpssladdr);
+	}
+}
+
 void APUDevice::LogVoiceTableDiagnostics() const
 {
 	if constexpr (!audio_diagnostics::kEnableDiagnosticLogging) {
@@ -2122,6 +2252,7 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	if (voiceTableBase == 0) {
 		EmuLog(LOG_LEVEL::INFO,
 			"APU voice table diagnostics voiceTableBase=0x00000000 active=0 paused=0 new=0 handles=[none]");
+		LogRecentFEMethodDiagnostics();
 		return;
 	}
 
@@ -2156,6 +2287,7 @@ void APUDevice::LogVoiceTableDiagnostics() const
 			activeVoiceCount,
 			pausedVoiceCount,
 			newVoiceCount);
+		LogRecentFEMethodDiagnostics();
 		return;
 	}
 
