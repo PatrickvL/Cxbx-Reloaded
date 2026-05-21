@@ -38,28 +38,7 @@
 #include "mnemonics.h"
 
 #include "core\kernel\init\CxbxKrnl.h"
-#include "common\AddressRanges.h"
 #include "devices\audio\AudioDiagnostics.h"
-
-namespace {
-
-bool IsAPUVPBaseRegisterTrace(xbox::addr_xt addr, uint32_t value)
-{
-	if (addr < APU_DEVICE_BASE || addr > APU_DEVICE_END || value == 0) {
-		return false;
-	}
-
-	switch (addr - APU_DEVICE_BASE) {
-	case 0x0000202C:
-	case 0x00002030:
-	case 0x00002034:
-		return true;
-	default:
-		return false;
-	}
-}
-
-}
 #include "core\kernel\support\Emu.h" // For EmuLog
 #include "devices\x86\EmuX86.h"
 #include "core\hle\Intercept.hpp"
@@ -248,7 +227,7 @@ void EmuX86_Write(xbox::addr_xt addr, uint32_t value, int size)
 			EmuLog(LOG_LEVEL::INFO,
 				"APU guest MMIO write addr=0x%08X offset=0x%08X value=0x%08X size=%d",
 				addr,
-				addr - APU_DEVICE_BASE,
+				addr - APU_BASE,
 				value,
 				size);
 		}

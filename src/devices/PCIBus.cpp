@@ -29,29 +29,8 @@
 
 #include "PCIBus.h"
 #include <cstdio>
-#include "common\AddressRanges.h"
 #include "common\Logging.h"
 #include "audio\AudioDiagnostics.h"
-
-namespace {
-
-bool IsAPUVPBaseRegisterTrace(uint32_t addr, uint32_t value)
-{
-	if (addr < APU_DEVICE_BASE || addr > APU_DEVICE_END || value == 0) {
-		return false;
-	}
-
-	switch (addr - APU_DEVICE_BASE) {
-	case 0x0000202C:
-	case 0x00002030:
-	case 0x00002034:
-		return true;
-	default:
-		return false;
-	}
-}
-
-}
 
 void PCIBus::ConnectDevice(uint32_t deviceId, PCIDevice *pDevice)
 {
