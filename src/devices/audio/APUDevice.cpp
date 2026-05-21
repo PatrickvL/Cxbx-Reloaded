@@ -352,7 +352,7 @@ constexpr float APU_SAMPLE_SCALE_FACTOR = 32767.0f;
 constexpr size_t APU_DIAGNOSTIC_MAX_VOICES_TO_LOG = 4;
 constexpr size_t APU_DIAGNOSTIC_MAX_ACTIVE_VOICES_TO_LOG = 4;
 
-uint32_t GetFEMethodTargetVoice(uint32_t addr, uint32_t value, uint32_t currentVoiceValue)
+uint32_t GetFEMethodTargetVoiceOrDefault(uint32_t addr, uint32_t value, uint32_t currentVoiceValue)
 {
 	switch (addr) {
 	case NV1BA0_PIO_SET_CURRENT_VOICE:
@@ -2188,7 +2188,7 @@ void APUDevice::RecordRecentFEMethod(uint32_t addr, uint32_t value, uint32_t cur
 	event.addr = addr;
 	event.value = value;
 	event.currentVoice = currentVoiceValue & APU_VP_VOICE_MAX_HANDLE;
-	event.targetVoice = GetFEMethodTargetVoice(addr, value, currentVoiceValue);
+	event.targetVoice = GetFEMethodTargetVoiceOrDefault(addr, value, currentVoiceValue);
 	event.feav = GetRegister32(NV_PAPU_FEAV);
 	event.vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
 	event.vpsgeaddr = GetRegister32(NV_PAPU_VPSGEADDR);
