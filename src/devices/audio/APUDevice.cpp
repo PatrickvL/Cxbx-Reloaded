@@ -493,8 +493,7 @@ bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& ho
 		return true;
 	}
 
-	if (guestAddress < PHYSICAL_MAP_SIZE &&
-		static_cast<uint64_t>(guestAddress) + static_cast<uint64_t>(size) <= PHYSICAL_MAP_SIZE) {
+	if (guestAddress < PHYSICAL_MAP_SIZE && endAddress < PHYSICAL_MAP_SIZE) {
 		hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress);
 		return true;
 	}
