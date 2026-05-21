@@ -1078,6 +1078,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 1);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
+		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_OFFSET,
+			NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
@@ -1090,6 +1092,14 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		uint32_t isStream = 0;
+		if (ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_DATA_TYPE, isStream)) {
+			uint32_t notifier = MCPX_HW_NOTIFIER_SSLA_DONE;
+			if (isStream != 0 && voiceHandle < m_VPSSLData.size()) {
+				notifier += std::min<uint32_t>(m_VPSSLData[voiceHandle].ssl_index, MCPX_HW_NOTIFIER_SSLB_DONE);
+			}
+			WriteNotifierStatus(voiceHandle, notifier, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+		}
 		if (voiceHandle < m_VPPlaybackState.size()) {
 			m_VPPlaybackState[voiceHandle] = PlaybackState{};
 		}
@@ -1310,6 +1320,29 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		}
 		return;
 	default:
+		if (addr >= NV1BA0_PIO_SET_VOICE_METHOD_FIRST && addr < NV1BA0_PIO_SET_VOICE_CFG_BUF_BASE &&
+			((addr - NV1BA0_PIO_SET_VOICE_METHOD_FIRST) % sizeof(uint32_t)) == 0) {
+			const uint32_t rawVoiceOffset = addr - NV1BA0_PIO_SET_VOICE_METHOD_FIRST;
+			if (rawVoiceOffset < NV_PAVS_SIZE) {
+				WriteVoiceMask(currentVoice(), rawVoiceOffset, 0xFFFFFFFF, value);
+				if (currentVoice() < m_VPPlaybackState.size()) {
+					if (rawVoiceOffset == NV_PAVS_VOICE_PAR_OFFSET) {
+						m_VPPlaybackState[currentVoice()] = PlaybackState{};
+					} else if (rawVoiceOffset == NV_PAVS_VOICE_CUR_PSL_START ||
+						rawVoiceOffset == NV_PAVS_VOICE_CUR_PSH_SAMPLE ||
+						rawVoiceOffset == NV_PAVS_VOICE_PAR_NEXT) {
+						m_VPPlaybackState[currentVoice()].valid = false;
+					}
+				}
+				if (rawVoiceOffset == NV_PAVS_VOICE_CUR_PSL_START ||
+					rawVoiceOffset == NV_PAVS_VOICE_CUR_PSH_SAMPLE ||
+					rawVoiceOffset == NV_PAVS_VOICE_PAR_OFFSET ||
+					rawVoiceOffset == NV_PAVS_VOICE_PAR_NEXT) {
+					ClearHRTFFilterState(currentVoice());
+				}
+				return;
+			}
+		}
 		if (addr >= NV1BA0_PIO_SET_SUBMIX_HEADROOM &&
 			addr < NV1BA0_PIO_SET_SUBMIX_HEADROOM + sizeof(uint32_t) * APU_MIXBIN_COUNT &&
 			((addr - NV1BA0_PIO_SET_SUBMIX_HEADROOM) % sizeof(uint32_t)) == 0) {
