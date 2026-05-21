@@ -2126,10 +2126,43 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 	m_LoggedAC97Missing = false;
 
+	const bool stereoBinsSilent =
+		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
+		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0;
+	bool useHRTFStereoFallback = false;
+	if (stereoBinsSilent) {
+		for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+			const uint32_t bin = m_VPHRTFSubmix[slot];
+			if (bin > 1 && bin < APU_MIXBIN_COUNT &&
+				PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, bin) != 0) {
+				useHRTFStereoFallback = true;
+				break;
+			}
+		}
+	}
+
 	std::vector<int16_t> output(frameCount * 2);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
-		output[frame * 2] = ClampToInt16(mixBins[frame]);
-		output[frame * 2 + 1] = ClampToInt16(mixBins[frameCount + frame]);
+		int64_t left = mixBins[frame];
+		int64_t right = mixBins[frameCount + frame];
+		if (useHRTFStereoFallback) {
+			for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+				const uint32_t bin = m_VPHRTFSubmix[slot];
+				if (bin <= 1 || bin >= APU_MIXBIN_COUNT) {
+					continue;
+				}
+
+				const int32_t contribution = mixBins[bin * frameCount + frame];
+				if ((slot & 1u) == 0) {
+					left += contribution;
+				} else {
+					right += contribution;
+				}
+			}
+		}
+
+		output[frame * 2] = ClampToInt16(static_cast<int32_t>(std::clamp<int64_t>(left, INT16_MIN, INT16_MAX)));
+		output[frame * 2 + 1] = ClampToInt16(static_cast<int32_t>(std::clamp<int64_t>(right, INT16_MIN, INT16_MAX)));
 	}
 
 	uint32_t stereoPeak = 0;
@@ -2137,9 +2170,14 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
 		if (hasVoiceActivity || stereoPeak != 0) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu",
+				"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu hrtfFallback=%d bins=[%u,%u,%u,%u]",
 				static_cast<unsigned>(stereoPeak),
-				frameCount);
+				frameCount,
+				useHRTFStereoFallback ? 1 : 0,
+				static_cast<unsigned>(m_VPHRTFSubmix[0]),
+				static_cast<unsigned>(m_VPHRTFSubmix[1]),
+				static_cast<unsigned>(m_VPHRTFSubmix[2]),
+				static_cast<unsigned>(m_VPHRTFSubmix[3]));
 		}
 	}
 
