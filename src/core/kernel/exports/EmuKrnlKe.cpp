@@ -83,6 +83,8 @@ namespace NtDll
 #include "core\kernel\support\NativeHandle.h"
 #include "Timer.h"
 #include "Util.h"
+#include "devices/video/nv2a.h" // For NV2ADevice, NV_PCRTC_INTR_0_VBLANK
+#include "devices/Xbox.h"      // For g_NV2A
 
 #pragma warning(disable:4005) // Ignore redefined status values
 #include <ntstatus.h>
@@ -796,6 +798,19 @@ XBSYSAPI EXPORTNUM(98) xbox::boolean_xt NTAPI xbox::KeConnectInterrupt
 			InterruptObject->Connected = TRUE;
 			EmuInterruptList[InterruptObject->BusInterruptLevel] = InterruptObject;
 			HalEnableSystemInterrupt(InterruptObject->BusInterruptLevel, InterruptObject->Mode);
+
+			// For the GPU interrupt (IRQ 3), also enable the NV2A PCRTC VBlank
+			// interrupt at the hardware level. On real Xbox, the kernel miniport
+			// writes NV_PCRTC_INTR_EN_0 = 1 during init, but since we emulate the
+			// kernel at the API level, that MMIO write never executes. Enable it
+			// here so the ISR can see VBlank pending interrupts.
+			if (InterruptObject->BusInterruptLevel == 3) {
+				if (g_NV2A) {
+					NV2AState* d = g_NV2A->GetDeviceState();
+					d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+				}
+			}
+
 			ret = TRUE;
 		}
 	}
