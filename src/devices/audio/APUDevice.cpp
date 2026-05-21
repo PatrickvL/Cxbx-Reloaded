@@ -1326,20 +1326,20 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			((addr - NV1BA0_PIO_SET_VOICE_METHOD_FIRST) % sizeof(uint32_t)) == 0) {
 			const uint32_t rawVoiceOffset = addr - NV1BA0_PIO_SET_VOICE_METHOD_FIRST;
 			if (rawVoiceOffset < NV_PAVS_SIZE) {
+				const bool affectsPlaybackCursor =
+					rawVoiceOffset == NV_PAVS_VOICE_CUR_PSL_START ||
+					rawVoiceOffset == NV_PAVS_VOICE_CUR_PSH_SAMPLE ||
+					rawVoiceOffset == NV_PAVS_VOICE_PAR_OFFSET ||
+					rawVoiceOffset == NV_PAVS_VOICE_PAR_NEXT;
 				WriteVoiceMask(currentVoice(), rawVoiceOffset, 0xFFFFFFFF, value);
 				if (currentVoice() < m_VPPlaybackState.size()) {
 					if (rawVoiceOffset == NV_PAVS_VOICE_PAR_OFFSET) {
 						m_VPPlaybackState[currentVoice()] = PlaybackState{};
-					} else if (rawVoiceOffset == NV_PAVS_VOICE_CUR_PSL_START ||
-						rawVoiceOffset == NV_PAVS_VOICE_CUR_PSH_SAMPLE ||
-						rawVoiceOffset == NV_PAVS_VOICE_PAR_NEXT) {
+					} else if (affectsPlaybackCursor) {
 						m_VPPlaybackState[currentVoice()].valid = false;
 					}
 				}
-				if (rawVoiceOffset == NV_PAVS_VOICE_CUR_PSL_START ||
-					rawVoiceOffset == NV_PAVS_VOICE_CUR_PSH_SAMPLE ||
-					rawVoiceOffset == NV_PAVS_VOICE_PAR_OFFSET ||
-					rawVoiceOffset == NV_PAVS_VOICE_PAR_NEXT) {
+				if (affectsPlaybackCursor) {
 					ClearHRTFFilterState(currentVoice());
 				}
 				return;
