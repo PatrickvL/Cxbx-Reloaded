@@ -1020,6 +1020,22 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 				GetRegister32(NV_PAPU_VPSGEADDR),
 				GetRegister32(NV_PAPU_VPSSLADDR));
 		}
+		if (!inserted) {
+			if (!m_LoggedVoiceListInsertFailure) {
+				EmuLog(LOG_LEVEL::WARNING,
+					"APU VOICE_ON failed to link handle=%u list=%u antecedent=0x%04x topRegister=0x%08x vpvaddr=0x%08x vpsgeaddr=0x%08x vpssladdr=0x%08x",
+					selectedHandle,
+					list,
+					antecedentVoice,
+					topRegister,
+					GetRegister32(NV_PAPU_VPVADDR),
+					GetRegister32(NV_PAPU_VPSGEADDR),
+					GetRegister32(NV_PAPU_VPSSLADDR));
+				m_LoggedVoiceListInsertFailure = true;
+			}
+		} else {
+			m_LoggedVoiceListInsertFailure = false;
+		}
 
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
@@ -1353,15 +1369,13 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
-		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-			if (!m_LoggedVoiceTableReadFailure) {
-				EmuLog(LOG_LEVEL::INFO,
-					"APU ReadVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x",
-					voiceHandle,
-					offset,
-					mask);
-				m_LoggedVoiceTableReadFailure = true;
-			}
+		if (!m_LoggedVoiceTableReadFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU ReadVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x",
+				voiceHandle,
+				offset,
+				mask);
+			m_LoggedVoiceTableReadFailure = true;
 		}
 		return false;
 	}
@@ -1369,28 +1383,24 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	const uint32_t voiceBase = voiceTableBase + voiceHandle * NV_PAVS_SIZE + offset;
 	uint32_t current = 0;
 	if (!ReadGuestWord(voiceBase, current)) {
-		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-			if (!m_LoggedVoiceTableReadFailure) {
-				EmuLog(LOG_LEVEL::INFO,
-					"APU ReadVoiceMask failed voiceTableBase=0x%08x voiceBase=0x%08x handle=%u offset=0x%08x mask=0x%08x",
-					voiceTableBase,
-					voiceBase,
-					voiceHandle,
-					offset,
-					mask);
-				m_LoggedVoiceTableReadFailure = true;
-			}
+		if (!m_LoggedVoiceTableReadFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU ReadVoiceMask failed voiceTableBase=0x%08x voiceBase=0x%08x handle=%u offset=0x%08x mask=0x%08x",
+				voiceTableBase,
+				voiceBase,
+				voiceHandle,
+				offset,
+				mask);
+			m_LoggedVoiceTableReadFailure = true;
 		}
 		return false;
 	}
 
 	const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
 	value = mask == 0xFFFFFFFF ? current : ((current & mask) >> shift);
-	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		// A successful read means the voice table is reachable again, so allow a future
-		// access regression to emit a fresh one-shot diagnostic.
-		m_LoggedVoiceTableReadFailure = false;
-	}
+	// A successful read means the voice table is reachable again, so allow a future
+	// access regression to emit a fresh one-shot diagnostic.
+	m_LoggedVoiceTableReadFailure = false;
 	return true;
 }
 
@@ -1402,38 +1412,34 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
-		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-			if (!m_LoggedVoiceTableWriteFailure) {
-				EmuLog(LOG_LEVEL::INFO,
-					"APU WriteVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x value=0x%08x",
-					voiceHandle,
-					offset,
-					mask,
-					value);
-				m_LoggedVoiceTableWriteFailure = true;
-			}
+		if (!m_LoggedVoiceTableWriteFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU WriteVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x value=0x%08x",
+				voiceHandle,
+				offset,
+				mask,
+				value);
+			m_LoggedVoiceTableWriteFailure = true;
 		}
 		return false;
 	}
 
 	const uint32_t voiceBase = voiceTableBase + voiceHandle * NV_PAVS_SIZE + offset;
 	const bool success = WriteGuestWordMasked(voiceBase, mask, value);
-	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		if (!success) {
-			if (!m_LoggedVoiceTableWriteFailure) {
-				EmuLog(LOG_LEVEL::INFO,
-					"APU WriteVoiceMask failed voiceTableBase=0x%08x voiceBase=0x%08x handle=%u offset=0x%08x mask=0x%08x value=0x%08x",
-					voiceTableBase,
-					voiceBase,
-					voiceHandle,
-					offset,
-					mask,
-					value);
-				m_LoggedVoiceTableWriteFailure = true;
-			}
-		} else {
-			m_LoggedVoiceTableWriteFailure = false;
+	if (!success) {
+		if (!m_LoggedVoiceTableWriteFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU WriteVoiceMask failed voiceTableBase=0x%08x voiceBase=0x%08x handle=%u offset=0x%08x mask=0x%08x value=0x%08x",
+				voiceTableBase,
+				voiceBase,
+				voiceHandle,
+				offset,
+				mask,
+				value);
+			m_LoggedVoiceTableWriteFailure = true;
 		}
+	} else {
+		m_LoggedVoiceTableWriteFailure = false;
 	}
 	return success;
 }
@@ -1442,34 +1448,30 @@ bool APUDevice::WriteVPScatterGatherEntry(uint32_t handle, uint32_t value)
 {
 	const uint32_t sgeTableBase = GetRegister32(NV_PAPU_VPSGEADDR);
 	if (sgeTableBase == 0) {
-		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-			if (!m_LoggedScatterGatherWriteFailure) {
-				EmuLog(LOG_LEVEL::INFO,
-					"APU WriteVPScatterGatherEntry blocked sgeTableBase=0x00000000 handle=%u value=0x%08x",
-					handle,
-					value);
-				m_LoggedScatterGatherWriteFailure = true;
-			}
+		if (!m_LoggedScatterGatherWriteFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU WriteVPScatterGatherEntry blocked sgeTableBase=0x00000000 handle=%u value=0x%08x",
+				handle,
+				value);
+			m_LoggedScatterGatherWriteFailure = true;
 		}
 		return false;
 	}
 
 	const uint32_t sgeBase = sgeTableBase + handle * 8;
 	const bool success = WriteGuestWord(sgeBase, value);
-	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		if (!success) {
-			if (!m_LoggedScatterGatherWriteFailure) {
-				EmuLog(LOG_LEVEL::INFO,
-					"APU WriteVPScatterGatherEntry failed sgeTableBase=0x%08x sgeBase=0x%08x handle=%u value=0x%08x",
-					sgeTableBase,
-					sgeBase,
-					handle,
-					value);
-				m_LoggedScatterGatherWriteFailure = true;
-			}
-		} else {
-			m_LoggedScatterGatherWriteFailure = false;
+	if (!success) {
+		if (!m_LoggedScatterGatherWriteFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU WriteVPScatterGatherEntry failed sgeTableBase=0x%08x sgeBase=0x%08x handle=%u value=0x%08x",
+				sgeTableBase,
+				sgeBase,
+				handle,
+				value);
+			m_LoggedScatterGatherWriteFailure = true;
 		}
+	} else {
+		m_LoggedScatterGatherWriteFailure = false;
 	}
 	return success;
 }
@@ -1945,6 +1947,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		return;
 	}
 
+	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
+	if (voiceTableBase == 0) {
+		if (!m_LoggedRenderStateFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU render blocked because NV_PAPU_VPVADDR is still zero; FE/VP voice state is not wired to guest memory yet");
+			m_LoggedRenderStateFailure = true;
+		}
+	}
+
 	if (g_AC97 != nullptr) {
 		g_AC97->Begin3DVoiceFrameBatch();
 	}
@@ -1954,6 +1965,16 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const size_t visited3D = RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	const size_t visitedMP = RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
 	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP) != 0;
+	if (!hasVoiceActivity && voiceTableBase != 0) {
+		if (!m_LoggedRenderStateFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU render found no active voices in TVL2D/TVL3D/TVLMP despite NV_PAPU_VPVADDR=0x%08x",
+				voiceTableBase);
+			m_LoggedRenderStateFailure = true;
+		}
+	} else if (hasVoiceActivity) {
+		m_LoggedRenderStateFailure = false;
+	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (!hasVoiceActivity) {
 			if (!m_LoggedEmptyVoiceTableDiagnostics) {
@@ -2033,8 +2054,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		}
 	}
 	if (g_AC97 == nullptr) {
+		if (!m_LoggedAC97Missing) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU rendered %zu frames but AC97 is not connected, so no host audio can be submitted",
+				frameCount);
+			m_LoggedAC97Missing = true;
+		}
 		return;
 	}
+	m_LoggedAC97Missing = false;
 
 	std::vector<int16_t> output(frameCount * 2);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
@@ -2619,8 +2647,15 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 			const uint32_t sslTableBase = GetRegister32(NV_PAPU_VPSSLADDR);
 			if (sslTableBase == 0) {
+				if (!m_LoggedStreamingSSLFailure) {
+					EmuLog(LOG_LEVEL::WARNING,
+						"APU streaming voice %u needs NV_PAPU_VPSSLADDR but the SSL table base is still zero",
+						voiceHandle);
+					m_LoggedStreamingSSLFailure = true;
+				}
 				return false;
 			}
+			m_LoggedStreamingSSLFailure = false;
 
 			const uint32_t segmentPage = voiceSSLData.base[sslIndex] + static_cast<uint32_t>(voiceSSLData.ssl_seg);
 			uint32_t segmentOffset = 0;
