@@ -197,11 +197,21 @@ void InitXboxHardware(HardwareModel hardwareModel)
 	}
 
 	// Connect devices to PCI bus
+	// Stub devices for PCI slots that are present on real hardware but not fully emulated
+	static PCIStubDevice s_HostBridge(PCI_VENDOR_ID_NVIDIA, 0x02A5, 0x060000A1); // Host bridge
+	static PCIStubDevice s_ISABridge(PCI_VENDOR_ID_NVIDIA, 0x01B2, 0x060100A1);  // ISA bridge (MCPX)
+	static PCIStubDevice s_APU(PCI_VENDOR_ID_NVIDIA, 0x01B0, 0x040100A1);        // Audio (APU)
+	static PCIStubDevice s_AC97(PCI_VENDOR_ID_NVIDIA, 0x01B1, 0x070300A1);       // AC97 modem interface
+	static PCIStubDevice s_IDE(PCI_VENDOR_ID_NVIDIA, 0x01BC, 0x010180A1);        // IDE controller
+
+	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(0, 0)), &s_HostBridge);
+	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(1, 0)), &s_ISABridge);
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(1, 1)), g_SMBus);
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(4, 0)), g_NVNet);
 	//g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(4, 1)), g_MCPX); // MCPX device ID = 0x0808 ?
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(5, 0)), g_APU);
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(6, 0)), g_AC97);
+	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(9, 0)), &s_IDE);
 	g_PCIBus->ConnectDevice(PCI_DEVID(1, PCI_DEVFN(0, 0)), g_NV2A);
 	// ergo720: according to some research done by LukeUsher, only Xbox Alpha Kits have a two HCs configuration. This seems to also be confirmed by the xboxdevwiki,
 	// which states that it has a xircom PGPCI2(OPTI 82C861) 2 USB port PCI card -> 2 ports, not 4. Finally, I disassembled various xbe's and discovered that the number

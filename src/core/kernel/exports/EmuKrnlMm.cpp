@@ -265,7 +265,23 @@ XBSYSAPI EXPORTNUM(174) xbox::boolean_xt NTAPI xbox::MmIsAddressValid
 
 	BOOLEAN Ret = FALSE;
 
-	if (g_VMManager.IsValidVirtualAddress((VAddr)VirtualAddress)) { Ret = TRUE; }
+	if (g_VMManager.IsValidVirtualAddress((VAddr)VirtualAddress)) {
+		Ret = TRUE;
+	}
+	else if ((VAddr)VirtualAddress >= XBE_MAX_VA && (VAddr)VirtualAddress < PHYSICAL_MAP_BASE) {
+		// For addresses above the Xbox placeholder (>= XBE_MAX_VA) but below kernel space,
+		// use VirtualQuery as a fallback. This handles host-only memory such as emulator
+		// thread stacks and other Windows-managed allocations that are not tracked by the
+		// Xbox page tables.
+		::MEMORY_BASIC_INFORMATION mbi;
+		if (::VirtualQuery(VirtualAddress, &mbi, sizeof(mbi)) != 0) {
+			if (mbi.State == MEM_COMMIT &&
+				(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0 &&
+				(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0) {
+				Ret = TRUE;
+			}
+		}
+	}
 
 	RETURN(Ret);
 }
@@ -391,7 +407,27 @@ XBSYSAPI EXPORTNUM(179) xbox::ulong_xt NTAPI xbox::MmQueryAddressProtect
 	LOG_FUNC_ONE_ARG(VirtualAddress);
 
 	ULONG Result = g_VMManager.QueryProtection((VAddr)VirtualAddress);
-	
+
+	if (Result == 0 && (VAddr)VirtualAddress < PHYSICAL_MAP_BASE) {
+		// Fallback: for host-backed memory (thread stacks, DLL code) not in Xbox
+		// page tables, query the Windows protection and convert to Xbox constants.
+		::MEMORY_BASIC_INFORMATION mbi;
+		if (::VirtualQuery(VirtualAddress, &mbi, sizeof(mbi)) != 0 && mbi.State == MEM_COMMIT) {
+			DWORD p = mbi.Protect & 0xFF; // strip modifier flags
+			if (p == PAGE_READONLY)                Result = XBOX_PAGE_READONLY;
+			else if (p == PAGE_READWRITE)          Result = XBOX_PAGE_READWRITE;
+			else if (p == PAGE_EXECUTE_READ)       Result = XBOX_PAGE_EXECUTE_READ;
+			else if (p == PAGE_EXECUTE_READWRITE)  Result = XBOX_PAGE_EXECUTE_READWRITE;
+			else if (p == PAGE_EXECUTE)            Result = XBOX_PAGE_EXECUTE;
+			else if (p == PAGE_WRITECOPY)          Result = XBOX_PAGE_READWRITE;
+			else if (p == PAGE_EXECUTE_WRITECOPY)  Result = XBOX_PAGE_EXECUTE_READWRITE;
+			// Preserve cache/guard modifiers
+			if (mbi.Protect & PAGE_NOCACHE)        Result |= XBOX_PAGE_NOCACHE;
+			if (mbi.Protect & PAGE_GUARD)          Result |= XBOX_PAGE_GUARD;
+			if (mbi.Protect & PAGE_WRITECOMBINE)   Result |= XBOX_PAGE_WRITECOMBINE;
+		}
+	}
+
 	RETURN(Result);
 }
 
@@ -429,31 +465,25 @@ XBSYSAPI EXPORTNUM(181) xbox::ntstatus_xt NTAPI xbox::MmQueryStatistics
 		RETURN(STATUS_INVALID_PARAMETER);
 	}
 
-	// Accept any Length that covers at least the pre-ImagePagesCommitted fields (0x20).
-	// Older XDK versions used an MM_STATISTICS without the ImagePagesCommitted field.
-	if (MemoryStatistics->Length >= offsetof(MM_STATISTICS, ImagePagesCommitted))
+	if (MemoryStatistics->Length != sizeof(MM_STATISTICS))
 	{
-		g_VMManager.MemoryStatistics(MemoryStatistics);
-
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->Length                      = 0x%.08X", MemoryStatistics->Length);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->TotalPhysicalPages          = 0x%.08X", MemoryStatistics->TotalPhysicalPages);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->AvailablePages              = 0x%.08X", MemoryStatistics->AvailablePages);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->VirtualMemoryBytesCommitted = 0x%.08X", MemoryStatistics->VirtualMemoryBytesCommitted);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->VirtualMemoryBytesReserved  = 0x%.08X", MemoryStatistics->VirtualMemoryBytesReserved);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->CachePagesCommitted         = 0x%.08X", MemoryStatistics->CachePagesCommitted);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->PoolPagesCommitted          = 0x%.08X", MemoryStatistics->PoolPagesCommitted);
-		EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->StackPagesCommitted         = 0x%.08X", MemoryStatistics->StackPagesCommitted);
-		if (MemoryStatistics->Length >= sizeof(MM_STATISTICS)) {
-			EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->ImagePagesCommitted         = 0x%.08X", MemoryStatistics->ImagePagesCommitted);
-		}
-
-		ret = X_STATUS_SUCCESS;
+		EmuLog(LOG_LEVEL::WARNING, "MmQueryStatistics with invalid size -> 0x%.8X", MemoryStatistics->Length);
+		RETURN(STATUS_INVALID_PARAMETER);
 	}
-	else
-	{
-		EmuLog(LOG_LEVEL::WARNING, "MmQueryStatistics with unusual size -> 0x%.8X", MemoryStatistics->Length);
-		ret = STATUS_INVALID_PARAMETER;
-	}
+
+	g_VMManager.MemoryStatistics(MemoryStatistics);
+
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->Length                      = 0x%.08X", MemoryStatistics->Length);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->TotalPhysicalPages          = 0x%.08X", MemoryStatistics->TotalPhysicalPages);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->AvailablePages              = 0x%.08X", MemoryStatistics->AvailablePages);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->VirtualMemoryBytesCommitted = 0x%.08X", MemoryStatistics->VirtualMemoryBytesCommitted);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->VirtualMemoryBytesReserved  = 0x%.08X", MemoryStatistics->VirtualMemoryBytesReserved);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->CachePagesCommitted         = 0x%.08X", MemoryStatistics->CachePagesCommitted);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->PoolPagesCommitted          = 0x%.08X", MemoryStatistics->PoolPagesCommitted);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->StackPagesCommitted         = 0x%.08X", MemoryStatistics->StackPagesCommitted);
+	EmuLog(LOG_LEVEL::DEBUG, "   MemoryStatistics->ImagePagesCommitted         = 0x%.08X", MemoryStatistics->ImagePagesCommitted);
+
+	ret = X_STATUS_SUCCESS;
 
 	RETURN(ret);
 }

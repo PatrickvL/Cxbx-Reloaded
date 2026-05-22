@@ -90,6 +90,8 @@ uint32_t PCIDevice::ReadConfigRegister(uint32_t reg)
 	switch (reg) {
 		case PCI_CONFIG_DEVICE:
 			return (m_DeviceId << 16) | m_VendorId;
+		case PCI_CONFIG_CLASS_REVISION:
+			return m_RevisionAndClassCode;
 		case PCI_CONFIG_BAR_0:
 		case PCI_CONFIG_BAR_1:
 		case PCI_CONFIG_BAR_2:

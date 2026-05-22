@@ -40,8 +40,8 @@ XBSYSAPI EXPORTNUM(39) void_xt NTAPI HalDisableSystemInterrupt
 );
 
 XBSYSAPI EXPORTNUM(40) ulong_xt HalDiskCachePartitionCount;
-XBSYSAPI EXPORTNUM(41) PANSI_STRING HalDiskModelNumber;
-XBSYSAPI EXPORTNUM(42) PANSI_STRING HalDiskSerialNumber;
+XBSYSAPI EXPORTNUM(41) ANSI_STRING HalDiskModelNumber;
+XBSYSAPI EXPORTNUM(42) ANSI_STRING HalDiskSerialNumber;
 
 // ******************************************************************
 // * 0x002B - HalEnableSystemInterrupt()

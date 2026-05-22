@@ -293,6 +293,17 @@ LOG_SANITIZE(sanitized_wchar, wchar_t);
 LOG_SANITIZE(sanitized_char_pointer, char *);
 LOG_SANITIZE(sanitized_wchar_pointer, wchar_t *);
 
+// Const pointer overloads — without these, const char*/wchar_t* falls through to
+// the generic template which passes them raw to ostream, crashing on NULL.
+inline Sanesanitized_char_pointer _log_sanitize(const char* value, int max = 80)
+{
+	return sanitized_char_pointer(const_cast<char*>(value), max);
+}
+inline Sanesanitized_wchar_pointer _log_sanitize(const wchar_t* value, int max = 80)
+{
+	return sanitized_wchar_pointer(const_cast<wchar_t*>(value), max);
+}
+
 
 //
 // Function (and argument) logging defines

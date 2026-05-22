@@ -521,7 +521,7 @@ XBSYSAPI EXPORTNUM(363) int_xt CDECL RtlVsnprintf
 	IN PCHAR string,
 	IN size_xt count,
 	IN LPCCH format,
-	...
+	IN va_list arglist
 );
 
 // ******************************************************************
@@ -531,7 +531,7 @@ XBSYSAPI EXPORTNUM(364) int_xt CDECL RtlVsprintf
 (
 	IN PCHAR string,
 	IN LPCCH format,
-	...
+	IN va_list arglist
 );
 
 XBSYSAPI EXPORTNUM(367) ntstatus_xt NTAPI UnknownAPI367

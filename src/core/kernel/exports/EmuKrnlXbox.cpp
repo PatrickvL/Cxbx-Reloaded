@@ -47,9 +47,8 @@ XBSYSAPI EXPORTNUM(321) xbox::XBOX_KEY_DATA xbox::XboxEEPROMKey = { 0 };
 //       from PCI space for Gpu rev, Mcp rev, and possibility INTERNAL_USB flag.
 XBSYSAPI EXPORTNUM(322) xbox::XBOX_HARDWARE_INFO xbox::XboxHardwareInfo =
 {
-	// TODO: What exactly 0xC0000030 flags are? Might need default to null then set them later properly.
 	// NOTE: Will be set by src/devices/Xbox.cpp and maybe other file(s)...
-	.Flags = 0xC0000030, // Flags: 1=INTERNAL_USB, 2=DEVKIT, 4=MACROVISION, 8=CHIHIRO
+	.Flags = 0, // Flags: 1=INTERNAL_USB, 2=DEVKIT, 4=MACROVISION, 8=CHIHIRO
 	.GpuRevision = 0xD3, // GpuRevision, byte read from NV2A first register, at 0xFD0000000 - see NV_PMC_BOOT_0
 	.McpRevision = 0, // NOTE: Will be set by src/devices/Xbox.cpp file.
 	.Unknown3 = 0, // unknown

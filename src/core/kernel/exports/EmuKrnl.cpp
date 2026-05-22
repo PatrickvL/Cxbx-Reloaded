@@ -127,6 +127,8 @@ xbox::PLIST_ENTRY RemoveTailList(xbox::PLIST_ENTRY pListHead)
 // Interrupts
 
 extern volatile DWORD HalInterruptRequestRegister;
+extern volatile xbox::KPRCB *KeGetCurrentPrcb();
+extern volatile xbox::ulong_xt g_DpcRoutineActive;
 
 volatile bool g_bInterruptsEnabled = true;
 
@@ -158,10 +160,7 @@ void CallSoftwareInterrupt(const xbox::KIRQL SoftwareIrql)
 		xbox::KiExecuteKernelApc();
 		break;
 	case DISPATCH_LEVEL: // = 2
-		// This can be recursively called by KiUnlockDispatcherDatabase and KfLowerIrql, so avoid calling DPCs again if the current one has queued yet another one
-		if (!IsDpcActive()) { // Avoid KeIsExecutingDpc(), as that logs
-			ExecuteDpcQueue();
-		}
+		ExecuteDpcQueue();
 		break;
 	case APC_LEVEL | DISPATCH_LEVEL: // = 3
 		KiUnexpectedInterrupt();
@@ -409,7 +408,7 @@ XBSYSAPI EXPORTNUM(160) xbox::KIRQL FASTCALL xbox::KfRaiseIrql
 	LOG_FUNC_ONE_ARG_TYPE(KIRQL_TYPE, NewIrql);
 
 	// Inlined KeGetCurrentIrql() :
-	PKPCR Pcr = EmuKeGetPcr();
+	volatile KPCR* Pcr = EmuKeGetPcr();
 	KIRQL OldIrql = (KIRQL)Pcr->Irql;
 
 	// Set new before check
@@ -437,7 +436,7 @@ XBSYSAPI EXPORTNUM(161) xbox::void_xt FASTCALL xbox::KfLowerIrql
 {
 	LOG_FUNC_ONE_ARG_TYPE(KIRQL_TYPE, NewIrql);
 
-	KPCR* Pcr = EmuKeGetPcr();
+	volatile KPCR* Pcr = EmuKeGetPcr();
 
 	if (g_bIsDebugKernel && NewIrql > Pcr->Irql) {
 		KIRQL OldIrql = Pcr->Irql;
@@ -473,8 +472,6 @@ XBSYSAPI EXPORTNUM(161) xbox::void_xt FASTCALL xbox::KfLowerIrql
 // Source:ReactOS
 XBSYSAPI EXPORTNUM(162) xbox::ulong_ptr_xt xbox::KiBugCheckData[5] = { NULL, NULL, NULL, NULL, NULL };
 
-extern xbox::KPRCB *KeGetCurrentPrcb();
-
 // ******************************************************************
 // * 0x00A3 - KiUnlockDispatcherDatabase()
 // ******************************************************************
@@ -485,9 +482,9 @@ XBSYSAPI EXPORTNUM(163) xbox::void_xt FASTCALL xbox::KiUnlockDispatcherDatabase
 {
 	LOG_FUNC_ONE_ARG_TYPE(KIRQL_TYPE, OldIrql);
 
-	// Wrong, this should only happen when OldIrql >= DISPATCH_LEVEL
-	// Checking DpcRoutineActive doesn't work because our Prcb is per-thread instead of being per-processor
-	if (!IsDpcActive()) { // Avoid KeIsExecutingDpc(), as that logs
+	// Xbox has a single CPU, so DpcRoutineActive is a system-wide flag.
+	// Skip dispatch if DPCs are already active (prevents re-entrant dispatch).
+	if (!g_DpcRoutineActive) {
 		HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 	}
 
@@ -527,11 +524,12 @@ XBSYSAPI EXPORTNUM(361) xbox::int_xt CDECL xbox::RtlSnprintf
 		LOG_FUNC_ARG(format)
 		LOG_FUNC_END;
 
-	// UNTESTED. Possible test-case : debugchannel.xbe
+	// Xbox uses old MSVC _snprintf semantics: returns -1 on truncation,
+	// writes count chars without null-terminator when truncated.
 
 	va_list ap;
 	va_start(ap, format);
-	INT Result = vsnprintf(string, count, format, ap);
+	INT Result = _vsnprintf(string, count, format, ap);
 	va_end(ap);
 
 	RETURN(Result);
@@ -570,7 +568,7 @@ XBSYSAPI EXPORTNUM(363) xbox::int_xt CDECL xbox::RtlVsnprintf
 	IN PCHAR string,
 	IN size_xt count,
 	IN LPCCH format,
-	...
+	IN va_list arglist
 )
 {
 	LOG_FUNC_BEGIN
@@ -579,12 +577,9 @@ XBSYSAPI EXPORTNUM(363) xbox::int_xt CDECL xbox::RtlVsnprintf
 		LOG_FUNC_ARG(format)
 		LOG_FUNC_END;
 
-	// UNTESTED. Possible test-case : debugchannel.xbe
-
-	va_list ap;
-	va_start(ap, format);
-	INT Result = vsnprintf(string, count, format, ap);
-	va_end(ap);
+	// Xbox uses old MSVC _vsnprintf semantics: returns -1 on truncation,
+	// writes count chars without null-terminator when truncated.
+	INT Result = _vsnprintf(string, count, format, arglist);
 
 	RETURN(Result);
 }
@@ -596,7 +591,7 @@ XBSYSAPI EXPORTNUM(364) xbox::int_xt CDECL xbox::RtlVsprintf
 (
 	IN PCHAR string,
 	IN LPCCH format,
-	...
+	IN va_list arglist
 )
 {
 	LOG_FUNC_BEGIN
@@ -604,12 +599,7 @@ XBSYSAPI EXPORTNUM(364) xbox::int_xt CDECL xbox::RtlVsprintf
 		LOG_FUNC_ARG(format)
 		LOG_FUNC_END;
 
-	// UNTESTED. Possible test-case : debugchannel.xbe
-
-	va_list ap;
-	va_start(ap, format);
-	INT Result = vsprintf(string, format, ap);
-	va_end(ap);
+	INT Result = vsprintf(string, format, arglist);
 
 	RETURN(Result);
 }

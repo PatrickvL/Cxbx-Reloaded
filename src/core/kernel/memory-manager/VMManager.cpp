@@ -566,14 +566,13 @@ VAddr VMManager::ClaimGpuMemory(size_t Size, size_t* BytesToSkip)
 		LOG_FUNC_ARG(*BytesToSkip)
 	LOG_FUNC_END;
 
-	// Note that, even though devkits have 128 MiB, there's no need to have a different case for those, since the instance
-	// memory is still located 0x10000 bytes from the top of memory just like retail consoles
-
-	if (m_MmLayoutChihiro)
-		*BytesToSkip = 0;
-	else
-		*BytesToSkip = CONVERT_PFN_TO_CONTIGUOUS_PHYSICAL(X64M_PHYSICAL_PAGE) -
-		CONVERT_PFN_TO_CONTIGUOUS_PHYSICAL(XBOX_INSTANCE_PHYSICAL_PAGE + NV2A_INSTANCE_PAGE_COUNT);
+	// On real Xbox, instance memory is accessed through both the NV2A PRAMIN
+	// MMIO window (0xFD700000) and the contiguous mapping.  Both paths alias the
+	// same physical VRAM.  In our emulator the PRAMIN MMIO pages are a separate
+	// VirtualAlloc so we return the PRAMIN MMIO base directly — the D3D runtime
+	// writes DMA objects and RAMHT entries there, and ramin_ptr already points
+	// to the same address, keeping everything coherent.
+	*BytesToSkip = 0;
 
 	if (Size != MAXULONG_PTR)
 	{
@@ -626,7 +625,7 @@ VAddr VMManager::ClaimGpuMemory(size_t Size, size_t* BytesToSkip)
 		Unlock();
 	}
 
-	RETURN((VAddr)CONVERT_PFN_TO_CONTIGUOUS_PHYSICAL(m_HighestPage + 1) - *BytesToSkip);
+	RETURN((VAddr)NV2A_PRAMIN_BASE);
 }
 
 void VMManager::PersistMemory(VAddr addr, size_t Size, bool bPersist)

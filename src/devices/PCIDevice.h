@@ -35,6 +35,7 @@
 #define PCI_BAR_TYPE_MEMORY		0
 
 #define PCI_CONFIG_DEVICE				0x00
+#define PCI_CONFIG_CLASS_REVISION		0x08
 #define PCI_CONFIG_BAR_0                0x10
 #define PCI_CONFIG_BAR_1                0x14
 #define PCI_CONFIG_BAR_2                0x18
@@ -164,12 +165,29 @@ protected:
 	std::map<int, PCIBar> m_BAR;
 	uint16_t m_DeviceId;
 	uint16_t m_VendorId;
+	uint32_t m_RevisionAndClassCode = 0; // Revision ID (8) | Prog IF (8) | Subclass (8) | Class (8)
 /* Unused?
 private:
 
 	static uint64_t MMIOBarRead(struct uc_struct* uc, void* pBar, uint64_t addr, unsigned size);
 	static void MMIOBarWrite(struct uc_struct* uc, void* pBar, uint64_t addr, uint64_t value, unsigned size);
 */
+};
+
+// Minimal PCI device stub that only responds to config space reads
+class PCIStubDevice : public PCIDevice {
+public:
+	PCIStubDevice(uint16_t vendorId, uint16_t deviceId, uint32_t classCode) {
+		m_VendorId = vendorId;
+		m_DeviceId = deviceId;
+		m_RevisionAndClassCode = classCode;
+	}
+	void Init() override {}
+	void Reset() override {}
+	uint32_t IORead(int barIndex, uint32_t port, unsigned size) override { return 0xFFFFFFFF; }
+	void IOWrite(int barIndex, uint32_t port, uint32_t value, unsigned size) override {}
+	uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size) override { return 0xFFFFFFFF; }
+	void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size) override {}
 };
 
 #endif
