@@ -37,9 +37,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <numbers>
 #include <string>
 
 #define LOG_PREFIX CXBXR_MODULE::MCPX
@@ -137,7 +139,6 @@ constexpr double AC97_TEST_BEEP_FREQUENCY_HZ = 880.0;
 constexpr double AC97_TEST_BEEP_DURATION_SECONDS = 0.125;
 constexpr float AC97_TEST_BEEP_AMPLITUDE = 0.20f;
 constexpr size_t AC97_TEST_BEEP_FADE_FRAMES = 128;
-constexpr double AC97_PI = 3.14159265358979323846;
 
 const char* GetRequestedOpenALDevice()
 {
@@ -158,14 +159,13 @@ bool ParseBooleanEnvironmentValue(const char* value)
 		return false;
 	}
 
-	if (std::strcmp(value, "1") == 0 || std::strcmp(value, "true") == 0 ||
-		std::strcmp(value, "TRUE") == 0 || std::strcmp(value, "yes") == 0 ||
-		std::strcmp(value, "YES") == 0 || std::strcmp(value, "on") == 0 ||
-		std::strcmp(value, "ON") == 0) {
-		return true;
-	}
-
-	return false;
+	std::string normalizedValue = value;
+	std::transform(normalizedValue.begin(), normalizedValue.end(), normalizedValue.begin(),
+		[](unsigned char ch) {
+			return static_cast<char>(std::tolower(ch));
+		});
+	return normalizedValue == "1" || normalizedValue == "true" ||
+		normalizedValue == "yes" || normalizedValue == "on";
 }
 
 bool GetOpenALTestBeepEnabled()
@@ -195,7 +195,7 @@ std::vector<int16_t> BuildOpenALTestBeepFrames()
 		}
 		envelope = std::clamp(envelope, 0.0f, 1.0f);
 
-		const double phase = (static_cast<double>(frame) * AC97_TEST_BEEP_FREQUENCY_HZ * 2.0 * AC97_PI) /
+		const double phase = (static_cast<double>(frame) * AC97_TEST_BEEP_FREQUENCY_HZ * 2.0 * std::numbers::pi_v<double>) /
 			static_cast<double>(APU_TIMER_FREQUENCY);
 		const float sample = static_cast<float>(std::sin(phase)) * AC97_TEST_BEEP_AMPLITUDE * envelope;
 		const int16_t pcm = ClampToInt16(static_cast<int32_t>(sample * static_cast<float>(INT16_MAX)));
