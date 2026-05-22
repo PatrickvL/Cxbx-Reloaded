@@ -36,8 +36,7 @@ using namespace DirectX;
 typedef DWORD D3DCOLOR;
 typedef D3D11_RECT D3DRECT;
 
-// Pre-define D3DVECTOR so dsound.h (which is included inside namespace xbox
-// in DirectSound.hpp) doesn't redefine it and cause type conflicts.
+// Pre-define D3DVECTOR before legacy DirectX headers to avoid type conflicts.
 #ifndef D3DVECTOR_DEFINED
 typedef struct _D3DVECTOR {
 	float x;

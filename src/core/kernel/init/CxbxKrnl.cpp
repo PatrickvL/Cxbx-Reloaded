@@ -42,7 +42,6 @@
 #include "core\kernel\exports\EmuKrnlPs.hpp"
 #include "EmuShared.h"
 #include "core\hle\D3D8\Rendering\RenderGlobals.h" // For CxbxInitWindow, EmuD3DInit
-#include "core\hle\DSOUND\DirectSound\DirectSound.hpp" // For CxbxInitAudio
 #include "core\hle\JVS\JVS.h" // For JVS_Init
 #include "core\hle\Intercept.hpp"
 #include "core\kernel\memory-manager\VMManager.h"
@@ -260,7 +259,6 @@ void PrintCurrentConfigurationLog()
 		g_EmuShared->GetAudioSettings(&XBAudioConf);
 
 		EmuLogInit(LOG_LEVEL::INFO, "--------------------------- AUDIO CONFIG ---------------------------");
-		EmuLogInit(LOG_LEVEL::INFO, "Audio Adapter: %s", XBAudioConf.adapterGUID.Data1 == 0 ? "Primary Audio Device" : "Secondary Audio Device");
 		EmuLogInit(LOG_LEVEL::INFO, "PCM is %s", XBAudioConf.codec_pcm ? "enabled" : "disabled");
 		EmuLogInit(LOG_LEVEL::INFO, "XADPCM is %s", XBAudioConf.codec_xadpcm ? "enabled" : "disabled");
 		EmuLogInit(LOG_LEVEL::INFO, "Unknown Codec is %s", XBAudioConf.codec_unknown ? "enabled" : "disabled");
@@ -1189,8 +1187,6 @@ static void CxbxrKrnlInitHacks()
 	}
 	if (BootFlags & BOOT_SKIP_ANIMATION) {} // TODO
 	if (BootFlags & BOOT_RUN_DASHBOARD) {} // TODO
-
-	CxbxInitAudio();
 
 	// EmuHLEIntercept must be call before MapThunkTable, otherwise scanning for symbols will not work properly.
 	EmuHLEIntercept(pXbeHeader);

@@ -38,6 +38,7 @@
 #include "mnemonics.h"
 
 #include "core\kernel\init\CxbxKrnl.h"
+#include "devices\audio\AudioDiagnostics.h"
 #include "core\kernel\support\Emu.h" // For EmuLog
 #include "devices\x86\EmuX86.h"
 #include "core\hle\Intercept.hpp"
@@ -219,6 +220,20 @@ void EmuX86_Write(xbox::addr_xt addr, uint32_t value, int size)
 	if (addr >= FLASH_DEVICE1_BASE) { // 0xFF000000 - 0xFFFFFFF
 		EmuLog(LOG_LEVEL::WARNING, "EmuX86_Write(0x%08X, 0x%08X) [FLASH_ROM]", addr, value);
 		return;
+	}
+
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		const bool traceAPUBaseRegister = IsAPUVPBaseRegisterTrace(addr);
+		const bool traceAPUMethodWindow = IsAPUVPMethodTrace(addr);
+		if (traceAPUBaseRegister || traceAPUMethodWindow) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU guest MMIO %s write addr=0x%08X offset=0x%08X value=0x%08X size=%d",
+				traceAPUBaseRegister ? "VP base-register" : "VP method-window",
+				addr,
+				addr - APU_BASE,
+				value,
+				size);
+		}
 	}
 
 	// Pass the Write to the PCI Bus, this will handle devices with BARs set to MMIO addresses

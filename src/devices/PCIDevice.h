@@ -55,6 +55,11 @@
 #define NV2A_USER_SIZE                          0x800000
 #define APU_BASE                                0xFE800000
 #define APU_SIZE                                0x80000
+#define APU_VPVADDR_OFFSET                      0x0000202C
+#define APU_VPSGEADDR_OFFSET                    0x00002030
+#define APU_VPSSLADDR_OFFSET                    0x00002034
+#define APU_VP_METHOD_WINDOW_OFFSET             0x00020000
+#define APU_VP_METHOD_WINDOW_END                0x00030000
 #define AC97_BASE                               0xFEC00000
 #define AC97_SIZE                               0x1000
 #define USB0_BASE                               0xFED00000
@@ -69,6 +74,32 @@
 #define MCPX_SIZE                               0x200
 
 class PCIDevice;
+
+inline bool IsAPUVPBaseRegisterTrace(uint32_t addr)
+{
+	if (addr < APU_BASE || addr >= APU_BASE + APU_SIZE) {
+		return false;
+	}
+
+	switch (addr - APU_BASE) {
+	case APU_VPVADDR_OFFSET:
+	case APU_VPSGEADDR_OFFSET:
+	case APU_VPSSLADDR_OFFSET:
+		return true;
+	default:
+		return false;
+	}
+}
+
+inline bool IsAPUVPMethodTrace(uint32_t addr)
+{
+	if (addr < APU_BASE || addr >= APU_BASE + APU_SIZE) {
+		return false;
+	}
+
+	const uint32_t offset = addr - APU_BASE;
+	return offset >= APU_VP_METHOD_WINDOW_OFFSET && offset < APU_VP_METHOD_WINDOW_END;
+}
 
 typedef struct
 {

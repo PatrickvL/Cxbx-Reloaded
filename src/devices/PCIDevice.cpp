@@ -25,7 +25,11 @@
 // *
 // ******************************************************************
 
+#define LOG_PREFIX CXBXR_MODULE::X86
+
 #include "PCIDevice.h"
+#include "common\Logging.h"
+#include "audio\AudioDiagnostics.h"
 
 bool PCIDevice::GetIOBar(uint32_t port, PCIBar* bar)
 {
@@ -123,7 +127,21 @@ void PCIDevice::WriteConfigRegister(uint32_t reg, uint32_t value)
 		case PCI_CONFIG_BAR_5:
 		{
 			int barIndex = (reg - PCI_CONFIG_BAR_0) / 4;
+			uint32_t oldValue = 0;
+			auto it = m_BAR.find(barIndex);
+			if (it != m_BAR.end()) {
+				oldValue = it->second.reg.value;
+			}
 			UpdateBAR(barIndex, value);
+			if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+				if (m_DeviceId == 0x01B0 && barIndex == 0) {
+					EmuLog(LOG_LEVEL::INFO,
+						"APU PCI BAR0 write old=0x%08x new=0x%08x decodedBase=0x%08x",
+						oldValue,
+						value,
+						value & 0xFFFFFFF0);
+				}
+			}
 			break;
 		}
 		default:
