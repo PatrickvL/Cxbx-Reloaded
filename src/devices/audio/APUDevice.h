@@ -29,6 +29,23 @@
 #define _APU_H_
 
 #include "../PCIDevice.h"
+
+// VP register offsets (relative to VP base 0x20000)
+#define NV_PAPU_VPVADDR_OFF   0x002C  // Voice descriptor table physical address
+#define NV_PAPU_VPSGEADDR_OFF 0x0030  // SGE table physical address
+
+// Voice descriptor field offsets
+#define NV_PAVS_VOICE_CFG_FMT_OFF      0x04
+#define NV_PAVS_VOICE_PAR_STATE_OFF    0x54
+#define NV_PAVS_VOICE_PAR_OFFSET_OFF   0x58  // Contains CBO (Current Buffer Offset)
+
+// Voice descriptor size
+#define NV_PAVS_VOICE_SIZE    0x80
+#define NV_PAVS_MAX_VOICES    256
+
+// Masks
+#define NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK 0x00FFFFFF
+
 class APUDevice : public PCIDevice {
 public:
 	using PCIDevice::PCIDevice;
@@ -42,6 +59,14 @@ public:
 
 	uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
 	void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
+
+	// Voice table base address (physical) — set by game writing NV_PAPU_VPVADDR
+	uint32_t GetVPVADDR() const { return m_vpvaddr; }
+
+	// Advance CBO for all active voices based on elapsed time.
+	// Called periodically from dsound_worker.
+	void AdvanceVoiceCursors();
+
 private:
 	uint32_t GPRead(uint32_t addr, unsigned size);
 	void GPWrite(uint32_t addr, uint32_t value, unsigned size);
@@ -49,6 +74,9 @@ private:
 	void EPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t VPRead(uint32_t addr, unsigned size);
 	void VPWrite(uint32_t addr, uint32_t value, unsigned size);
+
+	uint32_t m_vpvaddr = 0;      // Voice descriptor table physical address
+	uint32_t m_lastTickMs = 0;   // Last tick time for CBO advancement
 };
 
 #endif

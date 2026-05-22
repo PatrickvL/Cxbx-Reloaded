@@ -456,6 +456,9 @@ void dsound_async_worker()
     // stalls VBlank delivery and starves the DPC thread — causing deadlock.
     // Stream packet processing is handled by the game's own DirectSoundDoWork
     // calls on its own thread where blocking is safe.
+    //
+    // NOTE: Event-based stream processing (no callback) is handled in
+    // dsound_worker() below — see the stream loop there.
     return;
 }
 
@@ -463,6 +466,46 @@ void dsound_worker()
 {
     // Testcase: Gauntlet Dark Legacy, if Sleep(1) then intro videos start to starved often
     // unless console is open with logging enabled. This is the cause of stopping intro videos often.
+
+    // Advance emulated APU play cursor for games that poll voice descriptor CBO directly.
+    // On real Xbox, the APU Voice Processor continuously advances CBO as audio data is
+    // consumed.  HLE DirectSound replaces the entire audio pipeline so no voice descriptors
+    // exist — games that bypass GetCurrentPosition and read CBO directly will spin forever
+    // (or block on an event that's never signaled by APU interrupts).
+    // Once the stall is detected (see Timer.cpp / EmuKrnl.h), we advance the cursor here
+    // at a rate matching typical Xbox audio output (48 kHz, 16-bit, mono = 96 KB/s) and
+    // signal the associated event so KeWaitForSingleObject-based waits also unblock.
+    if (g_ApuPlayCursor.pCursor != nullptr) {
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        int64_t elapsed = now.QuadPart - g_ApuPlayCursor.lastQPC;
+        if (elapsed > 0 && g_ApuPlayCursor.rate > 0) {
+            extern int64_t HostQPCFrequency;
+            DWORD advance = static_cast<DWORD>(
+                static_cast<uint64_t>(elapsed) * g_ApuPlayCursor.rate / HostQPCFrequency);
+            if (advance > 0) {
+                DWORD cur = *g_ApuPlayCursor.pCursor;
+                DWORD next = cur + advance;
+                // Cap at buffer size (one-shot playback) — if the game uses circular
+                // buffers this will need wrapping logic, but linear is the common case
+                // for streaming audio during loading screens.
+                if (next > g_ApuPlayCursor.bufSize) {
+                    next = g_ApuPlayCursor.bufSize;
+                }
+                *g_ApuPlayCursor.pCursor = next;
+                g_ApuPlayCursor.lastQPC = now.QuadPart;
+
+                // Signal the associated event (if any) to wake game threads that use
+                // KeWaitForSingleObject instead of busy-polling the cursor.
+                if (g_ApuPlayCursor.pEvent != nullptr) {
+                    auto* event = reinterpret_cast<xbox::PKEVENT>(g_ApuPlayCursor.pEvent);
+                    if (event->Header.SignalState == 0) {
+                        xbox::KeSetEvent(event, 0, FALSE);
+                    }
+                }
+            }
+        }
+    }
 
     // Use try_lock to avoid blocking the system_events thread.
     // If a game thread holds g_DSoundMutex (e.g. inside a stream completion
@@ -484,6 +527,26 @@ void dsound_worker()
 				StreamBufferAudio(pBuffer, streamMs);
 			}
 		}
+	}
+
+	// Process stream packets.  On real Xbox, DirectSoundDoWork runs from a
+	// periodic DPC regardless of game thread state.  If the game thread is
+	// blocked (e.g. busy-polling a play cursor or waiting on a completion event),
+	// it can never call DirectSoundDoWork itself — deadlock.
+	//
+	// We process ALL streams here (including callback-based ones) because on real
+	// Xbox the DPC fires regardless of game thread state.  Stream callbacks are
+	// typically short (set a flag, signal an event) and safe from any thread.
+	xbox::LARGE_INTEGER time;
+	xbox::KeQuerySystemTime(&time);
+	for (auto ppDSStream = g_pDSoundStreamCache.begin(); ppDSStream != g_pDSoundStreamCache.end(); ppDSStream++) {
+		xbox::X_CDirectSoundStream* pThis = (*ppDSStream);
+		if (pThis->Host_BufferPacketArray.empty()) continue;
+		// Skip paused/flushing/synch-locked streams
+		if ((pThis->EmuFlags & (DSE_FLAG_PAUSE | DSE_FLAG_IS_FLUSHING | DSE_FLAG_SYNCHPLAYBACK_CONTROL)) != 0) continue;
+		if ((pThis->EmuFlags & DSE_FLAG_PAUSENOACTIVATE) != 0 &&
+		    !(pThis->EmuFlags & DSE_FLAG_IS_ACTIVATED)) continue;
+		DSStream_Packet_Process(pThis);
 	}
 }
 

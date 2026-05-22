@@ -72,6 +72,14 @@ void DSStream_Packet_Clear(
     xbox::X_CDirectSoundStream*  pThis
     )
 {
+    // [DIAG] Log packet clear details
+    fprintf(stderr, "[PKT-CLEAR] status=%s pdwCompletedSize=%p dwMaxSize=0x%X bufPlayed=0x%X isPlayed=%d callback=%p\n",
+        status == S_OK ? "SUCCESS" : "FLUSHED",
+        buffer->xmp_data.pdwCompletedSize,
+        buffer->xmp_data.dwMaxSize,
+        buffer->bufPlayed,
+        buffer->isPlayed ? 1 : 0,
+        Xb_lpfnCallback);
 
     free(buffer->pBuffer_data);
 
@@ -80,6 +88,9 @@ void DSStream_Packet_Clear(
     }
     if (buffer->xmp_data.pdwCompletedSize != xbox::zeroptr) {
         (*buffer->xmp_data.pdwCompletedSize) = DSoundBufferGetXboxBufferSize(pThis->EmuFlags, buffer->xmp_data.dwMaxSize);
+        fprintf(stderr, "[PKT-CLEAR] wrote 0x%X to *%p\n",
+            DSoundBufferGetXboxBufferSize(pThis->EmuFlags, buffer->xmp_data.dwMaxSize),
+            buffer->xmp_data.pdwCompletedSize);
     }
     DSoundSGEMemDealloc(buffer->xmp_data.dwMaxSize);
 
@@ -290,6 +301,18 @@ bool DSStream_Packet_Process(
                 // Return current completed size to Xbox's application.
                 if (packetCurrent->xmp_data.pdwCompletedSize != xbox::zeroptr) {
                     (*packetCurrent->xmp_data.pdwCompletedSize) = DSoundBufferGetXboxBufferSize(pThis->EmuFlags, packetCurrent->bufPlayed);
+                    // [DIAG] Log last few incremental updates before completion
+                    static int s_diagCount = 0;
+                    if (packetCurrent->bufPlayed >= packetCurrent->xmp_data.dwMaxSize - 100) {
+                        if (s_diagCount < 20) {
+                            fprintf(stderr, "[PKT-INCR] pdwCompletedSize=%p val=0x%X bufPlayed=0x%X dwMaxSize=0x%X\n",
+                                packetCurrent->xmp_data.pdwCompletedSize,
+                                DSoundBufferGetXboxBufferSize(pThis->EmuFlags, packetCurrent->bufPlayed),
+                                packetCurrent->bufPlayed,
+                                packetCurrent->xmp_data.dwMaxSize);
+                            s_diagCount++;
+                        }
+                    }
                 }
                 // Once bufPlayed is equal to dwMaxSize, we know the packet is completed.
                 if (packetCurrent->bufPlayed == packetCurrent->xmp_data.dwMaxSize) {

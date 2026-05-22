@@ -191,7 +191,13 @@ xbox::ulong_xt WINAPI xbox::EMUPATCH(CDirectSoundStream_Release)
             }
 
             for (auto buffer = pThis->Host_BufferPacketArray.begin(); buffer != pThis->Host_BufferPacketArray.end();) {
-                DSStream_Packet_Clear(buffer, XMP_STATUS_FLUSHED, pThis->Xb_lpfnCallback, pThis->Xb_lpvContext, pThis);
+                // Packets that were actively playing should complete as SUCCESS.
+                // On real hardware, the APU would have consumed submitted data before
+                // Release() returns. Using FLUSHED for in-progress packets causes the
+                // XDK callback to skip advancing the play cursor, hanging games that
+                // poll it (e.g. Turok: Evolution).
+                DWORD status = buffer->isPlayed ? XMP_STATUS_SUCCESS : XMP_STATUS_FLUSHED;
+                DSStream_Packet_Clear(buffer, status, pThis->Xb_lpfnCallback, pThis->Xb_lpvContext, pThis);
             }
 
             if (pThis->EmuBufferDesc.lpwfxFormat != nullptr) {

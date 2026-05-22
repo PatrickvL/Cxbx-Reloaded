@@ -29,6 +29,7 @@
 #include "PCIBus.h" // For PCIBus
 #include "SMBus.h" // For SMBus
 #include "MCPXDevice.h" // For MCPXDevice
+#include "audio/APUDevice.h" // For APUDevice
 #include "SMCDevice.h" // For SMCDevice
 #include "EEPROMDevice.h" // For EEPROMDevice
 #include "network/NVNetDevice.h" // For NVNetDevice
@@ -83,6 +84,7 @@ extern SMCDevice* g_SMC;
 extern EEPROMDevice* g_EEPROM;
 extern NVNetDevice* g_NVNet;
 extern NV2ADevice* g_NV2A;
+extern APUDevice* g_APU;
 extern USBDevice* g_USB0;
 extern MediaBoard* g_MediaBoard;
 

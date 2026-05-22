@@ -465,6 +465,10 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 		// Log ThreadID identical to how GetCurrentThreadID() is rendered :
 		EmuLog(LOG_LEVEL::DEBUG, "Created Xbox proxy thread. Handle : 0x%X, ThreadId : [0x%.4X], Native Handle : 0x%X, Native ThreadId : [0x%.4X]",
 			*ThreadHandle, eThread->UniqueThread, handle, ThreadId);
+
+		fprintf(stderr, "[THREAD-CREATE] routine=0x%p ctx=0x%p handle=0x%X tid=0x%X\n",
+			StartRoutine, StartContext, (unsigned)(uintptr_t)*ThreadHandle, ThreadId);
+		fflush(stderr);
 	}
 
 	RETURN(X_STATUS_SUCCESS);

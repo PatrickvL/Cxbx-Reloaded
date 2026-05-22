@@ -28,6 +28,7 @@
 #include <core\kernel\exports\xboxkrnl.h>
 
 #include <windows.h>
+#include <tlhelp32.h>
 #include <array>
 #include "Timer.h"
 #include "common\util\CxbxUtil.h"
@@ -147,9 +148,161 @@ static uint64_t pit_tick(uint64_t now)
 
 // ── Non-periodic event dispatch ──────────────────────────────────
 
+// Detect game threads stuck polling an APU play cursor that HLE DirectSound
+// doesn't advance.  Scans all threads looking for a tight spin loop reading
+// from contiguous memory (0x80000000+).  When found, initializes
+// g_ApuPlayCursor so dsound_worker can advance it continuously.
+//
+// Safety: requires the thread to be at the SAME EIP reading the SAME address
+// with an UNCHANGED value across two consecutive 1-second scans.  This prevents
+// false positives from threads that briefly pass through spin-waits during
+// normal operation (movie playback, vsync waits, etc.).
+static void detect_apu_play_cursor_spin()
+{
+	// Already detected — nothing more to do.
+	if (g_ApuPlayCursor.pCursor != nullptr)
+		return;
+
+	static DWORD s_lastCheck = 0;
+	DWORD now = GetTickCount();
+	if (now - s_lastCheck < 1000) return;
+	s_lastCheck = now;
+
+	// State from previous scan for two-scan confirmation.
+	static DWORD s_candidateTid = 0;
+	static DWORD s_candidateEip = 0;
+	static DWORD s_candidateEdx = 0;   // cursor pointer address
+	static DWORD s_candidateEsi = 0;   // buffer size (from ESI register)
+	static DWORD s_candidateVal = 0;   // *cursor value at last scan
+
+	DWORD myTid = GetCurrentThreadId();
+	DWORD pid = GetCurrentProcessId();
+	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+	if (snap == INVALID_HANDLE_VALUE) return;
+
+	bool found = false;
+	THREADENTRY32 te;
+	te.dwSize = sizeof(te);
+	if (Thread32First(snap, &te)) {
+		do {
+			if (te.th32OwnerProcessID != pid) continue;
+			if (te.th32ThreadID == myTid) continue;
+
+			HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, te.th32ThreadID);
+			if (!hThread) continue;
+
+			SuspendThread(hThread);
+			CONTEXT ctx = {};
+			ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+			if (GetThreadContext(hThread, &ctx)) {
+				// Thread must be in game code range with EDX pointing to contiguous memory
+				if (ctx.Eip >= 0x00100000 && ctx.Eip < 0x00400000 &&
+				    ctx.Edx >= 0x80000000 && ctx.Edx < 0x84000000) {
+					DWORD curVal = *reinterpret_cast<volatile DWORD*>(ctx.Edx);
+
+					// Check if this matches our previous candidate: same thread, same EIP,
+					// same cursor address, and cursor value UNCHANGED = genuinely stuck.
+					if (te.th32ThreadID == s_candidateTid &&
+					    ctx.Eip == s_candidateEip &&
+					    ctx.Edx == s_candidateEdx &&
+					    curVal == s_candidateVal) {
+						// Confirmed stuck — activate cursor advancement.
+						LARGE_INTEGER qpc;
+						QueryPerformanceCounter(&qpc);
+						g_ApuPlayCursor.pCursor = reinterpret_cast<volatile DWORD*>(ctx.Edx);
+						g_ApuPlayCursor.bufSize = s_candidateEsi;
+						// 48 kHz * 2 bytes (16-bit mono) = 96,000 bytes/sec
+						g_ApuPlayCursor.rate = 96000;
+						g_ApuPlayCursor.lastQPC = qpc.QuadPart;
+						EmuLogEx(CXBXR_MODULE::DSOUND, LOG_LEVEL::INFO,
+							"APU play cursor detected: addr=0x%08X bufSize=%u val=%u",
+							ctx.Edx, s_candidateEsi, curVal);
+						found = true;
+					} else {
+						// Record as candidate for next scan's confirmation.
+						s_candidateTid = te.th32ThreadID;
+						s_candidateEip = ctx.Eip;
+						s_candidateEdx = ctx.Edx;
+						s_candidateEsi = ctx.Esi;
+						s_candidateVal = curVal;
+					}
+				}
+			}
+			ResumeThread(hThread);
+			CloseHandle(hThread);
+			if (found) break;
+		} while (Thread32Next(snap, &te));
+	}
+	CloseHandle(snap);
+}
+
+// Proactive memory scan for APU play cursor pointer.
+// Scans the XBE .data section for DWORDs pointing into Xbox contiguous memory
+// (0x80000000-0x84000000) adjacent to a plausible buffer-size DWORD.
+// Unlike detect_apu_play_cursor_spin(), this does NOT suspend threads — it
+// reads game memory directly from the system_events thread, safe from any
+// deadlock or timing interference.  Uses two-scan confirmation (2s apart) to
+// prevent false positives.
+static void detect_apu_play_cursor_scan()
+{
+	if (g_ApuPlayCursor.pCursor != nullptr)
+		return;
+
+	static DWORD s_lastCheck = 0;
+	DWORD now = GetTickCount();
+	if (now - s_lastCheck < 2000) return;
+	s_lastCheck = now;
+
+	static uintptr_t s_candidateAddr = 0;
+	static DWORD     s_candidateCbo = 0;
+
+	if (s_candidateAddr != 0) {
+		DWORD* p = reinterpret_cast<DWORD*>(s_candidateAddr);
+		DWORD val = *p;
+		if (val >= 0x80000000 && val < 0x84000000 && (val & 0x3) == 0) {
+			DWORD cbo = *reinterpret_cast<volatile DWORD*>(val);
+			if (cbo == s_candidateCbo) {
+				LARGE_INTEGER qpc;
+				QueryPerformanceCounter(&qpc);
+				g_ApuPlayCursor.pCursor = reinterpret_cast<volatile DWORD*>(val);
+				g_ApuPlayCursor.bufSize = 0x200000;
+				g_ApuPlayCursor.rate = 96000;
+				g_ApuPlayCursor.lastQPC = qpc.QuadPart;
+				g_ApuPlayCursor.pEvent = nullptr;
+				EmuLogEx(CXBXR_MODULE::DSOUND, LOG_LEVEL::INFO,
+					"APU play cursor detected via memory scan: addr=0x%08X cbo=%u",
+					val, cbo);
+				return;
+			}
+		}
+		s_candidateAddr = 0;
+	}
+
+	DWORD* const SCAN_START = reinterpret_cast<DWORD*>(0x1A0000);
+	for (DWORD* p = SCAN_START; p < reinterpret_cast<DWORD*>(0x300000); p++) {
+		DWORD val = *p;
+		if (val >= 0x80000000 && val < 0x84000000 && (val & 0x3) == 0) {
+			DWORD cbo = *reinterpret_cast<volatile DWORD*>(val);
+			if (cbo < 0x100000) {
+				s_candidateAddr = reinterpret_cast<uintptr_t>(p);
+				s_candidateCbo = cbo;
+				return;
+			}
+		}
+	}
+}
+
 static void dispatch_non_periodic_events()
 {
 	dsound_worker();
+
+	// Detect stuck threads polling an APU play cursor that HLE doesn't advance.
+	// Three independent detection paths cover different game behaviours:
+	//   1. detect_apu_play_cursor_scan   — proactive memory scan (no thread suspension)
+	//   2. detect_apu_play_cursor_spin   — thread-snapshot scan for tight spin-loops
+	//   3. WaitApc in EmuKrnl.h          — cursor scan triggered by stalled KeWait stall
+	detect_apu_play_cursor_scan();
+	detect_apu_play_cursor_spin();
 
 	for (int i = 0; i < MAX_BUS_INTERRUPT_LEVEL; i++) {
 		// Skip IRQ 3 (GPU/NV2A) — delivered explicitly by

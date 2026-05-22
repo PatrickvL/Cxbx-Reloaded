@@ -57,6 +57,8 @@ DWORD                               g_dwFree3DBuffers = 0;
 
 DsBufferStreaming g_dsBufferStreaming;
 
+ApuPlayCursorState g_ApuPlayCursor = { nullptr, 0, 0, 0, nullptr };
+
 void DrawAudioProgress(xbox::XbHybridDSBuffer* pHybrid, float scaleWidth, ImDrawList* drawList) {
 	const auto& pBuffer = pHybrid->emuDSBuffer;
 

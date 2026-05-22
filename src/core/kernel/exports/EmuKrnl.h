@@ -29,6 +29,7 @@
 #include "core\kernel\support\Emu.h"
 #include "core\kernel\support\EmuFS.h"
 #include "EmuKrnlKi.h"
+#include "core\hle\DSOUND\DirectSound\ApuPlayCursor.h"
 #include <future>
 #include <cstdio>
 
@@ -149,6 +150,7 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 	if (Timeout == nullptr) {
 		// No timout specified, so this is an infinite wait until an alert, a user apc or the object(s) become(s) signalled
 		HANDLE hWake = CxbxGetThreadWakeEvent(kThread);
+		int stallIters = 0;
 		while (true) {
 			if (const auto ret = SatisfyWait(Lambda, kThread, Alertable, WaitMode)) {
 				status = *ret;
@@ -167,6 +169,64 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 				WaitForSingleObjectEx(hWake, 10, TRUE);
 			} else {
 				SleepEx(1, TRUE);
+			}
+
+			// Stall diagnostic: if we've been waiting >3 seconds, scan for the
+			// APU play cursor pointer.
+			if (++stallIters == 300) {
+				auto* objPtr = (unsigned char*)kThread->WaitBlockList->Object;
+				int objType = objPtr[0];
+				int signalState = *(int*)(objPtr + 4);
+				int waiters = !(((uintptr_t*)(objPtr + 8))[0] == (uintptr_t)(objPtr + 8));
+				fprintf(stderr, "[WAIT-STALL] tid=0x%X obj=0x%p type=%d signalState=%d waiters=%d state=%d\n",
+					GetCurrentThreadId(), kThread->WaitBlockList->Object,
+					objType, signalState, waiters, (int)kThread->State);
+				fflush(stderr);
+
+				uintptr_t eventAddr = (uintptr_t)kThread->WaitBlockList->Object;
+				if (eventAddr >= 0x00011000 && eventAddr < 0x00300000) {
+					DWORD* expectedP = reinterpret_cast<DWORD*>(eventAddr - 0x2530);
+					DWORD expectedVal = *expectedP;
+					if (expectedVal >= 0x80000000 && expectedVal < 0x84000000 && (expectedVal & 0x3) == 0) {
+						DWORD expectedCbo = *reinterpret_cast<volatile DWORD*>(expectedVal);
+						if (expectedCbo < 0x100000) {
+							LARGE_INTEGER qpc;
+							QueryPerformanceCounter(&qpc);
+							g_ApuPlayCursor.pCursor = reinterpret_cast<volatile DWORD*>(expectedVal);
+							g_ApuPlayCursor.bufSize = 0x200000;
+							g_ApuPlayCursor.rate = 96000;
+							g_ApuPlayCursor.lastQPC = qpc.QuadPart;
+							g_ApuPlayCursor.pEvent = kThread->WaitBlockList->Object;
+							fprintf(stderr, "  [APU-CURSOR] Activated at XDK offset: cursor=0x%08X cbo=%u event=0x%p\n",
+								expectedVal, expectedCbo, g_ApuPlayCursor.pEvent);
+							fflush(stderr);
+						}
+					}
+					if (g_ApuPlayCursor.pCursor == nullptr) {
+					DWORD* scanStart = reinterpret_cast<DWORD*>(
+						(eventAddr > 0x4000) ? (eventAddr - 0x4000) : 0x00011000);
+					DWORD* scanEnd = reinterpret_cast<DWORD*>(eventAddr);
+					for (DWORD* p = scanEnd - 1; p >= scanStart; p--) {
+						DWORD val = *p;
+						if (val >= 0x80000000 && val < 0x84000000 && (val & 0x3) == 0) {
+							DWORD cbo = *reinterpret_cast<volatile DWORD*>(val);
+							if (cbo < 0x100000) {
+								LARGE_INTEGER qpc;
+								QueryPerformanceCounter(&qpc);
+								g_ApuPlayCursor.pCursor = reinterpret_cast<volatile DWORD*>(val);
+								g_ApuPlayCursor.bufSize = 0x200000;
+								g_ApuPlayCursor.rate = 96000;
+								g_ApuPlayCursor.lastQPC = qpc.QuadPart;
+								g_ApuPlayCursor.pEvent = kThread->WaitBlockList->Object;
+								fprintf(stderr, "  [APU-CURSOR] Activated: cursor=0x%08X cbo=%u event=0x%p\n",
+									val, cbo, g_ApuPlayCursor.pEvent);
+								fflush(stderr);
+								break;
+							}
+						}
+					}
+					} /* g_ApuPlayCursor.pCursor == nullptr */
+				}
 			}
 		}
 	}
@@ -188,6 +248,7 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 		// The kernel timer (set up by the caller) will fire KiTimerExpiration → KiUnwaitThread
 		// which signals our wake event, so we can block efficiently here.
 		HANDLE hWake = CxbxGetThreadWakeEvent(kThread);
+		int finiteStallIters = 0;
 		while (true) {
 			if (const auto ret = SatisfyWait(Lambda, kThread, Alertable, WaitMode)) {
 				status = *ret;
@@ -203,6 +264,59 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 				WaitForSingleObjectEx(hWake, 10, TRUE);
 			} else {
 				SleepEx(1, TRUE);
+			}
+
+			if (++finiteStallIters == 300) {
+				auto* objPtr2 = (unsigned char*)kThread->WaitBlockList->Object;
+				fprintf(stderr, "[WAIT-STALL-FIN] tid=0x%X obj=0x%p type=%d signalState=%d timeout=%lld state=%d\n",
+					GetCurrentThreadId(), kThread->WaitBlockList->Object,
+					objPtr2[0], *(int*)(objPtr2 + 4), Timeout->QuadPart, (int)kThread->State);
+				fflush(stderr);
+
+				uintptr_t eventAddr = (uintptr_t)kThread->WaitBlockList->Object;
+				if (eventAddr >= 0x00011000 && eventAddr < 0x00300000) {
+					DWORD* expectedP = reinterpret_cast<DWORD*>(eventAddr - 0x2530);
+					DWORD expectedVal = *expectedP;
+					if (expectedVal >= 0x80000000 && expectedVal < 0x84000000 && (expectedVal & 0x3) == 0) {
+						DWORD expectedCbo = *reinterpret_cast<volatile DWORD*>(expectedVal);
+						if (expectedCbo < 0x100000) {
+							LARGE_INTEGER qpc;
+							QueryPerformanceCounter(&qpc);
+							g_ApuPlayCursor.pCursor = reinterpret_cast<volatile DWORD*>(expectedVal);
+							g_ApuPlayCursor.bufSize = 0x200000;
+							g_ApuPlayCursor.rate = 96000;
+							g_ApuPlayCursor.lastQPC = qpc.QuadPart;
+							g_ApuPlayCursor.pEvent = kThread->WaitBlockList->Object;
+							fprintf(stderr, "  [APU-CURSOR] Activated at XDK offset: cursor=0x%08X cbo=%u event=0x%p\n",
+								expectedVal, expectedCbo, g_ApuPlayCursor.pEvent);
+							fflush(stderr);
+						}
+					}
+					if (g_ApuPlayCursor.pCursor == nullptr) {
+					DWORD* scanStart = reinterpret_cast<DWORD*>(
+						(eventAddr > 0x4000) ? (eventAddr - 0x4000) : 0x00011000);
+					DWORD* scanEnd = reinterpret_cast<DWORD*>(eventAddr);
+					for (DWORD* p = scanEnd - 1; p >= scanStart; p--) {
+						DWORD val = *p;
+						if (val >= 0x80000000 && val < 0x84000000 && (val & 0x3) == 0) {
+							DWORD cbo = *reinterpret_cast<volatile DWORD*>(val);
+							if (cbo < 0x100000) {
+								LARGE_INTEGER qpc;
+								QueryPerformanceCounter(&qpc);
+								g_ApuPlayCursor.pCursor = reinterpret_cast<volatile DWORD*>(val);
+								g_ApuPlayCursor.bufSize = 0x200000;
+								g_ApuPlayCursor.rate = 96000;
+								g_ApuPlayCursor.lastQPC = qpc.QuadPart;
+								g_ApuPlayCursor.pEvent = kThread->WaitBlockList->Object;
+								fprintf(stderr, "  [APU-CURSOR] Activated: cursor=0x%08X cbo=%u event=0x%p\n",
+									val, cbo, g_ApuPlayCursor.pEvent);
+								fflush(stderr);
+								break;
+							}
+						}
+					}
+					} /* g_ApuPlayCursor.pCursor == nullptr */
+				}
 			}
 		}
 	}

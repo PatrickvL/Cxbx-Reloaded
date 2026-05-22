@@ -1245,6 +1245,13 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IDirectSoundBuffer_SetNotificationPositio
 		LOG_FUNC_ARG(paNotifies)
 		LOG_FUNC_END;
 
+    // [DIAG] Trace notification positions
+    fprintf(stderr, "[DSOUND-NOTIFY] SetNotificationPositions count=%u buf=%p\n", dwNotifyCount, pHybridThis);
+    for (DWORD i = 0; i < dwNotifyCount && i < 8; i++) {
+        fprintf(stderr, "  [%u] offset=0x%X event=0x%p\n", i, paNotifies[i].dwOffset, paNotifies[i].hEventNotify);
+    }
+    fflush(stderr);
+
     EmuDirectSoundBuffer* pThis = pHybridThis->emuDSBuffer;
     HRESULT hRet = DSERR_INVALIDPARAM;
 

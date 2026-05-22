@@ -53,6 +53,13 @@ DEVICE_READ32(PVIDEO)
 
 	case NV_PVIDEO_INTR:
 		result = d->pvideo.pending_interrupts;
+		{
+			static int s_pvideo_intr_reads = 0;
+			if (++s_pvideo_intr_reads <= 5) {
+				fprintf(stderr, "[PVIDEO] READ NV_PVIDEO_INTR = 0x%X (enabled=0x%X) read#%d\n",
+					result, d->pvideo.enabled_interrupts, s_pvideo_intr_reads);
+			}
+		}
 		break;
 	case NV_PVIDEO_INTR_EN:
 		result = d->pvideo.enabled_interrupts;
@@ -73,10 +80,18 @@ DEVICE_WRITE32(PVIDEO)
 	switch (addr) {
 	case NV_PVIDEO_INTR:
 		d->pvideo.pending_interrupts &= ~value;
+		{
+			static int s_pvideo_intr_writes = 0;
+			if (++s_pvideo_intr_writes <= 5) {
+				fprintf(stderr, "[PVIDEO] WRITE NV_PVIDEO_INTR ack=0x%X remaining=0x%X write#%d\n",
+					value, d->pvideo.pending_interrupts, s_pvideo_intr_writes);
+			}
+		}
 		update_irq(d);
 //		qemu_cond_broadcast(&d->pvideo.interrupt_cond);
 		break;
 	case NV_PVIDEO_INTR_EN:
+		fprintf(stderr, "[PVIDEO] WRITE NV_PVIDEO_INTR_EN = 0x%X\n", value);
 		d->pvideo.enabled_interrupts = value;
 		update_irq(d);
 		break;

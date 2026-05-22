@@ -28,6 +28,9 @@
 #include <cstdio>
 
 #include "APUDevice.h"
+#include "../../common/AddressRanges.h"
+
+#include <Windows.h>
 
 extern uint32_t GetAPUTime();
 
@@ -69,17 +72,21 @@ void APUDevice::Reset()
 
 uint32_t APUDevice::IORead(int barIndex, uint32_t addr, unsigned size)
 {
-	printf("APUDevice: Unimplemented IORead %X\n", addr);
 	return 0;
 }
 
 void APUDevice::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
-	printf("APUDevice: Unimplemented IOWrite %X\n", addr);
 }
 
 uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 {
+	// DIAG: Log all APU reads
+	static int readCount = 0;
+	if (readCount++ < 50) {
+		fprintf(stderr, "[APU-MMIO] Read addr=0x%05X size=%u\n", addr, size);
+	}
+
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		return VPRead(addr - APU_VP_BASE, size);
 	}
@@ -96,12 +103,17 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 		case 0x200C: return GetAPUTime();	
 	}
 
-	printf("APUDevice: Unimplemented MMIORead %X\n", addr);
 	return 0;
 }
 
 void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
+	// DIAG: Log all APU writes
+	static int writeCount = 0;
+	if (writeCount++ < 100) {
+		fprintf(stderr, "[APU-MMIO] Write addr=0x%05X value=0x%08X size=%u\n", addr, value, size);
+	}
+
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		VPWrite(addr - APU_VP_BASE, value, size);
 		return;
@@ -117,19 +129,17 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		return;
 	}
 
-	printf("APUDevice: Unimplemented MMIOWrite %X\n", addr);
+	// Unhandled APU register write
 }
 
 
 uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 {
-	printf("APUDevice: Unimplemented GP MMIORead %X\n", addr);
 	return 0;
 }
 
 void APUDevice::GPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
-	printf("APUDevice: Unimplemented GP MMIOWrite %X\n", addr);
 }
 
 
@@ -137,25 +147,76 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 {
 	switch (addr) {
 		case 0x10: return 0x80; // HACK: Pretend the FIFO is always empty, bypasses hangs when APU isn't fully implemented
+		case NV_PAPU_VPVADDR_OFF: return m_vpvaddr;
 	}
 
-	printf("APUDevice: Unimplemented VP MMIORead %X\n", addr);
 	return 0;
 }
 
 void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
-	printf("APUDevice: Unimplemented VP MMIOWrite %X\n", addr);
+	switch (addr) {
+		case NV_PAPU_VPVADDR_OFF:
+			m_vpvaddr = value;
+			fprintf(stderr, "[APU] VPVADDR set to 0x%08X (VA=0x%08X)\n", value, CONTIGUOUS_MEMORY_BASE + value);
+			return;
+	}
+}
+
+void APUDevice::AdvanceVoiceCursors()
+{
+	if (m_vpvaddr == 0) {
+		static int logCount = 0;
+		if (logCount++ < 5) fprintf(stderr, "[APU] AdvanceVoiceCursors called but VPVADDR=0\n");
+		return;
+	}
+
+	DWORD now = GetTickCount();
+	if (m_lastTickMs == 0) { m_lastTickMs = now; return; }
+	DWORD elapsed = now - m_lastTickMs;
+	if (elapsed == 0) return;
+	m_lastTickMs = now;
+
+	// Voice descriptor table lives in contiguous (physical) memory.
+	// In Cxbx, CONTIGUOUS_MEMORY_BASE (0x80000000) + physical offset is the virtual address.
+	uint8_t* voiceTable = (uint8_t*)(CONTIGUOUS_MEMORY_BASE + m_vpvaddr);
+
+	for (int v = 0; v < NV_PAVS_MAX_VOICES; v++) {
+		uint8_t* vd = voiceTable + v * NV_PAVS_VOICE_SIZE;
+		volatile uint32_t* pState = (volatile uint32_t*)(vd + NV_PAVS_VOICE_PAR_STATE_OFF);
+		volatile uint32_t* pOffset = (volatile uint32_t*)(vd + NV_PAVS_VOICE_PAR_OFFSET_OFF);
+		volatile uint32_t* pFmt = (volatile uint32_t*)(vd + NV_PAVS_VOICE_CFG_FMT_OFF);
+
+		// Check if voice has valid format (non-zero means initialized)
+		uint32_t fmt = *pFmt;
+		if (fmt == 0) continue;
+
+		// Read current CBO
+		uint32_t offset_reg = *pOffset;
+		uint32_t cbo = offset_reg & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK;
+
+		// Derive sample rate from format register.
+		// NV_PAVS_VOICE_CFG_FMT contains sample rate and format info.
+		// For a rough approximation, assume 48000 Hz stereo 16-bit (most common Xbox format).
+		// bytes_per_ms = sampleRate * channels * bytesPerSample / 1000
+		// = 48000 * 2 * 2 / 1000 = 192 bytes/ms
+		uint32_t bytesPerMs = 192;
+		uint32_t advance = elapsed * bytesPerMs;
+
+		// Advance CBO
+		uint32_t newCbo = cbo + advance;
+
+		// Write back (preserve upper bits of the register)
+		*pOffset = (offset_reg & ~NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK) | (newCbo & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
+	}
 }
 
 
 uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 {
-	printf("APUDevice: Unimplemented EP MMIORead %X\n", addr);
 	return 0;
 }
 
 void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
-	printf("APUDevice: Unimplemented EP MMIOWrite %X\n", addr);
 }

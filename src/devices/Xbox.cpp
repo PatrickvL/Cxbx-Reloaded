@@ -41,6 +41,7 @@ SMCDevice* g_SMC;
 EEPROMDevice* g_EEPROM;
 NVNetDevice* g_NVNet;
 NV2ADevice* g_NV2A;
+APUDevice* g_APU;
 ADM1032Device* g_ADM1032;
 USBDevice* g_USB0;
 MediaBoard* g_MediaBoard;
@@ -162,6 +163,7 @@ void InitXboxHardware(HardwareModel hardwareModel)
 	g_EEPROM = new EEPROMDevice();
 	g_NVNet = new NVNetDevice();
 	g_NV2A = new NV2ADevice();
+	g_APU = new APUDevice();
 	g_ADM1032 = new ADM1032Device();
 	g_USB0 = new USBDevice();
 
@@ -196,7 +198,6 @@ void InitXboxHardware(HardwareModel hardwareModel)
 	// Stub devices for PCI slots that are present on real hardware but not fully emulated
 	static PCIStubDevice s_HostBridge(PCI_VENDOR_ID_NVIDIA, 0x02A5, 0x060000A1); // Host bridge
 	static PCIStubDevice s_ISABridge(PCI_VENDOR_ID_NVIDIA, 0x01B2, 0x060100A1);  // ISA bridge (MCPX)
-	static PCIStubDevice s_APU(PCI_VENDOR_ID_NVIDIA, 0x01B0, 0x040100A1);        // Audio (APU)
 	static PCIStubDevice s_AC97(PCI_VENDOR_ID_NVIDIA, 0x01B1, 0x070300A1);       // AC97 modem interface
 	static PCIStubDevice s_IDE(PCI_VENDOR_ID_NVIDIA, 0x01BC, 0x010180A1);        // IDE controller
 
@@ -205,7 +206,7 @@ void InitXboxHardware(HardwareModel hardwareModel)
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(1, 1)), g_SMBus);
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(4, 0)), g_NVNet);
 	//g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(4, 1)), g_MCPX); // MCPX device ID = 0x0808 ?
-	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(5, 0)), &s_APU);
+	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(5, 0)), g_APU);
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(6, 0)), &s_AC97);
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(9, 0)), &s_IDE);
 	g_PCIBus->ConnectDevice(PCI_DEVID(1, PCI_DEVFN(0, 0)), g_NV2A);

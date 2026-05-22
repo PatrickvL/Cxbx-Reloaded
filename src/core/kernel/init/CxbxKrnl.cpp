@@ -1396,6 +1396,24 @@ static void CxbxrKrnlInitHacks()
 		// Use a do-while to re-check after processing: if new interrupts arrived during
 		// ISR/DPC execution, handle them immediately instead of risking a lost wakeup.
 		bool more_work;
+		static int s_dpcLoops = 0;
+		static int s_vblankFired = 0;
+		static int s_isrFired = 0;
+		s_dpcLoops++;
+		if ((s_dpcLoops % 500) == 0) {
+			extern std::atomic<int> g_DpcDispatchCount;
+			extern std::atomic<int> g_DpcSetEventCount;
+			extern std::atomic<int> g_DpcPulseEventCount;
+			uint32_t pmc_en = g_NV2A ? g_NV2A->GetDeviceState()->pmc.enabled_interrupts : 0xDEAD;
+			uint32_t pcrtc_en = g_NV2A ? g_NV2A->GetDeviceState()->pcrtc.enabled_interrupts : 0xDEAD;
+			uint32_t pcrtc_pend = g_NV2A ? g_NV2A->GetDeviceState()->pcrtc.pending_interrupts : 0xDEAD;
+			bool isr_connected = EmuInterruptList[3] && EmuInterruptList[3]->Connected;
+			fprintf(stderr, "[DPC-HB] loops=%d vblanks=%d isrs=%d dpcs=%d setev=%d pulse=%d cli=%d pmc_en=%u pcrtc_en=%u pcrtc_pend=%u isr_conn=%d\n",
+				s_dpcLoops, s_vblankFired, s_isrFired, g_DpcDispatchCount.load(),
+				g_DpcSetEventCount.load(), g_DpcPulseEventCount.load(),
+				(int)!g_bEnableAllInterrupts,
+				pmc_en, pcrtc_en, pcrtc_pend, (int)isr_connected);
+		}
 		do {
 			more_work = false;
 
@@ -1414,6 +1432,28 @@ static void CxbxrKrnlInitHacks()
 				if (d->vblank_pending.test()) {
 					d->vblank_pending.clear();
 					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+					s_vblankFired++;
+
+					// Dump thread stacks 5s after overlay starts, to diagnose mid-movie hangs
+					static int s_overlayVblanks = 0;
+					static bool s_overlayDumped = false;
+					if (d->enable_overlay) {
+						s_overlayVblanks++;
+						if (!s_overlayDumped && s_overlayVblanks >= 300) {
+							s_overlayDumped = true;
+							// Print lock ownership to diagnose deadlocks
+							extern DWORD CxbxGetD3D11ContextLockOwner();
+							fprintf(stdout, "\n[LOCK-DIAG] pfifo_lock.owner = %lu\n", (unsigned long)d->pfifo.pfifo_lock.owner);
+							fprintf(stdout, "[LOCK-DIAG] pgraph_lock.owner = %lu\n", (unsigned long)d->pgraph.pgraph_lock.owner);
+							fprintf(stdout, "[LOCK-DIAG] D3D11ContextLock.owner = %lu\n", (unsigned long)CxbxGetD3D11ContextLockOwner());
+							fprintf(stdout, "[LOCK-DIAG] DMA_GET=0x%08X DMA_PUT=0x%08X\n",
+								d->pfifo.regs[0x1244/4], d->pfifo.regs[0x1240/4]);
+							fflush(stdout);
+							EmuDumpAllThreadStacks("Movie overlay active for 5 seconds - stack dump for hang diagnosis");
+						}
+					} else {
+						s_overlayVblanks = 0;
+					}
 
 					// Generate PVIDEO buffer completion interrupts for active overlay buffers.
 					// On real hardware, when the overlay is active, at each VBlank the PVIDEO
@@ -1460,6 +1500,12 @@ static void CxbxrKrnlInitHacks()
 				if (nv2a_irq_pending &&
 				    EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
 					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
+					s_isrFired++;
+				}
+			} else if (g_NV2A && g_NV2A->GetDeviceState()->vblank_pending.test()) {
+				static int s_cliSkips = 0;
+				if ((++s_cliSkips % 60) == 1) {
+					fprintf(stderr, "[DPC-SKIP] CLI blocked VBlank (skip #%d)\n", s_cliSkips);
 				}
 			}
 

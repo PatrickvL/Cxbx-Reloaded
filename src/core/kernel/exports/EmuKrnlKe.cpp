@@ -109,6 +109,9 @@ DpcData g_DpcData = { 0 }; // Note : g_DpcData is initialized in InitDpcData()
 // We store it globally (not per-thread) so that all threads—including the
 // background DPC dispatch thread—see the same suppression state.
 volatile xbox::ulong_xt g_DpcRoutineActive = 0;
+std::atomic<int> g_DpcDispatchCount{0}; // diagnostic counter
+std::atomic<int> g_DpcSetEventCount{0}; // diagnostic: KeSetEvent from DPC
+std::atomic<int> g_DpcPulseEventCount{0}; // diagnostic: KePulseEvent from DPC
 std::atomic_flag xbox::KeSystemTimeChanged;
 
 xbox::ulonglong_xt LARGE_INTEGER2ULONGLONG(xbox::LARGE_INTEGER value)
@@ -518,6 +521,7 @@ void ExecuteDpcQueue(bool inline_dispatch)
 		LeaveCriticalSection(&(g_DpcData.Lock));
 
 		EmuLog(LOG_LEVEL::DEBUG, "DpcQueue: dispatching DPC 0x%.8X routine 0x%.8X", pkdpc, pkdpc->DeferredRoutine);
+		g_DpcDispatchCount.fetch_add(1, std::memory_order_relaxed);
 
 		// Call the Deferred Procedure  :
 		pkdpc->DeferredRoutine(
@@ -803,7 +807,12 @@ XBSYSAPI EXPORTNUM(98) xbox::boolean_xt NTAPI xbox::KeConnectInterrupt
 	if (!InterruptObject->Connected)
 	{
 		if (irq > MAX_BUS_INTERRUPT_LEVEL) {
+			fprintf(stderr, "[KeConnectInterrupt] IRQ %d (vector %d) out of range\n",
+				irq, InterruptObject->BusInterruptLevel);
 		} else {
+			fprintf(stderr, "[KeConnectInterrupt] IRQ=%d (vector=%d) ServiceRoutine=%p (slot occupied=%d)\n",
+				irq, InterruptObject->BusInterruptLevel, InterruptObject->ServiceRoutine,
+				EmuInterruptList[irq] != NULL);
 			// One interrupt per IRQ - only set when not set yet :
 			if (EmuInterruptList[irq] == NULL)
 			{
@@ -1528,6 +1537,15 @@ XBSYSAPI EXPORTNUM(123) xbox::long_xt NTAPI xbox::KePulseEvent
 		LOG_FUNC_ARG(Increment)
 		LOG_FUNC_ARG(Wait)
 		LOG_FUNC_END;
+
+	// Diagnostic: trace KePulseEvent calls from DPC context
+	if (KeGetCurrentPrcb()->DpcRoutineActive) {
+		g_DpcPulseEventCount.fetch_add(1, std::memory_order_relaxed);
+		fprintf(stderr, "[PULSE-DPC] event=0x%p type=%d signalState=%d hasWaiters=%d\n",
+			Event, (int)Event->Header.Type, (int)Event->Header.SignalState,
+			!IsListEmpty(&Event->Header.WaitListHead));
+		fflush(stderr);
+	}
 
 	KIRQL OldIrql;
 	KiLockDispatcherDatabase(&OldIrql);
@@ -2271,6 +2289,16 @@ XBSYSAPI EXPORTNUM(145) xbox::long_xt NTAPI xbox::KeSetEvent
 		LOG_FUNC_ARG(Wait)
 		LOG_FUNC_END;
 
+	// Diagnostic: trace KeSetEvent calls from DPC context when there are waiters
+	if (KeGetCurrentPrcb()->DpcRoutineActive) {
+		g_DpcSetEventCount.fetch_add(1, std::memory_order_relaxed);
+		if (!IsListEmpty(&Event->Header.WaitListHead)) {
+			fprintf(stderr, "[SETEVENT-DPC] event=0x%p type=%d signalState=%d hasWaiters=1\n",
+				Event, (int)Event->Header.Type, (int)Event->Header.SignalState);
+			fflush(stderr);
+		}
+	}
+
 	KIRQL OldIrql;
 	KiLockDispatcherDatabase(&OldIrql);
 
@@ -2918,6 +2946,19 @@ XBSYSAPI EXPORTNUM(159) xbox::ntstatus_xt NTAPI xbox::KeWaitForSingleObject
 		LOG_FUNC_ARG(Alertable)
 		LOG_FUNC_ARG(Timeout)
 		LOG_FUNC_END;
+
+	// DIAG: Track KeWaitForSingleObject calls to identify loading hang
+	{
+		static int s_keWaitCount = 0;
+		if ((++s_keWaitCount % 500) == 1) {
+			DISPATCHER_HEADER* hdr = (DISPATCHER_HEADER*)Object;
+			LONGLONG to = Timeout ? Timeout->QuadPart : 0;
+			fprintf(stderr, "[KEWAIT] #%d obj=%p type=%d signal=%d timeout=%lld tid=0x%X\n",
+				s_keWaitCount, Object, (int)hdr->Type, (int)hdr->SignalState, to,
+				GetCurrentThreadId());
+			fflush(stderr);
+		}
+	}
 
 	// If the lock is not already held, lock it
 	PRKTHREAD Thread = KeGetCurrentThread();

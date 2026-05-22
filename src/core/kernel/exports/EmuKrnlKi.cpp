@@ -137,6 +137,12 @@ void CxbxSignalThreadWakeEvent(xbox::PKTHREAD Thread)
 	HANDLE hEvent = CxbxGetThreadWakeEvent(Thread);
 	if (hEvent) {
 		SetEvent(hEvent);
+	} else {
+		static int s_noEventCount = 0;
+		if (++s_noEventCount <= 10) {
+			fprintf(stderr, "[WAKE-NOEVENT] thread=%p has no wake event registered!\n", Thread);
+			fflush(stderr);
+		}
 	}
 }
 xbox::KTIMER_TABLE_ENTRY KiTimerTableListHead[TIMER_TABLE_SIZE];
@@ -1245,6 +1251,12 @@ xbox::void_xt xbox::KiUnwaitThread
 
 	if (Thread->State != Waiting) {
 		// Don't do anything if it was already unwaited
+		static int s_skipCount = 0;
+		if (++s_skipCount <= 10) {
+			fprintf(stderr, "[UNWAIT-SKIP] tid=%p state=%d (expected Waiting=%d)\n",
+				Thread, (int)Thread->State, (int)Waiting);
+			fflush(stderr);
+		}
 		return;
 	}
 

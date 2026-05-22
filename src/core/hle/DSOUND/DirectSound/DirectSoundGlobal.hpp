@@ -84,3 +84,5 @@ extern void DirectSoundDoWork_Stream(xbox::LARGE_INTEGER& time);
 extern void dsound_async_worker();
 extern void dsound_worker();
 extern uint64_t dsound_tick(uint64_t now);
+
+#include "ApuPlayCursor.h"

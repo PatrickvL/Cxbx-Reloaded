@@ -2097,6 +2097,17 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	//    if(ByteOffset != 0 && ByteOffset->QuadPart == 0x00120800)
 	//        _asm int 3
 
+	// DIAG: Track NtReadFile calls
+	{
+		static int s_readCount = 0;
+		if ((++s_readCount % 50) == 1) {
+			fprintf(stderr, "[NTREAD] #%d handle=0x%X len=%u event=%p apc=%p tid=0x%X\n",
+				s_readCount, (unsigned)(uintptr_t)FileHandle, (unsigned)Length,
+				Event, ApcRoutine, GetCurrentThreadId());
+			fflush(stderr);
+		}
+	}
+
 	if (CxbxDebugger::CanReport())
 	{
 		uint64_t Offset = ~0;
@@ -3094,6 +3105,17 @@ XBSYSAPI EXPORTNUM(234) xbox::ntstatus_xt NTAPI xbox::NtWaitForSingleObjectEx
 )
 {
 	LOG_FORWARD("NtWaitForMultipleObjectsEx");
+
+	// DIAG: log waits from game thread to understand the loading hang
+	{
+		static int s_waitCount = 0;
+		if ((++s_waitCount % 200) == 1) {
+			LONGLONG to = Timeout ? Timeout->QuadPart : 0;
+			fprintf(stderr, "[NTWAIT] #%d handle=0x%X timeout=%lld alertable=%d tid=0x%X\n",
+				s_waitCount, (unsigned)(uintptr_t)Handle, to, (int)Alertable, GetCurrentThreadId());
+			fflush(stderr);
+		}
+	}
 
 	return xbox::NtWaitForMultipleObjectsEx(
 		/*Count=*/1,
