@@ -303,7 +303,7 @@ DEVICE_WRITE32(PGRAPH)
 			// thread, not the puller thread that owns the D3D11 context.
 			if (!g_pgraph_explicit_flip_stall_seen) {
 				d->pgraph.surface_color.draw_dirty = true;
-				qemu_cond_broadcast(&d->pfifo.puller_cond);
+				SetEvent(d->pfifo.puller_event);
 			}
 		}
 		break;
@@ -592,7 +592,7 @@ void pgraph_handle_method(NV2AState *d,
 				SET_MASK(pg->regs[RI(NV_PGRAPH_TRAPPED_ADDR)],
 					NV_PGRAPH_TRAPPED_ADDR_MTHD, method);
 				pg->regs[RI(NV_PGRAPH_TRAPPED_DATA_LOW)] = parameter;
-				pg->regs[RI(NV_PGRAPH_NSOURCE)] = NV_PGRAPH_NSOURCE_NOTIFICATION; /* TODO: check this */
+				pg->regs[RI(NV_PGRAPH_NSOURCE)] = NV_PGRAPH_NSOURCE_NOTIFICATION;
 				pg->pending_interrupts |= NV_PGRAPH_INTR_ERROR;
 
 				qemu_mutex_unlock(&pg->pgraph_lock);
@@ -648,18 +648,20 @@ void pgraph_handle_method(NV2AState *d,
 
 			break;
 		}
-		case NV097_FLIP_STALL:
+		case NV097_FLIP_STALL: {
 			// Title is using explicit flips — disable puller auto-present fallback.
 			g_pgraph_explicit_flip_stall_seen = true;
 
-			// Trigger host present via the flip_stall plugin callback
+			// Trigger host present via the flip_stall plugin callback.
 			if (g_pgraph_backend.flip_stall != nullptr) {
 				// Clear draw_dirty so the auto-present in the puller loop
 				// doesn't fire again after this explicit FLIP_STALL present.
 				d->pgraph.surface_color.draw_dirty = false;
 				extern bool g_PullerFlipStallThisCycle;
 				g_PullerFlipStallThisCycle = true;
+				qemu_mutex_unlock(&d->pgraph.pgraph_lock);
 				g_pgraph_backend.flip_stall(d);
+				qemu_mutex_lock(&d->pgraph.pgraph_lock);
 			}
 
 			// VBlank-gated frame pacing: wait until the next VBlank deadline.
@@ -697,6 +699,7 @@ void pgraph_handle_method(NV2AState *d,
 
 			NV2A_DPRINTF("flip stall done\n");
 			break;
+		}
 
 		case NV097_SET_CONTEXT_DMA_SEMAPHORE:
 			pg->dma_semaphore = parameter;
@@ -1574,10 +1577,9 @@ void pgraph_handle_method(NV2AState *d,
 			}
 			break;
 		}
+		case NV097_SET_SEMAPHORE_OFFSET:
+			break;
 		case NV097_BACK_END_WRITE_SEMAPHORE_RELEASE: {
-			//qemu_mutex_unlock(&pg->pgraph_lock);
-			//qemu_mutex_lock_iothread();
-
 			uint32_t semaphore_offset = pg->regs[RI(NV_PGRAPH_SEMAPHOREOFFSET)];
 
 			xbox::addr_xt semaphore_dma_len;
@@ -1591,9 +1593,6 @@ void pgraph_handle_method(NV2AState *d,
 			semaphore_data += semaphore_offset;
 
 			stl_le_p((uint32_t*)semaphore_data, parameter);
-
-			//qemu_mutex_lock(&pg->pgraph_lock);
-			//qemu_mutex_unlock_iothread();
 
 			break;
 		}

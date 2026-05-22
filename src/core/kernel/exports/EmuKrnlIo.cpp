@@ -36,6 +36,7 @@
 #include "EmuKrnlLogging.h"
 #include "core\kernel\init\CxbxKrnl.h" // For CxbxrAbort
 #include "core\kernel\support\Emu.h" // For EmuLog(LOG_LEVEL::WARNING, )
+#include "EmuKrnl.h" // For InsertHeadList
 #include "core\kernel\support\EmuFile.h" // For CxbxCreateSymbolicLink(), etc.
 #include "core/kernel/support/NativeHandle.h" // For Xbox objects to native handle and back
 #include "CxbxDebugger.h"
@@ -83,11 +84,21 @@ XBSYSAPI EXPORTNUM(59) xbox::PVOID NTAPI xbox::IoAllocateIrp
 {
 	LOG_FUNC_ONE_ARG(StackSize);
 
-	LOG_UNIMPLEMENTED();
+	word_xt Size = sizeof(IRP) + StackSize * sizeof(IO_STACK_LOCATION);
+	PIRP Irp = (PIRP)ExAllocatePoolWithTag(Size, 'pirI');
+	if (Irp == nullptr) {
+		RETURN(nullptr);
+	}
 
-	xbox::PVOID ret = nullptr;
+	memset(Irp, 0, Size);
+	Irp->Type = IO_TYPE_IRP;
+	Irp->Size = Size;
+	Irp->StackCount = StackSize;
+	Irp->CurrentLocation = StackSize + 1;
+	Irp->Tail.Overlay.CurrentStackLocation =
+		(PIO_STACK_LOCATION)((PUCHAR)(Irp + 1) + StackSize * sizeof(IO_STACK_LOCATION));
 
-	RETURN(ret);
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
@@ -112,11 +123,22 @@ XBSYSAPI EXPORTNUM(60) xbox::PVOID NTAPI xbox::IoBuildAsynchronousFsdRequest
 		LOG_FUNC_ARG_OUT(IoStatusBlock)
 		LOG_FUNC_END;
 
-	xbox::PVOID ret = nullptr;
+	PIRP Irp = (PIRP)IoAllocateIrp(DeviceObject->StackSize);
+	if (Irp == nullptr) {
+		RETURN(nullptr);
+	}
 
-	LOG_UNIMPLEMENTED();
+	Irp->UserIosb = IoStatusBlock;
+	Irp->UserBuffer = Buffer;
 
-	RETURN(ret);
+	PIO_STACK_LOCATION StackLocation = Irp->Tail.Overlay.CurrentStackLocation - 1;
+	StackLocation->MajorFunction = (uchar_xt)MajorFunction;
+	StackLocation->Parameters.Read.Length = Length;
+	if (StartingOffset != nullptr) {
+		StackLocation->Parameters.Read.ByteOffset = *StartingOffset;
+	}
+
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
@@ -147,11 +169,22 @@ XBSYSAPI EXPORTNUM(61) xbox::PVOID NTAPI xbox::IoBuildDeviceIoControlRequest
 		LOG_FUNC_ARG_OUT(IoStatusBlock)
 		LOG_FUNC_END;
 
-	xbox::PVOID ret = nullptr;
+	PIRP Irp = (PIRP)IoAllocateIrp(DeviceObject->StackSize);
+	if (Irp == nullptr) {
+		RETURN(nullptr);
+	}
 
-	LOG_UNIMPLEMENTED();
+	Irp->UserIosb = IoStatusBlock;
+	Irp->UserEvent = Event;
+	Irp->UserBuffer = OutputBuffer;
 
-	RETURN(ret);
+	PIO_STACK_LOCATION StackLocation = Irp->Tail.Overlay.CurrentStackLocation - 1;
+	StackLocation->MajorFunction = InternalDeviceIoControl ? 11 : 10; // IRP_MJ_INTERNAL_DEVICE_CONTROL : IRP_MJ_DEVICE_CONTROL
+	StackLocation->Parameters.DeviceIoControl.IoControlCode = IoControlCode;
+	StackLocation->Parameters.DeviceIoControl.InputBufferLength = InputBufferLength;
+	StackLocation->Parameters.DeviceIoControl.OutputBufferLength = OutputBufferLength;
+
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
@@ -178,11 +211,23 @@ XBSYSAPI EXPORTNUM(62) xbox::PVOID NTAPI xbox::IoBuildSynchronousFsdRequest
 		LOG_FUNC_ARG_OUT(IoStatusBlock)
 		LOG_FUNC_END;
 
-	xbox::PVOID ret = nullptr;
+	PIRP Irp = (PIRP)IoAllocateIrp(DeviceObject->StackSize);
+	if (Irp == nullptr) {
+		RETURN(nullptr);
+	}
 
-	LOG_UNIMPLEMENTED();
+	Irp->UserIosb = IoStatusBlock;
+	Irp->UserEvent = Event;
+	Irp->UserBuffer = Buffer;
 
-	RETURN(ret);
+	PIO_STACK_LOCATION StackLocation = Irp->Tail.Overlay.CurrentStackLocation - 1;
+	StackLocation->MajorFunction = (uchar_xt)MajorFunction;
+	StackLocation->Parameters.Read.Length = Length;
+	if (StartingOffset != nullptr) {
+		StackLocation->Parameters.Read.ByteOffset = *StartingOffset;
+	}
+
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
@@ -286,7 +331,7 @@ XBSYSAPI EXPORTNUM(64) xbox::OBJECT_TYPE xbox::IoCompletionObjectType =
 	NULL,
 	IopDeleteIoCompletion,
 	NULL,
-	&xbox::ObpDefaultObject,
+	(PVOID)offsetof(xbox::KQUEUE, Header),
 	'pmoC' // = first four characters of "Completion" in reverse
 };
 
@@ -1171,9 +1216,21 @@ XBSYSAPI EXPORTNUM(70) xbox::OBJECT_TYPE xbox::IoDeviceObjectType =
 	NULL,
 	NULL,
 	xbox::IopParseDevice,
-	&xbox::ObpDefaultObject,
+	(PVOID)offsetof(xbox::DEVICE_OBJECT, DeviceLock),
 	'iveD' // = first four characters of "Device" in reverse
 };
+
+// ******************************************************************
+// * IopCloseFile - FILE_OBJECT close procedure
+// ******************************************************************
+static xbox::void_xt NTAPI IopCloseFile(IN xbox::PVOID Object, IN xbox::ulong_xt SystemHandleCount)
+{
+	if (SystemHandleCount == 1) {
+		xbox::PFILE_OBJECT FileObject = reinterpret_cast<xbox::PFILE_OBJECT>(Object);
+		FileObject->Flags |= xbox::FO_HANDLE_CREATED;
+	}
+}
+
 // ******************************************************************
 // * IopDeleteFile - FILE_OBJECT delete procedure
 // ******************************************************************
@@ -1201,7 +1258,7 @@ XBSYSAPI EXPORTNUM(71) xbox::OBJECT_TYPE xbox::IoFileObjectType =
 {
 	xbox::ExAllocatePoolWithTag,
 	xbox::ExFreePool,
-	NULL, // TODO : xbox::IopCloseFile,
+	IopCloseFile,
 	IopDeleteFile,
 	xbox::IopParseFile,
 	(PVOID)offsetof(xbox::FILE_OBJECT, Event.Header),
@@ -1218,7 +1275,7 @@ XBSYSAPI EXPORTNUM(72) xbox::void_xt NTAPI xbox::IoFreeIrp
 {
 	LOG_FUNC_ONE_ARG(Irp);
 
-	LOG_UNIMPLEMENTED();
+	ExFreePool(Irp);
 }
 
 // ******************************************************************
@@ -1237,11 +1294,15 @@ XBSYSAPI EXPORTNUM(73) xbox::PVOID NTAPI xbox::IoInitializeIrp
 		LOG_FUNC_ARG(StackSize)
 		LOG_FUNC_END;
 
-	xbox::PVOID ret = nullptr;
+	memset(Irp, 0, PacketSize);
+	Irp->Type = 6; // IO_TYPE_IRP
+	Irp->Size = PacketSize;
+	Irp->StackCount = StackSize;
+	Irp->CurrentLocation = StackSize + 1;
+	Irp->Tail.Overlay.CurrentStackLocation =
+		reinterpret_cast<PIO_STACK_LOCATION>(Irp + 1) + StackSize;
 
-	LOG_UNIMPLEMENTED();
-
-	RETURN(ret);
+	RETURN((PVOID)Irp);
 }
 
 // ******************************************************************
@@ -1375,11 +1436,73 @@ XBSYSAPI EXPORTNUM(76) xbox::ntstatus_xt NTAPI xbox::IoQueryVolumeInformation
 		LOG_FUNC_ARG_OUT(ReturnedLength)
 		LOG_FUNC_END;
 
-	// Dxbx note : This is almost identical to NtQueryVolumeInformationFile
-	// DxbxPC2XB_FS_INFORMATION
-	LOG_UNIMPLEMENTED();
+	ntstatus_xt result;
 
-	RETURN(X_STATUS_NOT_IMPLEMENTED);
+	if (FsInformationClass == FileFsSizeInformation) {
+		if (Length < sizeof(FILE_FS_SIZE_INFORMATION)) {
+			RETURN(X_STATUS_INFO_LENGTH_MISMATCH);
+		}
+
+		PFILE_FS_SIZE_INFORMATION SizeInfo = (PFILE_FS_SIZE_INFORMATION)FsInformation;
+
+		switch (FileObject->DeviceObject->DeviceType) {
+		case FILE_DEVICE_DISK2: {
+			XboxPartitionTable partitionTable = CxbxGetPartitionTable();
+			PIDE_DISK_EXTENSION DeviceExtension = reinterpret_cast<PIDE_DISK_EXTENSION>(FileObject->DeviceObject->DeviceExtension);
+			int partitionNumber = DeviceExtension->PartitionInformation.PartitionNumber;
+			FATX_SUPERBLOCK superBlock = CxbxGetFatXSuperBlock(partitionNumber);
+
+			SizeInfo->BytesPerSector = 512;
+			SizeInfo->SectorsPerAllocationUnit = 32;
+			if (superBlock.ClusterSize > 0) {
+				SizeInfo->SectorsPerAllocationUnit = superBlock.ClusterSize;
+			}
+			SizeInfo->TotalAllocationUnits.QuadPart = partitionTable.TableEntries[partitionNumber - 1].LBASize / SizeInfo->SectorsPerAllocationUnit;
+			SizeInfo->AvailableAllocationUnits.QuadPart = SizeInfo->TotalAllocationUnits.QuadPart;
+
+			if (ReturnedLength) {
+				*ReturnedLength = sizeof(FILE_FS_SIZE_INFORMATION);
+			}
+			result = X_STATUS_SUCCESS;
+			break;
+		}
+		case FILE_DEVICE_CD_ROM2:
+			SizeInfo->BytesPerSector = 2048;
+			SizeInfo->SectorsPerAllocationUnit = 1;
+			SizeInfo->TotalAllocationUnits.QuadPart = 3820880;
+			SizeInfo->AvailableAllocationUnits.QuadPart = 0;
+
+			if (ReturnedLength) {
+				*ReturnedLength = sizeof(FILE_FS_SIZE_INFORMATION);
+			}
+			result = X_STATUS_SUCCESS;
+			break;
+
+		default:
+			EmuLog(LOG_LEVEL::WARNING, "IoQueryVolumeInformation: unrecognized DeviceType %d", FileObject->DeviceObject->DeviceType);
+			result = X_STATUS_INVALID_PARAMETER;
+			break;
+		}
+	} else {
+		// Forward other classes to the host via the native handle
+		const auto& nFileHandle = GetObjectNativeHandle(FileObject);
+		if (!nFileHandle) {
+			RETURN(X_STATUS_INVALID_HANDLE);
+		}
+
+		NtDll::IO_STATUS_BLOCK iosb;
+		result = NtDll::NtQueryVolumeInformationFile(
+			*nFileHandle,
+			&iosb,
+			(NtDll::PFILE_FS_SIZE_INFORMATION)FsInformation, Length,
+			(NtDll::FS_INFORMATION_CLASS)FsInformationClass);
+
+		if (ReturnedLength && X_NT_SUCCESS(result)) {
+			*ReturnedLength = (ULONG)iosb.Information;
+		}
+	}
+
+	RETURN(result);
 }
 
 // ******************************************************************
@@ -1392,7 +1515,11 @@ XBSYSAPI EXPORTNUM(77) xbox::void_xt NTAPI xbox::IoQueueThreadIrp
 {
 	LOG_FUNC_ONE_ARG(Irp);
 
-	LOG_UNIMPLEMENTED();
+	// Set the IRP's thread to the current thread and insert into
+	// the thread's IRP list for tracking outstanding I/O.
+	PETHREAD Thread = (PETHREAD)KeGetCurrentThread();
+	Irp->Tail.Overlay.Thread = Thread;
+	InsertHeadList(&Thread->IrpList, &Irp->ThreadListEntry);
 }
 
 // ******************************************************************
@@ -1584,7 +1711,20 @@ XBSYSAPI EXPORTNUM(83) xbox::void_xt NTAPI xbox::IoStartPacket
 		LOG_FUNC_ARG_OUT(Key)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	BOOLEAN Inserted;
+
+	if (Key != xbox::zeroptr) {
+		Inserted = KeInsertByKeyDeviceQueue(&DeviceObject->DeviceQueue, &Irp->Tail.Overlay.DeviceQueueEntry, *Key);
+	} else {
+		Inserted = KeInsertDeviceQueue(&DeviceObject->DeviceQueue, &Irp->Tail.Overlay.DeviceQueueEntry);
+	}
+
+	if (!Inserted) {
+		DeviceObject->CurrentIrp = Irp;
+		if (DeviceObject->DriverObject->DriverStartIo) {
+			DeviceObject->DriverObject->DriverStartIo(DeviceObject, Irp);
+		}
+	}
 }
 
 // ******************************************************************
@@ -1662,9 +1802,17 @@ XBSYSAPI EXPORTNUM(86) xbox::ntstatus_xt FASTCALL xbox::IofCallDriver
 		LOG_FUNC_ARG(Irp)
 		LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	// Advance to the next stack location for this driver
+	Irp->CurrentLocation--;
+	Irp->Tail.Overlay.CurrentStackLocation--;
 
-	RETURN(S_OK);
+	PIO_STACK_LOCATION StackLocation = Irp->Tail.Overlay.CurrentStackLocation;
+
+	// Dispatch through the driver's MajorFunction table
+	PDRIVER_DISPATCH DispatchRoutine =
+		DeviceObject->DriverObject->MajorFunction[StackLocation->MajorFunction];
+
+	RETURN(DispatchRoutine(DeviceObject, Irp));
 }
 
 // ******************************************************************
@@ -1729,9 +1877,11 @@ XBSYSAPI EXPORTNUM(359) xbox::cchar_xt NTAPI xbox::IoMarkIrpMustComplete
 {
 	LOG_FUNC_ONE_ARG(Irp);
 
-	xbox::cchar_xt ret = 0; // ShareAccess->OpenCount;
+	// Set the must-complete flag so IoCompleteRequest knows to process it
+	Irp->Flags |= 0x2000; // IRP_MUST_COMPLETE_REQUEST
 
-	LOG_UNIMPLEMENTED();
+	// Return and adjust CurrentLocation (advances the stack location)
+	xbox::cchar_xt ret = Irp->CurrentLocation;
 
 	RETURN(ret);
 }

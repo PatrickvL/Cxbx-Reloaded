@@ -469,6 +469,7 @@ void NV2ADevice::Init()
 	
 	m_DeviceId = 0x02A5;
 	m_VendorId = PCI_VENDOR_ID_NVIDIA;
+	m_RevisionAndClassCode = 0x030000A1; // VGA-compatible display controller, rev A1
 
 	NV2AState *d = m_nv2a_state; // glue
 
@@ -502,12 +503,50 @@ void NV2ADevice::Init()
 	d->vblank_cb = nv2a_vblank_interrupt;
 
     qemu_mutex_init(&d->pfifo.pfifo_lock);
-    qemu_cond_init(&d->pfifo.puller_cond);
+    d->pfifo.puller_event = CreateEvent(NULL, FALSE, FALSE, NULL); // auto-reset
     qemu_cond_init(&d->pfifo.pusher_cond);
     qemu_cond_init(&d->pfifo.flush_complete_cond);
     d->pfifo.flush_requested = false;
 
     d->pfifo.regs[RI(NV_PFIFO_CACHE1_STATUS)] |= NV_PFIFO_CACHE1_STATUS_LOW_MARK;
+
+    // Initialize RAMHT/RAMFC registers to match what the read handlers return.
+    // On real Xbox hardware these are programmed by the BIOS during boot.
+    // The D3D runtime reads these to find the RAMHT/RAMFC locations in PRAMIN
+    // and writes entries there; ramht_lookup must use the same values internally.
+    d->pfifo.regs[RI(NV_PFIFO_RAMHT)] = 0x03000100;
+    d->pfifo.regs[RI(NV_PFIFO_RAMFC)] = 0x00890110;
+
+    // Populate RAMHT with handle→instance mappings.
+    // On real Xbox the BIOS creates these entries; we emulate that here.
+    // RAMHT is at PRAMIN offset 0x10000 (4KB, 512 entries × 8 bytes).
+    // Hash for handles < 2048 with channel_id=0 is just the handle value.
+    // Entry format: word0=handle, word1=context (valid|engine|instance).
+    {
+        struct { uint32_t handle; uint32_t pramin_offset; } ramht_entries[] = {
+            { 0x02, 0x60 },  // DMA_TO_MEMORY: error notifier (small, base=0x03FD6020)
+            { 0x03, 0x10 },  // DMA_FROM_MEMORY: textures/vertices (all VRAM)
+            { 0x04, 0x30 },  // Bidirectional: state context (all VRAM)
+            { 0x07, 0x70 },  // Bidirectional: extended notifier (small, base=0x03FD6040)
+            { 0x08, 0x90 },  // Bidirectional: semaphore/fence (base=0x03FD6000, limit=0x20)
+            { 0x09, 0x20 },  // DMA_TO_MEMORY: color render target (all VRAM)
+            { 0x0A, 0x40 },  // Bidirectional: zeta/depth buffer (all VRAM)
+            { 0x0B, 0xA0 },  // DMA_FROM_MEMORY: second read context (all VRAM)
+            { 0x0C, 0x80 },  // Bidirectional: report/occlusion query (256MB)
+            { 0x11, 0x10 },  // DMA_FROM_MEMORY: vertex read (shares with handle 3)
+            { 0x19, 0x80 },  // Bidirectional: catch-all init DMA (256MB)
+        };
+
+        const uint32_t ramht_base = 0x10000; // PRAMIN offset of RAMHT
+        for (auto& e : ramht_entries) {
+            uint32_t hash = e.handle; // For handles < 2048 with channel_id=0
+            uint32_t context = NV_RAMHT_STATUS | NV_RAMHT_ENGINE_GRAPHICS
+                             | (e.pramin_offset >> 4);
+            uint8_t *entry_ptr = d->pramin.ramin_ptr + ramht_base + hash * 8;
+            *(uint32_t*)(entry_ptr + 0) = e.handle;
+            *(uint32_t*)(entry_ptr + 4) = context;
+        }
+    }
 
     // FIFO threads are started later by StartFifoThreads(), after the host
     // D3D11 device has been created (the puller thread calls D3D11 APIs).
@@ -527,11 +566,14 @@ void NV2ADevice::Reset()
 
 	d->exiting = true;
 
-	qemu_cond_broadcast(&d->pfifo.puller_cond);
+	SetEvent(d->pfifo.puller_event);
+	qemu_mutex_lock(&d->pfifo.pfifo_lock);
 	qemu_cond_broadcast(&d->pfifo.pusher_cond);
 	qemu_cond_broadcast(&d->pfifo.flush_complete_cond);
+	qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 	d->pfifo.puller_thread.join();
 	d->pfifo.pusher_thread.join();
+	CloseHandle(d->pfifo.puller_event);
 	qemu_mutex_destroy(&d->pfifo.pfifo_lock); // Cxbxr addition
 
 	pgraph_destroy(&d->pgraph);

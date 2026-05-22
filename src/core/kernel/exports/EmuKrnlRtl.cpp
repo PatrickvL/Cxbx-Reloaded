@@ -252,15 +252,12 @@ XBSYSAPI EXPORTNUM(264) xbox::void_xt NTAPI xbox::RtlAssert
 		LOG_FUNC_ARG(Message)
 		LOG_FUNC_END;
 
-	std::stringstream ss;
-	ss << "RtlAssert() raised by emulated program\n" << FileName << ":" << LineNumber << ":" << FailedAssertion ;
-	if (Message) {
-		ss << " " << Message;
-	}
-
-	ss << ")";
-
-	PopupWarning(nullptr, ss.str().c_str());
+	// On retail Xbox, RtlAssert is a no-op (only breaks into debugger on debug kernels)
+	EmuLog(LOG_LEVEL::WARNING, "RtlAssert: %s:%lu: %s %s",
+		FileName ? FileName : "(null)",
+		LineNumber,
+		FailedAssertion ? FailedAssertion : "(null)",
+		Message ? Message : "");
 }
 
 // ******************************************************************
@@ -1167,16 +1164,13 @@ XBSYSAPI EXPORTNUM(289) xbox::void_xt NTAPI xbox::RtlInitAnsiString
 	IN     PCSZ         SourceString
 )
 {
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG_OUT(DestinationString)
-		LOG_FUNC_ARG(SourceString)
-		LOG_FUNC_END;
+	// No LOG_FUNC: this is a high-frequency leaf function called by the
+	// kernel's own I/O path. Logging here causes infinite recursion when
+	// the logging infrastructure itself triggers string initialization.
 
 	DestinationString->Buffer = const_cast<PCHAR>(SourceString);
 	if (SourceString != NULL) {
-		CCHAR *pSourceString = (CCHAR*)(SourceString);
-		DestinationString->Buffer = const_cast<PCHAR>(SourceString);
-		DestinationString->Length = (USHORT)strlen(pSourceString);
+		DestinationString->Length = (USHORT)strlen(SourceString);
 		DestinationString->MaximumLength = DestinationString->Length + 1;
 	}
 	else {
@@ -1193,15 +1187,16 @@ XBSYSAPI EXPORTNUM(290) xbox::void_xt NTAPI xbox::RtlInitUnicodeString
 	IN     PCWSTR         SourceString
 )
 {
-	LOG_FUNC_BEGIN
-		LOG_FUNC_ARG_OUT(DestinationString)
-		LOG_FUNC_ARG(SourceString)
-		LOG_FUNC_END;
+	// No LOG_FUNC: same rationale as RtlInitAnsiString — high-frequency
+	// leaf function used internally by kernel I/O and string operations.
 
 	DestinationString->Buffer = (wchar_xt*)SourceString;
 	if (SourceString != NULL) {
-		DestinationString->Length = (USHORT)std::u16string(SourceString).length() * 2;
-		DestinationString->MaximumLength = DestinationString->Length + 2;
+		const wchar_xt* p = SourceString;
+		while (*p) p++;
+		USHORT len = (USHORT)((p - SourceString) * sizeof(wchar_xt));
+		DestinationString->Length = len;
+		DestinationString->MaximumLength = len + sizeof(wchar_xt);
 	}
 	else {
 		DestinationString->Length = DestinationString->MaximumLength = 0;
@@ -1347,9 +1342,13 @@ XBSYSAPI EXPORTNUM(295) xbox::void_xt NTAPI xbox::RtlLeaveCriticalSectionAndRegi
 
     RtlLeaveCriticalSection(CriticalSection);
 
-	// KeLeaveCriticalRegion must be called unconditionally to pair 1:1
-	// with KeLeaveCriticalRegion in RtlEnterCriticalSectionAndRegion.
-	KeLeaveCriticalRegion();
+	// Only leave the critical region when the critical section is fully released
+	// (RecursionCount dropped to 0). This pairs with the unconditional
+	// KeEnterCriticalRegion in RtlEnterCriticalSectionAndRegion, but defers the
+	// matching leave until the lock is no longer held.
+	if (CriticalSection->RecursionCount == 0) {
+		KeLeaveCriticalRegion();
+	}
 }
 
 // ******************************************************************
@@ -1447,22 +1446,23 @@ XBSYSAPI EXPORTNUM(299) xbox::ntstatus_xt NTAPI xbox::RtlMultiByteToUnicodeN
 		LOG_FUNC_ARG(BytesInMultiByteString)
 		LOG_FUNC_END;
 
-	ULONG maxUnicodeChars = MaxBytesInUnicodeString / sizeof(WCHAR);
+	ULONG maxUnicodeChars = MaxBytesInUnicodeString / sizeof(wchar_xt);
 	ULONG numChars = (maxUnicodeChars < BytesInMultiByteString) ? maxUnicodeChars : BytesInMultiByteString;
+	ntstatus_xt Status = (maxUnicodeChars < BytesInMultiByteString) ? X_STATUS_BUFFER_OVERFLOW : X_STATUS_SUCCESS;
 
 	if (BytesInUnicodeString != NULL) {
-		*BytesInUnicodeString = numChars * sizeof(WCHAR);
+		*BytesInUnicodeString = numChars * sizeof(wchar_xt);
 	}
 
 	while (numChars) {
-		*UnicodeString = (WCHAR)(*MultiByteString);
+		*UnicodeString = (wchar_xt)(*MultiByteString);
 
 		UnicodeString++;
 		MultiByteString++;
 		numChars--;
 	}
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(Status);
 }
 
 // ******************************************************************
@@ -1496,7 +1496,15 @@ XBSYSAPI EXPORTNUM(301) xbox::ulong_xt NTAPI xbox::RtlNtStatusToDosError
 {
 	LOG_FUNC_ONE_ARG(Status);
 
-	ULONG ret = NtDll::RtlNtStatusToDosError(Status);
+	ULONG ret;
+
+	// Xbox kernel maps STATUS_TIMEOUT to WAIT_TIMEOUT directly,
+	// while Windows host maps it to ERROR_TIMEOUT (0x5B4)
+	if (Status == STATUS_TIMEOUT) {
+		ret = WAIT_TIMEOUT;
+	} else {
+		ret = NtDll::RtlNtStatusToDosError(Status);
+	}
 /* https://doxygen.reactos.org/de/ddc/sdk_2lib_2rtl_2error_8c.html#aaad43f3dbf8784c2ca1ef07748199f20
 	struct error_table {
 		DWORD       start;
@@ -1593,14 +1601,10 @@ XBSYSAPI EXPORTNUM(302) xbox::void_xt NTAPI xbox::RtlRaiseException
 {
 	LOG_FUNC_ONE_ARG(ExceptionRecord);
 
-	// The Xbox EXCEPTION_RECORD layout is identical to the Windows one.
-	// Dispatch through the host Win32 SEH mechanism so that the game's
-	// own __try/__except handlers can catch the exception as expected.
-	::RaiseException(
-		ExceptionRecord->ExceptionCode,
-		ExceptionRecord->ExceptionFlags,
-		ExceptionRecord->NumberParameters,
-		reinterpret_cast<const ULONG_PTR*>(ExceptionRecord->ExceptionInformation));
+	// Dispatch through the Xbox exception chain (KPCR[0]), not host SEH.
+	// Xbox __try/__except handlers register on KPCR[0], so we must use
+	// ExRaiseException which walks that chain.
+	ExRaiseException(ExceptionRecord);
 }
 
 // ******************************************************************
@@ -1864,15 +1868,15 @@ XBSYSAPI EXPORTNUM(309) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeStringToInteger
 		LOG_FUNC_ARG(Value)
 		LOG_FUNC_END;
 
-	LPWSTR lpwstr = (LPWSTR)String->Buffer;
-	USHORT CharsRemaining = String->Length / sizeof(WCHAR);
+	wchar_xt* lpwstr = String->Buffer;
+	USHORT CharsRemaining = String->Length / sizeof(wchar_xt);
 	char bMinus = 0;
- 
+
 	while (CharsRemaining >= 1 && *lpwstr <= ' ') {
 		lpwstr++;
 		CharsRemaining--;
 	}
- 
+
 	if (CharsRemaining >= 1) {
 		if (*lpwstr == '+') {
 			lpwstr++;
@@ -1884,10 +1888,10 @@ XBSYSAPI EXPORTNUM(309) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeStringToInteger
 			CharsRemaining--;
 		}
 	}
- 
+
 	if (Base == 0) {
 		Base = 10;
- 
+
 		if (CharsRemaining >= 2 && lpwstr[0] == '0') {
 			if (lpwstr[1] == 'b') {
 				lpwstr += 2;
@@ -1909,17 +1913,17 @@ XBSYSAPI EXPORTNUM(309) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeStringToInteger
 	else if (Base != 2 && Base != 8 && Base != 10 && Base != 16) {
 		return STATUS_INVALID_PARAMETER;
 	}
- 
+
 	if (Value == NULL) {
 		return STATUS_ACCESS_VIOLATION;
 	}
- 
+
 	ULONG RunningTotal = 0;
 
 	while (CharsRemaining >= 1) {
-		WCHAR wchCurrent = *lpwstr;
+		wchar_xt wchCurrent = *lpwstr;
 		int digit;
- 
+
 		if (wchCurrent >= '0' && wchCurrent <= '9') {
 			digit = wchCurrent - '0';
 		}
@@ -1932,16 +1936,16 @@ XBSYSAPI EXPORTNUM(309) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeStringToInteger
 		else {
 			digit = -1;
 		}
- 
+
 		if (digit < 0 || (ULONG)digit >= Base) {
 			break;
 		}
- 
+
 		RunningTotal = RunningTotal * Base + digit;
 		lpwstr++;
 		CharsRemaining--;
 	}
- 
+
 	*Value = bMinus ? (0 - RunningTotal) : RunningTotal;
 
 	RETURN(X_STATUS_SUCCESS);
@@ -1967,8 +1971,9 @@ XBSYSAPI EXPORTNUM(310) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeToMultiByteN
 		LOG_FUNC_ARG(BytesInUnicodeString)
 		LOG_FUNC_END;
 
-	ULONG maxUnicodeChars = BytesInUnicodeString / sizeof(WCHAR);
+	ULONG maxUnicodeChars = BytesInUnicodeString / sizeof(wchar_xt);
 	ULONG numChars = (maxUnicodeChars < MaxBytesInMultiByteString) ? maxUnicodeChars : MaxBytesInMultiByteString;
+	ntstatus_xt Status = (maxUnicodeChars > MaxBytesInMultiByteString) ? X_STATUS_BUFFER_OVERFLOW : X_STATUS_SUCCESS;
 
 	if (BytesInMultiByteString != NULL) {
 		*BytesInMultiByteString = numChars;
@@ -1982,7 +1987,7 @@ XBSYSAPI EXPORTNUM(310) xbox::ntstatus_xt NTAPI xbox::RtlUnicodeToMultiByteN
 		numChars--;
 	}
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(Status);
 }
 
 // ******************************************************************
@@ -2024,22 +2029,50 @@ XBSYSAPI EXPORTNUM(312) xbox::void_xt NTAPI xbox::RtlUnwind
 		LOG_FUNC_ARG(ReturnValue)
 	LOG_FUNC_END;
 
-	// The Xbox RtlUnwind signature is identical to the Windows one.
-	// Delegate to the host to walk and unwind the SEH chain back to
-	// TargetFrame, invoking termination handlers along the way.
-	//
-	// WARNING: RtlUnwind does not respect stdcall non-volatile register
-	// conventions. It captures the register context via RtlCaptureContext
-	// after some of its prologue has already trashed non-volatile registers,
-	// then ZwContinue restores that (already corrupted) context to return
-	// to the caller. On the Xbox kernel, RtlUnwind is only ever called from
-	// _global_unwind2, which saves/restores non-volatile registers around it
-	// (Microsoft was aware of the problem). We return immediately after
-	// the call here, so the register trashing is harmless. Do NOT add code
-	// after this call that depends on non-volatile register values.
-	::RtlUnwind(TargetFrame, TargetIp,
-		reinterpret_cast<::PEXCEPTION_RECORD>(ExceptionRecord),
-		ReturnValue);
+	// Walk the Xbox exception chain (stored in KPCR[0]) from head to TargetFrame,
+	// calling each handler with the UNWINDING flag to run __finally blocks.
+	// Xbox code's fs:[0] accesses are patched to use KPCR[0], so we must operate
+	// on KPCR[0] directly — NOT delegate to host ::RtlUnwind (which uses real fs:[0]).
+
+	// Build an unwind exception record if none provided
+	EXCEPTION_RECORD LocalRecord = {};
+	if (ExceptionRecord == nullptr) {
+		ExceptionRecord = &LocalRecord;
+	}
+	ExceptionRecord->ExceptionFlags |= X_EXCEPTION_UNWINDING;
+	if (TargetFrame == nullptr) {
+		ExceptionRecord->ExceptionFlags |= X_EXCEPTION_EXIT_UNWIND;
+	}
+
+	// Handler function type
+	typedef EXCEPTION_DISPOSITION (NTAPI *PEXCEPTION_HANDLER_FUNC)(
+		PEXCEPTION_RECORD ExceptionRecord,
+		PVOID EstablisherFrame,
+		PCONTEXT ContextRecord,
+		PVOID DispatcherContext
+	);
+
+	CONTEXT Context = {};
+	PVOID DispatcherContext = nullptr;
+
+	DWORD kpcrPtr = __readfsdword(TIB_ArbitraryDataSlot);
+	auto Registration = reinterpret_cast<PEXCEPTION_REGISTRATION_RECORD>(*(DWORD *)kpcrPtr);
+
+	while (Registration != reinterpret_cast<PEXCEPTION_REGISTRATION_RECORD>(X_EXCEPTION_CHAIN_END)) {
+		if (Registration == reinterpret_cast<PEXCEPTION_REGISTRATION_RECORD>(TargetFrame)) {
+			break;
+		}
+
+		auto Handler = reinterpret_cast<PEXCEPTION_HANDLER_FUNC>(Registration->Handler);
+
+		// Call the handler with UNWINDING flag — runs __finally blocks
+		Handler(ExceptionRecord, Registration, &Context, &DispatcherContext);
+
+		// Pop this frame from the Xbox exception chain
+		// (Re-read KPCR[0] in case the handler modified it during local unwind)
+		Registration = Registration->Next;
+		*(DWORD *)kpcrPtr = reinterpret_cast<DWORD>(Registration);
+	}
 }
 
 // ******************************************************************
@@ -2118,8 +2151,9 @@ XBSYSAPI EXPORTNUM(315) xbox::ntstatus_xt NTAPI xbox::RtlUpcaseUnicodeToMultiByt
 		LOG_FUNC_ARG(BytesInUnicodeString)
 		LOG_FUNC_END;
 
-	ULONG maxUnicodeChars = BytesInUnicodeString / sizeof(WCHAR);
+	ULONG maxUnicodeChars = BytesInUnicodeString / sizeof(wchar_xt);
 	ULONG numChars = (maxUnicodeChars < MaxBytesInMultiByteString) ? maxUnicodeChars : MaxBytesInMultiByteString;
+	ntstatus_xt Status = (maxUnicodeChars > MaxBytesInMultiByteString) ? X_STATUS_BUFFER_OVERFLOW : X_STATUS_SUCCESS;
 
 	if (BytesInMultiByteString != NULL) {
 		*BytesInMultiByteString = numChars;
@@ -2136,7 +2170,7 @@ XBSYSAPI EXPORTNUM(315) xbox::ntstatus_xt NTAPI xbox::RtlUpcaseUnicodeToMultiByt
 		numChars--;
 	}
 
-	RETURN(X_STATUS_SUCCESS);
+	RETURN(Status);
 }
 
 // ******************************************************************

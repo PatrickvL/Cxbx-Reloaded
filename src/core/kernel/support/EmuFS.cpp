@@ -41,6 +41,9 @@
 #include <cstdio>
 #include <vector>
 
+// Global DpcRoutineActive flag (single-CPU emulation, defined in EmuKrnlKe.cpp)
+extern volatile xbox::ulong_xt g_DpcRoutineActive;
+
 #ifdef RtlZeroMemory
 #undef RtlZeroMemory
 #endif
@@ -123,44 +126,26 @@ NT_TIB *GetNtTib()
 	return (NT_TIB *)__readfsdword(TIB_LinearSelfAddress);
 }
 
-uint32_t fs_lock = 0;
+// ******************************************************************
+// * FS Thunks — Trailing-offset-byte scheme
+// *
+// * Each patched instruction is overwritten as:
+// *   CALL rel32 (5 bytes) + KPCR offset byte (1 byte) + NOP padding
+// *
+// * The thunk reads the offset byte from [return_address], increments
+// * the return address past it, then uses it as [KPCR_base + offset].
+// * One thunk per register per direction handles all valid KPCR offsets,
+// * reducing ~50 naked functions to 12 regular + 5 special = 17 total.
+// ******************************************************************
 
-__declspec(naked) void LockFS()
-{
-	__asm {
-		// Backup Registers
-		pushfd
-		pushad
-		jmp entry
-
-		// Spin until we can aquire the lock
-		spinlock :
-		call SwitchToThread // Give other threads a chance to run if we couldn't get the lock
-		entry:
-		mov eax, 1
-		xchg eax, fs_lock
-		test eax, eax
-		jnz spinlock
-
-		// Restore registers and return
-		popad
-		popfd
-		ret
-	}
-}
-
-__declspec(naked) void UnlockFS()
-{
-	__asm {
-		pushfd
-		pushad
-		xor eax, eax
-		xchg eax, fs_lock
-		popad
-		popfd
-		ret
-	}
-}
+// Valid KPCR offsets that Xbox code may access via fs:[]
+static const uint8_t kValidKpcrOffsets[] = {
+	0x00, // KPCR.NtTib              — ExceptionList (start of NT_TIB)
+	0x04, // KPCR.NtTib.StackBase    — Thread stack base
+	0x20, // KPCR.Prcb              — Pointer to KPRCB
+	0x28, // KPCR.PrcbData          — Inline KPRCB (CurrentThread, etc.)
+	0x58, // KPCR.PrcbData.DpcRoutineActive
+};
 
 void EmuKeSetPcr(xbox::KPCR *Pcr)
 {
@@ -195,7 +180,7 @@ void EmuKeSetPcr(xbox::KPCR *Pcr)
 void EmuKeFreePcr()
 {
 	using namespace xbox;
-	PVOID Pcr = EmuKeGetPcr();
+	PVOID Pcr = (PVOID)EmuKeGetPcr();
 	ulong_xt Size = zero;
 	ntstatus_xt Status = NtFreeVirtualMemory(&Pcr, &Size, XBOX_MEM_RELEASE); // free pcr
 	assert(Status == X_STATUS_SUCCESS);
@@ -220,9 +205,13 @@ __declspec(naked) void EmuFS_RefreshKPCR()
 	}
 }
 
+// ******************************************************************
+// * Special thunks (exact-match, no trailing offset byte)
+// ******************************************************************
+
 __declspec(naked) void EmuFS_CmpEsiFs00()
 {
-	// Note : eax must be preserved here, hence the push/pop
+	// cmp esi, large fs:0 — compare esi with KPCR[0] (ExceptionList)
 	__asm
 	{
 		call EmuFS_RefreshKPCR
@@ -234,174 +223,9 @@ __declspec(naked) void EmuFS_CmpEsiFs00()
 	}
 }
 
-__declspec(naked) void EmuFS_MovEaxFs00()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov eax, [eax]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEaxFs04()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov eax, [eax + 04h]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEaxFs20()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov eax, [eax + 20h]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEaxFs28()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov eax, [eax + 28h]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEaxFs58()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov eax, [eax + 58h]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEbxFs00()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov ebx, fs : [TIB_ArbitraryDataSlot]
-		mov ebx, [ebx]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEbxFs04()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov ebx, fs : [TIB_ArbitraryDataSlot]
-		mov ebx, [ebx + 04h]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEcxFs00()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov ecx, fs : [TIB_ArbitraryDataSlot]
-		mov ecx, [ecx]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEcxFs04()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov ecx, fs : [TIB_ArbitraryDataSlot]
-		mov ecx, [ecx + 04h]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEdiFs00()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov edi, fs : [TIB_ArbitraryDataSlot]
-		mov edi, [edi]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEdiFs04()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov edi, fs : [TIB_ArbitraryDataSlot]
-		mov edi, [edi + 04h]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEdxFs00()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov edx, fs : [TIB_ArbitraryDataSlot]
-		mov edx, [edx]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEdxFs04()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov edx, fs : [TIB_ArbitraryDataSlot]
-		mov edx, [edx + 04h]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEsiFs00()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov esi, fs : [TIB_ArbitraryDataSlot]
-		mov esi, [esi]
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovEsiFs04()
-{
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		mov esi, fs : [TIB_ArbitraryDataSlot]
-		mov esi, [esi + 04h]
-		ret
-	}
-}
-
 __declspec(naked) void EmuFS_MovzxEaxBytePtrFs24()
 {
-	// Note : Inlined KeGetCurrentIrql()
+	// movzx eax, byte ptr fs:[24h] — inlined KeGetCurrentIrql()
 	__asm
 	{
 		call EmuFS_RefreshKPCR
@@ -411,101 +235,26 @@ __declspec(naked) void EmuFS_MovzxEaxBytePtrFs24()
 	}
 }
 
-__declspec(naked) void EmuFS_MovFs00Eax()
+__declspec(naked) void EmuFS_WriteEsp()
 {
-	// Note : ebx must be preserved here, hence the push/pop
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		push ebx
-		mov ebx, fs : [TIB_ArbitraryDataSlot]
-		mov [ebx], eax
-		pop ebx
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovFs00Ebx()
-{
-	// Note : eax must be preserved here, hence the push/pop
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		push eax
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov [eax], ebx
-		pop eax
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovFs00Ecx()
-{
-	// Note : eax must be preserved here, hence the push/pop
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		push eax
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov [eax], ecx
-		pop eax
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovFs00Edi()
-{
-	// Note : eax must be preserved here, hence the push/pop
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		push eax
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov [eax], edi
-		pop eax
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovFs00Edx()
-{
-	// Note : eax must be preserved here, hence the push/pop
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		push eax
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov [eax], edx
-		pop eax
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovFs00Esi()
-{
-	// Note : eax must be preserved here, hence the push/pop
-	__asm
-	{
-		call EmuFS_RefreshKPCR
-		push eax
-		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov [eax], esi
-		pop eax
-		ret
-	}
-}
-
-__declspec(naked) void EmuFS_MovFs00Esp()
-{
-	// Note : eax must be preserved here, hence the push/pop
+	// mov fs:[offset], esp — stores adjusted ESP to KPCR[offset]
+	// Uses trailing-offset-byte scheme but also needs flags preservation
+	// and ESP adjustment to compensate for CALL + pushfd overhead.
 	__asm
 	{
 		pushfd
 		call EmuFS_RefreshKPCR
 		push eax
+		push ecx
+		// Stack: [ecx, eax, flags, ret_addr, <caller>]
+		//         +0   +4   +8     +12
+		mov ecx, [esp + 12]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 12]
 		mov eax, fs : [TIB_ArbitraryDataSlot]
-		mov [eax], esp
-		add [eax], 12 // account for esp changes from pushed registers and return address
+		mov[eax + ecx], esp
+		add dword ptr[eax + ecx], 16  // adjust: ecx(4) + eax(4) + flags(4) + ret_addr(4)
+		pop ecx
 		pop eax
 		popfd
 		ret
@@ -514,81 +263,340 @@ __declspec(naked) void EmuFS_MovFs00Esp()
 
 __declspec(naked) void EmuFS_PushDwordPtrFs00()
 {
-	static uint32_t returnAddr;
-	static uint32_t temp;
-
+	// push large dword ptr fs:0 — push KPCR[0] onto caller's stack
+	// Uses two xchg instructions to shuffle the stack without any
+	// off-stack storage, eliminating the static-variable data race.
 	__asm
 	{
-		call LockFS
 		call EmuFS_RefreshKPCR
-		pop returnAddr
-		mov temp, eax
+		// Stack: [ret_addr, <caller>]
+		push eax                      // Stack: [eax_saved, ret_addr, <caller>]
 		mov eax, fs : [TIB_ArbitraryDataSlot]
-		push dword ptr[eax]
-		mov eax, temp
-		push returnAddr
-		call UnlockFS
-		ret
+		mov eax, [eax]                // eax = KPCR[0] (value to push)
+		xchg eax, [esp + 4]          // Stack: [eax_saved, value, <caller>], eax = ret_addr
+		xchg eax, [esp]              // Stack: [ret_addr, value, <caller>], eax = eax_saved
+		ret                           // Stack: [value, <caller>] — push simulated
 	}
 }
 
 __declspec(naked) void EmuFS_PopDwordPtrFs00()
 {
-	static uint32_t returnAddr;
-	static uint32_t temp;
-
+	// pop large dword ptr fs:0 — pop caller's stack into KPCR[0]
+	// Uses ret 4 to discard the consumed stack slot, matching the
+	// ESP increment a real pop would have performed.
 	__asm
 	{
-		call LockFS
 		call EmuFS_RefreshKPCR
-		pop returnAddr
-		mov temp, eax
+		// Stack: [ret_addr, popped_value, <caller>]
+		push eax
+		push ebx
+		// Stack: [ebx, eax, ret_addr, popped_value, <caller>]
+		//         +0   +4   +8        +12
 		mov eax, fs : [TIB_ArbitraryDataSlot]
-		pop dword ptr [eax]
-		mov eax, temp
-		push returnAddr
-		call UnlockFS
+		mov ebx, [esp + 12]           // ebx = popped_value
+		mov[eax], ebx                 // KPCR[0] = popped_value
+		pop ebx
+		pop eax
+		// Stack: [ret_addr, popped_value, <caller>]
+		ret 4                         // return and discard popped_value slot
+		// Stack: [<caller>] — pop simulated
+	}
+}
+
+// ******************************************************************
+// * Regular read thunks (trailing-offset-byte scheme)
+// *
+// * The thunk reads the KPCR offset byte from [return_address],
+// * increments the return address past it, then loads KPCR[offset]
+// * into the target register.
+// ******************************************************************
+
+__declspec(naked) void EmuFS_ReadEax()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push ecx
+		mov ecx, [esp + 4]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 4]
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov eax, [eax + ecx]
+		pop ecx
 		ret
 	}
 }
 
+__declspec(naked) void EmuFS_ReadEbx()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push ecx
+		mov ecx, [esp + 4]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 4]
+		mov ebx, fs : [TIB_ArbitraryDataSlot]
+		mov ebx, [ebx + ecx]
+		pop ecx
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_ReadEcx()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		mov eax, [esp + 4]
+		movzx eax, byte ptr[eax]
+		inc dword ptr[esp + 4]
+		mov ecx, fs : [TIB_ArbitraryDataSlot]
+		mov ecx, [ecx + eax]
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_ReadEdx()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push ecx
+		mov ecx, [esp + 4]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 4]
+		mov edx, fs : [TIB_ArbitraryDataSlot]
+		mov edx, [edx + ecx]
+		pop ecx
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_ReadEsi()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push ecx
+		mov ecx, [esp + 4]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 4]
+		mov esi, fs : [TIB_ArbitraryDataSlot]
+		mov esi, [esi + ecx]
+		pop ecx
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_ReadEdi()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push ecx
+		mov ecx, [esp + 4]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 4]
+		mov edi, fs : [TIB_ArbitraryDataSlot]
+		mov edi, [edi + ecx]
+		pop ecx
+		ret
+	}
+}
+
+// ******************************************************************
+// * Regular write thunks (trailing-offset-byte scheme)
+// *
+// * The thunk reads the KPCR offset byte from [return_address],
+// * increments the return address past it, then stores the source
+// * register into KPCR[offset]. Writes to offset 0x58 also sync
+// * the global g_DpcRoutineActive flag.
+// ******************************************************************
+
+__declspec(naked) void EmuFS_WriteEax()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push ecx
+		push ebx
+		mov ecx, [esp + 8]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 8]
+		mov ebx, fs : [TIB_ArbitraryDataSlot]
+		mov[ebx + ecx], eax
+		cmp ecx, 58h
+		jne no_dpc_eax
+		mov[g_DpcRoutineActive], eax
+	no_dpc_eax:
+		pop ebx
+		pop ecx
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_WriteEbx()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		push ecx
+		mov ecx, [esp + 8]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 8]
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov[eax + ecx], ebx
+		cmp ecx, 58h
+		jne no_dpc_ebx
+		mov[g_DpcRoutineActive], ebx
+	no_dpc_ebx:
+		pop ecx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_WriteEcx()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		push ebx
+		mov ebx, [esp + 8]
+		movzx ebx, byte ptr[ebx]
+		inc dword ptr[esp + 8]
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov[eax + ebx], ecx
+		cmp ebx, 58h
+		jne no_dpc_ecx
+		mov[g_DpcRoutineActive], ecx
+	no_dpc_ecx:
+		pop ebx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_WriteEdx()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		push ecx
+		mov ecx, [esp + 8]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 8]
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov[eax + ecx], edx
+		cmp ecx, 58h
+		jne no_dpc_edx
+		mov[g_DpcRoutineActive], edx
+	no_dpc_edx:
+		pop ecx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_WriteEsi()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		push ecx
+		mov ecx, [esp + 8]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 8]
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov[eax + ecx], esi
+		cmp ecx, 58h
+		jne no_dpc_esi
+		mov[g_DpcRoutineActive], esi
+	no_dpc_esi:
+		pop ecx
+		pop eax
+		ret
+	}
+}
+
+__declspec(naked) void EmuFS_WriteEdi()
+{
+	__asm
+	{
+		call EmuFS_RefreshKPCR
+		push eax
+		push ecx
+		mov ecx, [esp + 8]
+		movzx ecx, byte ptr[ecx]
+		inc dword ptr[esp + 8]
+		mov eax, fs : [TIB_ArbitraryDataSlot]
+		mov[eax + ecx], edi
+		cmp ecx, 58h
+		jne no_dpc_edi
+		mov[g_DpcRoutineActive], edi
+	no_dpc_edi:
+		pop ecx
+		pop eax
+		ret
+	}
+}
+
+// ******************************************************************
+// * Patch table and matching
+// ******************************************************************
+
+struct fs_patch_t {
+	std::vector<uint8_t> data;   // byte pattern to match
+	void* functionPtr;           // thunk to redirect to
+	int offsetBytePos;           // position of wildcard KPCR offset byte (-1 = exact match)
+};
+
 // initialize fs segment selector emulation
 void EmuInitFS()
 {
-	/**
-	* Build the vector of FS instructions we need to intercept.
-	* The entries must be in order of size, to keep the chance of false positives to a minimum.
-	*/
-	std::vector<fs_instruction_t> fsInstructions;
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x0F, 0xB6, 0x05, 0x24, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovzxEaxBytePtrFs24 });// movzx eax, large byte ptr fs:24
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x3B, 0x35, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_CmpEsiFs00 });				// cmp esi, large fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x1D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEbxFs00 });				// mov ebx, large fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x1D, 0x04, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEbxFs04 });				// mov ebx, large fs:4
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x0D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEcxFs00 });				// mov ecx, large fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x0D, 0x04, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEcxFs04 });				// mov ecx, large fs:4
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x3D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdiFs00 });				// mov edi, large fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x3D, 0x04, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdiFs04 });				// mov edi, large fs:4
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x15, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdxFs00 });				// mov edx, large fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x15, 0x04, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEdxFs04 });				// mov edx, large fs:4
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x35, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEsiFs00 });				// mov esi, large fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8B, 0x35, 0x04, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEsiFs04 });				// mov esi, large fs:4
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x1D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs00Ebx });				// mov large fs:0, ebx
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x0D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs00Ecx });				// mov large fs:0, ecx
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x3D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs00Edi });				// mov large fs:0, edi
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x15, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs00Edx });				// mov large fs:0, edx
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x35, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs00Esi });				// mov large fs:0, esi
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x89, 0x25, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs00Esp });				// mov large fs:0, esp
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0x8F, 0x05, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_PopDwordPtrFs00 });		    // pop large dword ptr fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xFF, 0x35, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_PushDwordPtrFs00 });		// push large dword ptr fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs00 });					// mov eax, large fs:0
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x04, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs04 });					// mov eax, large fs:4
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x20, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs20 });					// mov eax, large fs:20
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x28, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs28 });					// mov eax, large fs:28
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA1, 0x58, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovEaxFs58 });					// mov eax, large fs:58
-	fsInstructions.push_back(fs_instruction_t { { 0x64, 0xA3, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovFs00Eax });					// mov large fs:0, eax 
-	EmuLogEx(CXBXR_MODULE::INIT, LOG_LEVEL::DEBUG, "Patching FS Register Accesses\n");
-	DWORD sizeOfImage = CxbxKrnl_XbeHeader->dwSizeofImage;
-	long numberOfInstructions = fsInstructions.size();
+	// Build the patch table. Entries with offsetBytePos >= 0 use the
+	// trailing-offset-byte scheme: the byte at that position is a wildcard
+	// during matching (validated against kValidKpcrOffsets), and emitted as
+	// the trailing byte after the CALL opcode. Entries are ordered by size
+	// (longest first) to avoid false-positive partial matches.
+	std::vector<fs_patch_t> patches;
+
+	// 8-byte entries (exact match)
+	patches.push_back({ { 0x64, 0x0F, 0xB6, 0x05, 0x24, 0x00, 0x00, 0x00 }, (void*)&EmuFS_MovzxEaxBytePtrFs24, -1 });  // movzx eax, byte ptr fs:[24h]
+
+	// 7-byte entries — reads (wildcard offset at position 3)
+	patches.push_back({ { 0x64, 0x8B, 0x1D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_ReadEbx, 3 });  // mov ebx, fs:[??]
+	patches.push_back({ { 0x64, 0x8B, 0x0D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_ReadEcx, 3 });  // mov ecx, fs:[??]
+	patches.push_back({ { 0x64, 0x8B, 0x15, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_ReadEdx, 3 });  // mov edx, fs:[??]
+	patches.push_back({ { 0x64, 0x8B, 0x35, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_ReadEsi, 3 });  // mov esi, fs:[??]
+	patches.push_back({ { 0x64, 0x8B, 0x3D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_ReadEdi, 3 });  // mov edi, fs:[??]
+
+	// 7-byte entries — writes (wildcard offset at position 3)
+	patches.push_back({ { 0x64, 0x89, 0x1D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_WriteEbx, 3 }); // mov fs:[??], ebx
+	patches.push_back({ { 0x64, 0x89, 0x0D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_WriteEcx, 3 }); // mov fs:[??], ecx
+	patches.push_back({ { 0x64, 0x89, 0x15, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_WriteEdx, 3 }); // mov fs:[??], edx
+	patches.push_back({ { 0x64, 0x89, 0x35, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_WriteEsi, 3 }); // mov fs:[??], esi
+	patches.push_back({ { 0x64, 0x89, 0x3D, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_WriteEdi, 3 }); // mov fs:[??], edi
+	patches.push_back({ { 0x64, 0x89, 0x25, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_WriteEsp, 3 }); // mov fs:[??], esp
+
+	// 7-byte entries — specials (exact match)
+	patches.push_back({ { 0x64, 0x3B, 0x35, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_CmpEsiFs00, -1 });      // cmp esi, fs:[0]
+	patches.push_back({ { 0x64, 0x8F, 0x05, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_PopDwordPtrFs00, -1 });  // pop dword ptr fs:[0]
+	patches.push_back({ { 0x64, 0xFF, 0x35, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_PushDwordPtrFs00, -1 }); // push dword ptr fs:[0]
+
+	// 6-byte entries — eax short-form reads/writes (wildcard offset at position 2)
+	patches.push_back({ { 0x64, 0xA1, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_ReadEax, 2 });   // mov eax, fs:[??]
+	patches.push_back({ { 0x64, 0xA3, 0x00, 0x00, 0x00, 0x00 }, (void*)&EmuFS_WriteEax, 2 });  // mov fs:[??], eax
+
+	EmuLogEx(CXBXR_MODULE::INIT, LOG_LEVEL::DEBUG, "Patching FS Register Accesses (%d patterns)\n", patches.size());
+	long numberOfPatches = patches.size();
 
 	// Iterate through each CODE section
 	for (uint32_t sectionIndex = 0; sectionIndex < CxbxKrnl_Xbe->m_Header.dwSections; sectionIndex++) {
@@ -596,39 +604,68 @@ void EmuInitFS()
 			continue;
 		}
 
-		EmuLogEx(CXBXR_MODULE::INIT, LOG_LEVEL::DEBUG, "Searching for FS Instruction in section %s\n", CxbxKrnl_Xbe->m_szSectionName[sectionIndex]);
+		EmuLogEx(CXBXR_MODULE::INIT, LOG_LEVEL::DEBUG, "Searching for FS instructions in section %s\n",
+			CxbxKrnl_Xbe->m_szSectionName[sectionIndex]);
 		xbox::addr_xt startAddr = CxbxKrnl_Xbe->m_SectionHeader[sectionIndex].dwVirtualAddr;
 		xbox::addr_xt endAddr = startAddr + CxbxKrnl_Xbe->m_SectionHeader[sectionIndex].dwSizeofRaw;
+
 		for (xbox::addr_xt addr = startAddr; addr < endAddr; addr++)
 		{
-			for (int i = 0; i < numberOfInstructions; i++)
+			for (int i = 0; i < numberOfPatches; i++)
 			{
-				// Loop through the data, checking if we get an exact match
-				long sizeOfData = fsInstructions[i].data.size();
-
-				if (addr + sizeOfData >= endAddr)
-				{
+				long sizeOfData = patches[i].data.size();
+				if (addr + sizeOfData >= endAddr) {
 					continue;
 				}
 
-				if (memcmp((void*)addr, &fsInstructions[i].data[0], sizeOfData) == 0)
-				{
-					EmuLogEx(CXBXR_MODULE::INIT, LOG_LEVEL::DEBUG, "Patching FS Instruction at 0x%.8X\n", addr);
+				// Match the pattern, treating offsetBytePos as a wildcard
+				bool match = true;
+				uint8_t offsetByte = 0;
 
-					// Write Call opcode
+				for (int j = 0; j < sizeOfData; j++) {
+					if (j == patches[i].offsetBytePos) {
+						// Wildcard position — capture and validate against whitelist
+						offsetByte = *(uint8_t*)(addr + j);
+						bool valid = false;
+						for (auto off : kValidKpcrOffsets) {
+							if (offsetByte == off) { valid = true; break; }
+						}
+						if (!valid) { match = false; break; }
+					} else {
+						if (*(uint8_t*)(addr + j) != patches[i].data[j]) {
+							match = false; break;
+						}
+					}
+				}
+
+				if (match) {
+					EmuLogEx(CXBXR_MODULE::INIT, LOG_LEVEL::DEBUG, "Patching FS instruction at 0x%.8X\n", addr);
+
+					// Write CALL rel32 (5 bytes)
 					*(uint8_t*)addr = OPCODE_CALL_E8;
-					*(uint32_t*)(addr + 1) = (uint32_t)fsInstructions[i].functionPtr - addr - 5;
+					*(uint32_t*)(addr + 1) = (uint32_t)patches[i].functionPtr - addr - 5;
 
-					// Fill the remaining bytes with nop instructions
-					int remaining_bytes = fsInstructions[i].data.size() - 5;
-					memset((void*)(addr + 5), OPCODE_NOP_90, remaining_bytes);
+					if (patches[i].offsetBytePos >= 0) {
+						// Trailing-offset-byte scheme: write captured offset after CALL
+						*(uint8_t*)(addr + 5) = offsetByte;
+						// NOP-fill the remainder
+						int remaining = sizeOfData - 6;
+						if (remaining > 0) {
+							memset((void*)(addr + 6), OPCODE_NOP_90, remaining);
+						}
+					} else {
+						// Exact-match entry: NOP-fill after CALL
+						int remaining = sizeOfData - 5;
+						memset((void*)(addr + 5), OPCODE_NOP_90, remaining);
+					}
+
 					addr += sizeOfData - 1;
 					break;
 				}
 			}
 		}
 	}
-	
+
 	EmuLogEx(CXBXR_MODULE::INIT, LOG_LEVEL::DEBUG, "Done patching FS Register Accesses\n");
 }
 
@@ -729,6 +766,8 @@ void EmuGenerateFS(xbox::PETHREAD Ethread, unsigned Host2XbStackBaseReserved, un
 		xbox::NtAllocateVirtualMemory(&base, 0, &size, XBOX_MEM_RESERVE | XBOX_MEM_COMMIT, XBOX_PAGE_READWRITE);
 		Ethread = (xbox::PETHREAD)base;
 		xbox::RtlZeroMemory(Ethread, sizeof(xbox::ETHREAD)); // Clear, to prevent side-effects on random contents
+		// Initialize the IRP tracking list for this thread
+		InitializeListHead(&Ethread->IrpList);
 		// Emulate kernel stack size as we can't use exact size.
 		xbox::ulong_xt KernelStackSize = Host2XbStackBaseReserved - reinterpret_cast<xbox::ulong_xt>(hTib->StackLimit);
 		// Since the cxbxr's kernel initialization occur there, we do not create a new thread

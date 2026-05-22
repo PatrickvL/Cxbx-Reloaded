@@ -83,10 +83,13 @@ namespace NtDll
 #include "core\kernel\support\NativeHandle.h"
 #include "Timer.h"
 #include "Util.h"
+#include "devices/video/nv2a.h" // For NV2ADevice, NV_PCRTC_INTR_0_VBLANK
+#include "devices/Xbox.h"      // For g_NV2A
 
 #pragma warning(disable:4005) // Ignore redefined status values
 #include <ntstatus.h>
 
+#include <atomic>
 #include <chrono>
 #include <float.h>
 #include <thread>
@@ -97,12 +100,15 @@ namespace NtDll
 // TODO : Move towards thread-simulation based Dpc emulation
 typedef struct _DpcData {
 	CRITICAL_SECTION Lock;
-	std::atomic_flag IsDpcActive;
 	std::atomic_flag IsDpcPending;
 	xbox::LIST_ENTRY DpcQueue; // TODO : Use KeGetCurrentPrcb()->DpcListHead instead
 } DpcData;
 
 DpcData g_DpcData = { 0 }; // Note : g_DpcData is initialized in InitDpcData()
+// Xbox has a single CPU, so DpcRoutineActive is effectively a system-wide flag.
+// We store it globally (not per-thread) so that all threads—including the
+// background DPC dispatch thread—see the same suppression state.
+volatile xbox::ulong_xt g_DpcRoutineActive = 0;
 std::atomic_flag xbox::KeSystemTimeChanged;
 
 xbox::ulonglong_xt LARGE_INTEGER2ULONGLONG(xbox::LARGE_INTEGER value)
@@ -180,10 +186,10 @@ void KeSignalVBlankPending()
 // * NOTE: This is a macro on the Xbox, however we implement it 
 // * as a function so it can suit our emulated KPCR structure
 // ******************************************************************
-xbox::KPCR* WINAPI EmuKeGetPcr()
+volatile xbox::KPCR* WINAPI EmuKeGetPcr()
 {
 	// See EmuKeSetPcr()
-	xbox::PKPCR Pcr = (xbox::PKPCR)__readfsdword(TIB_ArbitraryDataSlot);
+	volatile xbox::PKPCR Pcr = (volatile xbox::PKPCR)__readfsdword(TIB_ArbitraryDataSlot);
 
 	// If this fails, it's a bug: it means we are executing xbox code from a host thread, and we have forgotten to initialize
 	// the xbox thread first
@@ -195,7 +201,7 @@ xbox::KPCR* WINAPI EmuKeGetPcr()
 // ******************************************************************
 // * KeGetCurrentPrcb()
 // ******************************************************************
-xbox::KPRCB *KeGetCurrentPrcb()
+volatile xbox::KPRCB *KeGetCurrentPrcb()
 {
 	return &(EmuKeGetPcr()->PrcbData);
 }
@@ -481,20 +487,21 @@ xbox::void_xt xbox::KeInitializeThread<false>(
 #define KeRaiseIrql(NewIrql, OldIrql) \
 	*(OldIrql) = KfRaiseIrql(NewIrql)
 
-void ExecuteDpcQueue()
+void ExecuteDpcQueue(bool inline_dispatch)
 {
 	xbox::PKDPC pkdpc;
 
 	// While we're working with the DpcQueue, we need to be thread-safe :
 	EnterCriticalSection(&(g_DpcData.Lock));
 
-//    if (g_DpcData._fShutdown)
-//        break; // while 
-
-//    Assert(g_DpcData._dwThreadId == GetCurrentThreadId());
-//    Assert(g_DpcData._dwDpcThreadId == 0);
-//    g_DpcData._dwDpcThreadId = g_DpcData._dwThreadId;
-//    Assert(g_DpcData._dwDpcThreadId != 0);
+	// Suppress dispatch if the current thread is already dispatching DPCs
+	// (re-entrancy via KiUnlockDispatcherDatabase -> KfLowerIrql) or if
+	// game code has explicitly suppressed via fs:0x58 (g_DpcRoutineActive).
+	// When inline_dispatch is true, the caller holds the reservation.
+	if (!inline_dispatch && (g_DpcRoutineActive || KeGetCurrentPrcb()->DpcRoutineActive)) {
+		LeaveCriticalSection(&(g_DpcData.Lock));
+		return;
+	}
 
 	// Are there entries in the DpqQueue?
 	while (!IsListEmpty(&(g_DpcData.DpcQueue)))
@@ -503,12 +510,14 @@ void ExecuteDpcQueue()
 		pkdpc = CONTAINING_RECORD(RemoveHeadList(&(g_DpcData.DpcQueue)), xbox::KDPC, DpcListEntry);
 		// Mark it as no longer linked into the DpcQueue
 		pkdpc->Inserted = FALSE;
-		// Set DpcRoutineActive to support KeIsExecutingDpc:
-		g_DpcData.IsDpcActive.test_and_set();
-		KeGetCurrentPrcb()->DpcRoutineActive = TRUE; // Experimental
+		// Set per-thread DpcRoutineActive for re-entrancy protection and
+		// KeIsExecutingDpc reporting. Don't touch g_DpcRoutineActive here —
+		// it's reserved for game-level suppression (fs:0x58 writes) and the
+		// KeInsertQueueDpc inline reservation.
+		KeGetCurrentPrcb()->DpcRoutineActive = TRUE;
 		LeaveCriticalSection(&(g_DpcData.Lock));
 
-		EmuLog(LOG_LEVEL::DEBUG, "Global DpcQueue, calling DPC object 0x%.8X at 0x%.8X", pkdpc, pkdpc->DeferredRoutine);
+		EmuLog(LOG_LEVEL::DEBUG, "DpcQueue: dispatching DPC 0x%.8X routine 0x%.8X", pkdpc, pkdpc->DeferredRoutine);
 
 		// Call the Deferred Procedure  :
 		pkdpc->DeferredRoutine(
@@ -518,16 +527,12 @@ void ExecuteDpcQueue()
 			pkdpc->SystemArgument2);
 
 		EnterCriticalSection(&(g_DpcData.Lock));
-		KeGetCurrentPrcb()->DpcRoutineActive = FALSE; // Experimental
-		g_DpcData.IsDpcActive.clear();
+		KeGetCurrentPrcb()->DpcRoutineActive = FALSE;
 	}
 
 	// NOTE: IsDpcPending is now cleared at the start of the DPC loop iteration
 	// (in CxbxKrnlMain) to prevent lost-wake races. Do NOT clear it here.
 
-//    Assert(g_DpcData._dwThreadId == GetCurrentThreadId());
-//    Assert(g_DpcData._dwDpcThreadId == g_DpcData._dwThreadId);
-//    g_DpcData._dwDpcThreadId = 0;
 	LeaveCriticalSection(&(g_DpcData.Lock));
 }
 
@@ -539,13 +544,8 @@ void InitDpcData()
 	InitializeListHead(&(g_DpcData.DpcQueue));
 }
 
-bool IsDpcActive()
-{
-	return g_DpcData.IsDpcActive.test();
-}
-
 static constexpr uint32_t XBOX_TSC_FREQUENCY = 733333333; // Xbox Time Stamp Counter Frequency = 733333333 (CPU Clock)
-static constexpr uint32_t XBOX_ACPI_FREQUENCY = 3375000;  // Xbox ACPI frequency (3.375 mhz)
+static constexpr uint32_t XBOX_ACPI_FREQUENCY = 3579545;  // Xbox ACPI timer frequency (3.579545 MHz)
 
 ULONGLONG CxbxGetPerformanceCounter(bool acpi)
 {
@@ -774,6 +774,7 @@ XBSYSAPI EXPORTNUM(96) xbox::boolean_xt NTAPI xbox::KeCancelTimer
 }
 
 xbox::PKINTERRUPT EmuInterruptList[MAX_BUS_INTERRUPT_LEVEL + 1] = { 0 };
+xbox::PKINTERRUPT EmuInterruptChained[MAX_BUS_INTERRUPT_LEVEL + 1] = { 0 };
 
 // ******************************************************************
 // * 0x0062 - KeConnectInterrupt()
@@ -790,16 +791,46 @@ XBSYSAPI EXPORTNUM(98) xbox::boolean_xt NTAPI xbox::KeConnectInterrupt
 
 	KiLockDispatcherDatabase(&OldIrql);
 
+	// On Xbox, BusInterruptLevel contains the system interrupt vector
+	// (assigned by HalGetInterruptVector), not the raw IRQ number.
+	// Convert vector to IRQ for our internal array indexing.
+	ULONG irq = InterruptObject->BusInterruptLevel;
+	if (irq >= IRQ_BASE) {
+		irq = VECTOR2IRQ(irq);
+	}
+
 	// here we have to connect the interrupt object to the vector
 	if (!InterruptObject->Connected)
 	{
-		// One interrupt per IRQ - only set when not set yet :
-		if (EmuInterruptList[InterruptObject->BusInterruptLevel] == NULL)
-		{
-			InterruptObject->Connected = TRUE;
-			EmuInterruptList[InterruptObject->BusInterruptLevel] = InterruptObject;
-			HalEnableSystemInterrupt(InterruptObject->BusInterruptLevel, InterruptObject->Mode);
-			ret = TRUE;
+		if (irq > MAX_BUS_INTERRUPT_LEVEL) {
+		} else {
+			// One interrupt per IRQ - only set when not set yet :
+			if (EmuInterruptList[irq] == NULL)
+			{
+				InterruptObject->Connected = TRUE;
+				EmuInterruptList[irq] = InterruptObject;
+				HalEnableSystemInterrupt(irq, InterruptObject->Mode);
+
+				// For the GPU interrupt (IRQ 3), ensure VBlank is enabled at the
+				// hardware level. The game's D3D runtime writes NV_PCRTC_INTR_EN_0
+				// during init, but there may be a brief window between ISR connection
+				// and the MMIO write. Pre-enable as a safety net.
+				if (irq == 3) {
+					if (g_NV2A) {
+						NV2AState* d = g_NV2A->GetDeviceState();
+						d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+					}
+				}
+
+				ret = TRUE;
+			}
+			// ISR chaining: if slot is occupied, store as chained ISR.
+			else if (EmuInterruptChained[irq] == NULL)
+			{
+				InterruptObject->Connected = TRUE;
+				EmuInterruptChained[irq] = InterruptObject;
+				ret = TRUE;
+			}
 		}
 	}
 	// else do nothing
@@ -871,12 +902,26 @@ XBSYSAPI EXPORTNUM(100) xbox::void_xt NTAPI xbox::KeDisconnectInterrupt
 
 	KiLockDispatcherDatabase(&OldIrql);
 
+	// Convert vector to IRQ (same mapping as KeConnectInterrupt)
+	ULONG irq = InterruptObject->BusInterruptLevel;
+	if (irq >= IRQ_BASE) {
+		irq = VECTOR2IRQ(irq);
+	}
+
 	// Do the reverse of KeConnectInterrupt
-	if (InterruptObject->Connected) { // Text case : d3dbvt.xbe
-		// Mark InterruptObject as not connected anymore
-		HalDisableSystemInterrupt(InterruptObject->BusInterruptLevel);
-		EmuInterruptList[InterruptObject->BusInterruptLevel] = NULL;
-		InterruptObject->Connected = FALSE;
+	if (InterruptObject->Connected && irq <= MAX_BUS_INTERRUPT_LEVEL) { // Text case : d3dbvt.xbe
+		// Check if this is the chained interrupt
+		if (EmuInterruptChained[irq] == InterruptObject) {
+			EmuInterruptChained[irq] = NULL;
+			InterruptObject->Connected = FALSE;
+		}
+		// Otherwise it's the primary
+		else {
+			// Mark InterruptObject as not connected anymore
+			HalDisableSystemInterrupt(irq);
+			EmuInterruptList[irq] = NULL;
+			InterruptObject->Connected = FALSE;
+		}
 	}
 
 	KiUnlockDispatcherDatabase(OldIrql);
@@ -902,7 +947,7 @@ XBSYSAPI EXPORTNUM(103) xbox::KIRQL NTAPI xbox::KeGetCurrentIrql(void)
 {
 	LOG_FUNC(); // TODO : Remove nested logging on this somehow, so we can call this (instead of inlining)
 
-	KPCR* Pcr = EmuKeGetPcr();
+	volatile KPCR* Pcr = EmuKeGetPcr();
 	KIRQL Irql = (KIRQL)Pcr->Irql;
 
 	RETURN_TYPE(KIRQL_TYPE, Irql);
@@ -1050,7 +1095,7 @@ XBSYSAPI EXPORTNUM(109) xbox::void_xt NTAPI xbox::KeInitializeInterrupt
 
 	Interrupt->ServiceRoutine = ServiceRoutine;
 	Interrupt->ServiceContext = ServiceContext;
-	Interrupt->BusInterruptLevel = VECTOR2IRQ(Vector);
+	Interrupt->BusInterruptLevel = Vector;
 	Interrupt->Irql = Irql;
 	Interrupt->Connected = FALSE;
 	// Unused : Interrupt->ShareVector = ShareVector;
@@ -1099,6 +1144,7 @@ XBSYSAPI EXPORTNUM(110) xbox::void_xt NTAPI xbox::KeInitializeMutant
 	else {
 		Mutant->Header.SignalState = 1;
 		Mutant->OwnerThread = NULL;
+		InitializeListHead(&Mutant->MutantListEntry);
 	}
 }
 
@@ -1389,7 +1435,6 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 
 	// For thread safety, enter the Dpc lock:
 	EnterCriticalSection(&(g_DpcData.Lock));
-	// TODO : Instead, disable interrupts - use KeRaiseIrql(HIGH_LEVEL, &(KIRQL)OldIrql) ?
 
 	BOOLEAN NeedsInsertion = (Dpc->Inserted == FALSE);
 
@@ -1399,26 +1444,33 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 		Dpc->SystemArgument1 = SystemArgument1;
 		Dpc->SystemArgument2 = SystemArgument2;
 		InsertTailList(&(g_DpcData.DpcQueue), &(Dpc->DpcListEntry));
-		LeaveCriticalSection(&(g_DpcData.Lock));
-		g_DpcData.IsDpcPending.test_and_set();
-		g_DpcData.IsDpcPending.notify_one();
 
-		// TODO : Instead of DpcQueue, add the DPC to KeGetCurrentPrcb()->DpcListHead
-		// Signal the Dpc handling code there's work to do
-		if (!IsDpcActive()) {
+		// On real Xbox (single CPU), after queuing a DPC at PASSIVE_LEVEL,
+		// the DPC fires synchronously before KeInsertQueueDpc returns (via
+		// KfLowerIrql on the trap return path). Use per-thread DpcRoutineActive
+		// to decide — the background DPC thread's activity doesn't affect us
+		// (it's a separate "processor" in our emulation model).
+		volatile KPCR* Pcr = EmuKeGetPcr();
+		bool dispatch_now = (!Pcr->PrcbData.DpcRoutineActive && Pcr->Irql < DISPATCH_LEVEL);
+		if (dispatch_now) {
+			g_DpcRoutineActive = TRUE;
+		}
+		LeaveCriticalSection(&(g_DpcData.Lock));
+
+		if (dispatch_now) {
+			// Dispatch inline with g_DpcRoutineActive still TRUE from the
+			// reservation above — no race window for the background thread.
+			ExecuteDpcQueue(true);
+			// Release the reservation now that inline dispatch is complete.
+			g_DpcRoutineActive = FALSE;
+		} else {
+			// Signal the background DPC thread to dispatch later
 			HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 		}
-
-		// OpenXbox has this instead:
-		// if (!pKPRCB->DpcRoutineActive && !pKPRCB->DpcInterruptRequested) {
-		//	pKPRCB->DpcInterruptRequested = TRUE;
 	}
 	else {
 		LeaveCriticalSection(&(g_DpcData.Lock));
 	}
-
-	// Thread-safety is no longer required anymore
-	// TODO : Instead, enable interrupts - use KeLowerIrql(OldIrql) ?
 
 	RETURN(NeedsInsertion);
 }
@@ -1426,17 +1478,14 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 // ******************************************************************
 // * 0x0079 - KeIsExecutingDpc()
 // ******************************************************************
-XBSYSAPI EXPORTNUM(121) xbox::boolean_xt NTAPI xbox::KeIsExecutingDpc
+// On real Xbox, this reads KPRCB.DpcRoutineActive (at KPCR offset 0x58),
+// similar to how KeGetCurrentIrql reads KPCR.Irql (at offset 0x24).
+XBSYSAPI EXPORTNUM(121) xbox::ulong_xt NTAPI xbox::KeIsExecutingDpc
 ()
 {
 	LOG_FUNC();
 
-#if 0
-	// This is the correct implementation, but it doesn't work because our Prcb is per-thread instead of being per-processor
-	BOOLEAN ret = (BOOLEAN)KeGetCurrentPrcb()->DpcRoutineActive;
-#else
-	BOOLEAN ret = (BOOLEAN)IsDpcActive();
-#endif
+	ulong_xt ret = KeGetCurrentPrcb()->DpcRoutineActive;
 
 	RETURN(ret);
 }
@@ -1852,9 +1901,13 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 		// Associate with new queue
 		InsertTailList(&Queue->ThreadListHead, &Thread->QueueListEntry);
 		Thread->Queue = Queue;
-	} else {
+	} else if (Thread->QueueListEntry.Blink->Flink == &Thread->QueueListEntry) {
 		// Re-entering the same queue — decrement CurrentCount (was bumped on wake)
 		Queue->CurrentCount--;
+	} else {
+		// Stale association — queue was re-initialized at the same address.
+		// Re-associate the thread with this fresh queue.
+		InsertTailList(&Queue->ThreadListHead, &Thread->QueueListEntry);
 	}
 
 	// Fast-path: entry available and concurrency not exceeded
@@ -1868,6 +1921,7 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 
 	// Zero-timeout: return immediately if no entry is available
 	if (Timeout != zeroptr && !(Timeout->u.LowPart | Timeout->u.HighPart)) {
+		Queue->CurrentCount++;
 		KiUnlockDispatcherDatabase(orig_irql);
 		RETURN((PLIST_ENTRY)X_STATUS_TIMEOUT);
 	}
@@ -1914,6 +1968,7 @@ XBSYSAPI EXPORTNUM(136) xbox::PLIST_ENTRY NTAPI xbox::KeRemoveQueue
 			KiWaitListUnlock();
 			Thread->WaitBlockList = zeroptr;
 			Thread->State = Running;
+			Queue->CurrentCount++;
 			KiUnlockDispatcherDatabase(orig_irql);
 			RETURN((PLIST_ENTRY)X_STATUS_TIMEOUT);
 		}
@@ -2424,6 +2479,9 @@ XBSYSAPI EXPORTNUM(150) xbox::boolean_xt NTAPI xbox::KeSetTimerEx
 		// Do some unlinking if already inserted in the linked list
 		KxRemoveTreeTimer(Timer);
 	}
+
+	// Return TRUE if the timer was either in the queue or signaled
+	BOOLEAN PreviousState = Inserted || (Timer->Header.SignalState != 0);
 	
 	/* Set Default Timer Data */
 	Timer->Dpc = Dpc;
@@ -2449,7 +2507,7 @@ XBSYSAPI EXPORTNUM(150) xbox::boolean_xt NTAPI xbox::KeSetTimerEx
 	KiTimerUnlock();
 	KiUnlockDispatcherDatabase(OldIrql);
 
-	RETURN(Inserted);
+	RETURN(PreviousState);
 }
 
 // ******************************************************************

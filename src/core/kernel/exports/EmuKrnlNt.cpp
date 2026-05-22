@@ -242,9 +242,9 @@ XBSYSAPI EXPORTNUM(185) xbox::ntstatus_xt NTAPI xbox::NtCancelTimer
 		PETIMER Timer = (PETIMER)Object;
 
 		Timer->Lock.lock();
+		// Read the inserted state before cancelling — CurrentState reports whether the timer was set
+		BOOLEAN State = (BOOLEAN)Timer->KeTimer.Header.Inserted;
 		ExpCancelTimer(Timer);
-		// Read the signal state
-		BOOLEAN State = (BOOLEAN)Timer->KeTimer.Header.SignalState;
 		Timer->Lock.unlock();
 
 		ObfDereferenceObject(Timer);
@@ -478,7 +478,7 @@ XBSYSAPI EXPORTNUM(193) xbox::ntstatus_xt NTAPI xbox::NtCreateSemaphore
 		LOG_FUNC_ARG(MaximumCount)
 		LOG_FUNC_END;
 
-	if (MaximumCount <= 0 || InitialCount > (ulong_xt)MaximumCount) {
+	if ((long_xt)MaximumCount <= 0 || (long_xt)InitialCount < 0 || InitialCount > MaximumCount) {
 		RETURN(STATUS_INVALID_PARAMETER);
 	}
 
@@ -736,6 +736,7 @@ namespace xbox {
 			default:
 				EmuLog(LOG_LEVEL::DEBUG, "NtDeviceIoControlFile: unhandled IoControlCode 0x%X for device type %d",
 					IoControlCode, DeviceObject->DeviceType);
+				result = X_STATUS_INVALID_DEVICE_REQUEST;
 				LOG_UNIMPLEMENTED();
 			}
 		}
@@ -791,6 +792,10 @@ namespace xbox {
 			}
 			break;
 
+			default:
+				result = X_STATUS_INVALID_DEVICE_REQUEST;
+				LOG_UNIMPLEMENTED();
+				break;
 			}
 
 			LOG_INCOMPLETE();
@@ -1203,8 +1208,17 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 
 	NTSTATUS ret;
 
-	if (FileInformationClass != FileDirectoryInformation)   // Due to unicode->string conversion
-		CxbxrAbort("Unsupported FileInformationClass");
+	// Xbox uses FILE_DIRECTORY_INFORMATION for all directory listing classes
+	// (FileBothDirectoryInformation, FileFullDirectoryInformation, FileNamesInformation).
+	// Validate that the class is a directory-listing class, then always query the host
+	// with FileDirectoryInformation since the host structs for other classes differ in layout.
+	if (FileInformationClass != FileDirectoryInformation &&
+		FileInformationClass != FileFullDirectoryInformation &&
+		FileInformationClass != FileBothDirectoryInformation &&
+		FileInformationClass != FileNamesInformation) {
+		EmuLog(LOG_LEVEL::WARNING, "NtQueryDirectoryFile: unsupported FileInformationClass %d", FileInformationClass);
+		RETURN(X_STATUS_INVALID_INFO_CLASS);
+	}
 
 	/* Get File Object */
 	PFILE_OBJECT FileObject;
@@ -1285,7 +1299,7 @@ XBSYSAPI EXPORTNUM(207) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryFile
 			(NtDll::IO_STATUS_BLOCK*)IoStatusBlock, 
 			/*FileInformation=*/NtFileDirInfo,
 			NtFileDirectoryInformationSize + NtPathBufferSize,
-			(NtDll::FILE_INFORMATION_CLASS)FileInformationClass, 
+			(NtDll::FILE_INFORMATION_CLASS)NtDll::FileDirectoryInformation,
 			/*ReturnSingleEntry=*/TRUE,
 			&NtFileMask,
 			RestartScan
@@ -1354,9 +1368,80 @@ XBSYSAPI EXPORTNUM(208) xbox::ntstatus_xt NTAPI xbox::NtQueryDirectoryObject
 		LOG_FUNC_ARG_OUT(ReturnedLength)
 	LOG_FUNC_END;
 
-	LOG_UNIMPLEMENTED();
+	ntstatus_xt result;
+	PVOID DirectoryObject;
 
-	RETURN(X_STATUS_NOT_IMPLEMENTED);
+	result = ObReferenceObjectByHandle(DirectoryHandle, &ObDirectoryObjectType, &DirectoryObject);
+	if (!X_NT_SUCCESS(result)) {
+		RETURN(result);
+	}
+
+	POBJECT_DIRECTORY Directory = (POBJECT_DIRECTORY)DirectoryObject;
+
+	// If RestartScan, reset context to 0
+	ULONG Index = RestartScan ? 0 : *Context;
+
+	// Walk hash buckets to find entry at the given index
+	ULONG CurrentIndex = 0;
+	POBJECT_HEADER_NAME_INFO FoundEntry = NULL;
+
+	for (ULONG Bucket = 0; Bucket < OB_NUMBER_HASH_BUCKETS; Bucket++) {
+		POBJECT_HEADER_NAME_INFO Entry = Directory->HashBuckets[Bucket];
+		while (Entry != NULL) {
+			if (CurrentIndex == Index) {
+				FoundEntry = Entry;
+				goto EntryFound;
+			}
+			CurrentIndex++;
+			Entry = Entry->ChainLink;
+		}
+	}
+
+EntryFound:
+	if (FoundEntry == NULL) {
+		ObfDereferenceObject(DirectoryObject);
+		if (ReturnedLength) {
+			*ReturnedLength = 0;
+		}
+		RETURN((ntstatus_xt)0x8000001AL); // STATUS_NO_MORE_ENTRIES
+	}
+
+	// Calculate required buffer size
+	ULONG NameLength = FoundEntry->Name.Length;
+	ULONG RequiredSize = sizeof(OBJECT_DIRECTORY_INFORMATION) + NameLength + 1;
+
+	if (Length < RequiredSize) {
+		ObfDereferenceObject(DirectoryObject);
+		if (ReturnedLength) {
+			*ReturnedLength = RequiredSize;
+		}
+		RETURN(X_STATUS_BUFFER_TOO_SMALL);
+	}
+
+	// Fill in the output buffer
+	POBJECT_DIRECTORY_INFORMATION DirInfo = (POBJECT_DIRECTORY_INFORMATION)Buffer;
+	char_xt *NameDest = (char_xt *)((PUCHAR)Buffer + sizeof(OBJECT_DIRECTORY_INFORMATION));
+
+	memcpy(NameDest, FoundEntry->Name.Buffer, NameLength);
+	NameDest[NameLength] = '\0';
+
+	DirInfo->Name.Length = (ushort_xt)NameLength;
+	DirInfo->Name.MaximumLength = (ushort_xt)(NameLength + 1);
+	DirInfo->Name.Buffer = NameDest;
+
+	// Type is the PoolTag from the object's OBJECT_TYPE
+	POBJECT_HEADER ObjectHeader = OBJECT_HEADER_NAME_INFO_TO_OBJECT_HEADER(FoundEntry);
+	DirInfo->Type = ObjectHeader->Type ? ObjectHeader->Type->PoolTag : 0;
+
+	// Advance context
+	*Context = Index + 1;
+
+	if (ReturnedLength) {
+		*ReturnedLength = RequiredSize;
+	}
+
+	ObfDereferenceObject(DirectoryObject);
+	RETURN(X_STATUS_SUCCESS);
 }
 
 // ******************************************************************
@@ -2074,19 +2159,21 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	PIO_APC_ROUTINE OriginalApcRoutine = ApcRoutine;
 	PVOID OriginalApcContext = ApcContext;
 
+	// Clear FileObject->Event before starting I/O (real NT behavior).
+	// The kernel uses this event to signal completion when no explicit Event is provided.
+	KeResetEvent(&FileObject->Event);
+
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
-		// When an Xbox event or APC is involved, use a temporary Windows event
-		// to guarantee host I/O completes before we signal/post. Without this,
-		// the host could return STATUS_PENDING for async file handles and we'd
-		// propagate an incomplete result.
-		// For completion ports, we also need an event to track async completion,
-		// but we must NOT block — instead we use a thread pool wait.
-		HANDLE hHostEvent = NULL;
-		if (XboxEvent != nullptr || ApcRoutine != nullptr || CompletionContext != nullptr) {
-			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
-			if (hHostEvent == NULL) {
-				EmuLog(LOG_LEVEL::WARNING, "NtReadFile: CreateEvent failed, forcing synchronous I/O");
-			}
+		// Always use a temporary Windows event to guarantee host I/O completes
+		// before we return.  The NT kernel blocks the calling thread (waiting on
+		// FileObject->Event) when no explicit Event, APC, or completion port is
+		// specified.  Without this, async host file handles can return
+		// STATUS_PENDING which the game may poll forever.
+		// For completion ports (without Event/APC), we use a thread pool wait
+		// instead of blocking, so STATUS_PENDING is correctly handled there too.
+		HANDLE hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
+		if (hHostEvent == NULL) {
+			EmuLog(LOG_LEVEL::WARNING, "NtReadFile: CreateEvent failed, forcing synchronous I/O");
 		}
 
 		result = NtDll::NtReadFile(
@@ -2136,9 +2223,12 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// Signal the Xbox event now that I/O is complete
+	// Signal completion: if an explicit Event was provided, signal it.
+	// Otherwise, signal FileObject->Event (games may wait on the file handle).
 	if (XboxEvent) {
 		KeSetEvent(XboxEvent, /*Increment=*/1, /*Wait=*/FALSE);
+	} else if (X_NT_SUCCESS(result)) {
+		KeSetEvent(&FileObject->Event, /*Increment=*/0, /*Wait=*/FALSE);
 	}
 
 	// Call the game's APC routine directly (we're on the requesting thread)
@@ -2245,6 +2335,10 @@ XBSYSAPI EXPORTNUM(222) xbox::ntstatus_xt NTAPI xbox::NtReleaseSemaphore
 		LOG_FUNC_ARG(ReleaseCount)
 		LOG_FUNC_ARG_OUT(PreviousCount)
 		LOG_FUNC_END;
+
+	if ((long_xt)ReleaseCount <= 0) {
+		RETURN(STATUS_INVALID_PARAMETER);
+	}
 
 	PKSEMAPHORE Semaphore;
 	ntstatus_xt result = ObReferenceObjectByHandle(SemaphoreHandle, &ExSemaphoreObjectType, reinterpret_cast<PVOID *>(&Semaphore));
@@ -3165,19 +3259,15 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	PIO_APC_ROUTINE OriginalApcRoutine = ApcRoutine;
 	PVOID OriginalApcContext = ApcContext;
 
+	// Clear FileObject->Event before starting I/O (real NT behavior).
+	KeResetEvent(&FileObject->Event);
+
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
-		// When an Xbox event or APC is involved, use a temporary Windows event
-		// to guarantee host I/O completes before we signal/post. Without this,
-		// the host could return STATUS_PENDING for async file handles and we'd
-		// propagate an incomplete result.
-		// For completion ports, we also need an event to track async completion,
-		// but we must NOT block — instead we use a thread pool wait.
-		HANDLE hHostEvent = NULL;
-		if (XboxEvent != nullptr || ApcRoutine != nullptr || CompletionContext != nullptr) {
-			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
-			if (hHostEvent == NULL) {
-				EmuLog(LOG_LEVEL::WARNING, "NtWriteFile: CreateEvent failed, forcing synchronous I/O");
-			}
+		// Always use a temporary Windows event to guarantee host I/O completes
+		// before we return (see NtReadFile for full rationale).
+		HANDLE hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
+		if (hHostEvent == NULL) {
+			EmuLog(LOG_LEVEL::WARNING, "NtWriteFile: CreateEvent failed, forcing synchronous I/O");
 		}
 
 		result = NtDll::NtWriteFile(
@@ -3226,9 +3316,12 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// Signal the Xbox event now that I/O is complete
+	// Signal completion: if an explicit Event was provided, signal it.
+	// Otherwise, signal FileObject->Event (games may wait on the file handle).
 	if (XboxEvent) {
 		KeSetEvent(XboxEvent, /*Increment=*/1, /*Wait=*/FALSE);
+	} else if (X_NT_SUCCESS(result)) {
+		KeSetEvent(&FileObject->Event, /*Increment=*/0, /*Wait=*/FALSE);
 	}
 
 	// Call the game's APC routine directly (we're on the requesting thread)

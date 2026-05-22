@@ -325,12 +325,24 @@ void InitSoftwareInterrupts()
 void MapThunkTable(uint32_t* kt, uint32_t* pThunkTable)
 {
     const bool SendDebugReports = (pThunkTable == CxbxKrnl_KernelThunkTable) && CxbxDebugger::CanReport();
+	const bool IsKernelThunkTable = (pThunkTable == CxbxKrnl_KernelThunkTable);
+	const uint8_t systemFlag = CxbxKrnl_GetCurrentSystemFlag();
 
 	uint32_t* kt_tbl = (uint32_t*)kt;
 	int i = 0;
 	while (kt_tbl[i] != 0) {
 		int t = kt_tbl[i] & 0x7FFFFFFF;
-		kt_tbl[i] = pThunkTable[t];
+
+		// Check if this ordinal is available for the current system type
+		if (IsKernelThunkTable && !(CxbxKrnl_KernelThunkAvailability(t) & systemFlag)) {
+			EmuLogInit(LOG_LEVEL::WARNING, "Kernel import %d is not available on %s (devkit-only API)",
+				t, g_bIsChihiro ? "Chihiro" : "Retail");
+			kt_tbl[i] = pThunkTable[0]; // Map to zeroptr (undefined)
+		}
+		else {
+			kt_tbl[i] = pThunkTable[t];
+		}
+
         if (SendDebugReports) {
             // TODO: Update CxbxKrnl_KernelThunkTable to include symbol names
             std::string importName = "KernelImport_" + std::to_string(t);
@@ -1201,6 +1213,18 @@ static void CxbxrKrnlInitHacks()
 
 	InitXboxHardware(hardwareModel);
 
+	// Allocate HalDiskModelNumber/SerialNumber buffers from Xbox pool memory
+	// so that MmIsAddressValid returns TRUE for the Buffer pointers.
+	{
+		PCHAR pModelBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskModelNumber.MaximumLength, 'dlaH');
+		memcpy(pModelBuf, xbox::HalDiskModelNumber.Buffer, xbox::HalDiskModelNumber.MaximumLength);
+		xbox::HalDiskModelNumber.Buffer = pModelBuf;
+
+		PCHAR pSerialBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskSerialNumber.MaximumLength, 'dlaH');
+		memcpy(pSerialBuf, xbox::HalDiskSerialNumber.Buffer, xbox::HalDiskSerialNumber.MaximumLength);
+		xbox::HalDiskSerialNumber.Buffer = pSerialBuf;
+	}
+
 	// Read Xbox video mode from the SMC, store it in HalBootSMCVideoMode
 	xbox::HalReadSMBusValue(SMBUS_ADDRESS_SYSTEM_MICRO_CONTROLLER, SMC_COMMAND_AV_PACK, FALSE, (xbox::PULONG)&xbox::HalBootSMCVideoMode);
 
@@ -1378,6 +1402,14 @@ static void CxbxrKrnlInitHacks()
 			if (g_bEnableAllInterrupts && g_NV2A) {
 				NV2AState* d = g_NV2A->GetDeviceState();
 
+				// Safety net: ensure VBlank stays enabled once the game's ISR is connected.
+				// The D3D runtime may briefly write 0 to NV_PCRTC_INTR_EN during init;
+				// re-assert to avoid missing VBlanks during that window.
+				if (EmuInterruptList[3] && EmuInterruptList[3]->Connected &&
+				    !(d->pcrtc.enabled_interrupts & NV_PCRTC_INTR_0_VBLANK)) {
+					d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+				}
+
 				// Latch VBlank into pcrtc.pending_interrupts (like real hardware would)
 				if (d->vblank_pending.test()) {
 					d->vblank_pending.clear();
@@ -1397,20 +1429,33 @@ static void CxbxrKrnlInitHacks()
 						// Wake the puller thread so it can composite and present the
 						// overlay.  During FMV, no pushbuffer activity occurs, so the
 						// puller stays asleep and the overlay is never displayed.
-						qemu_cond_broadcast(&d->pfifo.puller_cond);
+						SetEvent(d->pfifo.puller_event);
 					}
 				}
 
 				// Check if any NV2A sub-unit has a pending interrupt that should
 				// fire the ISR. This mirrors the PMC_INTR_0 live computation.
-				// Only fire when pmc.enabled_interrupts != 0 (ISR checks this and
-				// returns without queuing a DPC if the master enable is off).
+				// Only fire when pmc.enabled_interrupts != 0 (the game's ISR
+				// checks NV_PMC_INTR_EN_0 and returns early if master enable is off).
+				bool pvideo_pending = (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) != 0;
 				bool nv2a_irq_pending = d->pmc.enabled_interrupts &&
 					((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
 					 (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
 					 (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
-					 (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
-					 (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts));
+					 (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts) ||
+					 pvideo_pending);
+
+				// PGRAPH INTR_ERROR (D3DDevice_InsertCallback) stalls the GPU
+				// pipeline until the CPU acknowledges it. When pmc_en=0, the
+				// ISR cannot fire, so we ack directly to unblock the puller.
+				// When pmc_en=1, the game's ISR handles it naturally (reads
+				// TRAPPED_DATA_LOW, dispatches the callback, writes PGRAPH_INTR
+				// to ack via MMIO).
+				if (!d->pmc.enabled_interrupts &&
+				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
+					d->pgraph.pending_interrupts &= ~NV_PGRAPH_INTR_ERROR;
+					qemu_cond_broadcast(&d->pgraph.interrupt_cond);
+				}
 
 				// PGRAPH INTR_ERROR (D3DDevice_InsertCallback) stalls the GPU
 				// pipeline until the CPU acknowledges it. When pmc_en=0, the
@@ -1431,6 +1476,12 @@ static void CxbxrKrnlInitHacks()
 				}
 			}
 
+			// Dispatch all pending DPCs. This thread is the primary DPC
+			// dispatcher — timer expirations (KiTimerExpiration) and other
+			// system DPCs rely on it. The combined g_DpcRoutineActive /
+			// per-thread PRCB guard inside ExecuteDpcQueue prevents dispatch
+			// when game code has set DpcRoutineActive (via fs:0x58 writes)
+			// or when we're already dispatching on this thread.
 			ExecuteDpcQueue();
 
 			// Re-check: if NV2A interrupts are still pending after ISR+DPC processing,

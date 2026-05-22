@@ -158,14 +158,14 @@ XBSYSAPI EXPORTNUM(40) xbox::ulong_xt xbox::HalDiskCachePartitionCount = 3;
 // ******************************************************************
 // * 0x0029 - HalDiskModelNumber
 // ******************************************************************
-// Source:OpenXDK  TODO : Fill this with something sensible
-XBSYSAPI EXPORTNUM(41) xbox::PANSI_STRING xbox::HalDiskModelNumber = 0;
+static char HalDiskModelNumberBuffer[] = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+XBSYSAPI EXPORTNUM(41) xbox::ANSI_STRING xbox::HalDiskModelNumber = { sizeof(HalDiskModelNumberBuffer) - 1, sizeof(HalDiskModelNumberBuffer), HalDiskModelNumberBuffer };
 
 // ******************************************************************
 // * 0x002A - HalDiskSerialNumber
 // ******************************************************************
-// Source:OpenXDK  TODO : Fill this with something sensible
-XBSYSAPI EXPORTNUM(42) xbox::PANSI_STRING xbox::HalDiskSerialNumber = 0;	
+static char HalDiskSerialNumberBuffer[] = "XXXXXXXXXXXXXXXXXXXX";
+XBSYSAPI EXPORTNUM(42) xbox::ANSI_STRING xbox::HalDiskSerialNumber = { sizeof(HalDiskSerialNumberBuffer) - 1, sizeof(HalDiskSerialNumberBuffer), HalDiskSerialNumberBuffer };	
 
 // ******************************************************************
 // * 0x002B - HalEnableSystemInterrupt()
@@ -282,7 +282,8 @@ XBSYSAPI EXPORTNUM(45) xbox::ntstatus_xt NTAPI xbox::HalReadSMBusValue
 	// TODO : Prevent interrupts
 
 	NTSTATUS Status = X_STATUS_SUCCESS;
-
+	// Clear any previous error status before starting a new transaction
+	g_SMBus->IOWrite(1, SMB_GLOBAL_STATUS, GS_CLEAR_STS);
 	// ergo720: the or 1 on the address is necessary because I have seen that UnleashX and RDX dashboard pass 0x20 instead of the
 	// expected 0x21 to this function when reading cpu and m/b temperatures
 
@@ -358,12 +359,13 @@ XBSYSAPI EXPORTNUM(46) xbox::void_xt NTAPI xbox::HalReadWritePCISpace
 		int ByteOffset = RegisterNumber % sizeof(ULONG);
 		int Size = RegisterDataSizes[RegisterNumber % sizeof(ULONG)][Length % sizeof(ULONG)];
 
+		CfgBits.u.bits.RegisterNumber = RegisterNumber / sizeof(ULONG);
 		EmuX86_IOWrite((xbox::addr_xt)PCI_TYPE1_ADDR_PORT, CfgBits.u.AsULONG, sizeof(uint32_t));
 
 		if (WritePCISpace) {
-			EmuX86_IOWrite(PCI_TYPE1_DATA_PORT, *((PUCHAR)Buffer), Size);
+			EmuX86_IOWrite(PCI_TYPE1_DATA_PORT + ByteOffset, *((PUCHAR)Buffer), Size);
 		} else {
-			uint32_t value = EmuX86_IORead(PCI_TYPE1_DATA_PORT, Size);
+			uint32_t value = EmuX86_IORead(PCI_TYPE1_DATA_PORT + ByteOffset, Size);
 			// TODO : Could memcpy(Buffer, &value, Size) the following (for all endianesses)?
 			switch (Size) {
 			case sizeof(uint8_t): // Byte
@@ -459,22 +461,24 @@ XBSYSAPI EXPORTNUM(48) xbox::void_xt FASTCALL xbox::HalRequestSoftwareInterrupt
 	DWORD InterruptMask = 1 << Request;
 	bool interrupt_flag = DisableInterrupts();
 
-	// Set this interrupt request bit:
+	// Mark this software interrupt as pending
 	HalInterruptRequestRegister |= InterruptMask;
 
-	// Get current IRQL
-	PKPCR Pcr = EmuKeGetPcr();
-	KIRQL CurrentIrql = (KIRQL)Pcr->Irql;
+	// On real hardware, DPC dispatch is deferred until IRQL is lowered
+	// (via KfLowerIrql). It does NOT fire here. KeInsertQueueDpc handles
+	// synchronous DPC dispatch explicitly. For other interrupt levels
+	// (APC, hardware), dispatch immediately if IRQL allows — our emulation
+	// lacks the implicit check-points (trap returns, context switches) that
+	// real hardware uses to service these.
+	if (Request != DISPATCH_LEVEL) {
+		volatile KPCR* Pcr = EmuKeGetPcr();
+		KIRQL CurrentIrql = (KIRQL)Pcr->Irql;
+		uint8_t SoftwareInterrupt = HalInterruptRequestRegister & 7;
+		KIRQL SoftwareIrql = SoftwareInterruptLookupTable[SoftwareInterrupt];
 
-	// Get pending Software Interrupts (by masking off the HW interrupt bits)
-	uint8_t SoftwareInterrupt = HalInterruptRequestRegister & 3;
-
-	// Get the highest pending software interrupt level
-	KIRQL SoftwareIrql = SoftwareInterruptLookupTable[SoftwareInterrupt];
-	
-	if (SoftwareIrql > CurrentIrql) {
-		// TODO: This is not completely correct, but it fixes an issue where DPCQueue's weren't running
-		CallSoftwareInterrupt(Request);
+		if (SoftwareIrql > CurrentIrql) {
+			CallSoftwareInterrupt(Request);
+		}
 	}
 
 	RestoreInterruptMode(interrupt_flag);
@@ -641,7 +645,8 @@ XBSYSAPI EXPORTNUM(50) xbox::ntstatus_xt NTAPI xbox::HalWriteSMBusValue
 	// TODO : Prevent interrupts
 
 	NTSTATUS Status = X_STATUS_SUCCESS;
-
+	// Clear any previous error status before starting a new transaction
+	g_SMBus->IOWrite(1, SMB_GLOBAL_STATUS, GS_CLEAR_STS);
 	g_SMBus->IOWrite(1, SMB_HOST_ADDRESS, Address);
 	g_SMBus->IOWrite(1, SMB_HOST_COMMAND, Command);
 	g_SMBus->IOWrite(1, SMB_HOST_DATA, DataValue & 0xFF);

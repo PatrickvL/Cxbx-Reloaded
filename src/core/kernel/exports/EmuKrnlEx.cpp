@@ -285,14 +285,12 @@ XBSYSAPI EXPORTNUM(18) xbox::void_xt NTAPI xbox::ExInitializeReadWriteLock
 XBSYSAPI EXPORTNUM(19) xbox::LARGE_INTEGER NTAPI xbox::ExInterlockedAddLargeInteger
 (
 	IN OUT PLARGE_INTEGER Addend,
-	IN LARGE_INTEGER Increment,
-	IN OUT PKSPIN_LOCK Lock
+	IN LARGE_INTEGER Increment
 )
 {
 	LOG_FUNC_BEGIN
 		LOG_FUNC_ARG(Addend)
 // TODO : operator<<(LARGE_INTERGER) enables 		LOG_FUNC_ARG(Increment)
-		LOG_FUNC_ARG(Lock)
 		LOG_FUNC_END;
 
 	LARGE_INTEGER OldValue;
@@ -346,6 +344,23 @@ XBSYSAPI EXPORTNUM(21) xbox::longlong_xt FASTCALL xbox::ExInterlockedCompareExch
 }
 
 // ******************************************************************
+// * ExpDeleteMutant - Mutant object delete procedure
+// ******************************************************************
+// Called by ObfDereferenceObject when the mutant's reference count drops to 0.
+// If the mutant is still owned by a thread, remove it from that thread's list.
+// Source: ReactOS
+xbox::void_xt NTAPI xbox::ExpDeleteMutant(IN xbox::PVOID ObjectBody)
+{
+	PKMUTANT Mutant = (PKMUTANT)ObjectBody;
+
+	if (Mutant->OwnerThread != nullptr) {
+		KIRQL OldIrql = KfRaiseIrql(DISPATCH_LEVEL);
+		RemoveEntryList(&Mutant->MutantListEntry);
+		KfLowerIrql(OldIrql);
+	}
+}
+
+// ******************************************************************
 // * 0x0016 - ExMutantObjectType
 // ******************************************************************
 XBSYSAPI EXPORTNUM(22) xbox::OBJECT_TYPE xbox::ExMutantObjectType = 
@@ -353,7 +368,7 @@ XBSYSAPI EXPORTNUM(22) xbox::OBJECT_TYPE xbox::ExMutantObjectType =
 	xbox::ExAllocatePoolWithTag,
 	xbox::ExFreePool,
 	NULL,
-	NULL, // TODO : xbox::ExpDeleteMutant,
+	xbox::ExpDeleteMutant,
 	NULL,
 	(PVOID)offsetof(xbox::KMUTANT, Header),
 	'atuM' // = first four characters of "Mutant" in reverse
@@ -530,6 +545,77 @@ XBSYSAPI EXPORTNUM(25) xbox::ntstatus_xt NTAPI xbox::ExReadWriteRefurbInfo
 	RETURN(Result);
 }
 
+// Exception handler function type matching x86 SEH convention.
+// This is the actual signature of _except_handler3 / _except_handler4 etc.
+typedef xbox::EXCEPTION_DISPOSITION (NTAPI *PEXCEPTION_HANDLER_FUNC)(
+	xbox::PEXCEPTION_RECORD ExceptionRecord,
+	PVOID EstablisherFrame,
+	xbox::PCONTEXT ContextRecord,
+	PVOID DispatcherContext
+);
+
+// Manually dispatches an exception through the Xbox KPCR's exception chain.
+//
+// The Xbox exception registration chain lives in KPCR[0] (NtTib.ExceptionList).
+// All Xbox code's fs:[0] accesses are patched to read/write KPCR[0] instead of
+// the host's real fs:[0].  This means:
+//   - We must NOT use host RaiseException/RtlUnwind (they operate on real fs:[0])
+//   - We must walk KPCR[0] ourselves, calling each handler directly
+//   - Xbox handlers (like _except_handler3) will interact with KPCR[0] via
+//     their patched fs:[0] accesses, keeping everything consistent.
+//
+// For EXCEPTION_EXECUTE_HANDLER: the handler calls _global_unwind2 → RtlUnwind
+// (our kernel export, which must also walk KPCR[0]) and then longjumps to the
+// __except block.  Control never returns to this function.
+//
+// For EXCEPTION_CONTINUE_EXECUTION: the handler returns ExceptionContinueExecution
+// and we simply return from ExRaiseException, resuming the caller.
+static void DispatchExceptionThroughXboxChain(xbox::PEXCEPTION_RECORD ExceptionRecord)
+{
+	DWORD kpcrPtr = __readfsdword(TIB_ArbitraryDataSlot);
+	auto Registration = reinterpret_cast<xbox::PEXCEPTION_REGISTRATION_RECORD>(*(DWORD *)kpcrPtr);
+
+	// Provide a minimal CONTEXT for the handler (filters may inspect it)
+	xbox::CONTEXT Context = {};
+	Context.ContextFlags = 0x10001; // CONTEXT_CONTROL
+
+	PVOID DispatcherContext = nullptr;
+
+	while (Registration != reinterpret_cast<xbox::PEXCEPTION_REGISTRATION_RECORD>(-1)) {
+		auto Handler = reinterpret_cast<PEXCEPTION_HANDLER_FUNC>(Registration->Handler);
+
+		xbox::EXCEPTION_DISPOSITION Disposition = Handler(
+			ExceptionRecord,
+			Registration,
+			&Context,
+			&DispatcherContext);
+
+		switch (Disposition) {
+		case xbox::ExceptionContinueExecution:
+			// Filter said to continue — return from ExRaiseException
+			return;
+
+		case xbox::ExceptionContinueSearch:
+			// Try the next frame in the chain
+			Registration = Registration->Next;
+			continue;
+
+		case xbox::ExceptionNestedException:
+			// Nested exception during dispatch — advance past the colliding frame
+			Registration = Registration->Next;
+			continue;
+
+		default:
+			// Includes ExceptionCollidedUnwind and unknown values
+			Registration = Registration->Next;
+			continue;
+		}
+	}
+
+	// If we get here, no handler caught the exception
+	CxbxrAbort("ExRaiseException: unhandled Xbox exception 0x%08X", ExceptionRecord->ExceptionCode);
+}
+
 // ******************************************************************
 // * 0x001A - ExRaiseException()
 // ******************************************************************
@@ -541,14 +627,7 @@ XBSYSAPI EXPORTNUM(26) xbox::void_xt NTAPI xbox::ExRaiseException
 {
 	LOG_FUNC_ONE_ARG(ExceptionRecord);
 
-	// The Xbox EXCEPTION_RECORD layout is identical to the Windows one, so we
-	// can dispatch through the host Win32 SEH mechanism directly.  This allows
-	// the game's own __try/__except handlers to catch the exception as expected.
-	::RaiseException(
-		ExceptionRecord->ExceptionCode,
-		ExceptionRecord->ExceptionFlags,
-		ExceptionRecord->NumberParameters,
-		reinterpret_cast<const ULONG_PTR*>(ExceptionRecord->ExceptionInformation));
+	DispatchExceptionThroughXboxChain(ExceptionRecord);
 }
 
 // ******************************************************************
