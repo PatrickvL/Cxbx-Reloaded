@@ -177,7 +177,7 @@ bool EqualsIgnoreCase(const char* value, std::string_view expected)
 	return value[index] == '\0' && index == expected.size();
 }
 
-bool ParseBooleanEnvironmentValue(const char* value, bool defaultValue = false)
+bool ParseBooleanEnvironmentValue(const char* value, bool defaultValue)
 {
 	if (value == nullptr || value[0] == '\0') {
 		return defaultValue;
