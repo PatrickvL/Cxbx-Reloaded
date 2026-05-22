@@ -462,6 +462,7 @@ void AC97Device::Reset()
 	ResetBusMasterChannel(NABM_MC_BASE);
 	WriteRegister(AC97_NAM_SIZE + NABM_GLOB_CNT, 0, sizeof(uint32_t));
 	UpdateGlobalStatus();
+	EnsureOutputDevice();
 }
 
 bool AC97Device::EnsureOutputDevice()
