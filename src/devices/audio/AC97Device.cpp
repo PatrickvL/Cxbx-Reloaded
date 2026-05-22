@@ -154,6 +154,11 @@ const char* GetRequestedOpenALDevice()
 	return requestedDevice.empty() ? nullptr : requestedDevice.c_str();
 }
 
+char ToLowerChar(char value)
+{
+	return static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
+}
+
 bool EqualsIgnoreCase(const char* value, std::string_view expected)
 {
 	if (value == nullptr) {
@@ -162,8 +167,7 @@ bool EqualsIgnoreCase(const char* value, std::string_view expected)
 
 	size_t index = 0;
 	for (; value[index] != '\0' && index < expected.size(); ++index) {
-		if (static_cast<char>(std::tolower(static_cast<unsigned char>(value[index]))) !=
-			static_cast<char>(std::tolower(static_cast<unsigned char>(expected[index])))) {
+		if (ToLowerChar(value[index]) != ToLowerChar(expected[index])) {
 			return false;
 		}
 	}
@@ -205,7 +209,7 @@ std::vector<int16_t> BuildOpenALTestBeepFrames()
 	std::vector<int16_t> frames(frameCount * AC97_OUTPUT_CHANNELS);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
 		float envelope = 1.0f;
-		const size_t edgeDistance = std::min(frame, frameCount - 1 - frame);
+		const size_t edgeDistance = std::min(frame, frameCount - frame - 1);
 		if (edgeDistance < AC97_TEST_BEEP_FADE_FRAMES) {
 			envelope = static_cast<float>(edgeDistance + 1) * fadeStep;
 		}
