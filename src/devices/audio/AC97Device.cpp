@@ -141,6 +141,8 @@ constexpr double AC97_TEST_BEEP_DURATION_SECONDS = 0.125;
 constexpr float AC97_TEST_BEEP_AMPLITUDE = 0.20f;
 constexpr size_t AC97_TEST_BEEP_FADE_FRAMES = 128;
 
+int16_t ClampToInt16(int32_t sample);
+
 const char* GetRequestedOpenALDevice()
 {
 	static std::once_flag requestedDeviceOnce;
