@@ -43,6 +43,7 @@
 #include <mutex>
 #include <numbers>
 #include <string>
+#include <string_view>
 
 #define LOG_PREFIX CXBXR_MODULE::MCPX
 
@@ -153,19 +154,30 @@ const char* GetRequestedOpenALDevice()
 	return requestedDevice.empty() ? nullptr : requestedDevice.c_str();
 }
 
+bool EqualsIgnoreCase(const char* value, std::string_view expected)
+{
+	if (value == nullptr) {
+		return false;
+	}
+
+	size_t index = 0;
+	for (; value[index] != '\0' && index < expected.size(); ++index) {
+		if (static_cast<char>(std::tolower(static_cast<unsigned char>(value[index]))) != expected[index]) {
+			return false;
+		}
+	}
+
+	return value[index] == '\0' && index == expected.size();
+}
+
 bool ParseBooleanEnvironmentValue(const char* value)
 {
 	if (value == nullptr || value[0] == '\0') {
 		return false;
 	}
 
-	std::string normalizedValue = value;
-	std::transform(normalizedValue.begin(), normalizedValue.end(), normalizedValue.begin(),
-		[](unsigned char ch) {
-			return static_cast<char>(std::tolower(ch));
-		});
-	return normalizedValue == "1" || normalizedValue == "true" ||
-		normalizedValue == "yes" || normalizedValue == "on";
+	return EqualsIgnoreCase(value, "1") || EqualsIgnoreCase(value, "true") ||
+		EqualsIgnoreCase(value, "yes") || EqualsIgnoreCase(value, "on");
 }
 
 bool GetOpenALTestBeepEnabled()
@@ -180,23 +192,26 @@ bool GetOpenALTestBeepEnabled()
 
 std::vector<int16_t> BuildOpenALTestBeepFrames()
 {
-	const size_t frameCount = static_cast<size_t>(APU_TIMER_FREQUENCY * AC97_TEST_BEEP_DURATION_SECONDS);
+	const double sampleRate = static_cast<double>(APU_TIMER_FREQUENCY);
+	const size_t frameCount = static_cast<size_t>(sampleRate * AC97_TEST_BEEP_DURATION_SECONDS);
 	if (frameCount == 0) {
 		return {};
 	}
 
+	const double radiansPerFrame =
+		(AC97_TEST_BEEP_FREQUENCY_HZ * 2.0 * std::numbers::pi_v<double>) / sampleRate;
+	const float fadeStep = 1.0f / static_cast<float>(AC97_TEST_BEEP_FADE_FRAMES);
 	std::vector<int16_t> frames(frameCount * AC97_OUTPUT_CHANNELS);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
 		float envelope = 1.0f;
 		if (frame < AC97_TEST_BEEP_FADE_FRAMES) {
-			envelope = static_cast<float>(frame + 1) / static_cast<float>(AC97_TEST_BEEP_FADE_FRAMES);
+			envelope = static_cast<float>(frame + 1) * fadeStep;
 		} else if (frame + AC97_TEST_BEEP_FADE_FRAMES > frameCount) {
-			envelope = static_cast<float>(frameCount - frame) / static_cast<float>(AC97_TEST_BEEP_FADE_FRAMES);
+			envelope = static_cast<float>(frameCount - frame) * fadeStep;
 		}
 		envelope = std::clamp(envelope, 0.0f, 1.0f);
 
-		const double phase = (static_cast<double>(frame) * AC97_TEST_BEEP_FREQUENCY_HZ * 2.0 * std::numbers::pi_v<double>) /
-			static_cast<double>(APU_TIMER_FREQUENCY);
+		const double phase = static_cast<double>(frame) * radiansPerFrame;
 		const float sample = static_cast<float>(std::sin(phase)) * AC97_TEST_BEEP_AMPLITUDE * envelope;
 		const int16_t pcm = ClampToInt16(static_cast<int32_t>(sample * static_cast<float>(INT16_MAX)));
 		const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
