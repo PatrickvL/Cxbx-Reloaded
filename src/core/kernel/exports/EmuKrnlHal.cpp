@@ -165,7 +165,7 @@ XBSYSAPI EXPORTNUM(41) xbox::ANSI_STRING xbox::HalDiskModelNumber = { sizeof(Hal
 // * 0x002A - HalDiskSerialNumber
 // ******************************************************************
 static char HalDiskSerialNumberBuffer[] = "XXXXXXXXXXXXXXXXXXXX";
-XBSYSAPI EXPORTNUM(42) xbox::ANSI_STRING xbox::HalDiskSerialNumber = { sizeof(HalDiskSerialNumberBuffer) - 1, sizeof(HalDiskSerialNumberBuffer), HalDiskSerialNumberBuffer };	
+XBSYSAPI EXPORTNUM(42) xbox::ANSI_STRING xbox::HalDiskSerialNumber = { sizeof(HalDiskSerialNumberBuffer) - 1, sizeof(HalDiskSerialNumberBuffer), HalDiskSerialNumberBuffer };
 
 // ******************************************************************
 // * 0x002B - HalEnableSystemInterrupt()

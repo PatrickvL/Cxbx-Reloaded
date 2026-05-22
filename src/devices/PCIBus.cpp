@@ -66,8 +66,8 @@ void PCIBus::IOWriteConfigData(uint32_t pData) {
 		return;
 	}
 
-	printf("PCIBus::IOWriteConfigData: Invalid Device Write (Bus: %d\t Slot: %d\t Function: %d)\n", m_configAddressRegister.busNumber, 
-		m_configAddressRegister.deviceNumber, 
+	printf("PCIBus::IOWriteConfigData: Invalid Device Write (Bus: %d\t Slot: %d\t Function: %d)\n", m_configAddressRegister.busNumber,
+		m_configAddressRegister.deviceNumber,
 		m_configAddressRegister.functionNumber);
 }
 
