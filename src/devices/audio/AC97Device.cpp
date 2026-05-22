@@ -177,22 +177,27 @@ bool EqualsIgnoreCase(const char* value, std::string_view expected)
 	return value[index] == '\0' && index == expected.size();
 }
 
-bool ParseBooleanEnvironmentValue(const char* value)
+bool ParseBooleanEnvironmentValue(const char* value, bool defaultValue = false)
 {
 	if (value == nullptr || value[0] == '\0') {
-		return false;
+		return defaultValue;
 	}
 
 	return EqualsIgnoreCase(value, "1") || EqualsIgnoreCase(value, "true") ||
-		EqualsIgnoreCase(value, "yes") || EqualsIgnoreCase(value, "on");
+		EqualsIgnoreCase(value, "yes") || EqualsIgnoreCase(value, "on") ||
+		(defaultValue &&
+			!EqualsIgnoreCase(value, "0") &&
+			!EqualsIgnoreCase(value, "false") &&
+			!EqualsIgnoreCase(value, "no") &&
+			!EqualsIgnoreCase(value, "off"));
 }
 
 bool GetOpenALTestBeepEnabled()
 {
 	static std::once_flag once;
-	static bool enabled = false;
+	static bool enabled = true;
 	std::call_once(once, []() {
-		enabled = ParseBooleanEnvironmentValue(std::getenv(AC97_OPENAL_TEST_BEEP_ENV));
+		enabled = ParseBooleanEnvironmentValue(std::getenv(AC97_OPENAL_TEST_BEEP_ENV), true);
 	});
 	return enabled;
 }
