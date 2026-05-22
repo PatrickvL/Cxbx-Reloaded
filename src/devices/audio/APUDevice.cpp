@@ -2404,10 +2404,37 @@ void APUDevice::LogVoiceTableDiagnostics() const
 		return;
 	}
 
+	const auto logFEVPRegisterDiagnostics = [this]() {
+		const uint32_t feav = GetRegister32(NV_PAPU_FEAV);
+		const uint32_t list = (feav & NV_PAPU_FEAV_LST) >> Ctz32(NV_PAPU_FEAV_LST);
+		const uint32_t antecedentVoice = feav & NV_PAPU_FEAV_VALUE;
+		const uint32_t decodedMethod = GetRegister32(NV_PAPU_FEDECMETH);
+		const char* decodedMethodName = GetAPUVPMethodTraceName(decodedMethod);
+		EmuLog(LOG_LEVEL::INFO,
+			"APU FE/VP register diagnostics currentVoice=0x%04x targetVoice=0x%04x list=%u antecedent=0x%04x lastMethod=%s addr=0x%08x value=0x%08x vpFree=0x%08x vpvaddr=0x%08x vpsgeaddr=0x%08x vpssladdr=0x%08x top=[0x%08x,0x%08x,0x%08x]",
+			GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE,
+			decodedMethod == NV1BA0_PIO_VOICE_ON
+				? (GetRegister32(NV_PAPU_FEDECPARAM) & NV1BA0_PIO_VOICE_ON_HANDLE)
+				: (GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE),
+			list,
+			antecedentVoice,
+			decodedMethodName != nullptr ? decodedMethodName : "UNKNOWN",
+			decodedMethod,
+			GetRegister32(NV_PAPU_FEDECPARAM),
+			GetRegister32(APU_VP_BASE + APU_VP_FREE),
+			GetRegister32(NV_PAPU_VPVADDR),
+			GetRegister32(NV_PAPU_VPSGEADDR),
+			GetRegister32(NV_PAPU_VPSSLADDR),
+			GetRegister32(NV_PAPU_TVL2D),
+			GetRegister32(NV_PAPU_TVL3D),
+			GetRegister32(NV_PAPU_TVLMP));
+	};
+
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
 		EmuLog(LOG_LEVEL::INFO,
 			"APU voice table diagnostics voiceTableBase=0x00000000 active=0 paused=0 new=0 handles=[none]");
+		logFEVPRegisterDiagnostics();
 		LogRecentFEMethodDiagnostics();
 		return;
 	}
@@ -2443,6 +2470,7 @@ void APUDevice::LogVoiceTableDiagnostics() const
 			activeVoiceCount,
 			pausedVoiceCount,
 			newVoiceCount);
+		logFEVPRegisterDiagnostics();
 		LogRecentFEMethodDiagnostics();
 		return;
 	}
@@ -2457,6 +2485,7 @@ void APUDevice::LogVoiceTableDiagnostics() const
 		loggedActiveHandles > 1 ? activeHandles[1] : APU_VP_VOICE_MAX_HANDLE,
 		loggedActiveHandles > 2 ? activeHandles[2] : APU_VP_VOICE_MAX_HANDLE,
 		loggedActiveHandles > 3 ? activeHandles[3] : APU_VP_VOICE_MAX_HANDLE);
+	logFEVPRegisterDiagnostics();
 }
 
 void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,

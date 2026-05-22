@@ -113,6 +113,7 @@ class AC97Device : public PCIDevice {
 		uint32_t m_QueuedAudioBytes = 0;
 		ALint m_LastOutputSourceState = -1;
 		bool m_OutputDeviceFailed = false;
+		bool m_OutputTestBeepPlayed = false;
 		bool m_LoggedQueueFull = false;
 		bool m_LoggedPlaybackStartFailure = false;
 };

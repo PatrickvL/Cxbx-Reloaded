@@ -130,8 +130,14 @@ constexpr uint16_t AC97_VOLUME_RIGHT_MASK = 0x001F;
 constexpr uint32_t AC97_VOLUME_LEFT_SHIFT = 8;
 constexpr float AC97_VOLUME_STEP_DB = 1.5f;
 constexpr const char* AC97_OPENAL_DEVICE_ENV = "CXBXR_OPENAL_DEVICE";
+constexpr const char* AC97_OPENAL_TEST_BEEP_ENV = "CXBXR_OPENAL_TEST_BEEP";
 constexpr size_t AC97_OPENAL_DEVICE_NAME_LIMIT = 4096;
 constexpr size_t AC97_OPENAL_DEVICE_COUNT_LIMIT = 256;
+constexpr double AC97_TEST_BEEP_FREQUENCY_HZ = 880.0;
+constexpr double AC97_TEST_BEEP_DURATION_SECONDS = 0.125;
+constexpr float AC97_TEST_BEEP_AMPLITUDE = 0.20f;
+constexpr size_t AC97_TEST_BEEP_FADE_FRAMES = 128;
+constexpr double AC97_PI = 3.14159265358979323846;
 
 const char* GetRequestedOpenALDevice()
 {
@@ -144,6 +150,61 @@ const char* GetRequestedOpenALDevice()
 		}
 	});
 	return requestedDevice.empty() ? nullptr : requestedDevice.c_str();
+}
+
+bool ParseBooleanEnvironmentValue(const char* value)
+{
+	if (value == nullptr || value[0] == '\0') {
+		return false;
+	}
+
+	if (std::strcmp(value, "1") == 0 || std::strcmp(value, "true") == 0 ||
+		std::strcmp(value, "TRUE") == 0 || std::strcmp(value, "yes") == 0 ||
+		std::strcmp(value, "YES") == 0 || std::strcmp(value, "on") == 0 ||
+		std::strcmp(value, "ON") == 0) {
+		return true;
+	}
+
+	return false;
+}
+
+bool GetOpenALTestBeepEnabled()
+{
+	static std::once_flag once;
+	static bool enabled = false;
+	std::call_once(once, []() {
+		enabled = ParseBooleanEnvironmentValue(std::getenv(AC97_OPENAL_TEST_BEEP_ENV));
+	});
+	return enabled;
+}
+
+std::vector<int16_t> BuildOpenALTestBeepFrames()
+{
+	const size_t frameCount = static_cast<size_t>(APU_TIMER_FREQUENCY * AC97_TEST_BEEP_DURATION_SECONDS);
+	if (frameCount == 0) {
+		return {};
+	}
+
+	std::vector<int16_t> frames(frameCount * AC97_OUTPUT_CHANNELS);
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		float envelope = 1.0f;
+		if (frame < AC97_TEST_BEEP_FADE_FRAMES) {
+			envelope = static_cast<float>(frame + 1) / static_cast<float>(AC97_TEST_BEEP_FADE_FRAMES);
+		} else if (frame + AC97_TEST_BEEP_FADE_FRAMES > frameCount) {
+			envelope = static_cast<float>(frameCount - frame) / static_cast<float>(AC97_TEST_BEEP_FADE_FRAMES);
+		}
+		envelope = std::clamp(envelope, 0.0f, 1.0f);
+
+		const double phase = (static_cast<double>(frame) * AC97_TEST_BEEP_FREQUENCY_HZ * 2.0 * AC97_PI) /
+			static_cast<double>(APU_TIMER_FREQUENCY);
+		const float sample = static_cast<float>(std::sin(phase)) * AC97_TEST_BEEP_AMPLITUDE * envelope;
+		const int16_t pcm = ClampToInt16(static_cast<int32_t>(sample * static_cast<float>(INT16_MAX)));
+		const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
+		frames[sampleIndex] = pcm;
+		frames[sampleIndex + 1] = pcm;
+	}
+
+	return frames;
 }
 
 std::vector<std::string> GetAvailableOpenALDevices()
@@ -478,7 +539,51 @@ bool AC97Device::EnsureOutputDevice()
 	m_StagedOutputFrames.clear();
 	m_LastOutputSourceState = -1;
 	m_LoggedPlaybackStartFailure = false;
+	m_OutputTestBeepPlayed = false;
 	alSourcef(m_OutputSource, AL_GAIN, 1.0f);
+
+	if (!m_OutputTestBeepPlayed && GetOpenALTestBeepEnabled() && !m_FreeOutputBuffers.empty()) {
+		const std::vector<int16_t> testBeep = BuildOpenALTestBeepFrames();
+		if (!testBeep.empty()) {
+			const ALuint buffer = m_FreeOutputBuffers.back();
+			m_FreeOutputBuffers.pop_back();
+			const auto bufferIndexIt = m_OutputBufferIndex.find(buffer);
+			if (bufferIndexIt != m_OutputBufferIndex.end()) {
+				const size_t bufferIndex = bufferIndexIt->second;
+				const ALsizei beepBytes = static_cast<ALsizei>(testBeep.size() * sizeof(int16_t));
+				alBufferData(buffer, AL_FORMAT_STEREO16, testBeep.data(), beepBytes, static_cast<ALsizei>(APU_TIMER_FREQUENCY));
+				ALenum error = alGetError();
+				if (error == AL_NO_ERROR) {
+					alSourceQueueBuffers(m_OutputSource, 1, &buffer);
+					error = alGetError();
+				}
+				if (error == AL_NO_ERROR) {
+					alSourcePlay(m_OutputSource);
+					error = alGetError();
+				}
+				if (error == AL_NO_ERROR) {
+					m_OutputBufferBytes[bufferIndex] = static_cast<uint32_t>(beepBytes);
+					m_QueuedAudioBytes += static_cast<uint32_t>(beepBytes);
+					m_OutputTestBeepPlayed = true;
+					EmuLog(LOG_LEVEL::INFO,
+						"AC97 OpenAL queued startup test beep from %s frames=%zu bytes=%u",
+						AC97_OPENAL_TEST_BEEP_ENV,
+						testBeep.size() / AC97_OUTPUT_CHANNELS,
+						static_cast<unsigned>(beepBytes));
+				} else {
+					m_OutputBufferBytes[bufferIndex] = 0;
+					m_FreeOutputBuffers.push_back(buffer);
+					EmuLog(LOG_LEVEL::WARNING,
+						"AC97 OpenAL failed to queue startup test beep from %s: %s (0x%04x)",
+						AC97_OPENAL_TEST_BEEP_ENV,
+						GetOpenALErrorName(error),
+						static_cast<unsigned>(error));
+				}
+			} else {
+				m_FreeOutputBuffers.push_back(buffer);
+			}
+		}
+	}
 	return true;
 }
 
