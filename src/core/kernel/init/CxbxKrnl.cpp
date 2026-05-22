@@ -1217,10 +1217,16 @@ static void CxbxrKrnlInitHacks()
 	// so that MmIsAddressValid returns TRUE for the Buffer pointers.
 	{
 		PCHAR pModelBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskModelNumber.MaximumLength, 'dlaH');
+		if (pModelBuf == nullptr) {
+			CxbxrAbort("Could not allocate HalDiskModelNumber buffer");
+		}
 		memcpy(pModelBuf, xbox::HalDiskModelNumber.Buffer, xbox::HalDiskModelNumber.MaximumLength);
 		xbox::HalDiskModelNumber.Buffer = pModelBuf;
 
 		PCHAR pSerialBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskSerialNumber.MaximumLength, 'dlaH');
+		if (pSerialBuf == nullptr) {
+			CxbxrAbort("Could not allocate HalDiskSerialNumber buffer");
+		}
 		memcpy(pSerialBuf, xbox::HalDiskSerialNumber.Buffer, xbox::HalDiskSerialNumber.MaximumLength);
 		xbox::HalDiskSerialNumber.Buffer = pSerialBuf;
 	}
