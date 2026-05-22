@@ -2141,14 +2141,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				break;
 			}
 		}
-		if (!useHRTFStereoFallback) {
-			for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
-				if (PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, bin) != 0) {
-					useNonStereoBinFallback = true;
-					break;
-				}
-			}
-		}
+		useNonStereoBinFallback = !useHRTFStereoFallback;
 	}
 
 	std::vector<int16_t> output(frameCount * 2);
@@ -2179,7 +2172,9 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				const int32_t contribution = mixBins[binBase + frame];
 				// Without the DSP/output-buffer stages, some voices only reach non-stereo
 				// mixbins. Fold them back to host stereo by bin parity so their audio stays
-				// audible until the full guest routing path is implemented.
+				// audible until the full guest routing path is implemented. This mirrors the
+				// voice-mixing convention above where even-numbered routes originate from the
+				// left sample and odd-numbered routes originate from the right sample.
 				if ((bin & 1u) == 0) {
 					left += contribution;
 				} else {
