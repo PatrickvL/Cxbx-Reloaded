@@ -199,7 +199,7 @@ bool ParseBooleanEnvironmentValue(const char* value, bool defaultValue = false)
 bool GetOpenALTestBeepEnabled()
 {
 	static std::once_flag once;
-	static bool enabled = true;
+	static bool enabled = false;
 	std::call_once(once, []() {
 		enabled = ParseBooleanEnvironmentValue(std::getenv(AC97_OPENAL_TEST_BEEP_ENV), true);
 	});
