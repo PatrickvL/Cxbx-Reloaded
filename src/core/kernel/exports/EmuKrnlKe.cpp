@@ -89,6 +89,7 @@ namespace NtDll
 #pragma warning(disable:4005) // Ignore redefined status values
 #include <ntstatus.h>
 
+#include <atomic>
 #include <chrono>
 #include <float.h>
 #include <thread>
@@ -773,6 +774,7 @@ XBSYSAPI EXPORTNUM(96) xbox::boolean_xt NTAPI xbox::KeCancelTimer
 }
 
 xbox::PKINTERRUPT EmuInterruptList[MAX_BUS_INTERRUPT_LEVEL + 1] = { 0 };
+xbox::PKINTERRUPT EmuInterruptChained[MAX_BUS_INTERRUPT_LEVEL + 1] = { 0 };
 
 // ******************************************************************
 // * 0x0062 - KeConnectInterrupt()
@@ -789,29 +791,46 @@ XBSYSAPI EXPORTNUM(98) xbox::boolean_xt NTAPI xbox::KeConnectInterrupt
 
 	KiLockDispatcherDatabase(&OldIrql);
 
+	// On Xbox, BusInterruptLevel contains the system interrupt vector
+	// (assigned by HalGetInterruptVector), not the raw IRQ number.
+	// Convert vector to IRQ for our internal array indexing.
+	ULONG irq = InterruptObject->BusInterruptLevel;
+	if (irq >= IRQ_BASE) {
+		irq = VECTOR2IRQ(irq);
+	}
+
 	// here we have to connect the interrupt object to the vector
 	if (!InterruptObject->Connected)
 	{
-		// One interrupt per IRQ - only set when not set yet :
-		if (EmuInterruptList[InterruptObject->BusInterruptLevel] == NULL)
-		{
-			InterruptObject->Connected = TRUE;
-			EmuInterruptList[InterruptObject->BusInterruptLevel] = InterruptObject;
-			HalEnableSystemInterrupt(InterruptObject->BusInterruptLevel, InterruptObject->Mode);
+		if (irq > MAX_BUS_INTERRUPT_LEVEL) {
+		} else {
+			// One interrupt per IRQ - only set when not set yet :
+			if (EmuInterruptList[irq] == NULL)
+			{
+				InterruptObject->Connected = TRUE;
+				EmuInterruptList[irq] = InterruptObject;
+				HalEnableSystemInterrupt(irq, InterruptObject->Mode);
 
-			// For the GPU interrupt (IRQ 3), also enable the NV2A PCRTC VBlank
-			// interrupt at the hardware level. On real Xbox, the kernel miniport
-			// writes NV_PCRTC_INTR_EN_0 = 1 during init, but since we emulate the
-			// kernel at the API level, that MMIO write never executes. Enable it
-			// here so the ISR can see VBlank pending interrupts.
-			if (InterruptObject->BusInterruptLevel == 3) {
-				if (g_NV2A) {
-					NV2AState* d = g_NV2A->GetDeviceState();
-					d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+				// For the GPU interrupt (IRQ 3), ensure VBlank is enabled at the
+				// hardware level. The game's D3D runtime writes NV_PCRTC_INTR_EN_0
+				// during init, but there may be a brief window between ISR connection
+				// and the MMIO write. Pre-enable as a safety net.
+				if (irq == 3) {
+					if (g_NV2A) {
+						NV2AState* d = g_NV2A->GetDeviceState();
+						d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+					}
 				}
-			}
 
-			ret = TRUE;
+				ret = TRUE;
+			}
+			// ISR chaining: if slot is occupied, store as chained ISR.
+			else if (EmuInterruptChained[irq] == NULL)
+			{
+				InterruptObject->Connected = TRUE;
+				EmuInterruptChained[irq] = InterruptObject;
+				ret = TRUE;
+			}
 		}
 	}
 	// else do nothing
@@ -883,12 +902,26 @@ XBSYSAPI EXPORTNUM(100) xbox::void_xt NTAPI xbox::KeDisconnectInterrupt
 
 	KiLockDispatcherDatabase(&OldIrql);
 
+	// Convert vector to IRQ (same mapping as KeConnectInterrupt)
+	ULONG irq = InterruptObject->BusInterruptLevel;
+	if (irq >= IRQ_BASE) {
+		irq = VECTOR2IRQ(irq);
+	}
+
 	// Do the reverse of KeConnectInterrupt
-	if (InterruptObject->Connected) { // Text case : d3dbvt.xbe
-		// Mark InterruptObject as not connected anymore
-		HalDisableSystemInterrupt(InterruptObject->BusInterruptLevel);
-		EmuInterruptList[InterruptObject->BusInterruptLevel] = NULL;
-		InterruptObject->Connected = FALSE;
+	if (InterruptObject->Connected && irq <= MAX_BUS_INTERRUPT_LEVEL) { // Text case : d3dbvt.xbe
+		// Check if this is the chained interrupt
+		if (EmuInterruptChained[irq] == InterruptObject) {
+			EmuInterruptChained[irq] = NULL;
+			InterruptObject->Connected = FALSE;
+		}
+		// Otherwise it's the primary
+		else {
+			// Mark InterruptObject as not connected anymore
+			HalDisableSystemInterrupt(irq);
+			EmuInterruptList[irq] = NULL;
+			InterruptObject->Connected = FALSE;
+		}
 	}
 
 	KiUnlockDispatcherDatabase(OldIrql);

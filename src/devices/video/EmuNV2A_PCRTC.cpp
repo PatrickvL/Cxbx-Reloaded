@@ -167,11 +167,9 @@ DEVICE_WRITE32(PCRTC)
 		break;
 	case NV_PCRTC_INTR_EN_0:
 		d->pcrtc.enabled_interrupts = value;
-		// On real Xbox, the kernel miniport owns NV_PCRTC_INTR_EN_0 and ensures
-		// VBlank stays enabled after ISR connection. Since we emulate the miniport
-		// at the API level (KeConnectInterrupt), the miniport's MMIO write never
-		// executes. Preserve VBlank enable when the GPU ISR is connected to prevent
-		// the D3D runtime's init sequence from accidentally disabling it.
+		// Safety net: prevent VBlank from being disabled once the game's ISR is
+		// connected. The D3D runtime may briefly clear this during init, but
+		// disabling VBlank would stall the DPC loop. Re-assert to be safe.
 		if (EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
 			d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
 		}

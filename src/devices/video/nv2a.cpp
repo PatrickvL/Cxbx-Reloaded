@@ -503,7 +503,7 @@ void NV2ADevice::Init()
 	d->vblank_cb = nv2a_vblank_interrupt;
 
     qemu_mutex_init(&d->pfifo.pfifo_lock);
-    qemu_cond_init(&d->pfifo.puller_cond);
+    d->pfifo.puller_event = CreateEvent(NULL, FALSE, FALSE, NULL); // auto-reset
     qemu_cond_init(&d->pfifo.pusher_cond);
     qemu_cond_init(&d->pfifo.flush_complete_cond);
     d->pfifo.flush_requested = false;
@@ -566,11 +566,14 @@ void NV2ADevice::Reset()
 
 	d->exiting = true;
 
-	qemu_cond_broadcast(&d->pfifo.puller_cond);
+	SetEvent(d->pfifo.puller_event);
+	qemu_mutex_lock(&d->pfifo.pfifo_lock);
 	qemu_cond_broadcast(&d->pfifo.pusher_cond);
 	qemu_cond_broadcast(&d->pfifo.flush_complete_cond);
+	qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 	d->pfifo.puller_thread.join();
 	d->pfifo.pusher_thread.join();
+	CloseHandle(d->pfifo.puller_event);
 	qemu_mutex_destroy(&d->pfifo.pfifo_lock); // Cxbxr addition
 
 	pgraph_destroy(&d->pgraph);

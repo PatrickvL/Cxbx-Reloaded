@@ -125,7 +125,7 @@ DEVICE_WRITE32(PFIFO)
 	}
 
     qemu_cond_broadcast(&d->pfifo.pusher_cond);
-    qemu_cond_broadcast(&d->pfifo.puller_cond);
+    SetEvent(d->pfifo.puller_event);
 
     qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 
@@ -257,7 +257,13 @@ int pfifo_puller_thread(NV2AState *d)
             qemu_cond_signal(&d->pfifo.flush_complete_cond);
         }
 
-        qemu_cond_wait(&d->pfifo.puller_cond, &d->pfifo.pfifo_lock);
+        // Release pfifo_lock while sleeping so other threads can access PFIFO
+        // registers.  Use a simple auto-reset event (puller_event) instead of
+        // qemu_cond — any thread can signal it without holding pfifo_lock,
+        // eliminating the deadlock-prone continue_event protocol.
+        qemu_mutex_unlock(&d->pfifo.pfifo_lock);
+        WaitForSingleObject(d->pfifo.puller_event, INFINITE);
+        qemu_mutex_lock(&d->pfifo.pfifo_lock);
     }
     qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 
@@ -465,12 +471,17 @@ void pfifo_flush_to_pgraph(NV2AState *d)
                            && !GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_STATUS);
         if (pusher_can_run) {
             // Process the DMA push buffer inline on the calling thread.
-            // pfifo_lock is already held, exactly as in pfifo_pusher_thread.
+            // Release pfifo_lock during processing: pfifo_run_pusher may
+            // acquire D3D11ContextLock (via draw/flip_stall callbacks), and
+            // the puller thread can hold D3D11ContextLock while waiting for
+            // pfifo_lock (overlay present) → deadlock if we hold pfifo_lock.
             // Mark this thread as puller context so that any draw callback
             // triggered by pgraph_handle_method (e.g. pgraph_draw_arrays)
             // does not attempt a re-entrant pfifo_flush_to_pgraph.
             CxbxSetPullerContext(true);
+            qemu_mutex_unlock(&d->pfifo.pfifo_lock);
             pfifo_run_pusher(d);
+            qemu_mutex_lock(&d->pfifo.pfifo_lock);
             CxbxSetPullerContext(false);
         } else {
             // Advance GET past the unprocessable commands.
@@ -738,7 +749,11 @@ int pfifo_pusher_thread(NV2AState *d)
     while (true) {
         {
             CXBX_PROFILE_SCOPE(PROF_PFIFO_PUSHER);
+            // Release pfifo_lock during processing to prevent deadlock with
+            // the puller thread's D3D11ContextLock → pfifo_lock ordering.
+            qemu_mutex_unlock(&d->pfifo.pfifo_lock);
             pfifo_run_pusher(d);
+            qemu_mutex_lock(&d->pfifo.pfifo_lock);
         }
 
         // flush_requested is no longer set by pfifo_flush_to_pgraph (flush now

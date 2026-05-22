@@ -303,7 +303,7 @@ DEVICE_WRITE32(PGRAPH)
 			// thread, not the puller thread that owns the D3D11 context.
 			if (!g_pgraph_explicit_flip_stall_seen) {
 				d->pgraph.surface_color.draw_dirty = true;
-				qemu_cond_broadcast(&d->pfifo.puller_cond);
+				SetEvent(d->pfifo.puller_event);
 			}
 		}
 		break;
@@ -652,14 +652,16 @@ void pgraph_handle_method(NV2AState *d,
 			// Title is using explicit flips — disable puller auto-present fallback.
 			g_pgraph_explicit_flip_stall_seen = true;
 
-			// Trigger host present via the flip_stall plugin callback
+			// Trigger host present via the flip_stall plugin callback.
 			if (g_pgraph_backend.flip_stall != nullptr) {
 				// Clear draw_dirty so the auto-present in the puller loop
 				// doesn't fire again after this explicit FLIP_STALL present.
 				d->pgraph.surface_color.draw_dirty = false;
 				extern bool g_PullerFlipStallThisCycle;
 				g_PullerFlipStallThisCycle = true;
+				qemu_mutex_unlock(&d->pgraph.pgraph_lock);
 				g_pgraph_backend.flip_stall(d);
+				qemu_mutex_lock(&d->pgraph.pgraph_lock);
 			}
 
 			// VBlank-gated frame pacing: wait until the next VBlank deadline.

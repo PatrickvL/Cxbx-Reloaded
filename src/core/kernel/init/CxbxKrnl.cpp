@@ -110,119 +110,6 @@ void SetupXboxDeviceTypes();
 
 extern xbox::void_xt NTAPI system_events(xbox::PVOID arg);
 
-// ---- GPU Miniport ISR/DPC Emulation ----
-// On real Xbox, the kernel miniport connects an ISR for IRQ 3 (GPU) during boot.
-// The ISR acks pending hardware interrupts and queues DPCs. Since we emulate the
-// kernel at the API level, the miniport boot code never runs. We provide our own
-// ISR and VBlank DPC to replicate this functionality.
-
-static xbox::KDPC g_VBlankDpc;
-
-static void NTAPI VBlankDpcRoutine(
-	IN xbox::KDPC *Dpc,
-	IN PVOID DeferredContext,
-	IN PVOID SystemArgument1,
-	IN PVOID SystemArgument2)
-{
-	// Signal the game's VBlank KEVENT (D3D_g_pDevice->m_VerticalBlankEvent)
-	// This is what the real miniport DPC does to wake BlockUntilVerticalBlank.
-	static xbox::PKEVENT s_pVBlankEvent = nullptr;
-
-	if (!s_pVBlankEvent) {
-		void* pDeviceGlobalAddr = GetXboxSymbolPointer("D3D_g_pDevice");
-		void* pOffsetValue = GetXboxSymbolPointer("D3DDevice__m_VerticalBlankEvent_OFFSET");
-		if (pDeviceGlobalAddr && pOffsetValue) {
-			uint32_t deviceAddr = *(uint32_t*)pDeviceGlobalAddr;
-			uint32_t offset = (uint32_t)(uintptr_t)pOffsetValue;
-			if (deviceAddr && offset) {
-				s_pVBlankEvent = (xbox::PKEVENT)(deviceAddr + offset);
-			}
-		}
-	}
-
-	if (s_pVBlankEvent) {
-		xbox::KeSetEvent(s_pVBlankEvent, 1, FALSE);
-	}
-}
-
-static xbox::KINTERRUPT g_GpuInterrupt;
-
-static xbox::boolean_xt __stdcall GpuIsrRoutine(
-	xbox::PKINTERRUPT Interrupt,
-	xbox::PVOID ServiceContext)
-{
-	// Read pending interrupts from NV2A sub-units
-	NV2AState* d = g_NV2A ? g_NV2A->GetDeviceState() : nullptr;
-	if (!d) return FALSE;
-
-	bool handled = false;
-
-	// PCRTC VBlank interrupt
-	if (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts & NV_PCRTC_INTR_0_VBLANK) {
-		// Ack the VBlank interrupt (like the real miniport ISR does)
-		d->pcrtc.pending_interrupts &= ~NV_PCRTC_INTR_0_VBLANK;
-		// Queue the VBlank DPC
-		xbox::KeInsertQueueDpc(&g_VBlankDpc, nullptr, nullptr);
-		handled = true;
-	}
-
-	// PGRAPH interrupts (e.g. NV_PGRAPH_INTR_ERROR from InsertCallback)
-	// The real miniport ISR acks these and signals the PGRAPH engine to continue.
-	uint32_t pgraph_pending = d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts;
-	if (pgraph_pending) {
-		d->pgraph.pending_interrupts &= ~pgraph_pending;
-		qemu_cond_broadcast(&d->pgraph.interrupt_cond);
-		handled = true;
-	}
-
-	// PVIDEO interrupts (overlay buffer completion)
-	uint32_t pvideo_pending = d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts;
-	if (pvideo_pending) {
-		d->pvideo.pending_interrupts &= ~pvideo_pending;
-		handled = true;
-	}
-
-	// PTIMER interrupts
-	uint32_t ptimer_pending = d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts;
-	if (ptimer_pending) {
-		d->ptimer.pending_interrupts &= ~ptimer_pending;
-		handled = true;
-	}
-
-	// PFIFO interrupts
-	uint32_t pfifo_pending = d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts;
-	if (pfifo_pending) {
-		d->pfifo.pending_interrupts &= ~pfifo_pending;
-		handled = true;
-	}
-
-	return handled ? TRUE : FALSE;
-}
-
-// Connect the GPU ISR during emulation init. Must be called AFTER NV2A device
-// initialization so that g_NV2A is available.
-void InitGpuInterrupt()
-{
-	// Initialize the VBlank DPC
-	xbox::KeInitializeDpc(&g_VBlankDpc, VBlankDpcRoutine, nullptr);
-
-	// Set up the GPU interrupt object for IRQ 3
-	memset(&g_GpuInterrupt, 0, sizeof(g_GpuInterrupt));
-	g_GpuInterrupt.BusInterruptLevel = 3;
-	g_GpuInterrupt.ServiceRoutine = (xbox::PKSERVICE_ROUTINE)GpuIsrRoutine;
-	g_GpuInterrupt.ServiceContext = nullptr;
-	g_GpuInterrupt.Connected = FALSE;
-
-	xbox::KeConnectInterrupt(&g_GpuInterrupt);
-
-	// Ensure VBlank interrupt is enabled at the hardware level
-	if (g_NV2A) {
-		NV2AState* d = g_NV2A->GetDeviceState();
-		d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
-		d->pmc.enabled_interrupts = NV_PMC_INTR_EN_0_HARDWARE;
-	}
-}
-
 void SetupPerTitleKeys()
 {
 	// Generate per-title keys from the XBE Certificate
@@ -1326,10 +1213,6 @@ static void CxbxrKrnlInitHacks()
 
 	InitXboxHardware(hardwareModel);
 
-	// Connect our GPU ISR for IRQ 3 (emulates the kernel miniport's interrupt
-	// handler that would normally be connected during Xbox kernel boot).
-	InitGpuInterrupt();
-
 	// Allocate HalDiskModelNumber/SerialNumber buffers from Xbox pool memory
 	// so that MmIsAddressValid returns TRUE for the Buffer pointers.
 	{
@@ -1519,11 +1402,9 @@ static void CxbxrKrnlInitHacks()
 			if (g_bEnableAllInterrupts && g_NV2A) {
 				NV2AState* d = g_NV2A->GetDeviceState();
 
-				// Ensure VBlank interrupt stays enabled when the GPU ISR is connected.
-				// On real Xbox, the kernel miniport writes NV_PCRTC_INTR_EN_0=1 during
-				// init, but since we emulate the kernel at the API level, that MMIO write
-				// never executes. The D3D runtime may write 0 to clear it during its own
-				// GPU init, so re-assert it here if the ISR is connected.
+				// Safety net: ensure VBlank stays enabled once the game's ISR is connected.
+				// The D3D runtime may briefly write 0 to NV_PCRTC_INTR_EN during init;
+				// re-assert to avoid missing VBlanks during that window.
 				if (EmuInterruptList[3] && EmuInterruptList[3]->Connected &&
 				    !(d->pcrtc.enabled_interrupts & NV_PCRTC_INTR_0_VBLANK)) {
 					d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
@@ -1548,28 +1429,28 @@ static void CxbxrKrnlInitHacks()
 						// Wake the puller thread so it can composite and present the
 						// overlay.  During FMV, no pushbuffer activity occurs, so the
 						// puller stays asleep and the overlay is never displayed.
-						qemu_cond_broadcast(&d->pfifo.puller_cond);
+						SetEvent(d->pfifo.puller_event);
 					}
 				}
 
 				// Check if any NV2A sub-unit has a pending interrupt that should
 				// fire the ISR. This mirrors the PMC_INTR_0 live computation.
-				// Only fire when pmc.enabled_interrupts != 0 (ISR checks this and
-				// returns without queuing a DPC if the master enable is off).
+				// Only fire when pmc.enabled_interrupts != 0 (the game's ISR
+				// checks NV_PMC_INTR_EN_0 and returns early if master enable is off).
+				bool pvideo_pending = (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) != 0;
 				bool nv2a_irq_pending = d->pmc.enabled_interrupts &&
 					((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
 					 (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
 					 (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
-					 (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
-					 (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts));
+					 (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts) ||
+					 pvideo_pending);
 
 				// PGRAPH INTR_ERROR (D3DDevice_InsertCallback) stalls the GPU
 				// pipeline until the CPU acknowledges it. When pmc_en=0, the
 				// ISR cannot fire, so we ack directly to unblock the puller.
 				// When pmc_en=1, the game's ISR handles it naturally (reads
 				// TRAPPED_DATA_LOW, dispatches the callback, writes PGRAPH_INTR
-				// to ack). We must NOT steal the ack from the ISR because the
-				// callback dispatch is essential for game logic.
+				// to ack via MMIO).
 				if (!d->pmc.enabled_interrupts &&
 				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
 					d->pgraph.pending_interrupts &= ~NV_PGRAPH_INTR_ERROR;
@@ -1602,7 +1483,6 @@ static void CxbxrKrnlInitHacks()
 				     ((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
 				      (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
 				      (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
-				      (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
 				      (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts))) ||
 				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
 					more_work = true;

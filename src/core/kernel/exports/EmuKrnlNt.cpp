@@ -2159,19 +2159,21 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 	PIO_APC_ROUTINE OriginalApcRoutine = ApcRoutine;
 	PVOID OriginalApcContext = ApcContext;
 
+	// Clear FileObject->Event before starting I/O (real NT behavior).
+	// The kernel uses this event to signal completion when no explicit Event is provided.
+	KeResetEvent(&FileObject->Event);
+
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
-		// When an Xbox event or APC is involved, use a temporary Windows event
-		// to guarantee host I/O completes before we signal/post. Without this,
-		// the host could return STATUS_PENDING for async file handles and we'd
-		// propagate an incomplete result.
-		// For completion ports, we also need an event to track async completion,
-		// but we must NOT block — instead we use a thread pool wait.
-		HANDLE hHostEvent = NULL;
-		if (XboxEvent != nullptr || ApcRoutine != nullptr || CompletionContext != nullptr) {
-			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
-			if (hHostEvent == NULL) {
-				EmuLog(LOG_LEVEL::WARNING, "NtReadFile: CreateEvent failed, forcing synchronous I/O");
-			}
+		// Always use a temporary Windows event to guarantee host I/O completes
+		// before we return.  The NT kernel blocks the calling thread (waiting on
+		// FileObject->Event) when no explicit Event, APC, or completion port is
+		// specified.  Without this, async host file handles can return
+		// STATUS_PENDING which the game may poll forever.
+		// For completion ports (without Event/APC), we use a thread pool wait
+		// instead of blocking, so STATUS_PENDING is correctly handled there too.
+		HANDLE hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
+		if (hHostEvent == NULL) {
+			EmuLog(LOG_LEVEL::WARNING, "NtReadFile: CreateEvent failed, forcing synchronous I/O");
 		}
 
 		result = NtDll::NtReadFile(
@@ -2221,9 +2223,12 @@ XBSYSAPI EXPORTNUM(219) xbox::ntstatus_xt NTAPI xbox::NtReadFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// Signal the Xbox event now that I/O is complete
+	// Signal completion: if an explicit Event was provided, signal it.
+	// Otherwise, signal FileObject->Event (games may wait on the file handle).
 	if (XboxEvent) {
 		KeSetEvent(XboxEvent, /*Increment=*/1, /*Wait=*/FALSE);
+	} else if (X_NT_SUCCESS(result)) {
+		KeSetEvent(&FileObject->Event, /*Increment=*/0, /*Wait=*/FALSE);
 	}
 
 	// Call the game's APC routine directly (we're on the requesting thread)
@@ -3254,19 +3259,15 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 	PIO_APC_ROUTINE OriginalApcRoutine = ApcRoutine;
 	PVOID OriginalApcContext = ApcContext;
 
+	// Clear FileObject->Event before starting I/O (real NT behavior).
+	KeResetEvent(&FileObject->Event);
+
 	if (const auto& nFileHandle = GetObjectNativeHandle(FileObject)) {
-		// When an Xbox event or APC is involved, use a temporary Windows event
-		// to guarantee host I/O completes before we signal/post. Without this,
-		// the host could return STATUS_PENDING for async file handles and we'd
-		// propagate an incomplete result.
-		// For completion ports, we also need an event to track async completion,
-		// but we must NOT block — instead we use a thread pool wait.
-		HANDLE hHostEvent = NULL;
-		if (XboxEvent != nullptr || ApcRoutine != nullptr || CompletionContext != nullptr) {
-			hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
-			if (hHostEvent == NULL) {
-				EmuLog(LOG_LEVEL::WARNING, "NtWriteFile: CreateEvent failed, forcing synchronous I/O");
-			}
+		// Always use a temporary Windows event to guarantee host I/O completes
+		// before we return (see NtReadFile for full rationale).
+		HANDLE hHostEvent = CreateEvent(NULL, /*bManualReset=*/TRUE, /*bInitialState=*/FALSE, NULL);
+		if (hHostEvent == NULL) {
+			EmuLog(LOG_LEVEL::WARNING, "NtWriteFile: CreateEvent failed, forcing synchronous I/O");
 		}
 
 		result = NtDll::NtWriteFile(
@@ -3315,9 +3316,12 @@ XBSYSAPI EXPORTNUM(236) xbox::ntstatus_xt NTAPI xbox::NtWriteFile
 		result = X_STATUS_INVALID_PARAMETER;
 	}
 
-	// Signal the Xbox event now that I/O is complete
+	// Signal completion: if an explicit Event was provided, signal it.
+	// Otherwise, signal FileObject->Event (games may wait on the file handle).
 	if (XboxEvent) {
 		KeSetEvent(XboxEvent, /*Increment=*/1, /*Wait=*/FALSE);
+	} else if (X_NT_SUCCESS(result)) {
+		KeSetEvent(&FileObject->Event, /*Increment=*/0, /*Wait=*/FALSE);
 	}
 
 	// Call the game's APC routine directly (we're on the requesting thread)
