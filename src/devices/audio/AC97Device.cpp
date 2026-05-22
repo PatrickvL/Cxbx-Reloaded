@@ -183,13 +183,17 @@ bool ParseBooleanEnvironmentValue(const char* value, bool defaultValue = false)
 		return defaultValue;
 	}
 
-	return EqualsIgnoreCase(value, "1") || EqualsIgnoreCase(value, "true") ||
-		EqualsIgnoreCase(value, "yes") || EqualsIgnoreCase(value, "on") ||
-		(defaultValue &&
-			!EqualsIgnoreCase(value, "0") &&
-			!EqualsIgnoreCase(value, "false") &&
-			!EqualsIgnoreCase(value, "no") &&
-			!EqualsIgnoreCase(value, "off"));
+	if (EqualsIgnoreCase(value, "1") || EqualsIgnoreCase(value, "true") ||
+		EqualsIgnoreCase(value, "yes") || EqualsIgnoreCase(value, "on")) {
+		return true;
+	}
+
+	if (EqualsIgnoreCase(value, "0") || EqualsIgnoreCase(value, "false") ||
+		EqualsIgnoreCase(value, "no") || EqualsIgnoreCase(value, "off")) {
+		return false;
+	}
+
+	return defaultValue;
 }
 
 bool GetOpenALTestBeepEnabled()
