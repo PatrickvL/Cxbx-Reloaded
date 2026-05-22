@@ -259,7 +259,7 @@ XBSYSAPI EXPORTNUM(120) KSYSTEM_TIME KeInterruptTime;
 // ******************************************************************
 // * 0x0079 - KeIsExecutingDpc()
 // ******************************************************************
-XBSYSAPI EXPORTNUM(121) boolean_xt NTAPI KeIsExecutingDpc();
+XBSYSAPI EXPORTNUM(121) ulong_xt NTAPI KeIsExecutingDpc();
 
 // ******************************************************************
 // * 0x007A - KeLeaveCriticalRegion()

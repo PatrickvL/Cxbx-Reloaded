@@ -462,7 +462,7 @@ typedef struct NV2AState {
 		uint32_t* regs; // Backed by g_pNV2AMMIO + NV2A_MMIO_OFF_PFIFO
 		QemuMutex pfifo_lock;
 		std::thread puller_thread;
-		QemuCond puller_cond;
+		HANDLE puller_event;  // Auto-reset event to wake the puller thread
 		std::thread pusher_thread;
 		QemuCond pusher_cond;
 		// Flush synchronization: HLE thread signals flush_requested, then

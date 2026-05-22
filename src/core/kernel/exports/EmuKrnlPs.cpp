@@ -368,6 +368,9 @@ XBSYSAPI EXPORTNUM(255) xbox::ntstatus_xt NTAPI xbox::PsCreateSystemThreadEx
 
 		std::memset(eThread, 0, sizeof(ETHREAD) + ThreadExtensionSize);
 
+		// Initialize the IRP tracking list for this thread
+		InitializeListHead(&eThread->IrpList);
+
 		// Create kernel stack for xbox title to able write on stack instead of host.
 		PVOID KernelStack = MmCreateKernelStack(KernelStackSize, DebuggerThread);
 

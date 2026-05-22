@@ -37,6 +37,30 @@
 #define PROFILING // private kernel profiling functions
 // A.k.a. _XBOX_ENABLE_PROFILING
 
+// Kernel API availability flags per system type
+#define KAPI_RETAIL  (1 << 0)
+#define KAPI_DEVKIT  (1 << 1)
+#define KAPI_CHIHIRO (1 << 2)
+#define KAPI_ALL     (KAPI_RETAIL | KAPI_DEVKIT | KAPI_CHIHIRO)
+
+// Returns the system availability flags for a given kernel thunk ordinal.
+// On real hardware, the retail/chihiro kernel exports ordinals 1-366.
+// The debug kernel additionally exports ordinals 367-378.
+uint8_t CxbxKrnl_KernelThunkAvailability(int ordinal)
+{
+	if (ordinal >= 1 && ordinal <= 366) return KAPI_ALL;
+	if (ordinal >= 367 && ordinal <= 378) return KAPI_DEVKIT;
+	return 0; // ordinal 0 or out of range
+}
+
+// Returns the KAPI flag corresponding to the current emulated system
+uint8_t CxbxKrnl_GetCurrentSystemFlag()
+{
+	if (g_bIsDevKit) return KAPI_DEVKIT;
+	if (g_bIsChihiro) return KAPI_CHIHIRO;
+	return KAPI_RETAIL;
+}
+
 // kernel thunk table
 // Note : Names that collide with other symbols, use the KRNL() macro.
 uint32_t CxbxKrnl_KernelThunkTable[379] =

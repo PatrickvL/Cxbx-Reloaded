@@ -560,10 +560,6 @@ typedef struct _OBJECT_HEADER {
 	quad_xt Body;
 } OBJECT_HEADER, *POBJECT_HEADER;
 
-// Source : DXBX
-typedef ulong_ptr_xt KSPIN_LOCK;
-typedef KSPIN_LOCK *PKSPIN_LOCK;
-
 // ******************************************************************
 // * FILETIME
 // ******************************************************************
@@ -2127,7 +2123,7 @@ static_assert(sizeof(ETHREAD) == 0x140);
 // ******************************************************************
 // * PCREATE_THREAD_NOTIFY_ROUTINE
 // ******************************************************************
-typedef void_xt(*PCREATE_THREAD_NOTIFY_ROUTINE)
+typedef void_xt(NTAPI *PCREATE_THREAD_NOTIFY_ROUTINE)
 (
 	IN PETHREAD Thread,
 	IN HANDLE ThreadId,
@@ -2935,7 +2931,7 @@ typedef struct _IRP
 			union {
 				KDEVICE_QUEUE_ENTRY DeviceQueueEntry;
 				struct {
-					PVOID DriverContext[4];
+					PVOID DriverContext[5];
 				};
 			};
 			PETHREAD Thread;

@@ -142,7 +142,7 @@ DEVICE_WRITE32(USER)
 
 		if (channel_id == cur_channel_id) {
 			switch (addr & 0xFFFF) {
-			case NV_USER_DMA_PUT:
+			case NV_USER_DMA_PUT: {
 				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_PUT)] = value;
 				// Process commands inline immediately.  Native D3D runtime
 				// may wait for completion signals (FLIP_STALL, semaphore)
@@ -155,12 +155,22 @@ DEVICE_WRITE32(USER)
 					                   && GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_ACCESS)
 					                   && !GET_MASK(dma_push, NV_PFIFO_CACHE1_DMA_PUSH_STATUS);
 					if (pusher_can_run) {
+						// Release pfifo_lock during inline pushbuffer processing.
+						// pfifo_run_pusher → pgraph_handle_method may acquire
+						// D3D11ContextLock (draw, flip_stall). The puller thread
+						// can hold D3D11ContextLock (overlay present) while waiting
+						// for pfifo_lock → deadlock if we hold pfifo_lock here.
+						// DMA_PUT was already written above; no other thread modifies
+						// DMA_GET while we're processing (game thread is us).
+						qemu_mutex_unlock(&d->pfifo.pfifo_lock);
 						CxbxSetPullerContext(true);
 						pfifo_run_pusher(d);
 						CxbxSetPullerContext(false);
+						qemu_mutex_lock(&d->pfifo.pfifo_lock);
 					}
 				}
 				break;
+			}
 			case NV_USER_DMA_GET:
 				d->pfifo.regs[RI(NV_PFIFO_CACHE1_DMA_GET)] = value;
 				break;
@@ -178,7 +188,7 @@ DEVICE_WRITE32(USER)
             // (pfifo_flush_to_pgraph called from DMA_GET reads and before draws).
             // Signaling the pusher would cause it to race for pfifo_lock,
             // introducing intermittent stalls in the game thread.
-            qemu_cond_broadcast(&d->pfifo.puller_cond);
+            SetEvent(d->pfifo.puller_event);
 		} else {
 			/* ramfc */
 			assert(false);

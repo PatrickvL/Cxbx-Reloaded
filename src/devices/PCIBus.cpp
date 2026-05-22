@@ -46,40 +46,54 @@ void PCIBus::IOWriteConfigAddress(uint32_t pData)
 
 uint32_t PCIBus::IOReadConfigData()
 {
-	auto it = m_Devices.find(PCI_DEVID(m_configAddressRegister.busNumber, m_configAddressRegister.deviceNumber));
+	auto it = m_Devices.find(PCI_DEVID(m_configAddressRegister.busNumber, PCI_DEVFN(m_configAddressRegister.deviceNumber, m_configAddressRegister.functionNumber)));
 	if (it != m_Devices.end()) {
 		return it->second->ReadConfigRegister(m_configAddressRegister.registerNumber & PCI_CONFIG_REGISTER_MASK);
 	}
 
-	printf("PCIBus::IOReadConfigData: Invalid Device Write (Bus: %d\t Slot: %d\t Function: %d)\n", m_configAddressRegister.busNumber,
-		PCI_SLOT(m_configAddressRegister.deviceNumber),
-		PCI_FUNC(m_configAddressRegister.deviceNumber));
+	printf("PCIBus::IOReadConfigData: Invalid Device Read (Bus: %d\t Slot: %d\t Function: %d)\n", m_configAddressRegister.busNumber,
+		m_configAddressRegister.deviceNumber,
+		m_configAddressRegister.functionNumber);
 
 	// Unpopulated PCI slots return 0xFFFFFFFF
 	return 0xFFFFFFFF;
 }
 
 void PCIBus::IOWriteConfigData(uint32_t pData) {
-	auto it = m_Devices.find(PCI_DEVID(m_configAddressRegister.busNumber, m_configAddressRegister.deviceNumber));
+	auto it = m_Devices.find(PCI_DEVID(m_configAddressRegister.busNumber, PCI_DEVFN(m_configAddressRegister.deviceNumber, m_configAddressRegister.functionNumber)));
 	if (it != m_Devices.end()) {
 		it->second->WriteConfigRegister(m_configAddressRegister.registerNumber & PCI_CONFIG_REGISTER_MASK, pData);
 		return;
 	}
 
-	printf("PCIBus::IOWriteConfigData: Invalid Device Write (Bus: %d\t Slot: %d\t Function: %d)\n", m_configAddressRegister.busNumber, 
-		PCI_SLOT(m_configAddressRegister.deviceNumber), 
-		PCI_FUNC(m_configAddressRegister.deviceNumber));
+	printf("PCIBus::IOWriteConfigData: Invalid Device Write (Bus: %d\t Slot: %d\t Function: %d)\n", m_configAddressRegister.busNumber,
+		m_configAddressRegister.deviceNumber,
+		m_configAddressRegister.functionNumber);
 }
 
 bool PCIBus::IORead(uint32_t addr, uint32_t* data, unsigned size)
 {
 	switch (addr) {
 	case PORT_PCI_CONFIG_DATA: // 0xCFC
-		if (size == sizeof(uint32_t)) {
-			*data = IOReadConfigData();
-			return true;
-		} // TODO : else log wrong size-access?
-		break;
+	case PORT_PCI_CONFIG_DATA + 1:
+	case PORT_PCI_CONFIG_DATA + 2:
+	case PORT_PCI_CONFIG_DATA + 3:
+	{
+		uint32_t configData = IOReadConfigData();
+		int byteOffset = addr - PORT_PCI_CONFIG_DATA;
+		switch (size) {
+		case sizeof(uint32_t):
+			*data = configData;
+			break;
+		case sizeof(uint16_t):
+			*data = (configData >> (byteOffset * 8)) & 0xFFFF;
+			break;
+		case sizeof(uint8_t):
+			*data = (configData >> (byteOffset * 8)) & 0xFF;
+			break;
+		}
+		return true;
+	}
 	default:
 		for (auto it = m_Devices.begin(); it != m_Devices.end(); ++it) {
 			PCIBar bar;
