@@ -162,7 +162,8 @@ bool EqualsIgnoreCase(const char* value, std::string_view expected)
 
 	size_t index = 0;
 	for (; value[index] != '\0' && index < expected.size(); ++index) {
-		if (static_cast<char>(std::tolower(static_cast<unsigned char>(value[index]))) != expected[index]) {
+		if (static_cast<char>(std::tolower(static_cast<unsigned char>(value[index]))) !=
+			static_cast<char>(std::tolower(static_cast<unsigned char>(expected[index])))) {
 			return false;
 		}
 	}
@@ -204,12 +205,10 @@ std::vector<int16_t> BuildOpenALTestBeepFrames()
 	std::vector<int16_t> frames(frameCount * AC97_OUTPUT_CHANNELS);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
 		float envelope = 1.0f;
-		if (frame < AC97_TEST_BEEP_FADE_FRAMES) {
-			envelope = static_cast<float>(frame + 1) * fadeStep;
-		} else if (frame + AC97_TEST_BEEP_FADE_FRAMES > frameCount) {
-			envelope = static_cast<float>(frameCount - frame) * fadeStep;
+		const size_t edgeDistance = std::min(frame, frameCount - 1 - frame);
+		if (edgeDistance < AC97_TEST_BEEP_FADE_FRAMES) {
+			envelope = static_cast<float>(edgeDistance + 1) * fadeStep;
 		}
-		envelope = std::clamp(envelope, 0.0f, 1.0f);
 
 		const double phase = static_cast<double>(frame) * radiansPerFrame;
 		const float sample = static_cast<float>(std::sin(phase)) * AC97_TEST_BEEP_AMPLITUDE * envelope;
