@@ -2130,6 +2130,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
 		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0;
 	bool useHRTFStereoFallback = false;
+	bool useNonStereoBinFallback = false;
 	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
 	if (stereoBinsSilent) {
 		for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
@@ -2138,6 +2139,14 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, bin) != 0) {
 				useHRTFStereoFallback = true;
 				break;
+			}
+		}
+		if (!useHRTFStereoFallback) {
+			for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
+				if (PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, bin) != 0) {
+					useNonStereoBinFallback = true;
+					break;
+				}
 			}
 		}
 	}
@@ -2164,6 +2173,19 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 					right += contribution;
 				}
 			}
+		} else if (useNonStereoBinFallback) {
+			for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
+				const size_t binBase = bin * frameCount;
+				const int32_t contribution = mixBins[binBase + frame];
+				// Without the DSP/output-buffer stages, some voices only reach non-stereo
+				// mixbins. Fold them back to host stereo by bin parity so their audio stays
+				// audible until the full guest routing path is implemented.
+				if ((bin & 1u) == 0) {
+					left += contribution;
+				} else {
+					right += contribution;
+				}
+			}
 		}
 
 		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(left, INT16_MIN, INT16_MAX));
@@ -2175,10 +2197,11 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
 		if (hasVoiceActivity || stereoPeak != 0) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu hrtfFallback=%d bins=[%u,%u,%u,%u]",
+				"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu hrtfFallback=%d nonStereoFallback=%d bins=[%u,%u,%u,%u]",
 				static_cast<unsigned>(stereoPeak),
 				frameCount,
 				useHRTFStereoFallback ? 1 : 0,
+				useNonStereoBinFallback ? 1 : 0,
 				static_cast<unsigned>(m_VPHRTFSubmix[0]),
 				static_cast<unsigned>(m_VPHRTFSubmix[1]),
 				static_cast<unsigned>(m_VPHRTFSubmix[2]),
