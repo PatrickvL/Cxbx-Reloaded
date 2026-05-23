@@ -542,6 +542,11 @@ uint32_t CountTrailingZeros64(uint64_t value)
 #endif
 }
 
+size_t GetRecentFEMethodIndex(size_t nextIndex, size_t bufferSize, size_t reverseOffset)
+{
+	return (nextIndex + bufferSize - 1 - reverseOffset) % bufferSize;
+}
+
 bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& hostAddress)
 {
 	if (size == 0) {
@@ -2631,11 +2636,10 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				renderFallbackVoice(voiceHandle);
 			}
 		}
-		// NV_PAPU_FECV is a raw register value, so mask it down to the guest voice handle.
-		renderFallbackVoice(GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE);
+		renderFallbackVoice(static_cast<uint16_t>(GetRegister32(NV_PAPU_FECV)));
 		for (size_t i = 0; i < m_RecentFEMethodCount; ++i) {
 			const size_t recentIndex =
-				(m_RecentFEMethodNext + m_RecentFEMethods.size() - 1 - i) % m_RecentFEMethods.size();
+				GetRecentFEMethodIndex(m_RecentFEMethodNext, m_RecentFEMethods.size(), i);
 			const auto& event = m_RecentFEMethods[recentIndex];
 			renderFallbackVoice(event.targetVoice);
 			renderFallbackVoice(event.currentVoice);
