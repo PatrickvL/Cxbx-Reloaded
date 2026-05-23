@@ -51,14 +51,18 @@ class AC97Device : public PCIDevice {
 
 		uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
 		void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
+		void ServiceAudio();
 		void Begin3DVoiceFrameBatch();
-		void Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, bool sourceStereo,
+		void Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, float guestHRTFPan, bool sourceStereo,
 			const std::array<uint8_t, 4>& hrtfSubmix, const std::array<uint32_t, 4>& hrtfSubmixVolumes,
 			uint8_t hrtfHeadroom,
 			const int16_t* stereoSamples, size_t frameCount);
+		void SubmitGuestSpatialSubmixFrames(uint32_t submixSlot, uint8_t routedBin,
+			const int16_t* monoSamples, size_t frameCount);
 		void SubmitPCMFrames(const int16_t* samples, size_t frameCount);
 	private:
 		static constexpr size_t OUTPUT_BUFFER_COUNT = 128;
+		static constexpr size_t SPATIAL_OUTPUT_BUFFER_COUNT = 512;
 
 		enum class PrimeResult : uint8_t {
 			Ready,
@@ -69,15 +73,30 @@ class AC97Device : public PCIDevice {
 		struct SpatialVoiceState {
 			bool active = false;
 			bool sourceStereo = false;
+			bool guestOutputSubmix = false;
+			bool hasGuestHRTFPan = false;
 			uint32_t hrtfEntryIndex = 0xFFFFFFFF;
+			float guestHRTFPan = 0.0f;
 			std::array<uint8_t, 4> hrtfSubmix{};
 			std::array<uint32_t, 4> hrtfSubmixVolumes{};
 			uint8_t hrtfHeadroom = 0;
 			std::vector<int16_t> samples{};
 		};
 
+		struct SpatialPlaybackSourceState {
+			ALuint source = 0;
+			uint32_t voiceHandle = 0;
+			uint8_t submixSlot = 0;
+			bool active = false;
+		};
+
 		bool EnsureOutputDevice();
 		void ResetOutputStream();
+		void ResetSpatialOutput();
+		void DestroySpatialSource(SpatialPlaybackSourceState& sourceState);
+		bool QueueSpatialVoiceSubmix(uint32_t voiceHandle, const SpatialVoiceState& voiceState,
+			size_t submixSlot, size_t frameCount, float outputGain);
+		bool SubmitPending3DVoices(size_t frameCount, float leftOutputGain, float rightOutputGain);
 		uint32_t ReadRegister(uint32_t addr, unsigned size) const;
 		void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
 		uint16_t ReadRegister16(uint32_t addr) const;
@@ -89,7 +108,9 @@ class AC97Device : public PCIDevice {
 		void UpdateBusMasterStatus(uint32_t channelBase);
 		uint32_t GetBusMasterSampleRate(uint32_t channelBase) const;
 		uint8_t GetPrefetchedIndexValue(uint32_t channelBase, uint8_t currentIndex, uint8_t lastValidIndex) const;
+		bool ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const;
 		bool ReadGuest32(uint32_t guestAddress, uint32_t& value) const;
+		bool WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size);
 		bool IsDescriptorErrorAcknowledged(uint32_t channelBase) const;
 		bool QueryOutputSourceSnapshot(ALint& state, ALint& queued, ALint& processed, ALenum& error) const;
 		void LogOutputOperationFailure(const char* operation, ALenum sourceError) const;
@@ -100,22 +121,33 @@ class AC97Device : public PCIDevice {
 		std::array<bool, 3> m_ChannelAdvanceOnRestart{};
 		std::array<bool, 3> m_ChannelQueuedAfterHalt{};
 		std::array<bool, 3> m_ChannelDescriptorError{};
+		std::array<bool, 3> m_LoggedCaptureStub{};
+		std::vector<uint8_t> m_CaptureScratch{};
+		std::vector<int16_t> m_PlaybackDMAScratch{};
 		std::vector<int16_t> m_OutputScratch{};
 		std::vector<int16_t> m_StagedOutputFrames{};
+		std::vector<int16_t> m_SpatialOutputScratch{};
 		std::unordered_map<uint32_t, SpatialVoiceState> m_Pending3DVoices{};
+		std::unordered_map<uint64_t, SpatialPlaybackSourceState> m_SpatialPlaybackSources{};
 		std::vector<ALuint> m_FreeOutputBuffers{};
+		std::vector<ALuint> m_FreeSpatialBuffers{};
 		std::unordered_map<ALuint, size_t> m_OutputBufferIndex{};
+		std::unordered_map<ALuint, size_t> m_SpatialBufferIndex{};
 		ALCdevice* m_OutputDevice = nullptr;
 		ALCcontext* m_OutputContext = nullptr;
 		ALuint m_OutputSource = 0;
 		std::array<ALuint, OUTPUT_BUFFER_COUNT> m_OutputBuffers{};
+		std::array<ALuint, SPATIAL_OUTPUT_BUFFER_COUNT> m_SpatialBuffers{};
 		std::array<uint32_t, OUTPUT_BUFFER_COUNT> m_OutputBufferBytes{};
+		std::array<uint32_t, SPATIAL_OUTPUT_BUFFER_COUNT> m_SpatialBufferBytes{};
 		uint32_t m_QueuedAudioBytes = 0;
 		ALint m_LastOutputSourceState = -1;
 		bool m_OutputDeviceFailed = false;
 		bool m_OutputTestBeepPlayed = false;
+		bool m_HasSpatializeExtension = false;
 		bool m_LoggedQueueFull = false;
 		bool m_LoggedPlaybackStartFailure = false;
+		bool m_LoggedSpatialPlaybackFailure = false;
 };
 
 #endif

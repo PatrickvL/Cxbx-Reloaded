@@ -1401,6 +1401,12 @@ static void CxbxrKrnlInitHacks()
 		do {
 			more_work = false;
 
+			if (g_AC97 != nullptr) {
+				g_AC97->ServiceAudio();
+			} else if (g_APU != nullptr) {
+				g_APU->SynchronizeAudio();
+			}
+
 			if (g_bEnableAllInterrupts && g_NV2A) {
 				NV2AState* d = g_NV2A->GetDeviceState();
 
@@ -1416,6 +1422,11 @@ static void CxbxrKrnlInitHacks()
 				if (d->vblank_pending.test()) {
 					d->vblank_pending.clear();
 					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+					if (g_AC97 != nullptr) {
+						g_AC97->ServiceAudio();
+					} else if (g_APU != nullptr) {
+						g_APU->SynchronizeAudio();
+					}
 
 					// Generate PVIDEO buffer completion interrupts for active overlay buffers.
 					// On real hardware, when the overlay is active, at each VBlank the PVIDEO
