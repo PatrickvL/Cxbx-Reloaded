@@ -335,9 +335,9 @@ constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 4;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLA_DONE = 0;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
 constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
-// NV1BA0 reports successful notifier completion with status 0x01; using 0xFF
-// caused guest polling loops to wait indefinitely because it does not match the
-// hardware success code.
+// NV1BA0 reports successful notifier completion with status 0x01 per observed
+// hardware/guest behavior; using 0xFF caused guest polling loops to wait
+// indefinitely because it does not match the expected success code.
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_ERROR = 0x80;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
@@ -2759,9 +2759,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	std::array<int16_t, APU_XADPCM_MAX_DECODED_SAMPLES> cachedADPCMSamples{};
 
 	auto sslData = m_VPSSLData[voiceHandle];
-	bool voiceStopped = false;
-	auto finishVoice = [&](uint8_t completionStatus) {
-		voiceStopped = true;
+	bool shouldSkipStateWrites = false;
+	auto terminateVoiceWithStatus = [&](uint8_t completionStatus) {
+		shouldSkipStateWrites = true;
 		playbackState.previewDecodeFailures = 0;
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
@@ -2772,10 +2772,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 	};
 	auto stopVoice = [&]() {
-		finishVoice(NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+		terminateVoiceWithStatus(NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 	};
 	auto failVoice = [&]() {
-		finishVoice(NV1BA0_NOTIFICATION_STATUS_DONE_ERROR);
+		terminateVoiceWithStatus(NV1BA0_NOTIFICATION_STATUS_DONE_ERROR);
 	};
 	std::vector<int32_t> multipassSource;
 	if (multipass && clearMix) {
@@ -3207,7 +3207,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			}
 		}
 	}
-	if (voiceStopped) {
+	if (shouldSkipStateWrites) {
 		return;
 	}
 

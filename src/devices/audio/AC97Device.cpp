@@ -756,6 +756,9 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	if (!m_Pending3DVoices.empty()) {
 		const uint32_t stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(samples, sampleCount);
 		if (stereoPeak == 0) {
+			// Only fold the pending 3D handoff into host stereo when the primary stereo
+			// stream is silent, so this fallback does not double-mix titles that are
+			// already audible through the existing CPU stereo path.
 			bool mixedPendingVoices = false;
 			spatialFallbackMix.assign(samples, samples + sampleCount);
 			for (const auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
