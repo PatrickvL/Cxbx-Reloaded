@@ -172,6 +172,9 @@ static uint64_t dispatch_periodic_events(uint64_t now)
 		g_NV2A->ptimer_tick(now),
 		g_USB0->m_HostController->OHCI_tick(now)
 	};
+	if (g_AC97 != nullptr) {
+		g_AC97->ServiceAudio();
+	}
 	return *std::min_element(deadlines.begin(), deadlines.end());
 }
 

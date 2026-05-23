@@ -465,6 +465,11 @@ void AC97Device::Reset()
 	EnsureOutputDevice();
 }
 
+void AC97Device::ServiceAudio()
+{
+	UpdateBusMasterChannels();
+}
+
 bool AC97Device::EnsureOutputDevice()
 {
 	if (m_OutputContext != nullptr) {
