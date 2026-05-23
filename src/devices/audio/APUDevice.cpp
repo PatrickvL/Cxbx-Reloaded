@@ -3464,6 +3464,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0);
 	const bool guestVPOutputPlaybackConfigured = !m_EnableHostSpatialHandoff && !dspOutputActive;
 	bool guestVPOutputPlaybackActive = false;
+	bool guestVPOutputStereoMixed = false;
 	std::array<uint32_t, 4> guestVPOutputPeak{};
 	const bool hostSpatialSubmitted = m_ChunkSubmittedHostSpatialVoiceCount != 0;
 	bool useHRTFStereoFallback = false;
@@ -3483,9 +3484,12 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 
 	if (guestVPOutputPlaybackConfigured) {
 		guestVPOutputPlaybackActive = SubmitGuestVPOutputBuffersToAC97(frameCount, &guestVPOutputPeak);
+		if (!guestVPOutputPlaybackActive) {
+			guestVPOutputStereoMixed = MixGuestVPOutputBuffers(output.data(), frameCount, &guestVPOutputPeak);
+		}
 	}
 
-	if (!guestVPOutputPlaybackActive && !dspOutputActive) {
+	if (!guestVPOutputPlaybackActive && !guestVPOutputStereoMixed && !dspOutputActive) {
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			int64_t left = output[frame * 2];
 			int64_t right = output[frame * 2 + 1];
@@ -3535,6 +3539,8 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			arbitrationWinner = "gp-ep-dsp";
 		} else if (guestVPOutputPlaybackActive) {
 			arbitrationWinner = "guest-vp-spatial";
+		} else if (guestVPOutputStereoMixed) {
+			arbitrationWinner = "guest-vp-stereo";
 		} else if (hostSpatialSubmitted) {
 			arbitrationWinner = "host-spatial";
 		} else if (useHRTFStereoFallback) {
@@ -3545,13 +3551,14 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
 		if (hasVoiceActivity || stereoPeak != 0) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU playback arbitration frames=%zu peak=%u captured3DVoices=%zu hostSpatialVoices=%zu guestVPConfigured=%d guestVPActive=%d dspActive=%d hrtfFallback=%d nonStereoFallback=%d winner=%s bins=[%u,%u,%u,%u] guestVPPeaks=[%u,%u,%u,%u]",
+				"APU playback arbitration frames=%zu peak=%u captured3DVoices=%zu hostSpatialVoices=%zu guestVPConfigured=%d guestVPActive=%d guestVPStereo=%d dspActive=%d hrtfFallback=%d nonStereoFallback=%d winner=%s bins=[%u,%u,%u,%u] guestVPPeaks=[%u,%u,%u,%u]",
 				frameCount,
 				static_cast<unsigned>(stereoPeak),
 				m_ChunkCaptured3DVoiceCount,
 				m_ChunkSubmittedHostSpatialVoiceCount,
 				guestVPOutputPlaybackConfigured ? 1 : 0,
 				guestVPOutputPlaybackActive ? 1 : 0,
+				guestVPOutputStereoMixed ? 1 : 0,
 				dspOutputActive ? 1 : 0,
 				useHRTFStereoFallback ? 1 : 0,
 				useNonStereoBinFallback ? 1 : 0,
