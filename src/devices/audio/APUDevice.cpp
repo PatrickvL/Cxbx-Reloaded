@@ -728,18 +728,22 @@ void StepVoiceLFOLevel(uint32_t delta, uint32_t& level, bool& descending)
 		return;
 	}
 
+	const int32_t maxLevel = static_cast<int32_t>(APU_LFO_LEVEL_MAX);
+	const int32_t period = maxLevel * 2;
 	int32_t value = static_cast<int32_t>(std::min<uint32_t>(level, APU_LFO_LEVEL_MAX));
 	value += descending ? -static_cast<int32_t>(delta) : static_cast<int32_t>(delta);
 	// Reflect off the 0..0x7FFF bounds and flip the direction bit so the guest-
-	// visible PAR_LFO state advances as a continuous triangle waveform.
-	while (value < 0 || value > static_cast<int32_t>(APU_LFO_LEVEL_MAX)) {
-		if (value < 0) {
-			value = -value;
-			descending = false;
-		} else {
-			value = static_cast<int32_t>(APU_LFO_LEVEL_MAX) * 2 - value;
-			descending = true;
-		}
+	// visible PAR_LFO state advances as a continuous triangle waveform; modulo
+	// arithmetic keeps large deltas from iterating across multiple bounces.
+	value %= period;
+	if (value < 0) {
+		value += period;
+	}
+	if (value >= maxLevel) {
+		value = period - value;
+		descending = true;
+	} else {
+		descending = false;
 	}
 
 	level = static_cast<uint32_t>(value);
@@ -3748,7 +3752,6 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	if (captureVoiceDiagnostics) {
 		diagnostics->startOffset = currentOffset;
 		diagnostics->pitchStep = pitchStep;
-		diagnostics->maxPitchStep = pitchStep;
 	}
 	const uint32_t lfoADelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOADLT);
 	const uint32_t lfoFDelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOFDLT);
@@ -4214,8 +4217,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const float lfoAValue = NormalizeVoiceLFOModulationLevel(lfoALevel);
 		const float lfoFValue = NormalizeVoiceLFOModulationLevel(lfoFLevel);
 		// Keep tremolo centered around unity so positive and negative swings can
-		// both attenuate and boost the decoded sample; clamping at 2.0 avoids
-		// runaway gain while still allowing the full signed guest modulation range.
+		// both attenuate and boost the decoded sample; clamping at 2.0 is a
+		// practical host-side limit that preserves the full signed guest range
+		// without allowing runaway amplification in the software mix path.
 		const float amplitudeLFOModulation = std::clamp(1.0f + lfoAValue * lfoAmplitudeAmount, 0.0f, 2.0f);
 		const float cutoffLFOOctaves = lfoAValue * lfoAmplitudeCutoffAmount;
 		const double modulatedPitchStep = pitchStep * std::exp2(
