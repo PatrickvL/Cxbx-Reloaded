@@ -8,7 +8,7 @@
 namespace audio_diagnostics {
 
 #ifndef CXBXR_ENABLE_AUDIO_DIAGNOSTIC_LOGGING
-#define CXBXR_ENABLE_AUDIO_DIAGNOSTIC_LOGGING 1
+#define CXBXR_ENABLE_AUDIO_DIAGNOSTIC_LOGGING 0
 #endif
 
 inline constexpr bool kEnableDiagnosticLogging = CXBXR_ENABLE_AUDIO_DIAGNOSTIC_LOGGING != 0;

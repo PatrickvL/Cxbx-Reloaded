@@ -31,11 +31,13 @@
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
 #include "common/audio/XADPCM.h"
+#include "core/kernel/exports/EmuKrnl.h"
 #include "core/kernel/support/Emu.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <unordered_set>
 #include <vector>
 
 #define LOG_PREFIX CXBXR_MODULE::MCPX
@@ -86,6 +88,8 @@ constexpr uint32_t NV_PAPU_FETFORCE0 = 0x00001500;
 constexpr uint32_t NV_PAPU_FETFORCE1 = 0x00001504;
 constexpr uint32_t NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE = 1 << 15;
 constexpr uint32_t NV_PAPU_SECTL = 0x00002000;
+constexpr uint32_t NV_PAPU_SECTL_XCNTMODE = 0x00000018;
+constexpr uint32_t NV_PAPU_SECTL_XCNTMODE_OFF = 0;
 constexpr uint32_t NV_PAPU_XGSCNT = 0x0000200C;
 constexpr uint32_t NV_PAPU_VPVADDR = 0x0000202C;
 constexpr uint32_t NV_PAPU_VPSGEADDR = 0x00002030;
@@ -325,28 +329,45 @@ constexpr uint32_t APU_VOICE_LIST_INHERIT = 0;
 constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
 constexpr size_t APU_AUDIO_CHUNK_FRAMES = 256;
 constexpr float APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
-constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 16;
-constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 16;
+// MCPX notifier records are 16-byte entries. The hardware stores two generic
+// notifier entries before the per-voice audio notifiers, so
+// MCPX_HW_NOTIFIER_BASE_OFFSET means 2 entries * 16 bytes = 32 bytes rather
+// than a raw byte offset literal.
+constexpr uint32_t MCPX_HW_NOTIFIER_ENTRY_SIZE = 16;
+constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 2;
+// MCPX exposes four notifier slots per voice in the audio notifier table.
+constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 4;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLA_DONE = 0;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
-constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0xFF;
+constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
+// NV1BA0 reports successful notifier completion with status 0x01 in observed
+// guest/hardware traces; using 0xFF caused guest polling loops to wait
+// indefinitely because it does not match the expected success code.
+constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
+constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_ERROR = 0x80;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
+constexpr size_t APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES = 8;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
 constexpr size_t APU_XADPCM_PCM_SAMPLES_PER_BLOCK = XBOX_ADPCM_DSTSIZE / sizeof(int16_t);
 constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
 constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_MIXBIN_COUNT = 32;
+constexpr uint32_t APU_FIRST_NON_STEREO_BIN = 2;
 constexpr uint32_t APU_MAX_3D_VOICES = static_cast<uint32_t>(APUDevice::MAX_HRTF_VOICES);
 constexpr size_t APU_HRTF_SUBMIX_COUNT = 4;
 static_assert(APU_HRTF_SUBMIX_COUNT <= 8, "HRTF submix handoff expects no more than eight voice volumes");
 constexpr size_t APU_HRTF_ENTRY_COUNT = 128;
 constexpr size_t APU_HRTF_COEFFICIENT_COUNT = APUDevice::HRTF_FILTER_TAPS;
 constexpr uint32_t APU_INVALID_HRTF_ENTRY_INDEX = 0xFFFF;
+constexpr uint32_t APU_IRQ = 5;
 constexpr float APU_HRTF_ITD_SCALE = 512.0f;
+constexpr float APU_HRTF_PAN_ITD_WEIGHT = 0.75f;
+constexpr float APU_HRTF_PAN_MAGNITUDE_WEIGHT = 0.25f;
 constexpr float APU_HRTF_PARAM_SMOOTH_ALPHA = 0.01f;
 constexpr float APU_HRTF_NORMALIZATION_EPSILON = 0.000001f;
 constexpr float APU_HRTF_MAX_DELAY_SAMPLES_FLOAT = static_cast<float>(APUDevice::HRTF_FILTER_DELAY_SAMPLES);
+constexpr float APU_HRTF_ITD_NORMALIZER = APU_HRTF_ITD_SCALE * APU_HRTF_MAX_DELAY_SAMPLES_FLOAT;
 // Scale normalized floating-point samples to signed 16-bit PCM amplitude.
 constexpr float APU_SAMPLE_SCALE_FACTOR = 32767.0f;
 constexpr size_t APU_DIAGNOSTIC_MAX_VOICES_TO_LOG = 4;
@@ -402,6 +423,29 @@ constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
 constexpr float APU_FILTER_MIN_Q = 0.079407f;
 // FC1 is a 16-bit fixed-point resonance value normalized against 0x8000.
 constexpr float APU_FILTER_Q_NORMALIZER = 32768.0f;
+
+bool IsAPUWordAddressRegister(uint32_t addr)
+{
+	switch (addr) {
+	case NV_PAPU_FENADDR:
+	case NV_PAPU_FEMEMADDR:
+	case NV_PAPU_VPVADDR:
+	case NV_PAPU_VPSGEADDR:
+	case NV_PAPU_VPSSLADDR:
+	case NV_PAPU_GPSADDR:
+	case NV_PAPU_GPFADDR:
+	case NV_PAPU_EPSADDR:
+	case NV_PAPU_EPFADDR:
+		return true;
+	default:
+		return false;
+	}
+}
+
+uint32_t NormalizeAPUWordAddress(uint32_t value)
+{
+	return value & ~0x3u;
+}
 
 uint32_t AbsoluteMixMagnitude(int32_t value)
 {
@@ -477,6 +521,34 @@ uint32_t Ctz32(uint32_t value)
 		++shift;
 	}
 	return shift;
+}
+
+// Return the bit index of the least-significant set bit in a 64-bit voice mask.
+// A return value of 64 means the mask was empty, which lets callers keep the
+// "no bits set" case explicit without a separate sentinel.
+uint32_t CountTrailingZeros64(uint64_t value)
+{
+	if (value == 0) {
+		return 64;
+	}
+#if defined(__clang__) || defined(__GNUC__)
+	return static_cast<uint32_t>(__builtin_ctzll(value));
+#else
+	uint32_t shift = 0;
+	while (((value >> shift) & 1u) == 0u) {
+		++shift;
+	}
+	return shift;
+#endif
+}
+
+size_t GetRecentFEMethodIndex(size_t nextIndex, size_t bufferSize, size_t reverseOffset)
+{
+	// Walk the fixed-size recent-method ring buffer newest-first.
+	// reverseOffset=0 returns the most recently written entry and larger offsets
+	// move progressively backward through older entries. Callers are expected to
+	// clamp reverseOffset to the number of valid buffered entries.
+	return (nextIndex + bufferSize - 1 - (reverseOffset % bufferSize)) % bufferSize;
 }
 
 bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& hostAddress)
@@ -634,7 +706,6 @@ void APUDevice::Reset()
 	m_VPCurrentSSLContextDMA = 0;
 	m_VPSSLBasePage = 0;
 	m_VPCurrentHRTFEntry = 0;
-	m_VPLastVoicePositionHandle = 0;
 	m_GPXMem.fill(0);
 	m_GPMixBuf.fill(0);
 	m_GPYMem.fill(0);
@@ -648,6 +719,7 @@ void APUDevice::Reset()
 	m_VPSubmixHeadroom.fill(0);
 	m_VPVoiceLocked.fill(0);
 	m_VPOutBufferCursor.fill(0);
+	m_VPOutBufferPlaybackCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
 	m_VPHRTFFilterState.fill(APUDevice::HRTFFilterState{});
@@ -660,6 +732,10 @@ void APUDevice::Reset()
 	m_LoggedVoiceTableReadFailure = false;
 	m_LoggedVoiceTableWriteFailure = false;
 	m_LoggedScatterGatherWriteFailure = false;
+	m_EnableHostSpatialHandoff = true;
+	m_LoggedVPOutputBufferReadFailure = false;
+	m_ChunkCaptured3DVoiceCount = 0;
+	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 
 	SetRegister32(NV_PAPU_ISTS, 0);
 	SetRegister32(NV_PAPU_IEN, 0);
@@ -723,6 +799,11 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 		return ReadRegisterFragment(GetAPUTime(), addr - NV_PAPU_XGSCNT, size);
 	}
 
+	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
+		const uint32_t currentValue = RefreshFEMemDataRegister(0);
+		return ReadRegisterFragment(currentValue, addr - NV_PAPU_FEMEMDATA, size);
+	}
+
 	return ReadRegister(addr, size);
 }
 
@@ -771,9 +852,32 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		return;
 	}
 
+	if ((addr >= NV_PAPU_FETFORCE0 && addr < NV_PAPU_FETFORCE0 + sizeof(uint32_t)) ||
+		(addr >= NV_PAPU_FETFORCE1 && addr < NV_PAPU_FETFORCE1 + sizeof(uint32_t))) {
+		WriteRegister(addr, value, size);
+		const bool wroteFETFORCE0 =
+			addr >= NV_PAPU_FETFORCE0 && addr < NV_PAPU_FETFORCE0 + sizeof(uint32_t);
+		uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+		const bool idleVoiceTrapPending =
+			(fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED &&
+			(fectl & NV_PAPU_FECTL_FETRAPREASON) == NV_PAPU_FECTL_FETRAPREASON_REQUESTED;
+		if (idleVoiceTrapPending) {
+			const bool clearIdleVoiceTrap =
+				wroteFETFORCE0 ||
+				((GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) == 0);
+			if (clearIdleVoiceTrap) {
+				fectl &= ~(NV_PAPU_FECTL_FEMETHMODE | NV_PAPU_FECTL_FETRAPREASON);
+				SetRegister32(NV_PAPU_FECTL, fectl);
+			}
+		}
+		RefreshInterruptStatus();
+		return;
+	}
+
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
 		WriteRegister(addr, value, size);
 		WriteGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
+		RefreshFEMemDataRegister(GetRegister32(NV_PAPU_FEMEMDATA));
 		return;
 	}
 
@@ -801,22 +905,33 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	}
 
 	WriteRegister(addr, value, size);
+	const uint32_t registerBase = addr & ~0x3u;
+	if (IsAPUWordAddressRegister(registerBase)) {
+		SetRegister32(registerBase, NormalizeAPUWordAddress(GetRegister32(registerBase)));
+		if (registerBase == NV_PAPU_FEMEMADDR) {
+			RefreshFEMemDataRegister(GetRegister32(NV_PAPU_FEMEMDATA));
+		}
+	}
 }
 
 
 uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 {
 	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
-		return ReadMemoryWindow(m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, size);
 	}
 	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
-		return ReadMemoryWindow(m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, size);
 	}
 	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
-		return ReadMemoryWindow(m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, size);
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		return ReadMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, size);
 	}
 	return ReadRegister(APU_GP_BASE + addr, size);
 }
@@ -824,19 +939,23 @@ uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 void APUDevice::GPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
-		WriteMemoryWindow(m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
-		WriteMemoryWindow(m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
-		WriteMemoryWindow(m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		WriteMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, value, size);
 		return;
 	}
 	WriteRegister(APU_GP_BASE + addr, value, size);
@@ -884,13 +1003,16 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 {
 	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
-		return ReadMemoryWindow(m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, size);
 	}
 	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
-		return ReadMemoryWindow(m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, size);
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		return ReadMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, size);
 	}
 	return ReadRegister(APU_EP_BASE + addr, size);
 }
@@ -898,15 +1020,18 @@ uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
-		WriteMemoryWindow(m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
-		WriteMemoryWindow(m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		WriteMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, value, size);
 		return;
 	}
 	WriteRegister(APU_EP_BASE + addr, value, size);
@@ -1006,6 +1131,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			return;
 		}
 
+		UnlinkVoiceFromLists(selectedHandle);
+
 		const uint32_t feav = GetRegister32(NV_PAPU_FEAV);
 		const uint32_t list = (feav & NV_PAPU_FEAV_LST) >> Ctz32(NV_PAPU_FEAV_LST);
 		const uint32_t antecedentVoice = feav & NV_PAPU_FEAV_VALUE;
@@ -1076,11 +1203,17 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
+		SetVoiceActiveHint(selectedHandle, true);
+		SetVoiceLocked(selectedHandle, false);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_OFFSET,
 			NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
+		uint32_t notifierBase = 0;
+		if (ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
+			WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
+		}
 		ClearHRTFFilterState(selectedHandle);
 		InitializeVoiceEnvelopes(selectedHandle, value);
 		m_LoggedEmptyVoiceTableDiagnostics = false;
@@ -1088,18 +1221,14 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	}
 	case NV1BA0_PIO_VOICE_OFF: {
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
+		SetVoiceActiveHint(voiceHandle, false);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
-		uint32_t voiceDataType = 0;
-		if (ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_DATA_TYPE, voiceDataType)) {
-			uint32_t notifier = MCPX_HW_NOTIFIER_SSLA_DONE;
-			// Streaming voices toggle between the SSLA and SSLB completion notifiers.
-			if (voiceDataType != 0 && voiceHandle < m_VPSSLData.size() &&
-				m_VPSSLData[voiceHandle].ssl_index == 1) {
-				notifier = MCPX_HW_NOTIFIER_SSLB_DONE;
-			}
-			WriteNotifierStatus(voiceHandle, notifier, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
-		}
+		UnlinkVoiceFromLists(voiceHandle);
+		// Sample the guest-visible offset register before clearing the local playback cache so
+		// the completion notifier reflects the position software last programmed/observed.
+		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, GetVoicePlaybackOffset(voiceHandle));
+		NotifyVoiceCompletion(voiceHandle, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		if (voiceHandle < m_VPPlaybackState.size()) {
 			m_VPPlaybackState[voiceHandle] = PlaybackState{};
 		}
@@ -1128,7 +1257,12 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		return;
 	}
 	case NV1BA0_PIO_GET_VOICE_POSITION:
-		m_VPLastVoicePositionHandle = value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE;
+		WriteNotifierValue(value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE,
+			MCPX_HW_NOTIFIER_VOICE_POSITION,
+			GetVoicePlaybackOffset(value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE));
+		WriteNotifierStatus(value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE,
+			MCPX_HW_NOTIFIER_VOICE_POSITION,
+			NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		return;
 	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY:
 		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
@@ -1311,6 +1445,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		WriteVPScatterGatherEntry(m_VPOutputSgeHandle, value & NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_OFFSET_PARAMETER);
 		return;
 	case SE2FE_IDLE_VOICE:
+		SetRegister32(NV_PAPU_FECV, value & APU_VP_VOICE_MAX_HANDLE);
 		if ((GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0) {
 			uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
 			fectl &= ~(NV_PAPU_FECTL_FEMETHMODE | NV_PAPU_FECTL_FETRAPREASON);
@@ -1353,8 +1488,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			return;
 		}
 		if (addr >= NV1BA0_PIO_SET_SSL_SEGMENT_OFFSET && addr < 0x00000800) {
-			const uint32_t sslTableBase = GetRegister32(NV_PAPU_VPSSLADDR);
-			if (sslTableBase != 0) {
+			uint32_t sslTableBase = 0;
+			if (ResolveOptionalGuestTableBase(NV_PAPU_VPSSLADDR, m_VPCurrentSSLContextDMA, sslTableBase)) {
 				WriteGuestWord(sslTableBase + m_VPSSLBasePage * 8 + (addr - NV1BA0_PIO_SET_SSL_SEGMENT_OFFSET), value);
 			}
 			return;
@@ -1365,6 +1500,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			if (slot < m_VPOutBufferCursor.size()) {
 				m_VPOutBufferCursor[slot] = 0;
 			}
+			if (slot < m_VPOutBufferPlaybackCursor.size()) {
+				m_VPOutBufferPlaybackCursor[slot] = 0;
+			}
 			return;
 		}
 		if (addr >= NV1BA0_PIO_SET_OUTBUF_LEN && addr < NV1BA0_PIO_SET_OUTBUF_LEN + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_LEN) % 8) == 0) {
@@ -1372,6 +1510,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			WriteRegister(APU_VP_BASE + addr, value & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE, sizeof(uint32_t));
 			if (slot < m_VPOutBufferCursor.size()) {
 				m_VPOutBufferCursor[slot] = 0;
+			}
+			if (slot < m_VPOutBufferPlaybackCursor.size()) {
+				m_VPOutBufferPlaybackCursor[slot] = 0;
 			}
 			return;
 		}
@@ -1414,6 +1555,29 @@ bool APUDevice::WriteGuestBytes(uint32_t guestAddress, const void* src, size_t s
 	return true;
 }
 
+bool APUDevice::ResolveOptionalGuestTableBase(uint32_t registerAddress, uint32_t fallbackGuestAddress, uint32_t& guestBase) const
+{
+	const uint32_t registerBase = GetRegister32(registerAddress);
+	if (registerBase != 0 && ResolveGuestMemoryPointer(registerBase, 1)) {
+		guestBase = registerBase;
+		return true;
+	}
+
+	if (fallbackGuestAddress != 0 && ResolveGuestMemoryPointer(fallbackGuestAddress, 1)) {
+		guestBase = fallbackGuestAddress;
+		return true;
+	}
+
+	guestBase = 0;
+	return false;
+}
+
+void APUDevice::SignalNotifierInterrupt()
+{
+	SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
+	RefreshInterruptStatus();
+}
+
 bool APUDevice::WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value)
 {
 	if (mask == 0) {
@@ -1429,6 +1593,119 @@ bool APUDevice::WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint3
 	current &= ~mask;
 	current |= (value << shift) & mask;
 	return WriteGuestWord(guestAddress, current);
+}
+
+bool APUDevice::ReadScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, void* dest, size_t size) const
+{
+	if (dest == nullptr || size == 0) {
+		return false;
+	}
+
+	auto* bytes = reinterpret_cast<uint8_t*>(dest);
+	uint32_t currentAddress = addr;
+	size_t remaining = size;
+	while (remaining > 0) {
+		const uint32_t pageEntry = currentAddress / APU_SGE_PAGE_SIZE;
+		if (pageEntry > maxSge) {
+			return false;
+		}
+
+		uint32_t pageBase = 0;
+		if (!ReadGuestWord(sgeBase + pageEntry * 8, pageBase)) {
+			return false;
+		}
+
+		const uint32_t offsetInPage = currentAddress % APU_SGE_PAGE_SIZE;
+		const size_t chunk = std::min<size_t>(remaining, APU_SGE_PAGE_SIZE - offsetInPage);
+		if (!ReadGuestBytes(pageBase + offsetInPage, bytes, chunk)) {
+			return false;
+		}
+
+		bytes += chunk;
+		currentAddress += static_cast<uint32_t>(chunk);
+		remaining -= chunk;
+	}
+
+	return true;
+}
+
+bool APUDevice::WriteScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, const void* src, size_t size)
+{
+	if (src == nullptr || size == 0) {
+		return false;
+	}
+
+	const auto* bytes = reinterpret_cast<const uint8_t*>(src);
+	uint32_t currentAddress = addr;
+	size_t remaining = size;
+	while (remaining > 0) {
+		const uint32_t pageEntry = currentAddress / APU_SGE_PAGE_SIZE;
+		if (pageEntry > maxSge) {
+			return false;
+		}
+
+		uint32_t pageBase = 0;
+		if (!ReadGuestWord(sgeBase + pageEntry * 8, pageBase)) {
+			return false;
+		}
+
+		const uint32_t offsetInPage = currentAddress % APU_SGE_PAGE_SIZE;
+		const size_t chunk = std::min<size_t>(remaining, APU_SGE_PAGE_SIZE - offsetInPage);
+		if (!WriteGuestBytes(pageBase + offsetInPage, bytes, chunk)) {
+			return false;
+		}
+
+		bytes += chunk;
+		currentAddress += static_cast<uint32_t>(chunk);
+		remaining -= chunk;
+	}
+
+	return true;
+}
+
+uint32_t APUDevice::ReadScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+	const uint8_t* data, size_t length, uint32_t addr, unsigned size) const
+{
+	if (size == 0 || addr + size > length) {
+		return 0;
+	}
+
+	const uint32_t sgeBase = GetRegister32(sgeBaseRegister);
+	if (sgeBase != 0) {
+		std::array<uint8_t, sizeof(uint32_t)> scratch{};
+		if (ReadScatterGatherBytes(sgeBase, GetRegister32(maxSgeRegister), addr, scratch.data(), size)) {
+			return ReadLE(scratch.data(), 0, size);
+		}
+	}
+
+	return ReadMemoryWindow(data, length, addr, size);
+}
+
+void APUDevice::WriteScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+	uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size)
+{
+	if (size == 0 || addr + size > length) {
+		return;
+	}
+
+	const uint32_t sgeBase = GetRegister32(sgeBaseRegister);
+	if (sgeBase != 0) {
+		std::array<uint8_t, sizeof(uint32_t)> scratch{};
+		WriteLE(scratch.data(), 0, value, size);
+		if (WriteScatterGatherBytes(sgeBase, GetRegister32(maxSgeRegister), addr, scratch.data(), size)) {
+			return;
+		}
+	}
+
+	WriteMemoryWindow(data, length, addr, value, size);
+}
+
+uint32_t APUDevice::RefreshFEMemDataRegister(uint32_t fallbackValue)
+{
+	uint32_t value = fallbackValue;
+	ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), value);
+	SetRegister32(NV_PAPU_FEMEMDATA, value);
+	return value;
 }
 
 bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const
@@ -1546,17 +1823,123 @@ bool APUDevice::WriteVPScatterGatherEntry(uint32_t handle, uint32_t value)
 	return success;
 }
 
-void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status)
+void APUDevice::WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint32_t value)
 {
-	const uint32_t notifierBase = GetRegister32(NV_PAPU_FENADDR);
-	if (notifierBase != 0) {
-		const uint32_t offset = 16 * (MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
-		WriteGuestBytes(notifierBase + offset + 14, &APU_NOTIFY_ENV_STATE_ACTIVE, sizeof(APU_NOTIFY_ENV_STATE_ACTIVE));
-		WriteGuestBytes(notifierBase + offset + 15, &status, sizeof(status));
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || notifier >= MCPX_HW_NOTIFIER_COUNT) {
+		return;
 	}
 
-	SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
-	RefreshInterruptStatus();
+	uint32_t notifierBase = 0;
+	if (!ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
+		SignalNotifierInterrupt();
+		return;
+	}
+
+	const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
+		(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
+	WriteGuestWord(notifierBase + offset, value);
+}
+
+void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || notifier >= MCPX_HW_NOTIFIER_COUNT) {
+		return;
+	}
+
+	uint32_t notifierBase = 0;
+	if (!ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
+		SignalNotifierInterrupt();
+		return;
+	}
+
+	const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
+		(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
+	WriteGuestBytes(notifierBase + offset + 14, &APU_NOTIFY_ENV_STATE_ACTIVE, sizeof(APU_NOTIFY_ENV_STATE_ACTIVE));
+	WriteGuestBytes(notifierBase + offset + 15, &status, sizeof(status));
+
+	SignalNotifierInterrupt();
+}
+
+void APUDevice::NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status)
+{
+	uint32_t voiceDataType = 0;
+	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_DATA_TYPE, voiceDataType)) {
+		return;
+	}
+
+	uint32_t notifier = MCPX_HW_NOTIFIER_SSLA_DONE;
+	if (voiceDataType != 0 && voiceHandle < m_VPSSLData.size() &&
+		m_VPSSLData[voiceHandle].ssl_index == 1) {
+		notifier = MCPX_HW_NOTIFIER_SSLB_DONE;
+	}
+
+	WriteNotifierValue(voiceHandle, notifier, GetVoicePlaybackOffset(voiceHandle));
+	WriteNotifierStatus(voiceHandle, notifier, status);
+}
+
+uint32_t APUDevice::GetVoicePlaybackOffset(uint32_t voiceHandle) const
+{
+	uint32_t currentOffset = 0;
+	// ReadVoiceMask already emits one-shot diagnostics on failure; keep the notifier
+	// payload deterministic by falling back to zero when the guest voice table cannot
+	// currently be read.
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+	return currentOffset;
+}
+
+uint32_t APUDevice::GetVoiceNextHandle(uint32_t voiceHandle) const
+{
+	uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
+	if (voiceHandle < APU_VP_VOICE_MAX_HANDLE) {
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
+			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
+	}
+	return nextHandle;
+}
+
+void APUDevice::SetVoiceNextHandle(uint32_t voiceHandle, uint32_t nextHandle)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
+		return;
+	}
+
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
+		NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE,
+		std::min(nextHandle, APU_VP_VOICE_MAX_HANDLE));
+}
+
+void APUDevice::UnlinkVoiceFromList(uint32_t topRegister, uint32_t voiceHandle)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
+		return;
+	}
+
+	const uint32_t head = GetRegister32(topRegister);
+	if (head == voiceHandle) {
+		SetRegister32(topRegister, GetVoiceNextHandle(voiceHandle));
+		return;
+	}
+
+	uint32_t previousHandle = head;
+	for (size_t visited = 0; visited < APU_VP_VOICE_MAX_HANDLE && previousHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
+		const uint32_t nextHandle = GetVoiceNextHandle(previousHandle);
+		if (nextHandle == voiceHandle) {
+			SetVoiceNextHandle(previousHandle, GetVoiceNextHandle(voiceHandle));
+			return;
+		}
+		if (nextHandle == previousHandle) {
+			break;
+		}
+		previousHandle = nextHandle;
+	}
+}
+
+void APUDevice::UnlinkVoiceFromLists(uint32_t voiceHandle)
+{
+	UnlinkVoiceFromList(NV_PAPU_TVL2D, voiceHandle);
+	UnlinkVoiceFromList(NV_PAPU_TVL3D, voiceHandle);
+	UnlinkVoiceFromList(NV_PAPU_TVLMP, voiceHandle);
+	SetVoiceNextHandle(voiceHandle, APU_VP_VOICE_MAX_HANDLE);
 }
 
 bool APUDevice::IsVoiceLocked(uint32_t voiceHandle) const
@@ -1583,8 +1966,37 @@ void APUDevice::SetVoiceLocked(uint32_t voiceHandle, bool locked)
 	}
 }
 
+bool APUDevice::IsVoiceActiveHinted(uint32_t voiceHandle) const
+{
+	if (voiceHandle >= MAX_VOICE_HANDLES) {
+		return false;
+	}
+
+	const uint64_t mask = uint64_t{1} << (voiceHandle % 64);
+	return (m_VPActiveVoiceHints[voiceHandle / 64] & mask) != 0;
+}
+
+void APUDevice::SetVoiceActiveHint(uint32_t voiceHandle, bool active)
+{
+	if (voiceHandle >= MAX_VOICE_HANDLES) {
+		return;
+	}
+
+	const uint64_t mask = uint64_t{1} << (voiceHandle % 64);
+	if (active) {
+		m_VPActiveVoiceHints[voiceHandle / 64] |= mask;
+	} else {
+		m_VPActiveVoiceHints[voiceHandle / 64] &= ~mask;
+	}
+}
+
 bool APUDevice::ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const
 {
+	if (ResolveGuestMemoryPointer(linearAddress, 1)) {
+		guestAddress = linearAddress;
+		return true;
+	}
+
 	const uint32_t sgeTableBase = GetRegister32(NV_PAPU_VPSGEADDR);
 	if (sgeTableBase == 0) {
 		guestAddress = linearAddress;
@@ -1641,6 +2053,177 @@ bool APUDevice::WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length,
 	}
 
 	return true;
+}
+
+bool APUDevice::ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
+	void* dest, size_t size) const
+{
+	if (dest == nullptr || length == 0) {
+		return false;
+	}
+
+	auto* bytes = static_cast<uint8_t*>(dest);
+	size_t remaining = size;
+	cursor %= length;
+	while (remaining > 0) {
+		const uint32_t chunkLength = std::min<uint32_t>(length - cursor, static_cast<uint32_t>(remaining));
+		if (!ReadGuestBytes(guestAddress + cursor, bytes, chunkLength)) {
+			return false;
+		}
+
+		bytes += chunkLength;
+		remaining -= chunkLength;
+		cursor = (cursor + chunkLength) % length;
+	}
+
+	return true;
+}
+
+bool APUDevice::HasGuestDspExecution() const
+{
+	// xemu only routes monitor/output-buffer audio when the GP/EP DSP path is
+	// actually running; otherwise it bypasses VP audio straight to the host sink.
+	// Our GP/EP memory windows exist, but the DSP execution stage is still absent,
+	// so configured output buffers must not steal playback from the audible OpenAL
+	// VP bypass path.
+	return false;
+}
+
+bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
+{
+	if (!HasGuestDspExecution()) {
+		return false;
+	}
+
+	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+		const uint32_t bin = m_VPHRTFSubmix[slot];
+		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
+			continue;
+		}
+
+		const uint32_t outBufferBaseRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferLengthRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
+		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
+			continue;
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak)
+{
+	if (output == nullptr || frameCount == 0) {
+		return false;
+	}
+
+	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFOutputChannelMapping{ 0, 1, 0, 1 };
+	bool mixedAnySubmix = false;
+
+	if (slotPeak != nullptr) {
+		slotPeak->fill(0);
+	}
+
+	std::vector<int16_t> slotSamples(frameCount);
+	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+		const uint32_t bin = m_VPHRTFSubmix[slot];
+		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
+			continue;
+		}
+
+		const uint32_t outBufferBaseRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferLengthRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
+		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
+			continue;
+		}
+
+		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
+			slotSamples.data(), slotSamples.size() * sizeof(slotSamples[0]))) {
+			if (!m_LoggedVPOutputBufferReadFailure) {
+				EmuLog(LOG_LEVEL::WARNING,
+					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
+					slot, bin, outBufferBase, outBufferLength);
+				m_LoggedVPOutputBufferReadFailure = true;
+			}
+			continue;
+		}
+
+		const size_t outputChannel = kHRTFOutputChannelMapping[slot];
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			const size_t outputIndex = frame * 2 + outputChannel;
+			output[outputIndex] = ClampToInt16(static_cast<int32_t>(output[outputIndex]) + slotSamples[frame]);
+		}
+		mixedAnySubmix = true;
+		if (slotPeak != nullptr) {
+			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(slotSamples.data(), slotSamples.size());
+		}
+	}
+
+	m_LoggedVPOutputBufferReadFailure = false;
+	return mixedAnySubmix;
+}
+
+bool APUDevice::SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<uint32_t, 4>* slotPeak)
+{
+	if (g_AC97 == nullptr || frameCount == 0) {
+		return false;
+	}
+
+	bool stagedAnySubmix = false;
+	if (slotPeak != nullptr) {
+		slotPeak->fill(0);
+	}
+
+	std::vector<int16_t> slotSamples(frameCount);
+	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+		const uint32_t bin = m_VPHRTFSubmix[slot];
+		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
+			continue;
+		}
+
+		const uint32_t outBufferBaseRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferLengthRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
+		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
+			continue;
+		}
+
+		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
+			slotSamples.data(), slotSamples.size() * sizeof(slotSamples[0]))) {
+			if (!m_LoggedVPOutputBufferReadFailure) {
+				EmuLog(LOG_LEVEL::WARNING,
+					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
+					slot, bin, outBufferBase, outBufferLength);
+				m_LoggedVPOutputBufferReadFailure = true;
+			}
+			continue;
+		}
+
+		g_AC97->SubmitGuestSpatialSubmixFrames(static_cast<uint32_t>(slot),
+			static_cast<uint8_t>(bin),
+			slotSamples.data(),
+			frameCount);
+		stagedAnySubmix = true;
+		if (slotPeak != nullptr) {
+			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(slotSamples.data(), slotSamples.size());
+		}
+	}
+
+	m_LoggedVPOutputBufferReadFailure = false;
+	return stagedAnySubmix;
 }
 
 uint32_t APUDevice::ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const
@@ -2001,7 +2584,15 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 
 void APUDevice::SynchronizeAudio()
 {
+	std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
+
 	const uint32_t now = GetAPUTime();
+	if (((GetRegister32(NV_PAPU_SECTL) & NV_PAPU_SECTL_XCNTMODE) >> Ctz32(NV_PAPU_SECTL_XCNTMODE)) ==
+		NV_PAPU_SECTL_XCNTMODE_OFF) {
+		m_LastAudioUpdate = now;
+		return;
+	}
+
 	uint32_t remaining = now - m_LastAudioUpdate;
 	while (remaining > 0) {
 		const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
@@ -2028,6 +2619,9 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		m_LoggedMissingVoiceTableDuringRender = false;
 	}
 
+	m_EnableHostSpatialHandoff = !HasGuestVPOutputBufferPlaybackPath();
+	m_ChunkCaptured3DVoiceCount = 0;
+	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 	if (g_AC97 != nullptr) {
 		g_AC97->Begin3DVoiceFrameBatch();
 	}
@@ -2036,11 +2630,60 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const size_t visited2D = RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
 	const size_t visited3D = RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	const size_t visitedMP = RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
-	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP) != 0;
+	size_t fallbackVisited = 0;
+	if ((visited2D + visited3D + visitedMP) == 0 &&
+		GetRegister32(NV_PAPU_TVL2D) >= APU_VP_VOICE_MAX_HANDLE &&
+		GetRegister32(NV_PAPU_TVL3D) >= APU_VP_VOICE_MAX_HANDLE &&
+		GetRegister32(NV_PAPU_TVLMP) >= APU_VP_VOICE_MAX_HANDLE) {
+		std::unordered_set<uint32_t> renderedVoiceHandles;
+		const auto renderFallbackVoice = [&](uint32_t voiceHandle) {
+			if (voiceHandle >= MAX_VOICE_HANDLES || IsVoiceLocked(voiceHandle) ||
+				!renderedVoiceHandles.insert(voiceHandle).second) {
+				return;
+			}
+
+			++fallbackVisited;
+			RenderBasicVoice(voiceHandle, mixBins.data(), frameCount);
+		};
+		for (size_t wordIndex = 0; wordIndex < m_VPActiveVoiceHints.size(); ++wordIndex) {
+			uint64_t pendingVoices = m_VPActiveVoiceHints[wordIndex];
+			while (pendingVoices != 0) {
+				const uint32_t bitIndex = CountTrailingZeros64(pendingVoices);
+				const uint32_t voiceHandle = static_cast<uint32_t>(wordIndex * 64 + bitIndex);
+				pendingVoices &= ~(uint64_t{1} << bitIndex);
+				renderFallbackVoice(voiceHandle);
+			}
+		}
+		renderFallbackVoice(GetRegister32(NV_PAPU_FECV) & NV1BA0_PIO_VOICE_ON_HANDLE);
+		const size_t recentMethodCount = std::min(m_RecentFEMethodCount, m_RecentFEMethods.size());
+		for (size_t i = 0; i < recentMethodCount; ++i) {
+			const size_t recentIndex =
+				GetRecentFEMethodIndex(m_RecentFEMethodNext, m_RecentFEMethods.size(), i);
+			const auto& event = m_RecentFEMethods[recentIndex];
+			renderFallbackVoice(event.targetVoice);
+			renderFallbackVoice(event.currentVoice);
+		}
+	}
+	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP + fallbackVisited) != 0;
+	if (fallbackVisited != 0) {
+		if (!m_LoggedFallbackActiveVoiceRender) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU rendered %zu fallback candidate voices outside the guest TVL lists; list heads were all idle",
+				fallbackVisited);
+			m_LoggedFallbackActiveVoiceRender = true;
+		}
+	}
+	if (voiceTableBase != 0 &&
+		!hasVoiceActivity &&
+		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
+		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+		ConsumeVPMethod(SE2FE_IDLE_VOICE, APU_VP_VOICE_MAX_HANDLE, sizeof(uint32_t));
+	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (!hasVoiceActivity) {
 			if (!m_LoggedEmptyVoiceTableDiagnostics) {
 				LogVoiceTableDiagnostics();
+				LogRecentVoiceStateDiagnostics();
 				m_LoggedEmptyVoiceTableDiagnostics = true;
 			}
 		} else {
@@ -2091,7 +2734,11 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 
 		std::array<uint32_t, 4> outBufferPeak{};
 		for (size_t slot = 0; slot < outBufferPeak.size() && slot < APU_MIXBIN_COUNT; ++slot) {
-			outBufferPeak[slot] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, slot);
+			size_t sourceBin = slot;
+			if (slot < APU_HRTF_SUBMIX_COUNT && m_VPHRTFSubmix[slot] < APU_MIXBIN_COUNT) {
+				sourceBin = m_VPHRTFSubmix[slot];
+			}
+			outBufferPeak[slot] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, sourceBin);
 			shouldLogChunkDiagnostics = shouldLogChunkDiagnostics || outBufferPeak[slot] != 0;
 		}
 
@@ -2129,13 +2776,17 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const bool stereoBinsSilent =
 		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
 		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0;
+	const bool guestVPOutputPlaybackConfigured = !m_EnableHostSpatialHandoff;
+	bool guestVPOutputPlaybackActive = false;
+	std::array<uint32_t, 4> guestVPOutputPeak{};
+	const bool hostSpatialSubmitted = m_ChunkSubmittedHostSpatialVoiceCount != 0;
 	bool useHRTFStereoFallback = false;
 	bool useNonStereoBinFallback = false;
 	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
-	if (stereoBinsSilent) {
+	if (stereoBinsSilent && !guestVPOutputPlaybackConfigured && !hostSpatialSubmitted) {
 		for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 			const uint32_t bin = m_VPHRTFSubmix[slot];
-			if (bin > 1 && bin < APU_MIXBIN_COUNT &&
+			if (bin >= APU_FIRST_NON_STEREO_BIN && bin < APU_MIXBIN_COUNT &&
 				PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, bin) != 0) {
 				useHRTFStereoFallback = true;
 				break;
@@ -2147,60 +2798,90 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	std::vector<int16_t> output(frameCount * 2);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
 		// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
-		int64_t left = mixBins[frame];
-		int64_t right = mixBins[frameCount + frame];
-		if (useHRTFStereoFallback) {
-			for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
-				const uint32_t bin = m_VPHRTFSubmix[slot];
-				if (bin <= 1 || bin >= APU_MIXBIN_COUNT) {
-					continue;
-				}
+		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frame], INT16_MIN, INT16_MAX));
+		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frameCount + frame], INT16_MIN, INT16_MAX));
+	}
 
-				const size_t binBase = static_cast<size_t>(bin) * frameCount;
-				const int32_t contribution = mixBins[binBase + frame];
-				// Fold the four global HRTF submix slots back to host stereo as L,R,L,R
-				// until the dedicated OpenAL 3D handoff consumes them directly.
-				if (kHRTFFallbackChannelMapping[slot] == 0) {
-					left += contribution;
-				} else {
-					right += contribution;
+	if (guestVPOutputPlaybackConfigured) {
+		guestVPOutputPlaybackActive = SubmitGuestVPOutputBuffersToAC97(frameCount, &guestVPOutputPeak);
+	}
+
+	if (!guestVPOutputPlaybackActive) {
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			int64_t left = output[frame * 2];
+			int64_t right = output[frame * 2 + 1];
+			if (useHRTFStereoFallback) {
+				for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+					const uint32_t bin = m_VPHRTFSubmix[slot];
+					if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT) {
+						continue;
+					}
+
+					const size_t binBase = static_cast<size_t>(bin) * frameCount;
+					const int32_t contribution = mixBins[binBase + frame];
+					// Fold the four global HRTF submix slots back to host stereo as L,R,L,R
+					// until the dedicated OpenAL 3D handoff consumes them directly.
+					if (kHRTFFallbackChannelMapping[slot] == 0) {
+						left += contribution;
+					} else {
+						right += contribution;
+					}
+				}
+			} else if (useNonStereoBinFallback) {
+				for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
+					const size_t binBase = bin * frameCount;
+					const int32_t contribution = mixBins[binBase + frame];
+					// Without the DSP/output-buffer stages, some voices only reach non-stereo
+					// mixbins. Fold them back to host stereo by bin parity so their audio stays
+					// audible until the full guest routing path is implemented. This mirrors the
+					// voice-mixing convention above where even-numbered routes originate from the
+					// left sample and odd-numbered routes originate from the right sample.
+					if ((bin & 1u) == 0) {
+						left += contribution;
+					} else {
+						right += contribution;
+					}
 				}
 			}
-		} else if (useNonStereoBinFallback) {
-			for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
-				const size_t binBase = bin * frameCount;
-				const int32_t contribution = mixBins[binBase + frame];
-				// Without the DSP/output-buffer stages, some voices only reach non-stereo
-				// mixbins. Fold them back to host stereo by bin parity so their audio stays
-				// audible until the full guest routing path is implemented. This mirrors the
-				// voice-mixing convention above where even-numbered routes originate from the
-				// left sample and odd-numbered routes originate from the right sample.
-				if ((bin & 1u) == 0) {
-					left += contribution;
-				} else {
-					right += contribution;
-				}
-			}
+
+			output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(left, INT16_MIN, INT16_MAX));
+			output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(right, INT16_MIN, INT16_MAX));
 		}
-
-		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(left, INT16_MIN, INT16_MAX));
-		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(right, INT16_MIN, INT16_MAX));
 	}
 
 	uint32_t stereoPeak = 0;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		const char* arbitrationWinner = "stereo-direct";
+		if (guestVPOutputPlaybackActive) {
+			arbitrationWinner = "guest-vp-spatial";
+		} else if (hostSpatialSubmitted) {
+			arbitrationWinner = "host-spatial";
+		} else if (useHRTFStereoFallback) {
+			arbitrationWinner = "stereo-hrtf-fallback";
+		} else if (useNonStereoBinFallback) {
+			arbitrationWinner = "stereo-nonstereo-fallback";
+		}
 		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
 		if (hasVoiceActivity || stereoPeak != 0) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu hrtfFallback=%d nonStereoFallback=%d bins=[%u,%u,%u,%u]",
-				static_cast<unsigned>(stereoPeak),
+				"APU playback arbitration frames=%zu peak=%u captured3DVoices=%zu hostSpatialVoices=%zu guestVPConfigured=%d guestVPActive=%d hrtfFallback=%d nonStereoFallback=%d winner=%s bins=[%u,%u,%u,%u] guestVPPeaks=[%u,%u,%u,%u]",
 				frameCount,
+				static_cast<unsigned>(stereoPeak),
+				m_ChunkCaptured3DVoiceCount,
+				m_ChunkSubmittedHostSpatialVoiceCount,
+				guestVPOutputPlaybackConfigured ? 1 : 0,
+				guestVPOutputPlaybackActive ? 1 : 0,
 				useHRTFStereoFallback ? 1 : 0,
 				useNonStereoBinFallback ? 1 : 0,
+				arbitrationWinner,
 				static_cast<unsigned>(m_VPHRTFSubmix[0]),
 				static_cast<unsigned>(m_VPHRTFSubmix[1]),
 				static_cast<unsigned>(m_VPHRTFSubmix[2]),
-				static_cast<unsigned>(m_VPHRTFSubmix[3]));
+				static_cast<unsigned>(m_VPHRTFSubmix[3]),
+				guestVPOutputPeak[0],
+				guestVPOutputPeak[1],
+				guestVPOutputPeak[2],
+				guestVPOutputPeak[3]);
 		}
 	}
 
@@ -2244,8 +2925,12 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 			continue;
 		}
 
+		size_t sourceBin = slot;
+		if (slot < APU_HRTF_SUBMIX_COUNT && m_VPHRTFSubmix[slot] < APU_MIXBIN_COUNT) {
+			sourceBin = m_VPHRTFSubmix[slot];
+		}
 		for (size_t frame = 0; frame < frameCount; ++frame) {
-			output[frame] = ClampToInt16(mixBins[slot * frameCount + frame]);
+			output[frame] = ClampToInt16(mixBins[sourceBin * frameCount + frame]);
 		}
 
 		WriteGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferCursor[slot],
@@ -2283,7 +2968,9 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 		const bool hasState = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
 		const bool active = hasState && (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
 		if (!active) {
+			SetVoiceActiveHint(voiceHandle, false);
 			ConsumeVPMethod(SE2FE_IDLE_VOICE, voiceHandle, sizeof(uint32_t));
+			UnlinkVoiceFromLists(voiceHandle);
 		} else if (!IsVoiceLocked(voiceHandle)) {
 			RenderBasicVoice(voiceHandle, mixBins, frameCount, &diagnostics);
 		}
@@ -2506,6 +3193,236 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	logFEVPRegisterDiagnostics();
 }
 
+void APUDevice::LogRecentVoiceStateDiagnostics() const
+{
+	if constexpr (!audio_diagnostics::kEnableDiagnosticLogging) {
+		return;
+	}
+
+	struct VoiceDiagnosticCandidate {
+		uint32_t handle = APU_VP_VOICE_MAX_HANDLE;
+		const char* reason = nullptr;
+	};
+
+	std::array<VoiceDiagnosticCandidate, 4> candidates{};
+	size_t candidateCount = 0;
+	const auto addCandidate = [&](uint32_t handle, const char* reason) {
+		if (handle >= APU_VP_VOICE_MAX_HANDLE) {
+			return;
+		}
+		for (size_t i = 0; i < candidateCount; ++i) {
+			if (candidates[i].handle == handle) {
+				return;
+			}
+		}
+		if (candidateCount < candidates.size()) {
+			candidates[candidateCount++] = VoiceDiagnosticCandidate{ handle, reason };
+		}
+	};
+
+	addCandidate(GetRegister32(NV_PAPU_FECV) & NV1BA0_PIO_VOICE_ON_HANDLE, "fecv");
+	const size_t recentMethodCount = std::min(m_RecentFEMethodCount, m_RecentFEMethods.size());
+	for (size_t i = 0; i < recentMethodCount && candidateCount < candidates.size(); ++i) {
+		const size_t recentIndex =
+			GetRecentFEMethodIndex(m_RecentFEMethodNext, m_RecentFEMethods.size(), i);
+		const auto& event = m_RecentFEMethods[recentIndex];
+		addCandidate(event.currentVoice, "recent-current");
+		addCandidate(event.targetVoice, "recent-target");
+	}
+
+	if (candidateCount == 0) {
+		EmuLog(LOG_LEVEL::INFO, "APU recent voice state diagnostics [none]");
+		return;
+	}
+
+	for (size_t candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
+		const uint32_t voiceHandle = candidates[candidateIndex].handle;
+		uint32_t state = 0;
+		uint32_t format = 0;
+		uint32_t baseAddress = 0;
+		uint32_t currentOffset = 0;
+		uint32_t endOffset = 0;
+		uint32_t loopOffset = 0;
+		uint32_t bin0 = 0;
+		uint32_t bin1 = 0;
+		uint32_t volume0 = 0x0FFF;
+		uint32_t volume1 = 0x0FFF;
+		const bool hasState = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
+		const bool hasFormat = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, 0xFFFFFFFF, format);
+		const bool hasBase = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
+			NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
+		const bool hasCurrent = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET,
+			NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+		const bool hasEnd = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT,
+			NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
+		const bool hasLoop = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE,
+			NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN, bin0)) {
+			bin0 = 0;
+		}
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V1BIN, bin1)) {
+			bin1 = 1;
+		}
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME0, volume0);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME1, volume1);
+
+		const bool streaming = hasFormat && (format & NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) != 0;
+		const bool stereo = hasFormat && (format & NV_PAVS_VOICE_CFG_FMT_STEREO) != 0;
+		const uint32_t channels = stereo ? 2u : 1u;
+		const uint32_t sampleSize = hasFormat
+			? ((format & NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE))
+			: 0u;
+		const uint32_t containerSizeMode = hasFormat
+			? ((format & NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE))
+			: 0u;
+		const uint32_t samplesPerBlock = hasFormat
+			? (((format & NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK)) + 1u)
+			: 0u;
+		const bool adpcm = containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM;
+
+		uint32_t containerSize = 0;
+		switch (containerSizeMode) {
+		case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B8:
+			containerSize = 1;
+			break;
+		case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B16:
+			containerSize = 2;
+			break;
+		case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM:
+			containerSize = XBOX_ADPCM_SRCSIZE;
+			break;
+		case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B32:
+			containerSize = 4;
+			break;
+		default:
+			break;
+		}
+
+		uint32_t previewAddress = 0;
+		bool previewAddressValid = hasBase && hasCurrent && containerSize != 0;
+		if (previewAddressValid) {
+			if (adpcm && samplesPerBlock != 0) {
+				const uint32_t bytesPerBlock = containerSize * channels;
+				previewAddress = baseAddress + (currentOffset / samplesPerBlock) * bytesPerBlock;
+			} else if (streaming) {
+				previewAddress = baseAddress + currentOffset * containerSize * channels;
+			} else {
+				previewAddress = baseAddress + currentOffset;
+			}
+		}
+
+		std::array<uint8_t, 8> previewBytes{};
+		bool previewRead = false;
+		if (previewAddressValid) {
+			previewRead = ReadVoiceBufferBytes(previewAddress, previewBytes.data(), previewBytes.size());
+		}
+
+		int32_t previewSampleLeft = 0;
+		int32_t previewSampleRight = 0;
+		bool decodedPreview = false;
+		if (previewAddressValid && adpcm && samplesPerBlock != 0) {
+			const uint32_t bytesPerBlock = containerSize * channels;
+			std::array<uint8_t, APU_XADPCM_MAX_SOURCE_BLOCK_BYTES> encodedBlock{};
+			std::array<int16_t, APU_XADPCM_MAX_DECODED_SAMPLES> decodedSamples{};
+			if (ReadVoiceBufferBytes(previewAddress, encodedBlock.data(), bytesPerBlock)) {
+				const int decodedBytes = TXboxAdpcmDecoder_Decode_Memory(
+					encodedBlock.data(),
+					static_cast<int>(bytesPerBlock),
+					reinterpret_cast<uint8_t*>(decodedSamples.data()),
+					static_cast<int>(channels));
+				if (decodedBytes > 0) {
+					const uint32_t sampleIndex = (currentOffset % samplesPerBlock) * channels;
+					if (sampleIndex < decodedSamples.size() &&
+						(channels == 1 || (sampleIndex + 1) < decodedSamples.size())) {
+						previewSampleLeft = decodedSamples[sampleIndex];
+						previewSampleRight = channels > 1 ? decodedSamples[sampleIndex + 1] : decodedSamples[sampleIndex];
+						decodedPreview = true;
+					}
+				}
+			}
+		} else if (previewRead) {
+			switch (sampleSize) {
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_U8:
+				previewSampleLeft = static_cast<int32_t>(previewBytes[0]) - 128;
+				previewSampleRight = channels > 1 ? static_cast<int32_t>(previewBytes[1]) - 128 : previewSampleLeft;
+				decodedPreview = true;
+				break;
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S16:
+				previewSampleLeft = static_cast<int32_t>(static_cast<int16_t>(
+					static_cast<uint16_t>(previewBytes[0]) | (static_cast<uint16_t>(previewBytes[1]) << 8)));
+				if (channels > 1) {
+					previewSampleRight = static_cast<int32_t>(static_cast<int16_t>(
+						static_cast<uint16_t>(previewBytes[2]) | (static_cast<uint16_t>(previewBytes[3]) << 8)));
+				} else {
+					previewSampleRight = previewSampleLeft;
+				}
+				decodedPreview = true;
+				break;
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S24: {
+				const uint32_t packedLeft = static_cast<uint32_t>(previewBytes[0]) |
+					(static_cast<uint32_t>(previewBytes[1]) << 8) |
+					(static_cast<uint32_t>(previewBytes[2]) << 16);
+				previewSampleLeft = (static_cast<int32_t>(packedLeft << 8)) >> 8;
+				if (channels > 1) {
+					const uint32_t packedRight = static_cast<uint32_t>(previewBytes[3]) |
+						(static_cast<uint32_t>(previewBytes[4]) << 8) |
+						(static_cast<uint32_t>(previewBytes[5]) << 16);
+					previewSampleRight = (static_cast<int32_t>(packedRight << 8)) >> 8;
+				} else {
+					previewSampleRight = previewSampleLeft;
+				}
+				decodedPreview = true;
+				break;
+			}
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S32:
+				previewSampleLeft = static_cast<int32_t>(
+					static_cast<uint32_t>(previewBytes[0]) |
+					(static_cast<uint32_t>(previewBytes[1]) << 8) |
+					(static_cast<uint32_t>(previewBytes[2]) << 16) |
+					(static_cast<uint32_t>(previewBytes[3]) << 24));
+				if (channels > 1) {
+					previewSampleRight = static_cast<int32_t>(
+						static_cast<uint32_t>(previewBytes[4]) |
+						(static_cast<uint32_t>(previewBytes[5]) << 8) |
+						(static_cast<uint32_t>(previewBytes[6]) << 16) |
+						(static_cast<uint32_t>(previewBytes[7]) << 24));
+				} else {
+					previewSampleRight = previewSampleLeft;
+				}
+				decodedPreview = true;
+				break;
+			default:
+				break;
+			}
+		}
+
+		EmuLog(LOG_LEVEL::INFO,
+			"APU recent voice state diag reason=%s handle=%u active=%d paused=%d new=%d fmt=0x%08x base=0x%08x cbo=0x%08x ebo=0x%08x lbo=0x%08x bins=[%u,%u] volumes=[%u,%u] previewAddr=0x%08x previewRead=%d previewBytes=[%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x] previewSample=[%d,%d]",
+			candidates[candidateIndex].reason != nullptr ? candidates[candidateIndex].reason : "unknown",
+			voiceHandle,
+			hasState && (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0 ? 1 : 0,
+			hasState && (state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0 ? 1 : 0,
+			hasState && (state & NV_PAVS_VOICE_PAR_STATE_NEW_VOICE) != 0 ? 1 : 0,
+			hasFormat ? format : 0,
+			hasBase ? baseAddress : 0,
+			hasCurrent ? currentOffset : 0,
+			hasEnd ? endOffset : 0,
+			hasLoop ? loopOffset : 0,
+			bin0,
+			bin1,
+			volume0,
+			volume1,
+			previewAddressValid ? previewAddress : 0,
+			previewRead ? 1 : 0,
+			static_cast<unsigned>(previewBytes[0]), static_cast<unsigned>(previewBytes[1]),
+			static_cast<unsigned>(previewBytes[2]), static_cast<unsigned>(previewBytes[3]),
+			static_cast<unsigned>(previewBytes[4]), static_cast<unsigned>(previewBytes[5]),
+			static_cast<unsigned>(previewBytes[6]), static_cast<unsigned>(previewBytes[7]),
+			decodedPreview ? previewSampleLeft : 0,
+			decodedPreview ? previewSampleRight : 0);
+	}
+}
+
 void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,
 	BasicVoiceDiagnosticSummary* diagnostics)
 {
@@ -2520,6 +3437,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
 		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
 		(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0) {
+		if ((state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+			SetVoiceActiveHint(voiceHandle, false);
+		}
 		return;
 	}
 
@@ -2551,8 +3471,6 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		if (samplesPerBlock != APU_XADPCM_PCM_SAMPLES_PER_BLOCK) {
 			return;
 		}
-	} else if (samplesPerBlock != 1) {
-		return;
 	}
 
 	uint32_t containerSize = 0;
@@ -2649,11 +3567,15 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		diagnostics->pitchStep = pitchStep;
 	}
 	const uint32_t bytesPerFrame = adpcm ? 0u : containerSize * channels;
+	// The guest programs CBO/EBO/LBO in byte units for non-streaming PCM voices.
+	// Streaming SSL segments and ADPCM blocks still advance in decoded-sample units.
+	const uint32_t offsetStep = (!multipass && !streaming && !adpcm) ? bytesPerFrame : 1u;
 	const uint32_t bytesPerBlock = containerSize * channels;
 	auto& playbackState = m_VPPlaybackState[voiceHandle];
 	if (!playbackState.valid || playbackState.offset != currentOffset) {
 		playbackState.offset = currentOffset;
 		playbackState.fraction = 0.0;
+		playbackState.previewDecodeFailures = 0;
 		playbackState.valid = true;
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
@@ -2665,12 +3587,26 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	std::array<int16_t, APU_XADPCM_MAX_DECODED_SAMPLES> cachedADPCMSamples{};
 
 	auto sslData = m_VPSSLData[voiceHandle];
-	auto stopVoice = [&]() {
+	bool shouldSkipStateWrites = false;
+	auto terminateVoiceWithStatus = [&](uint8_t completionStatus) {
+		shouldSkipStateWrites = true;
+		playbackState.previewDecodeFailures = 0;
+		SetVoiceActiveHint(voiceHandle, false);
+		SetVoiceLocked(voiceHandle, false);
+		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
+		NotifyVoiceCompletion(voiceHandle, completionStatus);
+		UnlinkVoiceFromLists(voiceHandle);
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	};
+	auto stopVoice = [&]() {
+		terminateVoiceWithStatus(NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+	};
+	auto failVoice = [&]() {
+		terminateVoiceWithStatus(NV1BA0_NOTIFICATION_STATUS_DONE_ERROR);
 	};
 	std::vector<int32_t> multipassSource;
 	if (multipass && clearMix) {
@@ -2762,9 +3698,39 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_HRTF_TARGET,
 			NV_PAVS_VOICE_CFG_HRTF_TARGET_HANDLE, hrtfEntryIndex) &&
 		hrtfEntryIndex < m_VPHRTFEntries.size();
-	const bool capture3DForOpenAL = hrtfEnabled && g_AC97 != nullptr;
-	if (capture3DForOpenAL) {
+	const float guestHRTFPan = [&]() {
+		if (!hrtfEnabled) {
+			return 0.0f;
+		}
+
+		const auto& hrtfEntry = m_VPHRTFEntries[hrtfEntryIndex];
+		float leftMagnitude = 0.0f;
+		float rightMagnitude = 0.0f;
+		for (const int8_t coefficient : hrtfEntry.coeffs[0]) {
+			leftMagnitude += std::fabs(static_cast<float>(coefficient));
+		}
+		for (const int8_t coefficient : hrtfEntry.coeffs[1]) {
+			rightMagnitude += std::fabs(static_cast<float>(coefficient));
+		}
+		const float normalizedItd = std::clamp(
+			static_cast<float>(hrtfEntry.itd) / APU_HRTF_ITD_NORMALIZER,
+			-1.0f,
+			1.0f);
+		const float magnitudeSum = leftMagnitude + rightMagnitude;
+		const float magnitudeBalance = magnitudeSum > APU_HRTF_NORMALIZATION_EPSILON
+			? ((rightMagnitude - leftMagnitude) / magnitudeSum)
+			: 0.0f;
+		return std::clamp(
+			normalizedItd * APU_HRTF_PAN_ITD_WEIGHT +
+			magnitudeBalance * APU_HRTF_PAN_MAGNITUDE_WEIGHT,
+			-1.0f,
+			1.0f);
+	}();
+	const bool capture3DHandoff = hrtfEnabled && g_AC97 != nullptr;
+	const bool submit3DToAC97 = capture3DHandoff && m_EnableHostSpatialHandoff;
+	if (capture3DHandoff) {
 		m_VP3DVoiceCaptureScratch.assign(frameCount * 2, 0);
+		++m_ChunkCaptured3DVoiceCount;
 	}
 	auto storeCaptured3DSample = [&](size_t frame, float sampleLeft, float sampleRight, float envelopeGain) {
 		const size_t sampleIndex = frame * 2;
@@ -2778,7 +3744,11 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
 	}
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
-		return streaming ? ReadGuestBytes(sampleAddress, dest, size) : ReadVoiceBufferBytes(sampleAddress, dest, size);
+		// Streaming voices can surface VP-linear offsets, raw physical offsets, or
+		// KSEG0/physical-map addresses depending on how the title programmed the SSL
+		// tables, so route them through the same voice-buffer translation path as
+		// non-streaming voices.
+		return ReadVoiceBufferBytes(sampleAddress, dest, size);
 	};
 	auto loadStreamingSegment = [&](SSLData& voiceSSLData, uint32_t& segmentBaseAddress, uint32_t& segmentEndOffset, uint32_t& segmentCurrentOffset, bool commit) -> bool {
 		for (size_t attempts = 0; attempts < 4; ++attempts) {
@@ -2804,13 +3774,16 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				continue;
 			}
 
-			const uint32_t sslTableBase = GetRegister32(NV_PAPU_VPSSLADDR);
-			if (sslTableBase == 0) {
+			uint32_t sslTableBase = 0;
+			if (!ResolveOptionalGuestTableBase(NV_PAPU_VPSSLADDR, m_VPCurrentSSLContextDMA, sslTableBase)) {
 				if (!m_LoggedStreamingSSLFailure) {
 					EmuLog(LOG_LEVEL::WARNING,
-						"APU streaming voice %u needs NV_PAPU_VPSSLADDR but the SSL table base is still zero",
+						"APU streaming voice %u needs an SSL table, but neither NV_PAPU_VPSSLADDR nor the current SSL context DMA resolved to guest memory",
 						voiceHandle);
 					m_LoggedStreamingSSLFailure = true;
+				}
+				if (commit) {
+					failVoice();
 				}
 				return false;
 			}
@@ -2821,6 +3794,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			uint32_t segmentLength = 0;
 			if (!ReadGuestWord(sslTableBase + segmentPage * 8, segmentOffset) ||
 				!ReadGuestWord(sslTableBase + segmentPage * 8 + 4, segmentLength)) {
+				if (commit) {
+					failVoice();
+				}
 				return false;
 			}
 
@@ -2836,6 +3812,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			if (segmentContainerSizeMode != containerSizeMode ||
 				segmentSamplesPerBlock != samplesPerBlock ||
 				segmentStereo != stereo) {
+				if (commit) {
+					failVoice();
+				}
 				return false;
 			}
 
@@ -2928,7 +3907,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			return true;
 		}
 
-		const uint32_t linearAddress = segmentBaseAddress + segmentCurrentOffset * bytesPerFrame;
+		const uint32_t linearAddress = segmentBaseAddress +
+			(streaming ? (segmentCurrentOffset * bytesPerFrame) : segmentCurrentOffset);
 		for (uint32_t channel = 0; channel < channels; ++channel) {
 			const uint32_t sampleAddress = linearAddress + channel * containerSize;
 			float sample = 0.0f;
@@ -3018,11 +3998,15 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float currentRight = 0.0f;
 		const uint32_t frameOffset = multipass ? static_cast<uint32_t>(frame) : currentOffset;
 		if (!decodeFrame(baseAddress, frameOffset, currentLeft, currentRight)) {
-			return;
+			// stopVoice clears the cached playback state and guest active bits; break out of
+			// the per-frame loop immediately, then let the final voiceStopped return below
+			// skip the remaining state writes for this voice.
+			failVoice();
+			break;
 		}
 		if (multipass) {
 			applyLowPass(currentLeft, currentRight);
-			if (capture3DForOpenAL) {
+			if (capture3DHandoff) {
 				storeCaptured3DSample(frame, currentLeft, currentRight, envelopeGain);
 			}
 			if (hrtfEnabled) {
@@ -3040,10 +4024,22 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		auto previewSSLData = sslData;
 		uint32_t previewBaseAddress = baseAddress;
 		uint32_t previewEndOffset = endOffset;
-		uint32_t previewOffset = currentOffset + 1;
+		uint32_t previewOffset = currentOffset + offsetStep;
 		if (advancePlaybackPosition(previewSSLData, previewBaseAddress, previewEndOffset, previewOffset, false)) {
 			if (!decodeFrame(previewBaseAddress, previewOffset, nextLeft, nextRight)) {
-				return;
+				// If the look-ahead sample cannot be decoded, keep the current sample so
+				// interpolation continues briefly. Repeated look-ahead failures mean the next
+				// sample is persistently unreadable, so stop the voice instead of looping on
+				// the same broken preview forever.
+				++playbackState.previewDecodeFailures;
+				if (playbackState.previewDecodeFailures >= APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES) {
+					failVoice();
+					break;
+				}
+				nextLeft = currentLeft;
+				nextRight = currentRight;
+			} else {
+				playbackState.previewDecodeFailures = 0;
 			}
 		}
 
@@ -3051,7 +4047,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
 		applyLowPass(sampleLeft, sampleRight);
-		if (capture3DForOpenAL) {
+		if (capture3DHandoff) {
 			storeCaptured3DSample(frame, sampleLeft, sampleRight, envelopeGain);
 		}
 		if (hrtfEnabled) {
@@ -3067,9 +4063,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const uint32_t wholeFrames = static_cast<uint32_t>(nextPlaybackPosition);
 		playbackState.fraction = nextPlaybackPosition - static_cast<double>(wholeFrames);
 		for (uint32_t step = 0; step < wholeFrames; ++step) {
-			++currentOffset;
+			currentOffset += offsetStep;
 			if (captureVoiceDiagnostics) {
-				++diagnostics->offsetAdvance;
+				diagnostics->offsetAdvance += offsetStep;
 			}
 			if (!advancePlaybackPosition(sslData, baseAddress, endOffset, currentOffset, true)) {
 				frame = frameCount;
@@ -3077,9 +4073,13 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			}
 		}
 	}
+	if (shouldSkipStateWrites) {
+		return;
+	}
 
-	if (capture3DForOpenAL) {
-		g_AC97->Submit3DVoiceFrames(voiceHandle, hrtfEntryIndex, stereo,
+	if (submit3DToAC97) {
+		++m_ChunkSubmittedHostSpatialVoiceCount;
+		g_AC97->Submit3DVoiceFrames(voiceHandle, hrtfEntryIndex, guestHRTFPan, stereo,
 			m_VPHRTFSubmix, hrtfSubmixVolumes, m_VPHRTFHeadroom,
 			m_VP3DVoiceCaptureScratch.data(), frameCount);
 	}
@@ -3091,6 +4091,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	m_VPSSLData[voiceHandle] = sslData;
 	playbackState.offset = currentOffset;
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+	WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 }
 
 void APUDevice::UpdateVPFifo()
@@ -3130,4 +4131,5 @@ void APUDevice::RefreshInterruptStatus()
 	}
 
 	SetRegister32(NV_PAPU_ISTS, status);
+	HalSystemInterrupts[APU_IRQ].Assert((status & NV_PAPU_ISTS_GINTSTS) != 0);
 }

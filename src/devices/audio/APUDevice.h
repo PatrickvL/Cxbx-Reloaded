@@ -31,6 +31,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 #include "../PCIDevice.h"
@@ -66,6 +67,7 @@ private:
 	struct PlaybackState {
 		uint32_t offset = 0;
 		double fraction = 0.0;
+		size_t previewDecodeFailures = 0;
 		bool valid = false;
 	};
 
@@ -123,6 +125,7 @@ private:
 	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,
 		BasicVoiceDiagnosticSummary* diagnostics = nullptr);
 	void LogVoiceTableDiagnostics() const;
+	void LogRecentVoiceStateDiagnostics() const;
 	void InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue);
 	void BeginVoiceRelease(uint32_t voiceHandle);
 	float StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
@@ -133,16 +136,40 @@ private:
 	bool WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size);
 	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
 	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
+	bool ReadScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, void* dest, size_t size) const;
+	bool WriteScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, const void* src, size_t size);
+	uint32_t ReadScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+		const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
+	void WriteScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+		uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
+	uint32_t RefreshFEMemDataRegister(uint32_t fallbackValue);
+	bool ResolveOptionalGuestTableBase(uint32_t registerAddress, uint32_t fallbackGuestAddress, uint32_t& guestBase) const;
+	void SignalNotifierInterrupt();
 	bool ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const;
 	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
 	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
+	void WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint32_t value);
 	void WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status);
+	void NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status);
+	uint32_t GetVoicePlaybackOffset(uint32_t voiceHandle) const;
+	uint32_t GetVoiceNextHandle(uint32_t voiceHandle) const;
+	void SetVoiceNextHandle(uint32_t voiceHandle, uint32_t nextHandle);
+	void UnlinkVoiceFromList(uint32_t topRegister, uint32_t voiceHandle);
+	void UnlinkVoiceFromLists(uint32_t voiceHandle);
 	bool IsVoiceLocked(uint32_t voiceHandle) const;
 	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
+	bool IsVoiceActiveHinted(uint32_t voiceHandle) const;
+	void SetVoiceActiveHint(uint32_t voiceHandle, bool active);
 	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;
 	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
+	bool ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
+		void* dest, size_t size) const;
 	bool WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
 		const void* src, size_t size);
+	bool HasGuestDspExecution() const;
+	bool HasGuestVPOutputBufferPlaybackPath() const;
+	bool MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak);
+	bool SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<uint32_t, 4>* slotPeak);
 	uint32_t ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
 	void WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
 	void WriteHRTFCoefficient(uint32_t entryIndex, size_t channel, size_t coefficientIndex, int8_t value);
@@ -158,6 +185,7 @@ private:
 	uint32_t GetRegister32(uint32_t addr) const;
 
 	std::array<uint8_t, APU_SIZE> m_Registers{};
+	mutable std::mutex m_AudioUpdateMutex{};
 	uint32_t m_VPFifoLevel = 0;
 	uint32_t m_VPFifoLastUpdate = 0;
 	uint32_t m_LastAudioUpdate = 0;
@@ -167,7 +195,6 @@ private:
 	uint32_t m_VPCurrentSSLContextDMA = 0;
 	uint32_t m_VPSSLBasePage = 0;
 	uint32_t m_VPCurrentHRTFEntry = 0;
-	uint32_t m_VPLastVoicePositionHandle = 0;
 	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPXMem{};
 	std::array<uint8_t, 0x400 * sizeof(uint32_t)> m_GPMixBuf{};
 	std::array<uint8_t, 0x800 * sizeof(uint32_t)> m_GPYMem{};
@@ -180,7 +207,9 @@ private:
 	uint8_t m_VPHRTFHeadroom = 0;
 	std::array<uint8_t, 32> m_VPSubmixHeadroom{};
 	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPVoiceLocked{};
+	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPActiveVoiceHints{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
+	std::array<uint32_t, 4> m_VPOutBufferPlaybackCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
 	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};
@@ -199,6 +228,11 @@ private:
 	bool m_LoggedMissingVoiceTableDuringRender = false;
 	bool m_LoggedAC97Missing = false;
 	bool m_LoggedStreamingSSLFailure = false;
+	bool m_EnableHostSpatialHandoff = true;
+	bool m_LoggedVPOutputBufferReadFailure = false;
+	bool m_LoggedFallbackActiveVoiceRender = false;
+	size_t m_ChunkCaptured3DVoiceCount = 0;
+	size_t m_ChunkSubmittedHostSpatialVoiceCount = 0;
 };
 
 #endif
