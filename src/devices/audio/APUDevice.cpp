@@ -1087,7 +1087,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
-		WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
+		if (GetRegister32(NV_PAPU_FENADDR) != 0) {
+			WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
+		}
 		ClearHRTFFilterState(selectedHandle);
 		InitializeVoiceEnvelopes(selectedHandle, value);
 		m_LoggedEmptyVoiceTableDiagnostics = false;
@@ -1097,6 +1099,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		// Sample the guest-visible offset register before clearing the local playback cache so
+		// the completion notifier reflects the position software last programmed/observed.
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, GetVoicePlaybackOffset(voiceHandle));
 		NotifyVoiceCompletion(voiceHandle, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		if (voiceHandle < m_VPPlaybackState.size()) {
@@ -3073,6 +3077,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float currentRight = 0.0f;
 		const uint32_t frameOffset = multipass ? static_cast<uint32_t>(frame) : currentOffset;
 		if (!decodeFrame(baseAddress, frameOffset, currentLeft, currentRight)) {
+			// stopVoice clears the cached playback state and guest active bits, so leave the
+			// render loop immediately after signaling completion for this voice.
 			stopVoice();
 			break;
 		}
