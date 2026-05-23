@@ -753,6 +753,12 @@ void StepVoiceLFOLevel(uint32_t delta, uint32_t& level, bool& descending)
 	level = static_cast<uint32_t>(value);
 }
 
+bool IsVoiceLFODelayActive(uint32_t voiceState, uint32_t delayMask, uint32_t envelopeStateMask)
+{
+	return (voiceState & delayMask) != 0 &&
+		GetMaskedValue(voiceState, envelopeStateMask) == NV_PAVS_VOICE_PAR_STATE_EFCUR_DELAY;
+}
+
 float DecodeSignedLFOAmount(uint32_t value)
 {
 	return static_cast<float>(static_cast<int8_t>(value & 0xFF)) / APU_LFO_MODULATION_NORMALIZER;
@@ -4244,10 +4250,20 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, lfoAReverse);
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, lfoFLevel);
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, lfoFReverse);
+		uint32_t lfoState = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, lfoState);
 		bool lfoADescending = lfoAReverse != 0;
 		bool lfoFDescending = lfoFReverse != 0;
-		StepVoiceLFOLevel(lfoADelta, lfoALevel, lfoADescending);
-		StepVoiceLFOLevel(lfoFDelta, lfoFLevel, lfoFDescending);
+		StepVoiceLFOLevel(
+			IsVoiceLFODelayActive(lfoState, NV_PAVS_VOICE_PAR_STATE_LFOA_DELAYMODE, NV_PAVS_VOICE_PAR_STATE_EACUR)
+				? 0u
+				: lfoADelta,
+			lfoALevel, lfoADescending);
+		StepVoiceLFOLevel(
+			IsVoiceLFODelayActive(lfoState, NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE, NV_PAVS_VOICE_PAR_STATE_EFCUR)
+				? 0u
+				: lfoFDelta,
+			lfoFLevel, lfoFDescending);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOALVL, lfoALevel);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, lfoADescending ? 1u : 0u);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, lfoFLevel);
