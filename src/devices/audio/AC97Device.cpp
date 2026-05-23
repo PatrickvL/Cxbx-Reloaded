@@ -527,6 +527,30 @@ uint32_t GetBusMasterFrameBytes(uint32_t channelBase)
 	}
 }
 
+uint8_t GetCaptureChannelCount(uint32_t channelBase)
+{
+	switch (channelBase) {
+	case NABM_PI_BASE:
+		return AC97_PCM_INPUT_CHANNELS;
+	case NABM_MC_BASE:
+		return AC97_MIC_INPUT_CHANNELS;
+	default:
+		return 0;
+	}
+}
+
+ALenum GetCaptureFormat(uint32_t channelBase)
+{
+	switch (channelBase) {
+	case NABM_PI_BASE:
+		return AL_FORMAT_STEREO16;
+	case NABM_MC_BASE:
+		return AL_FORMAT_MONO16;
+	default:
+		return 0;
+	}
+}
+
 }
 
 extern APUDevice* g_APU;
@@ -575,6 +599,9 @@ void AC97Device::Reset()
 	m_ChannelQueuedAfterHalt.fill(false);
 	m_ChannelDescriptorError.fill(false);
 	m_LoggedCaptureStub.fill(false);
+	for (uint32_t channelBase : { NABM_PI_BASE, NABM_MC_BASE }) {
+		ResetCaptureStream(channelBase);
+	}
 	m_Pending3DVoices.clear();
 	m_LoggedQueueFull = false;
 	m_LoggedPlaybackStartFailure = false;
@@ -773,6 +800,131 @@ bool AC97Device::EnsureOutputDevice()
 		}
 	}
 	return true;
+}
+
+void AC97Device::ResetCaptureStream(uint32_t channelBase)
+{
+	const size_t channelIndex = ChannelIndex(channelBase);
+	auto& captureStream = m_CaptureStreams[channelIndex];
+	if (captureStream.device != nullptr) {
+		if (captureStream.active) {
+			alcCaptureStop(captureStream.device);
+		}
+		alcCaptureCloseDevice(captureStream.device);
+	}
+	captureStream = {};
+}
+
+bool AC97Device::EnsureCaptureStream(uint32_t channelBase)
+{
+	const uint8_t channels = GetCaptureChannelCount(channelBase);
+	const ALenum format = GetCaptureFormat(channelBase);
+	if (channels == 0 || format == 0) {
+		return false;
+	}
+
+	const size_t channelIndex = ChannelIndex(channelBase);
+	auto& captureStream = m_CaptureStreams[channelIndex];
+	const uint32_t sampleRate = GetBusMasterSampleRate(channelBase);
+	if (captureStream.device != nullptr &&
+		captureStream.sampleRate == sampleRate &&
+		captureStream.channels == channels &&
+		captureStream.active) {
+		return true;
+	}
+
+	const bool hadPreviousFailure = captureStream.failed;
+	ResetCaptureStream(channelBase);
+	const ALCsizei captureBufferFrames = static_cast<ALCsizei>(std::max<uint32_t>(sampleRate / 4, 1024u));
+	captureStream.device = alcCaptureOpenDevice(nullptr,
+		static_cast<ALCuint>(sampleRate),
+		format,
+		captureBufferFrames);
+	if (captureStream.device == nullptr) {
+		if (!hadPreviousFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"AC97 failed to open OpenAL capture device for %s input rate=%u channels=%u; falling back to silence",
+				channelBase == NABM_PI_BASE ? "PCM" : "microphone",
+				static_cast<unsigned>(sampleRate),
+				static_cast<unsigned>(channels));
+		}
+		captureStream.failed = true;
+		return false;
+	}
+
+	alcCaptureStart(captureStream.device);
+	const ALCenum captureError = alcGetError(captureStream.device);
+	if (captureError != ALC_NO_ERROR) {
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 failed to start OpenAL capture for %s input rate=%u channels=%u: 0x%04x; falling back to silence",
+			channelBase == NABM_PI_BASE ? "PCM" : "microphone",
+			static_cast<unsigned>(sampleRate),
+			static_cast<unsigned>(channels),
+			static_cast<unsigned>(captureError));
+		alcCaptureCloseDevice(captureStream.device);
+		captureStream = {};
+		captureStream.failed = true;
+		return false;
+	}
+
+	captureStream.sampleRate = sampleRate;
+	captureStream.channels = channels;
+	captureStream.active = true;
+	captureStream.failed = false;
+	m_LoggedCaptureStub[channelIndex] = false;
+	EmuLog(LOG_LEVEL::INFO,
+		"AC97 opened OpenAL capture for %s input rate=%u channels=%u",
+		channelBase == NABM_PI_BASE ? "PCM" : "microphone",
+		static_cast<unsigned>(sampleRate),
+		static_cast<unsigned>(channels));
+	return true;
+}
+
+size_t AC97Device::CaptureFrames(uint32_t channelBase, void* dest, size_t frameCount)
+{
+	const uint32_t frameBytes = GetBusMasterFrameBytes(channelBase);
+	const size_t byteCount = frameCount * frameBytes;
+	if (dest == nullptr || frameCount == 0 || frameBytes == 0) {
+		return 0;
+	}
+
+	std::memset(dest, 0, byteCount);
+	if (!EnsureCaptureStream(channelBase)) {
+		return 0;
+	}
+
+	auto& captureStream = m_CaptureStreams[ChannelIndex(channelBase)];
+	ALCint availableFrames = 0;
+	alcGetIntegerv(captureStream.device, ALC_CAPTURE_SAMPLES, 1, &availableFrames);
+	const ALCenum captureError = alcGetError(captureStream.device);
+	if (captureError != ALC_NO_ERROR) {
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 failed to query OpenAL capture samples for %s input: 0x%04x; returning silence",
+			channelBase == NABM_PI_BASE ? "PCM" : "microphone",
+			static_cast<unsigned>(captureError));
+		ResetCaptureStream(channelBase);
+		m_CaptureStreams[ChannelIndex(channelBase)].failed = true;
+		return 0;
+	}
+
+	const size_t framesToRead = std::min<size_t>(frameCount,
+		availableFrames > 0 ? static_cast<size_t>(availableFrames) : 0u);
+	if (framesToRead == 0) {
+		return 0;
+	}
+
+	alcCaptureSamples(captureStream.device, dest, static_cast<ALCsizei>(framesToRead));
+	if (alcGetError(captureStream.device) != ALC_NO_ERROR) {
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 failed to read OpenAL capture samples for %s input; returning silence",
+			channelBase == NABM_PI_BASE ? "PCM" : "microphone");
+		ResetCaptureStream(channelBase);
+		m_CaptureStreams[ChannelIndex(channelBase)].failed = true;
+		std::memset(dest, 0, byteCount);
+		return 0;
+	}
+
+	return framesToRead;
 }
 
 bool AC97Device::QueryOutputSourceSnapshot(ALint& state, ALint& queued, ALint& processed, ALenum& error) const
@@ -1525,9 +1677,11 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					WriteRegister16(AC97_PCM_Surround_DAC_Rate, AC97_RATE_48KHZ);
 					WriteRegister16(AC97_PCM_LFE_DAC_Rate, AC97_RATE_48KHZ);
 					WriteRegister16(AC97_PCM_LR_ADC_Rate, AC97_RATE_48KHZ);
+					ResetCaptureStream(NABM_PI_BASE);
 				}
 				if ((next & AC97_EXT_AUDIO_ID_VRM) == 0) {
 					WriteRegister16(AC97_MIC_ADC_Rate, AC97_RATE_48KHZ);
+					ResetCaptureStream(NABM_MC_BASE);
 				}
 				return;
 			}
@@ -1537,16 +1691,20 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 			case AC97_PCM_LR_ADC_Rate:
 				if ((ReadRegister16(AC97_Extended_Audio_Ctrl_Stat) & AC97_EXT_AUDIO_ID_VRA) == 0) {
 					WriteRegister16(addr, AC97_RATE_48KHZ);
+					ResetCaptureStream(NABM_PI_BASE);
 					return;
 				}
 				WriteRegister16(addr, ClampSampleRateRegister(value16));
+				ResetCaptureStream(NABM_PI_BASE);
 				return;
 			case AC97_MIC_ADC_Rate:
 				if ((ReadRegister16(AC97_Extended_Audio_Ctrl_Stat) & AC97_EXT_AUDIO_ID_VRM) == 0) {
 					WriteRegister16(addr, AC97_RATE_48KHZ);
+					ResetCaptureStream(NABM_MC_BASE);
 					return;
 				}
 				WriteRegister16(addr, ClampSampleRateRegister(value16));
+				ResetCaptureStream(NABM_MC_BASE);
 				return;
 			default:
 				break;
@@ -1646,6 +1804,11 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 					if ((control & CR_RR) != 0) {
 						ResetBusMasterChannel(channelBase);
 					} else {
+						if (channelBase != NABM_PO_BASE &&
+							(previousControl & CR_RPBM) != 0 &&
+							(control & CR_RPBM) == 0) {
+							ResetCaptureStream(channelBase);
+						}
 						if ((previousControl & CR_RPBM) == 0 &&
 							(control & CR_RPBM) != 0 &&
 							IsDescriptorErrorAcknowledged(channelBase)) {
@@ -1792,6 +1955,9 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 	m_ChannelQueuedAfterHalt[channelIndex] = false;
 	m_ChannelDescriptorError[channelIndex] = false;
 	m_LoggedCaptureStub[channelIndex] = false;
+	if (channelBase != NABM_PO_BASE) {
+		ResetCaptureStream(channelBase);
+	}
 
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_BDBAR, 0, sizeof(uint32_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CIV, 0, sizeof(uint8_t));
@@ -1952,10 +2118,10 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 					if (m_CaptureScratch.size() < transferBytes) {
 						m_CaptureScratch.resize(transferBytes);
 					}
-					std::memset(m_CaptureScratch.data(), 0, transferBytes);
-					if (!m_LoggedCaptureStub[channelIndex]) {
+					const size_t capturedFrames = CaptureFrames(channelBase, m_CaptureScratch.data(), consumed);
+					if (capturedFrames == 0 && !m_LoggedCaptureStub[channelIndex]) {
 						EmuLog(LOG_LEVEL::INFO,
-							"AC97 %s capture DMA is stubbed; returning silence frames=%u bytes=%zu rate=%u",
+							"AC97 %s capture is currently unavailable; returning silence frames=%u bytes=%zu rate=%u",
 							channelBase == NABM_PI_BASE ? "PCM input" : "microphone input",
 							static_cast<unsigned>(consumed),
 							transferBytes,
