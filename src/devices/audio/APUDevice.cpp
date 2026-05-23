@@ -522,7 +522,9 @@ uint32_t Ctz32(uint32_t value)
 	return shift;
 }
 
-// Count trailing zero bits in a 64-bit mask; return 64 when the mask is empty.
+// Return the bit index of the least-significant set bit in a 64-bit voice mask.
+// A return value of 64 means the mask was empty, which lets callers keep the
+// "no bits set" case explicit without a separate sentinel.
 uint32_t CountTrailingZeros64(uint64_t value)
 {
 	if (value == 0) {
@@ -2631,8 +2633,6 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				fallbackVisited);
 			m_LoggedFallbackActiveVoiceRender = true;
 		}
-	} else if ((visited2D + visited3D + visitedMP) != 0) {
-		m_LoggedFallbackActiveVoiceRender = false;
 	}
 	if (voiceTableBase != 0 &&
 		!hasVoiceActivity &&
