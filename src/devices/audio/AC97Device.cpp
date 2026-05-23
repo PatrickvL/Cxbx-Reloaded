@@ -805,6 +805,9 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 			// already audible through the existing CPU stereo path.
 			bool mixedPendingVoices = false;
 			spatialFallbackMix.assign(samples, samples + sampleCount);
+			// The MCPX routes 3D voice HRTF output through four global submix slots;
+			// until those slots are rendered directly on the host side, fold them back
+			// to stereo as L,R,L,R to mirror the in-APU fallback routing.
 			constexpr std::array<size_t, 4> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
 			for (const auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
 				(void)voiceHandle;
