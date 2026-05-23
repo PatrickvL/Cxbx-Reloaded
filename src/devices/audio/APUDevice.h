@@ -157,6 +157,8 @@ private:
 	void UnlinkVoiceFromLists(uint32_t voiceHandle);
 	bool IsVoiceLocked(uint32_t voiceHandle) const;
 	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
+	bool IsVoiceActiveHinted(uint32_t voiceHandle) const;
+	void SetVoiceActiveHint(uint32_t voiceHandle, bool active);
 	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;
 	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
 	bool ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
@@ -203,6 +205,7 @@ private:
 	uint8_t m_VPHRTFHeadroom = 0;
 	std::array<uint8_t, 32> m_VPSubmixHeadroom{};
 	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPVoiceLocked{};
+	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPActiveVoiceHints{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
 	std::array<uint32_t, 4> m_VPOutBufferPlaybackCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
@@ -225,6 +228,7 @@ private:
 	bool m_LoggedStreamingSSLFailure = false;
 	bool m_EnableHostSpatialHandoff = true;
 	bool m_LoggedVPOutputBufferReadFailure = false;
+	bool m_LoggedFallbackActiveVoiceRender = false;
 	size_t m_ChunkCaptured3DVoiceCount = 0;
 	size_t m_ChunkSubmittedHostSpatialVoiceCount = 0;
 };

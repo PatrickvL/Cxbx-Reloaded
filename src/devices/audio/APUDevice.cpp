@@ -1174,6 +1174,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
+		SetVoiceActiveHint(selectedHandle, true);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_OFFSET,
 			NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
 		m_VPSSLData[selectedHandle].ssl_index = 0;
@@ -1190,6 +1191,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	}
 	case NV1BA0_PIO_VOICE_OFF: {
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
+		SetVoiceActiveHint(voiceHandle, false);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 		UnlinkVoiceFromLists(voiceHandle);
@@ -1934,6 +1936,30 @@ void APUDevice::SetVoiceLocked(uint32_t voiceHandle, bool locked)
 	}
 }
 
+bool APUDevice::IsVoiceActiveHinted(uint32_t voiceHandle) const
+{
+	if (voiceHandle >= MAX_VOICE_HANDLES) {
+		return false;
+	}
+
+	const uint64_t mask = uint64_t{1} << (voiceHandle % 64);
+	return (m_VPActiveVoiceHints[voiceHandle / 64] & mask) != 0;
+}
+
+void APUDevice::SetVoiceActiveHint(uint32_t voiceHandle, bool active)
+{
+	if (voiceHandle >= MAX_VOICE_HANDLES) {
+		return;
+	}
+
+	const uint64_t mask = uint64_t{1} << (voiceHandle % 64);
+	if (active) {
+		m_VPActiveVoiceHints[voiceHandle / 64] |= mask;
+	} else {
+		m_VPActiveVoiceHints[voiceHandle / 64] &= ~mask;
+	}
+}
+
 bool APUDevice::ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const
 {
 	if (ResolveGuestMemoryPointer(linearAddress, 1)) {
@@ -2560,7 +2586,44 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const size_t visited2D = RenderBasicVoiceList(NV_PAPU_TVL2D, mixBins.data(), frameCount);
 	const size_t visited3D = RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	const size_t visitedMP = RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
-	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP) != 0;
+	size_t fallbackVisited = 0;
+	if ((visited2D + visited3D + visitedMP) == 0 &&
+		GetRegister32(NV_PAPU_TVL2D) >= APU_VP_VOICE_MAX_HANDLE &&
+		GetRegister32(NV_PAPU_TVL3D) >= APU_VP_VOICE_MAX_HANDLE &&
+		GetRegister32(NV_PAPU_TVLMP) >= APU_VP_VOICE_MAX_HANDLE) {
+		for (size_t wordIndex = 0; wordIndex < m_VPActiveVoiceHints.size(); ++wordIndex) {
+			uint64_t pendingVoices = m_VPActiveVoiceHints[wordIndex];
+			while (pendingVoices != 0) {
+				uint32_t bitIndex = 0;
+				while (((pendingVoices >> bitIndex) & 1u) == 0u && bitIndex < 64) {
+					++bitIndex;
+				}
+				if (bitIndex >= 64) {
+					break;
+				}
+
+				const uint32_t voiceHandle = static_cast<uint32_t>(wordIndex * 64 + bitIndex);
+				pendingVoices &= ~(uint64_t{1} << bitIndex);
+				if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || IsVoiceLocked(voiceHandle)) {
+					continue;
+				}
+
+				++fallbackVisited;
+				RenderBasicVoice(voiceHandle, mixBins.data(), frameCount);
+			}
+		}
+	}
+	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP + fallbackVisited) != 0;
+	if (fallbackVisited != 0) {
+		if (!m_LoggedFallbackActiveVoiceRender) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU rendered %zu hinted active voices outside the guest TVL lists; list heads were all idle",
+				fallbackVisited);
+			m_LoggedFallbackActiveVoiceRender = true;
+		}
+	} else if ((visited2D + visited3D + visitedMP) != 0) {
+		m_LoggedFallbackActiveVoiceRender = false;
+	}
 	if (voiceTableBase != 0 &&
 		!hasVoiceActivity &&
 		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
@@ -2855,6 +2918,7 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 		const bool hasState = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
 		const bool active = hasState && (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
 		if (!active) {
+			SetVoiceActiveHint(voiceHandle, false);
 			ConsumeVPMethod(SE2FE_IDLE_VOICE, voiceHandle, sizeof(uint32_t));
 			UnlinkVoiceFromLists(voiceHandle);
 		} else if (!IsVoiceLocked(voiceHandle)) {
@@ -3093,6 +3157,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
 		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
 		(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0) {
+		if ((state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+			SetVoiceActiveHint(voiceHandle, false);
+		}
 		return;
 	}
 
@@ -3241,6 +3308,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	auto terminateVoiceWithStatus = [&](uint8_t completionStatus) {
 		shouldSkipStateWrites = true;
 		playbackState.previewDecodeFailures = 0;
+		SetVoiceActiveHint(voiceHandle, false);
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
 		UnlinkVoiceFromLists(voiceHandle);
