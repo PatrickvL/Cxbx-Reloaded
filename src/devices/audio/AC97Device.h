@@ -56,6 +56,8 @@ class AC97Device : public PCIDevice {
 			const std::array<uint8_t, 4>& hrtfSubmix, const std::array<uint32_t, 4>& hrtfSubmixVolumes,
 			uint8_t hrtfHeadroom,
 			const int16_t* stereoSamples, size_t frameCount);
+		void SubmitGuestSpatialSubmixFrames(uint32_t submixSlot, uint8_t routedBin,
+			const int16_t* monoSamples, size_t frameCount);
 		void SubmitPCMFrames(const int16_t* samples, size_t frameCount);
 	private:
 		static constexpr size_t OUTPUT_BUFFER_COUNT = 128;
@@ -70,6 +72,7 @@ class AC97Device : public PCIDevice {
 		struct SpatialVoiceState {
 			bool active = false;
 			bool sourceStereo = false;
+			bool guestOutputSubmix = false;
 			uint32_t hrtfEntryIndex = 0xFFFFFFFF;
 			std::array<uint8_t, 4> hrtfSubmix{};
 			std::array<uint32_t, 4> hrtfSubmixVolumes{};

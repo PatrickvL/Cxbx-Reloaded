@@ -2100,6 +2100,59 @@ bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std:
 	return mixedAnySubmix;
 }
 
+bool APUDevice::SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<uint32_t, 4>* slotPeak)
+{
+	if (g_AC97 == nullptr || frameCount == 0) {
+		return false;
+	}
+
+	bool stagedAnySubmix = false;
+	if (slotPeak != nullptr) {
+		slotPeak->fill(0);
+	}
+
+	std::vector<int16_t> slotSamples(frameCount);
+	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+		const uint32_t bin = m_VPHRTFSubmix[slot];
+		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
+			continue;
+		}
+
+		const uint32_t outBufferBaseRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferLengthRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
+		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
+			return false;
+		}
+
+		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
+			slotSamples.data(), slotSamples.size() * sizeof(slotSamples[0]))) {
+			if (!m_LoggedVPOutputBufferReadFailure) {
+				EmuLog(LOG_LEVEL::WARNING,
+					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
+					slot, bin, outBufferBase, outBufferLength);
+				m_LoggedVPOutputBufferReadFailure = true;
+			}
+			return false;
+		}
+
+		g_AC97->SubmitGuestSpatialSubmixFrames(static_cast<uint32_t>(slot),
+			static_cast<uint8_t>(bin),
+			slotSamples.data(),
+			frameCount);
+		stagedAnySubmix = true;
+		if (slotPeak != nullptr) {
+			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(slotSamples.data(), slotSamples.size());
+		}
+	}
+
+	m_LoggedVPOutputBufferReadFailure = false;
+	return stagedAnySubmix;
+}
+
 uint32_t APUDevice::ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const
 {
 	if (data == nullptr || size == 0 || addr + size > length) {
@@ -2634,7 +2687,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 
 	if (guestVPOutputPlaybackConfigured) {
-		guestVPOutputPlaybackActive = MixGuestVPOutputBuffers(output.data(), frameCount, &guestVPOutputPeak);
+		guestVPOutputPlaybackActive = SubmitGuestVPOutputBuffersToAC97(frameCount, &guestVPOutputPeak);
 	}
 
 	if (!guestVPOutputPlaybackActive) {
@@ -2684,7 +2737,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		const char* arbitrationWinner = "stereo-direct";
 		if (guestVPOutputPlaybackActive) {
-			arbitrationWinner = "guest-vp-output";
+			arbitrationWinner = "guest-vp-spatial";
 		} else if (hostSpatialSubmitted) {
 			arbitrationWinner = "host-spatial";
 		} else if (useHRTFStereoFallback) {

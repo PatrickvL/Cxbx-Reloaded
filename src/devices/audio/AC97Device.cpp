@@ -123,6 +123,7 @@ constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_C
 constexpr uint32_t AC97_SPATIAL_SUBMIX_COUNT = 4;
 constexpr uint32_t AC97_SPATIAL_SUBMIX_SLOT_BITS = 2;
 constexpr uint32_t AC97_SPATIAL_SUBMIX_SLOT_MASK = (1u << AC97_SPATIAL_SUBMIX_SLOT_BITS) - 1u;
+constexpr uint32_t AC97_GUEST_SPATIAL_SUBMIX_HANDLE_BASE = 0x80000000u;
 constexpr uint32_t AC97_PCM_INPUT_CHANNELS = 2;
 constexpr uint32_t AC97_PCM_INPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_PCM_INPUT_CHANNELS;
 constexpr uint32_t AC97_MIC_INPUT_CHANNELS = 1;
@@ -1112,6 +1113,7 @@ void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryInd
 	auto& voiceState = m_Pending3DVoices[voiceHandle];
 	voiceState.active = true;
 	voiceState.sourceStereo = sourceStereo;
+	voiceState.guestOutputSubmix = false;
 	voiceState.hrtfEntryIndex = hrtfEntryIndex;
 	voiceState.hrtfSubmix = hrtfSubmix;
 	voiceState.hrtfSubmixVolumes = hrtfSubmixVolumes;
@@ -1121,6 +1123,34 @@ void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryInd
 		voiceState.samples.resize(sampleCount);
 	}
 	std::copy_n(stereoSamples, sampleCount, voiceState.samples.begin());
+}
+
+void AC97Device::SubmitGuestSpatialSubmixFrames(uint32_t submixSlot, uint8_t routedBin,
+	const int16_t* monoSamples, size_t frameCount)
+{
+	if (monoSamples == nullptr || frameCount == 0 || submixSlot >= AC97_SPATIAL_SUBMIX_COUNT) {
+		return;
+	}
+
+	auto& voiceState = m_Pending3DVoices[AC97_GUEST_SPATIAL_SUBMIX_HANDLE_BASE + submixSlot];
+	voiceState.active = true;
+	voiceState.sourceStereo = false;
+	voiceState.guestOutputSubmix = true;
+	voiceState.hrtfEntryIndex = 0xFFFFFFFF;
+	voiceState.hrtfSubmix.fill(0);
+	voiceState.hrtfSubmix[submixSlot] = routedBin;
+	voiceState.hrtfSubmixVolumes.fill(0x0FFF);
+	voiceState.hrtfSubmixVolumes[submixSlot] = 0;
+	voiceState.hrtfHeadroom = 0;
+	const size_t sampleCount = frameCount * AC97_OUTPUT_CHANNELS;
+	if (voiceState.samples.size() < sampleCount) {
+		voiceState.samples.resize(sampleCount);
+	}
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
+		voiceState.samples[sampleIndex] = monoSamples[frame];
+		voiceState.samples[sampleIndex + 1] = monoSamples[frame];
+	}
 }
 
 void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
@@ -1143,27 +1173,35 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	std::vector<int16_t> spatialFallbackMix;
 	const int16_t* spatialInput = samples;
 	if (useSpatialFallback) {
-		bool stereoSilent = true;
-		for (size_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
-			if (samples[sampleIndex] != 0) {
-				stereoSilent = false;
+		const bool stereoSilent = std::none_of(samples, samples + sampleCount, [](int16_t sample) {
+			return sample != 0;
+		});
+		bool shouldMixPendingVoices = false;
+		for (const auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
+			(void)voiceHandle;
+			if (!voiceState.active || voiceState.samples.size() < sampleCount) {
+				continue;
+			}
+			if (voiceState.guestOutputSubmix || stereoSilent) {
+				shouldMixPendingVoices = true;
 				break;
 			}
 		}
 
-		if (stereoSilent) {
-			// Only fold the pending 3D handoff into host stereo when the primary stereo
-			// stream is silent, so this fallback does not double-mix titles that are
-			// already audible through the existing CPU stereo path.
-			bool mixedPendingVoices = false;
+		if (shouldMixPendingVoices) {
 			spatialFallbackMix.assign(samples, samples + sampleCount);
-			// The MCPX routes 3D voice HRTF output through four global submix slots;
-			// until those slots are rendered directly on the host side, fold them back
-			// to stereo as L,R,L,R to mirror the in-APU fallback routing.
+			// Fold failed spatial batches back to stereo as L,R,L,R to mirror the
+			// in-APU submix convention. Guest VP output-buffer submixes always use this
+			// fold-down on failure, while direct 3D voice handoff still waits for the
+			// primary stereo stream to go silent to avoid double-mixing.
 			constexpr std::array<size_t, 4> HRTF_FALLBACK_CHANNEL_MAPPING{ 0, 1, 0, 1 };
+			bool mixedPendingVoices = false;
 			for (const auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
 				(void)voiceHandle;
 				if (!voiceState.active || voiceState.samples.size() < sampleCount) {
+					continue;
+				}
+				if (!voiceState.guestOutputSubmix && !stereoSilent) {
 					continue;
 				}
 				for (size_t frame = 0; frame < frameCount; ++frame) {

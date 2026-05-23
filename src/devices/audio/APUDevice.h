@@ -165,6 +165,7 @@ private:
 		const void* src, size_t size);
 	bool HasGuestVPOutputBufferPlaybackPath() const;
 	bool MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak);
+	bool SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<uint32_t, 4>* slotPeak);
 	uint32_t ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
 	void WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
 	void WriteHRTFCoefficient(uint32_t entryIndex, size_t channel, size_t coefficientIndex, int8_t value);
