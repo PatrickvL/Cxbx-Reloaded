@@ -121,6 +121,8 @@ constexpr uint16_t AC97_VENDOR_SIGMATEL_2 = 0x7608;
 constexpr uint32_t AC97_OUTPUT_CHANNELS = 2;
 constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_CHANNELS;
 constexpr uint32_t AC97_SPATIAL_SUBMIX_COUNT = 4;
+constexpr uint32_t AC97_SPATIAL_SUBMIX_SLOT_BITS = 2;
+constexpr uint32_t AC97_SPATIAL_SUBMIX_SLOT_MASK = (1u << AC97_SPATIAL_SUBMIX_SLOT_BITS) - 1u;
 constexpr uint32_t AC97_PCM_INPUT_CHANNELS = 2;
 constexpr uint32_t AC97_PCM_INPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_PCM_INPUT_CHANNELS;
 constexpr uint32_t AC97_MIC_INPUT_CHANNELS = 1;
@@ -365,7 +367,8 @@ const char* GetOpenALErrorName(ALenum error)
 
 uint64_t MakeSpatialPlaybackSourceKey(uint32_t voiceHandle, size_t submixSlot)
 {
-	return (static_cast<uint64_t>(voiceHandle) << 2) | static_cast<uint64_t>(submixSlot & 0x3);
+	return (static_cast<uint64_t>(voiceHandle) << AC97_SPATIAL_SUBMIX_SLOT_BITS) |
+		static_cast<uint64_t>(submixSlot & AC97_SPATIAL_SUBMIX_SLOT_MASK);
 }
 
 float DecodeSpatialOutputGain(float leftGain, float rightGain)
@@ -375,19 +378,29 @@ float DecodeSpatialOutputGain(float leftGain, float rightGain)
 
 bool IsDirectStereoBin(uint8_t routedBin)
 {
+	// The guest's mixbins 0 and 1 feed the primary left/right AC97 stereo stream.
 	return routedBin <= 1;
 }
 
 std::array<float, 3> ComputeSpatialSubmixPosition(uint8_t routedBin)
 {
-	// Preserve the guest's left/right mixbin affinity by bin parity and treat any
-	// non-stereo HRTF submix destination as rear-biased so it stays distinct from
-	// the primary AC97 stereo stream.
+	constexpr float kSpatialPositionFront = -1.0f;
+	constexpr float kSpatialPositionRear = 1.0f;
+	// Return [x, y, z] in OpenAL listener space, where x spans left (-1.0) to
+	// right (1.0) and z spans front (-1.0) to rear (1.0). Preserve the guest's
+	// left/right mixbin affinity by bin parity and treat any non-stereo HRTF
+	// submix destination as rear-biased so it stays distinct from the primary
+	// AC97 stereo stream.
 	return {
 		(routedBin & 1u) != 0 ? 1.0f : -1.0f,
 		0.0f,
-		IsDirectStereoBin(routedBin) ? -1.0f : 1.0f
+		IsDirectStereoBin(routedBin) ? kSpatialPositionFront : kSpatialPositionRear
 	};
+}
+
+size_t GetSourceChannelForSubmixSlot(bool sourceStereo, size_t submixSlot)
+{
+	return sourceStereo ? (submixSlot & 1u) : 0u;
 }
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
@@ -850,6 +863,7 @@ void AC97Device::ResetSpatialOutput()
 	if (m_OutputContext != nullptr &&
 		alcGetCurrentContext() != m_OutputContext &&
 		!alcMakeContextCurrent(m_OutputContext)) {
+		EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL failed to make the output context current while resetting spatial playback");
 		return;
 	}
 
@@ -948,7 +962,7 @@ bool AC97Device::QueueSpatialVoiceSubmix(uint32_t voiceHandle, const SpatialVoic
 		return false;
 	}
 
-	const size_t sourceChannel = voiceState.sourceStereo ? (submixSlot & 1u) : 0;
+	const size_t sourceChannel = GetSourceChannelForSubmixSlot(voiceState.sourceStereo, submixSlot);
 	if (m_SpatialOutputScratch.size() < frameCount) {
 		m_SpatialOutputScratch.resize(frameCount);
 	}
