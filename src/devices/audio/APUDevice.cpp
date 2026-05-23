@@ -653,6 +653,17 @@ uint32_t ReadRegisterFragment(uint32_t value, uint32_t byteOffset, unsigned size
 	return (value >> shift) & mask;
 }
 
+uint32_t WriteRegisterFragment(uint32_t current, uint32_t value, uint32_t byteOffset, unsigned size)
+{
+	const uint32_t shift = byteOffset * 8;
+	if (size >= sizeof(uint32_t)) {
+		return value;
+	}
+
+	const uint32_t mask = ((1u << (size * 8)) - 1u) << shift;
+	return (current & ~mask) | ((value << shift) & mask);
+}
+
 uint32_t Ctz32(uint32_t value)
 {
 	uint32_t shift = 0;
