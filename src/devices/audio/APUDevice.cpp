@@ -2611,26 +2611,40 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		GetRegister32(NV_PAPU_TVL2D) >= APU_VP_VOICE_MAX_HANDLE &&
 		GetRegister32(NV_PAPU_TVL3D) >= APU_VP_VOICE_MAX_HANDLE &&
 		GetRegister32(NV_PAPU_TVLMP) >= APU_VP_VOICE_MAX_HANDLE) {
+		std::vector<uint32_t> fallbackHandles;
+		const auto renderFallbackVoice = [&](uint32_t voiceHandle) {
+			if (voiceHandle >= MAX_VOICE_HANDLES || IsVoiceLocked(voiceHandle) ||
+				std::find(fallbackHandles.begin(), fallbackHandles.end(), voiceHandle) != fallbackHandles.end()) {
+				return;
+			}
+
+			fallbackHandles.push_back(voiceHandle);
+			++fallbackVisited;
+			RenderBasicVoice(voiceHandle, mixBins.data(), frameCount);
+		};
 		for (size_t wordIndex = 0; wordIndex < m_VPActiveVoiceHints.size(); ++wordIndex) {
 			uint64_t pendingVoices = m_VPActiveVoiceHints[wordIndex];
 			while (pendingVoices != 0) {
 				const uint32_t bitIndex = CountTrailingZeros64(pendingVoices);
 				const uint32_t voiceHandle = static_cast<uint32_t>(wordIndex * 64 + bitIndex);
 				pendingVoices &= ~(uint64_t{1} << bitIndex);
-				if (voiceHandle >= MAX_VOICE_HANDLES || IsVoiceLocked(voiceHandle)) {
-					continue;
-				}
-
-				++fallbackVisited;
-				RenderBasicVoice(voiceHandle, mixBins.data(), frameCount);
+				renderFallbackVoice(voiceHandle);
 			}
+		}
+		renderFallbackVoice(GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE);
+		for (size_t i = 0; i < m_RecentFEMethodCount; ++i) {
+			const size_t recentIndex =
+				(m_RecentFEMethodNext + m_RecentFEMethods.size() - 1 - i) % m_RecentFEMethods.size();
+			const auto& event = m_RecentFEMethods[recentIndex];
+			renderFallbackVoice(event.targetVoice);
+			renderFallbackVoice(event.currentVoice);
 		}
 	}
 	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP + fallbackVisited) != 0;
 	if (fallbackVisited != 0) {
 		if (!m_LoggedFallbackActiveVoiceRender) {
 			EmuLog(LOG_LEVEL::WARNING,
-				"APU rendered %zu hinted active voices outside the guest TVL lists; list heads were all idle",
+				"APU rendered %zu fallback candidate voices outside the guest TVL lists; list heads were all idle",
 				fallbackVisited);
 			m_LoggedFallbackActiveVoiceRender = true;
 		}
