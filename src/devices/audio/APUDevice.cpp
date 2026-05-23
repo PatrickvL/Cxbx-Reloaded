@@ -728,6 +728,9 @@ float NormalizeVoiceLFOModulationLevel(uint32_t level)
 void StepVoiceLFOLevel(uint32_t delta, uint32_t& level, bool& descending)
 {
 	if (delta == 0) {
+		// Voice render code uses a zero delta to hold an LFO at its current level,
+		// which is how the guest-visible delay-mode bits keep the oscillator parked
+		// at the neutral center until the corresponding envelope leaves DELAY.
 		level = std::min<uint32_t>(level, APU_LFO_LEVEL_MAX);
 		return;
 	}
