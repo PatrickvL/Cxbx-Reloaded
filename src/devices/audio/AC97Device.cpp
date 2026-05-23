@@ -128,6 +128,7 @@ constexpr uint32_t AC97_PCM_INPUT_CHANNELS = 2;
 constexpr uint32_t AC97_PCM_INPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_PCM_INPUT_CHANNELS;
 constexpr uint32_t AC97_MIC_INPUT_CHANNELS = 1;
 constexpr uint32_t AC97_MIC_INPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_MIC_INPUT_CHANNELS;
+constexpr uint32_t AC97_PCM_LOOPBACK_HISTORY_FRAMES = AC97_RATE_48KHZ / 2;
 constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
 constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 2048;
 constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_OUTPUT_BYTES_PER_FRAME;
@@ -602,6 +603,7 @@ void AC97Device::Reset()
 	for (uint32_t channelBase : { NABM_PI_BASE, NABM_MC_BASE }) {
 		ResetCaptureStream(channelBase);
 	}
+	ResetPCMLoopback();
 	m_Pending3DVoices.clear();
 	m_LoggedQueueFull = false;
 	m_LoggedPlaybackStartFailure = false;
@@ -843,10 +845,11 @@ bool AC97Device::EnsureCaptureStream(uint32_t channelBase)
 	if (captureStream.device == nullptr) {
 		if (!hadPreviousFailure) {
 			EmuLog(LOG_LEVEL::WARNING,
-				"AC97 failed to open OpenAL capture device for %s input rate=%u channels=%u; falling back to silence",
+				"AC97 failed to open OpenAL capture device for %s input rate=%u channels=%u; falling back to %s",
 				channelBase == NABM_PI_BASE ? "PCM" : "microphone",
 				static_cast<unsigned>(sampleRate),
-				static_cast<unsigned>(channels));
+				static_cast<unsigned>(channels),
+				channelBase == NABM_PI_BASE ? "loopback or silence" : "silence");
 		}
 		captureStream.failed = true;
 		return false;
@@ -856,11 +859,12 @@ bool AC97Device::EnsureCaptureStream(uint32_t channelBase)
 	const ALCenum captureError = alcGetError(captureStream.device);
 	if (captureError != ALC_NO_ERROR) {
 		EmuLog(LOG_LEVEL::WARNING,
-			"AC97 failed to start OpenAL capture for %s input rate=%u channels=%u: 0x%04x; falling back to silence",
+			"AC97 failed to start OpenAL capture for %s input rate=%u channels=%u: 0x%04x; falling back to %s",
 			channelBase == NABM_PI_BASE ? "PCM" : "microphone",
 			static_cast<unsigned>(sampleRate),
 			static_cast<unsigned>(channels),
-			static_cast<unsigned>(captureError));
+			static_cast<unsigned>(captureError),
+			channelBase == NABM_PI_BASE ? "loopback or silence" : "silence");
 		alcCaptureCloseDevice(captureStream.device);
 		captureStream = {};
 		captureStream.failed = true;
@@ -880,6 +884,82 @@ bool AC97Device::EnsureCaptureStream(uint32_t channelBase)
 	return true;
 }
 
+void AC97Device::ResetPCMLoopback()
+{
+	m_PCMLoopbackFrames.assign(static_cast<size_t>(AC97_PCM_LOOPBACK_HISTORY_FRAMES) * AC97_PCM_INPUT_CHANNELS, 0);
+	m_PCMLoopbackReadFrame = 0.0;
+	m_PCMLoopbackWriteFrame = 0;
+	m_PCMLoopbackSourceRate = AC97_RATE_48KHZ;
+	m_LoggedPCMLoopbackFallback = false;
+}
+
+void AC97Device::StorePCMLoopbackFrames(const int16_t* samples, size_t frameCount, uint32_t sampleRate)
+{
+	if (samples == nullptr || frameCount == 0) {
+		return;
+	}
+
+	if (m_PCMLoopbackFrames.empty()) {
+		ResetPCMLoopback();
+	}
+
+	const size_t capacityFrames = m_PCMLoopbackFrames.size() / AC97_PCM_INPUT_CHANNELS;
+	if (capacityFrames == 0) {
+		return;
+	}
+
+	m_PCMLoopbackSourceRate = ClampSampleRateRegister(static_cast<uint16_t>(sampleRate));
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		const size_t dstFrame = static_cast<size_t>((m_PCMLoopbackWriteFrame + frame) % capacityFrames);
+		const size_t dstIndex = dstFrame * AC97_PCM_INPUT_CHANNELS;
+		const size_t srcIndex = frame * AC97_PCM_INPUT_CHANNELS;
+		m_PCMLoopbackFrames[dstIndex] = samples[srcIndex];
+		m_PCMLoopbackFrames[dstIndex + 1] = samples[srcIndex + 1];
+	}
+	m_PCMLoopbackWriteFrame += frameCount;
+}
+
+size_t AC97Device::CapturePCMLoopbackFrames(void* dest, size_t frameCount, uint32_t targetRate)
+{
+	if (dest == nullptr || frameCount == 0 || m_PCMLoopbackFrames.empty() || m_PCMLoopbackWriteFrame == 0) {
+		return 0;
+	}
+
+	const size_t capacityFrames = m_PCMLoopbackFrames.size() / AC97_PCM_INPUT_CHANNELS;
+	if (capacityFrames == 0) {
+		return 0;
+	}
+
+	const uint64_t oldestRetainedFrame = (m_PCMLoopbackWriteFrame > capacityFrames)
+		? (m_PCMLoopbackWriteFrame - capacityFrames)
+		: 0;
+	if (m_PCMLoopbackReadFrame < static_cast<double>(oldestRetainedFrame)) {
+		m_PCMLoopbackReadFrame = static_cast<double>(oldestRetainedFrame);
+	}
+
+	const double sourceRate = static_cast<double>(ClampSampleRateRegister(static_cast<uint16_t>(m_PCMLoopbackSourceRate)));
+	const double captureRate = static_cast<double>(ClampSampleRateRegister(static_cast<uint16_t>(targetRate)));
+	const double frameStep = sourceRate / std::max(1.0, captureRate);
+	auto* output = static_cast<int16_t*>(dest);
+	size_t producedFrames = 0;
+	while (producedFrames < frameCount) {
+		const uint64_t sourceFrame = static_cast<uint64_t>(m_PCMLoopbackReadFrame);
+		if (sourceFrame >= m_PCMLoopbackWriteFrame) {
+			break;
+		}
+
+		const size_t srcFrameIndex = static_cast<size_t>(sourceFrame % capacityFrames);
+		const size_t srcIndex = srcFrameIndex * AC97_PCM_INPUT_CHANNELS;
+		const size_t dstIndex = producedFrames * AC97_PCM_INPUT_CHANNELS;
+		output[dstIndex] = m_PCMLoopbackFrames[srcIndex];
+		output[dstIndex + 1] = m_PCMLoopbackFrames[srcIndex + 1];
+		++producedFrames;
+		m_PCMLoopbackReadFrame += frameStep;
+	}
+
+	return producedFrames;
+}
+
 size_t AC97Device::CaptureFrames(uint32_t channelBase, void* dest, size_t frameCount)
 {
 	const uint32_t frameBytes = GetBusMasterFrameBytes(channelBase);
@@ -890,8 +970,24 @@ size_t AC97Device::CaptureFrames(uint32_t channelBase, void* dest, size_t frameC
 
 	std::memset(dest, 0, byteCount);
 	if (!EnsureCaptureStream(channelBase)) {
+		if (channelBase == NABM_PI_BASE) {
+			const size_t loopbackFrames = CapturePCMLoopbackFrames(dest, frameCount, GetBusMasterSampleRate(channelBase));
+			if (loopbackFrames != 0) {
+				if (!m_LoggedPCMLoopbackFallback) {
+					EmuLog(LOG_LEVEL::INFO,
+						"AC97 PCM input capture unavailable; using playback loopback frames=%zu rate=%u sourceRate=%u",
+						loopbackFrames,
+						static_cast<unsigned>(GetBusMasterSampleRate(channelBase)),
+						static_cast<unsigned>(m_PCMLoopbackSourceRate));
+					m_LoggedPCMLoopbackFallback = true;
+				}
+				m_LoggedCaptureStub[ChannelIndex(channelBase)] = false;
+				return loopbackFrames;
+			}
+		}
 		return 0;
 	}
+	m_LoggedPCMLoopbackFallback = false;
 
 	auto& captureStream = m_CaptureStreams[ChannelIndex(channelBase)];
 	ALCint availableFrames = 0;
@@ -1458,17 +1554,6 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		--processed;
 	}
 
-	const uint32_t pendingBytes = static_cast<uint32_t>(m_StagedOutputFrames.size() * sizeof(int16_t));
-	const uint32_t incomingBytes = static_cast<uint32_t>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME);
-	const uint64_t totalBufferedBytes = static_cast<uint64_t>(pendingBytes) + incomingBytes + m_QueuedAudioBytes;
-	if (totalBufferedBytes > AC97_MAX_BUFFERED_AUDIO_BYTES) {
-		if (!m_LoggedQueueFull) {
-			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL staged audio backlog full, dropping PCM frames");
-			m_LoggedQueueFull = true;
-		}
-		return;
-	}
-
 	const size_t outputSampleCount = frameCount * AC97_OUTPUT_CHANNELS;
 	const int16_t* output = spatialInput;
 	if (leftGain != 1.0f || rightGain != 1.0f) {
@@ -1481,6 +1566,19 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 			m_OutputScratch[sampleIndex + 1] = ClampToInt16(ScaleSample(spatialInput[sampleIndex + 1], rightGain));
 		}
 		output = m_OutputScratch.data();
+	}
+
+	StorePCMLoopbackFrames(output, frameCount, GetBusMasterSampleRate(NABM_PO_BASE));
+
+	const uint32_t pendingBytes = static_cast<uint32_t>(m_StagedOutputFrames.size() * sizeof(int16_t));
+	const uint32_t incomingBytes = static_cast<uint32_t>(frameCount * AC97_OUTPUT_BYTES_PER_FRAME);
+	const uint64_t totalBufferedBytes = static_cast<uint64_t>(pendingBytes) + incomingBytes + m_QueuedAudioBytes;
+	if (totalBufferedBytes > AC97_MAX_BUFFERED_AUDIO_BYTES) {
+		if (!m_LoggedQueueFull) {
+			EmuLog(LOG_LEVEL::WARNING, "AC97 OpenAL staged audio backlog full, dropping PCM frames");
+			m_LoggedQueueFull = true;
+		}
+		return;
 	}
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {

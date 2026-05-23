@@ -102,6 +102,9 @@ class AC97Device : public PCIDevice {
 		bool EnsureOutputDevice();
 		void ResetCaptureStream(uint32_t channelBase);
 		bool EnsureCaptureStream(uint32_t channelBase);
+		void ResetPCMLoopback();
+		void StorePCMLoopbackFrames(const int16_t* samples, size_t frameCount, uint32_t sampleRate);
+		size_t CapturePCMLoopbackFrames(void* dest, size_t frameCount, uint32_t targetRate);
 		size_t CaptureFrames(uint32_t channelBase, void* dest, size_t frameCount);
 		void ResetOutputStream();
 		void ResetSpatialOutput();
@@ -137,6 +140,7 @@ class AC97Device : public PCIDevice {
 		std::array<bool, 3> m_LoggedCaptureStub{};
 		std::array<CaptureStreamState, 3> m_CaptureStreams{};
 		std::vector<uint8_t> m_CaptureScratch{};
+		std::vector<int16_t> m_PCMLoopbackFrames{};
 		std::vector<int16_t> m_PlaybackDMAScratch{};
 		std::vector<int16_t> m_OutputScratch{};
 		std::vector<int16_t> m_StagedOutputFrames{};
@@ -155,10 +159,14 @@ class AC97Device : public PCIDevice {
 		std::array<uint32_t, OUTPUT_BUFFER_COUNT> m_OutputBufferBytes{};
 		std::array<uint32_t, SPATIAL_OUTPUT_BUFFER_COUNT> m_SpatialBufferBytes{};
 		uint32_t m_QueuedAudioBytes = 0;
+		double m_PCMLoopbackReadFrame = 0.0;
+		uint64_t m_PCMLoopbackWriteFrame = 0;
+		uint32_t m_PCMLoopbackSourceRate = 48000;
 		ALint m_LastOutputSourceState = -1;
 		bool m_OutputDeviceFailed = false;
 		bool m_OutputTestBeepPlayed = false;
 		bool m_HasSpatializeExtension = false;
+		bool m_LoggedPCMLoopbackFallback = false;
 		bool m_LoggedQueueFull = false;
 		bool m_LoggedPlaybackStartFailure = false;
 		bool m_LoggedSpatialPlaybackFailure = false;
