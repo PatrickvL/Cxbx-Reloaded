@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <unordered_set>
 #include <vector>
 
 #define LOG_PREFIX CXBXR_MODULE::MCPX
@@ -2611,14 +2612,13 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		GetRegister32(NV_PAPU_TVL2D) >= APU_VP_VOICE_MAX_HANDLE &&
 		GetRegister32(NV_PAPU_TVL3D) >= APU_VP_VOICE_MAX_HANDLE &&
 		GetRegister32(NV_PAPU_TVLMP) >= APU_VP_VOICE_MAX_HANDLE) {
-		std::vector<uint32_t> fallbackHandles;
+		std::unordered_set<uint32_t> fallbackHandles;
 		const auto renderFallbackVoice = [&](uint32_t voiceHandle) {
 			if (voiceHandle >= MAX_VOICE_HANDLES || IsVoiceLocked(voiceHandle) ||
-				std::find(fallbackHandles.begin(), fallbackHandles.end(), voiceHandle) != fallbackHandles.end()) {
+				!fallbackHandles.insert(voiceHandle).second) {
 				return;
 			}
 
-			fallbackHandles.push_back(voiceHandle);
 			++fallbackVisited;
 			RenderBasicVoice(voiceHandle, mixBins.data(), frameCount);
 		};
@@ -2631,6 +2631,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				renderFallbackVoice(voiceHandle);
 			}
 		}
+		// NV_PAPU_FECV is a raw register value, so mask it down to the guest voice handle.
 		renderFallbackVoice(GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE);
 		for (size_t i = 0; i < m_RecentFEMethodCount; ++i) {
 			const size_t recentIndex =
