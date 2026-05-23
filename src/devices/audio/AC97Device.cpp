@@ -591,6 +591,9 @@ void AC97Device::Reset()
 
 void AC97Device::ServiceAudio()
 {
+	// The system-events thread drives periodic audio/DMA progress while guest MMIO,
+	// reset, and submission paths can run on other emulator threads, so the shared
+	// AC97 state needs the same mutex used by those entry points.
 	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	UpdateBusMasterChannels();
 }
