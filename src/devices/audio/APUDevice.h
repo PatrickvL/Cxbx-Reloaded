@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "../PCIDevice.h"
+struct DSPState;
 class APUDevice : public PCIDevice {
 public:
 	using PCIDevice::PCIDevice;
@@ -115,6 +116,21 @@ private:
 	void EPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t VPRead(uint32_t addr, unsigned size);
 	void VPWrite(uint32_t addr, uint32_t value, unsigned size);
+	void InitializeDSP();
+	void ResetDSPState();
+	bool IsGPDSPEnabled() const;
+	bool IsEPDSPEnabled() const;
+	bool IsAnyDSPEnabled() const;
+	static void GPDspScratchRW(void* opaque, uint8_t* ptr, uint32_t addr, size_t len, bool dir);
+	static void EPDspScratchRW(void* opaque, uint8_t* ptr, uint32_t addr, size_t len, bool dir);
+	static void GPDspFifoRW(void* opaque, uint8_t* ptr, unsigned index, size_t len, bool dir);
+	static void EPDspFifoRW(void* opaque, uint8_t* ptr, unsigned index, size_t len, bool dir);
+	bool ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t frameCount);
+	bool TransferDSPScratch(bool gp, uint8_t* ptr, uint32_t addr, size_t len, bool dir);
+	uint32_t TransferDSPCircularScatterGather(uint32_t sgeBase, uint32_t maxSge, uint8_t* ptr,
+		uint32_t base, uint32_t end, uint32_t cur, size_t len, bool dir);
+	void TransferDSPFifo(bool gp, uint8_t* ptr, unsigned index, size_t len, bool dir);
+	void CaptureEPFifoOutput(uint8_t* ptr, size_t len);
 	void ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size);
 	void UpdateVPFifo();
 	void RefreshVPStatus();
@@ -197,6 +213,9 @@ private:
 	uint32_t m_VPCurrentSSLContextDMA = 0;
 	uint32_t m_VPSSLBasePage = 0;
 	uint32_t m_VPCurrentHRTFEntry = 0;
+	DSPState* m_GPDsp = nullptr;
+	DSPState* m_EPDsp = nullptr;
+	uint32_t m_DSPFrameDivider = 0;
 	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPXMem{};
 	std::array<uint8_t, 0x400 * sizeof(uint32_t)> m_GPMixBuf{};
 	std::array<uint8_t, 0x800 * sizeof(uint32_t)> m_GPYMem{};
@@ -222,6 +241,7 @@ private:
 	size_t m_RecentFEMethodNext = 0;
 	uint32_t m_RecentFEMethodSequence = 0;
 	std::vector<int16_t> m_VP3DVoiceCaptureScratch{};
+	std::vector<int16_t> m_DSPOutputScratch{};
 	bool m_LoggedXADPCMDecodeFailure = false;
 	bool m_LoggedEmptyVoiceTableDiagnostics = false;
 	mutable bool m_LoggedVoiceTableReadFailure = false;
@@ -233,6 +253,7 @@ private:
 	bool m_LoggedStreamingSSLFailure = false;
 	bool m_EnableHostSpatialHandoff = true;
 	bool m_LoggedVPOutputBufferReadFailure = false;
+	bool m_LoggedDSPOutputCaptureFailure = false;
 	bool m_LoggedFallbackActiveVoiceRender = false;
 	size_t m_ChunkCaptured3DVoiceCount = 0;
 	size_t m_ChunkSubmittedHostSpatialVoiceCount = 0;

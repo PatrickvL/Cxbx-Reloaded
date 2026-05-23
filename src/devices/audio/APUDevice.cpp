@@ -29,6 +29,8 @@
 #include "AC97Device.h"
 #include "AudioDiagnostics.h"
 #include "APUTimer.h"
+#include "dsp/dsp.h"
+#include "dsp/dsp_state.h"
 #include "common/AddressRanges.h"
 #include "common/audio/XADPCM.h"
 #include "core/kernel/exports/EmuKrnl.h"
@@ -107,7 +109,32 @@ constexpr uint32_t NV_PAPU_EPSMAXSGE = 0x000020DC;
 constexpr uint32_t NV_PAPU_EPFMAXSGE = 0x000020E0;
 
 constexpr uint32_t NV_PAPU_GPRST_GPRST = 1 << 0;
+constexpr uint32_t NV_PAPU_GPRST_GPDSPRST = 1 << 1;
 constexpr uint32_t NV_PAPU_EPRST_EPRST = 1 << 0;
+constexpr uint32_t NV_PAPU_EPRST_EPDSPRST = NV_PAPU_GPRST_GPDSPRST;
+
+constexpr uint32_t NV_PAPU_GPOFBASE0 = 0x00003024;
+constexpr uint32_t NV_PAPU_GPOFEND0 = 0x00003028;
+constexpr uint32_t NV_PAPU_GPOFCUR0 = 0x0000302C;
+constexpr uint32_t NV_PAPU_GPIFBASE0 = 0x00003064;
+constexpr uint32_t NV_PAPU_GPIFEND0 = 0x00003068;
+constexpr uint32_t NV_PAPU_GPIFCUR0 = 0x0000306C;
+constexpr uint32_t NV_PAPU_EPOFBASE0 = 0x00004024;
+constexpr uint32_t NV_PAPU_EPOFEND0 = 0x00004028;
+constexpr uint32_t NV_PAPU_EPOFCUR0 = 0x0000402C;
+constexpr uint32_t NV_PAPU_EPIFBASE0 = 0x00004064;
+constexpr uint32_t NV_PAPU_EPIFEND0 = 0x00004068;
+constexpr uint32_t NV_PAPU_EPIFCUR0 = 0x0000406C;
+constexpr uint32_t NV_PAPU_FIFO_VALUE = 0x00FFFFFF;
+
+constexpr size_t APU_DSP_FRAME_SAMPLES = 32;
+constexpr size_t APU_DSP_FRAME_STEREO_SAMPLES = APU_DSP_FRAME_SAMPLES * 2;
+constexpr size_t APU_DSP_EP_FRAME_DIVIDER = 8;
+constexpr size_t APU_DSP_GP_OUTPUT_FIFO_COUNT = 4;
+constexpr size_t APU_DSP_GP_INPUT_FIFO_COUNT = 2;
+constexpr size_t APU_DSP_EP_OUTPUT_FIFO_COUNT = 4;
+constexpr size_t APU_DSP_EP_INPUT_FIFO_COUNT = 2;
+constexpr uint32_t APU_DSP_GP_MIXBUF_BASE = 0x001400;
 
 constexpr uint32_t NV_PAPU_FEAV_VALUE = 0x0000FFFF;
 constexpr uint32_t NV_PAPU_FEAV_LST = 0x00030000;
@@ -823,6 +850,17 @@ int16_t ConvertFloatSampleToInt16(float sample)
 		static_cast<double>(ClampUnitSample(sample)) * 32767.0)));
 }
 
+uint32_t ConvertInt16ToDSP24(int16_t sample)
+{
+	return static_cast<uint32_t>(static_cast<int32_t>(sample) << 8) & 0x00FFFFFF;
+}
+
+int16_t ConvertDSP24ToInt16(uint32_t sample)
+{
+	const int32_t signedSample = static_cast<int32_t>(sample << 8) >> 8;
+	return ClampToInt16(signedSample >> 8);
+}
+
 }
 
 struct APUDevice::BasicVoiceDiagnosticSummary {
@@ -852,6 +890,83 @@ extern AC97Device* g_AC97;
 
 // Basic VP playback and guest-visible buffer plumbing exist here, but full
 // GP/EP DSP execution and threaded audio scheduling are still incomplete.
+
+void APUDevice::GPDspScratchRW(void* opaque, uint8_t* ptr, uint32_t addr, size_t len, bool dir)
+{
+	auto* apu = static_cast<APUDevice*>(opaque);
+	if (apu != nullptr) {
+		apu->TransferDSPScratch(true, ptr, addr, len, dir);
+	}
+}
+
+void APUDevice::EPDspScratchRW(void* opaque, uint8_t* ptr, uint32_t addr, size_t len, bool dir)
+{
+	auto* apu = static_cast<APUDevice*>(opaque);
+	if (apu != nullptr) {
+		apu->TransferDSPScratch(false, ptr, addr, len, dir);
+	}
+}
+
+void APUDevice::GPDspFifoRW(void* opaque, uint8_t* ptr, unsigned index, size_t len, bool dir)
+{
+	auto* apu = static_cast<APUDevice*>(opaque);
+	if (apu != nullptr) {
+		apu->TransferDSPFifo(true, ptr, index, len, dir);
+	}
+}
+
+void APUDevice::EPDspFifoRW(void* opaque, uint8_t* ptr, unsigned index, size_t len, bool dir)
+{
+	auto* apu = static_cast<APUDevice*>(opaque);
+	if (apu != nullptr) {
+		apu->TransferDSPFifo(false, ptr, index, len, dir);
+	}
+}
+
+void APUDevice::InitializeDSP()
+{
+	if (m_GPDsp == nullptr) {
+		m_GPDsp = dsp_init(this, &APUDevice::GPDspScratchRW, &APUDevice::GPDspFifoRW);
+	}
+	if (m_EPDsp == nullptr) {
+		m_EPDsp = dsp_init(this, &APUDevice::EPDspScratchRW, &APUDevice::EPDspFifoRW);
+	}
+}
+
+void APUDevice::ResetDSPState()
+{
+	InitializeDSP();
+	if (m_GPDsp != nullptr) {
+		dsp_reset(m_GPDsp);
+	}
+	if (m_EPDsp != nullptr) {
+		dsp_reset(m_EPDsp);
+	}
+	m_DSPFrameDivider = 0;
+	m_DSPOutputScratch.clear();
+	m_LoggedDSPOutputCaptureFailure = false;
+}
+
+bool APUDevice::IsGPDSPEnabled() const
+{
+	const uint32_t reset = GetRegister32(APU_GP_BASE + NV_PAPU_GPRST);
+	return (reset & NV_PAPU_GPRST_GPRST) != 0 &&
+		(reset & NV_PAPU_GPRST_GPDSPRST) != 0 &&
+		m_GPDsp != nullptr;
+}
+
+bool APUDevice::IsEPDSPEnabled() const
+{
+	const uint32_t reset = GetRegister32(APU_EP_BASE + NV_PAPU_EPRST);
+	return (reset & NV_PAPU_EPRST_EPRST) != 0 &&
+		(reset & NV_PAPU_EPRST_EPDSPRST) != 0 &&
+		m_EPDsp != nullptr;
+}
+
+bool APUDevice::IsAnyDSPEnabled() const
+{
+	return IsGPDSPEnabled() || IsEPDSPEnabled();
+}
 
 void APUDevice::Init()
 {
@@ -913,6 +1028,7 @@ void APUDevice::Reset()
 	m_LoggedMissingVoiceTableDuringRender = false;
 	m_EnableHostSpatialHandoff = true;
 	m_LoggedVPOutputBufferReadFailure = false;
+	ResetDSPState();
 	m_LoggedFallbackActiveVoiceRender = false;
 	m_ChunkCaptured3DVoiceCount = 0;
 	m_ChunkSubmittedHostSpatialVoiceCount = 0;
@@ -1109,20 +1225,20 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 {
 	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_GPXMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_GPDsp, 'X', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, size);
+		const uint32_t wordAddr = APU_DSP_GP_MIXBUF_BASE + (addr - NV_PAPU_GPMIXBUF) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_GPDsp, 'X', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_GPYMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_GPDsp, 'Y', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		// GPPMEM is GP DSP PMEM/program storage, not part of the GP scratch DMA aperture.
-		return ReadMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_GPPMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_GPDsp, 'P', wordAddr), addr & 0x3u, size);
 	}
 	return ReadRegister(APU_GP_BASE + addr, size);
 }
@@ -1130,32 +1246,241 @@ uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 void APUDevice::GPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_GPXMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_GPXMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_GPDsp, 'X', wordAddr);
+		dsp_write_memory(m_GPDsp, 'X', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_GPMIXBUF) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_GPMIXBUF) & 0x3u;
+		const uint32_t wordAddr = APU_DSP_GP_MIXBUF_BASE + wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_GPDsp, 'X', wordAddr);
+		dsp_write_memory(m_GPDsp, 'X', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_GPYMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_GPYMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_GPDsp, 'Y', wordAddr);
+		dsp_write_memory(m_GPDsp, 'Y', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		WriteMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_GPPMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_GPPMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_GPDsp, 'P', wordAddr);
+		dsp_write_memory(m_GPDsp, 'P', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
+	const uint32_t oldValue = ReadRegister(APU_GP_BASE + addr, sizeof(uint32_t));
 	WriteRegister(APU_GP_BASE + addr, value, size);
-	if (addr == NV_PAPU_GPRST && size == sizeof(uint32_t) &&
-		(value & NV_PAPU_GPRST_GPRST) == 0) {
-		m_GPXMem.fill(0);
-		m_GPMixBuf.fill(0);
-		m_GPYMem.fill(0);
-		m_GPPMem.fill(0);
+	if (addr == NV_PAPU_GPRST && size == sizeof(uint32_t)) {
+		const bool wasEnabled = (oldValue & (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
+			(NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST);
+		const bool isEnabled = (value & (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
+			(NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST);
+		if (!isEnabled) {
+			dsp_reset(m_GPDsp);
+			m_DSPFrameDivider = 0;
+		} else if (!wasEnabled) {
+			dsp_bootstrap(m_GPDsp);
+		}
 	}
+}
+
+bool APUDevice::TransferDSPScratch(bool gp, uint8_t* ptr, uint32_t addr, size_t len, bool dir)
+{
+	if (ptr == nullptr || len == 0) {
+		return true;
+	}
+
+	const uint32_t sgeBase = GetRegister32(gp ? NV_PAPU_GPSADDR : NV_PAPU_EPSADDR);
+	const uint32_t maxSge = GetRegister32(gp ? NV_PAPU_GPSMAXSGE : NV_PAPU_EPSMAXSGE);
+	if (sgeBase == 0) {
+		if (!dir) {
+			std::memset(ptr, 0, len);
+		}
+		return false;
+	}
+
+	return dir
+		? WriteScatterGatherBytes(sgeBase, maxSge, addr, ptr, len)
+		: ReadScatterGatherBytes(sgeBase, maxSge, addr, ptr, len);
+}
+
+uint32_t APUDevice::TransferDSPCircularScatterGather(uint32_t sgeBase, uint32_t maxSge, uint8_t* ptr,
+	uint32_t base, uint32_t end, uint32_t cur, size_t len, bool dir)
+{
+	if (ptr == nullptr || len == 0 || end <= base) {
+		return base;
+	}
+	if (cur >= end) {
+		cur = base + ((cur - base) % (end - base));
+	} else if (cur < base) {
+		cur = base;
+	}
+
+	size_t remaining = len;
+	uint8_t* bytes = ptr;
+	while (remaining != 0) {
+		const uint32_t chunk = std::min<uint32_t>(end - cur, static_cast<uint32_t>(remaining));
+		const bool ok = dir
+			? WriteScatterGatherBytes(sgeBase, maxSge, cur, bytes, chunk)
+			: ReadScatterGatherBytes(sgeBase, maxSge, cur, bytes, chunk);
+		if (!ok) {
+			if (!dir) {
+				std::memset(bytes, 0, remaining);
+			}
+			break;
+		}
+		bytes += chunk;
+		remaining -= chunk;
+		cur += chunk;
+		if (cur >= end) {
+			cur = base;
+		}
+	}
+
+	return cur;
+}
+
+void APUDevice::CaptureEPFifoOutput(uint8_t* ptr, size_t len)
+{
+	if (ptr == nullptr || len == 0 || (len % sizeof(int16_t)) != 0) {
+		if (!m_LoggedDSPOutputCaptureFailure) {
+			EmuLog(LOG_LEVEL::WARNING, "APU DSP EP output capture received an unexpected payload size=%zu", len);
+			m_LoggedDSPOutputCaptureFailure = true;
+		}
+		return;
+	}
+
+	const size_t sampleCount = len / sizeof(int16_t);
+	m_DSPOutputScratch.resize(sampleCount);
+	std::memcpy(m_DSPOutputScratch.data(), ptr, len);
+	m_LoggedDSPOutputCaptureFailure = false;
+}
+
+void APUDevice::TransferDSPFifo(bool gp, uint8_t* ptr, unsigned index, size_t len, bool dir)
+{
+	if (ptr == nullptr || len == 0) {
+		return;
+	}
+
+	const uint32_t sgeBase = GetRegister32(gp ? NV_PAPU_GPFADDR : NV_PAPU_EPFADDR);
+	const uint32_t maxSge = GetRegister32(gp ? NV_PAPU_GPFMAXSGE : NV_PAPU_EPFMAXSGE);
+	if (sgeBase == 0) {
+		if (!dir) {
+			std::memset(ptr, 0, len);
+		}
+		return;
+	}
+
+	uint32_t baseRegister = 0;
+	uint32_t endRegister = 0;
+	uint32_t curRegister = 0;
+	if (gp) {
+		if (dir) {
+			if (index >= APU_DSP_GP_OUTPUT_FIFO_COUNT) {
+				return;
+			}
+			baseRegister = NV_PAPU_GPOFBASE0 + static_cast<uint32_t>(index) * 0x10;
+			endRegister = NV_PAPU_GPOFEND0 + static_cast<uint32_t>(index) * 0x10;
+			curRegister = NV_PAPU_GPOFCUR0 + static_cast<uint32_t>(index) * 0x10;
+		} else {
+			if (index >= APU_DSP_GP_INPUT_FIFO_COUNT) {
+				std::memset(ptr, 0, len);
+				return;
+			}
+			baseRegister = NV_PAPU_GPIFBASE0 + static_cast<uint32_t>(index) * 0x10;
+			endRegister = NV_PAPU_GPIFEND0 + static_cast<uint32_t>(index) * 0x10;
+			curRegister = NV_PAPU_GPIFCUR0 + static_cast<uint32_t>(index) * 0x10;
+		}
+	} else {
+		if (dir) {
+			if (index >= APU_DSP_EP_OUTPUT_FIFO_COUNT) {
+				return;
+			}
+			baseRegister = NV_PAPU_EPOFBASE0 + static_cast<uint32_t>(index) * 0x10;
+			endRegister = NV_PAPU_EPOFEND0 + static_cast<uint32_t>(index) * 0x10;
+			curRegister = NV_PAPU_EPOFCUR0 + static_cast<uint32_t>(index) * 0x10;
+		} else {
+			if (index >= APU_DSP_EP_INPUT_FIFO_COUNT) {
+				std::memset(ptr, 0, len);
+				return;
+			}
+			baseRegister = NV_PAPU_EPIFBASE0 + static_cast<uint32_t>(index) * 0x10;
+			endRegister = NV_PAPU_EPIFEND0 + static_cast<uint32_t>(index) * 0x10;
+			curRegister = NV_PAPU_EPIFCUR0 + static_cast<uint32_t>(index) * 0x10;
+		}
+	}
+
+	const uint32_t base = GetRegister32(baseRegister) & NV_PAPU_FIFO_VALUE;
+	const uint32_t end = GetRegister32(endRegister) & NV_PAPU_FIFO_VALUE;
+	if (base == 0 || end <= base) {
+		if (!dir) {
+			std::memset(ptr, 0, len);
+		}
+		return;
+	}
+
+	if (!gp && dir && index == 0) {
+		CaptureEPFifoOutput(ptr, len);
+		std::memset(ptr, 0, len);
+	}
+
+	const uint32_t cur = GetRegister32(curRegister) & NV_PAPU_FIFO_VALUE;
+	const uint32_t next = TransferDSPCircularScatterGather(sgeBase, maxSge, ptr, base, end, cur, len, dir);
+	SetRegister32(curRegister, next & NV_PAPU_FIFO_VALUE);
+}
+
+bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t frameCount)
+{
+	if (output == nullptr || mixBins == nullptr || frameCount == 0 || !IsAnyDSPEnabled() ||
+		(frameCount % APU_DSP_FRAME_SAMPLES) != 0) {
+		return false;
+	}
+
+	m_DSPOutputScratch.clear();
+	const auto runDSP = [](DSPState* dsp) {
+		dsp_start_frame(dsp);
+		dsp->core.is_idle = false;
+		dsp->core.cycle_count = 0;
+		for (size_t guard = 0; guard < 1024 && !dsp->core.is_idle; ++guard) {
+			dsp_run(dsp, 1000);
+		}
+	};
+
+	for (size_t frameBase = 0; frameBase < frameCount; frameBase += APU_DSP_FRAME_SAMPLES) {
+		if (IsGPDSPEnabled()) {
+			for (size_t mixbin = 0; mixbin < std::min<size_t>(APU_MIXBIN_COUNT, 32); ++mixbin) {
+				for (size_t sample = 0; sample < APU_DSP_FRAME_SAMPLES; ++sample) {
+					const int16_t value = ClampToInt16(mixBins[mixbin * frameCount + frameBase + sample]);
+					dsp_write_memory(m_GPDsp, 'X',
+						APU_DSP_GP_MIXBUF_BASE + static_cast<uint32_t>(mixbin * APU_DSP_FRAME_SAMPLES + sample),
+						ConvertInt16ToDSP24(value));
+				}
+			}
+			runDSP(m_GPDsp);
+		}
+
+		if (IsEPDSPEnabled()) {
+			++m_DSPFrameDivider;
+			if ((m_DSPFrameDivider % APU_DSP_EP_FRAME_DIVIDER) == 0) {
+				runDSP(m_EPDsp);
+			}
+		}
+	}
+
+	if (m_DSPOutputScratch.size() != frameCount * 2) {
+		return false;
+	}
+	std::copy(m_DSPOutputScratch.begin(), m_DSPOutputScratch.end(), output);
+	return true;
 }
 
 
@@ -1219,16 +1544,16 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 {
 	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_EPXMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_EPDsp, 'X', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_EPYMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_EPDsp, 'Y', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		// EPPMEM is EP DSP PMEM/program storage, not part of the EP scratch DMA aperture.
-		return ReadMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_EPPMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_EPDsp, 'P', wordAddr), addr & 0x3u, size);
 	}
 	return ReadRegister(APU_EP_BASE + addr, size);
 }
@@ -1236,25 +1561,43 @@ uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_EPXMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_EPXMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_EPDsp, 'X', wordAddr);
+		dsp_write_memory(m_EPDsp, 'X', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_EPYMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_EPYMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_EPDsp, 'Y', wordAddr);
+		dsp_write_memory(m_EPDsp, 'Y', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		WriteMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_EPPMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_EPPMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_EPDsp, 'P', wordAddr);
+		dsp_write_memory(m_EPDsp, 'P', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
+	const uint32_t oldValue = ReadRegister(APU_EP_BASE + addr, sizeof(uint32_t));
 	WriteRegister(APU_EP_BASE + addr, value, size);
-	if (addr == NV_PAPU_EPRST && size == sizeof(uint32_t) &&
-		(value & NV_PAPU_EPRST_EPRST) == 0) {
-		m_EPXMem.fill(0);
-		m_EPYMem.fill(0);
-		m_EPPMem.fill(0);
+	if (addr == NV_PAPU_EPRST && size == sizeof(uint32_t)) {
+		const bool wasEnabled = (oldValue & (NV_PAPU_EPRST_EPRST | NV_PAPU_EPRST_EPDSPRST)) ==
+			(NV_PAPU_EPRST_EPRST | NV_PAPU_EPRST_EPDSPRST);
+		const bool isEnabled = (value & (NV_PAPU_EPRST_EPRST | NV_PAPU_EPRST_EPDSPRST)) ==
+			(NV_PAPU_EPRST_EPRST | NV_PAPU_EPRST_EPDSPRST);
+		if (!isEnabled) {
+			dsp_reset(m_EPDsp);
+			m_DSPFrameDivider = 0;
+		} else if (!wasEnabled) {
+			dsp_bootstrap(m_EPDsp);
+			m_DSPFrameDivider = 0;
+		}
 	}
 }
 
@@ -2856,7 +3199,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		m_LoggedMissingVoiceTableDuringRender = false;
 	}
 
-	m_EnableHostSpatialHandoff = !HasGuestVPOutputBufferPlaybackPath();
+	m_EnableHostSpatialHandoff = !HasGuestVPOutputBufferPlaybackPath() && !IsAnyDSPEnabled();
 	m_ChunkCaptured3DVoiceCount = 0;
 	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 	if (g_AC97 != nullptr) {
@@ -3012,10 +3355,19 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 	m_LoggedAC97Missing = false;
 
-	const bool stereoBinsSilent =
-		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
-		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0;
-	const bool guestVPOutputPlaybackConfigured = !m_EnableHostSpatialHandoff;
+	std::vector<int16_t> output(frameCount * 2);
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
+		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frame], INT16_MIN, INT16_MAX));
+		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frameCount + frame], INT16_MIN, INT16_MAX));
+	}
+
+	const bool dspOutputActive = ProcessDSPAudio(output.data(), mixBins.data(), frameCount);
+	const bool stereoBinsSilent = dspOutputActive
+		? audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size()) == 0
+		: (PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
+			PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0);
+	const bool guestVPOutputPlaybackConfigured = !m_EnableHostSpatialHandoff && !dspOutputActive;
 	bool guestVPOutputPlaybackActive = false;
 	std::array<uint32_t, 4> guestVPOutputPeak{};
 	const bool hostSpatialSubmitted = m_ChunkSubmittedHostSpatialVoiceCount != 0;
@@ -3034,18 +3386,11 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		useNonStereoBinFallback = !useHRTFStereoFallback;
 	}
 
-	std::vector<int16_t> output(frameCount * 2);
-	for (size_t frame = 0; frame < frameCount; ++frame) {
-		// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
-		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frame], INT16_MIN, INT16_MAX));
-		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frameCount + frame], INT16_MIN, INT16_MAX));
-	}
-
 	if (guestVPOutputPlaybackConfigured) {
 		guestVPOutputPlaybackActive = SubmitGuestVPOutputBuffersToAC97(frameCount, &guestVPOutputPeak);
 	}
 
-	if (!guestVPOutputPlaybackActive) {
+	if (!guestVPOutputPlaybackActive && !dspOutputActive) {
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			int64_t left = output[frame * 2];
 			int64_t right = output[frame * 2 + 1];
@@ -3091,7 +3436,9 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	uint32_t stereoPeak = 0;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		const char* arbitrationWinner = "stereo-direct";
-		if (guestVPOutputPlaybackActive) {
+		if (dspOutputActive) {
+			arbitrationWinner = "gp-ep-dsp";
+		} else if (guestVPOutputPlaybackActive) {
 			arbitrationWinner = "guest-vp-spatial";
 		} else if (hostSpatialSubmitted) {
 			arbitrationWinner = "host-spatial";
@@ -3103,13 +3450,14 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
 		if (hasVoiceActivity || stereoPeak != 0) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU playback arbitration frames=%zu peak=%u captured3DVoices=%zu hostSpatialVoices=%zu guestVPConfigured=%d guestVPActive=%d hrtfFallback=%d nonStereoFallback=%d winner=%s bins=[%u,%u,%u,%u] guestVPPeaks=[%u,%u,%u,%u]",
+				"APU playback arbitration frames=%zu peak=%u captured3DVoices=%zu hostSpatialVoices=%zu guestVPConfigured=%d guestVPActive=%d dspActive=%d hrtfFallback=%d nonStereoFallback=%d winner=%s bins=[%u,%u,%u,%u] guestVPPeaks=[%u,%u,%u,%u]",
 				frameCount,
 				static_cast<unsigned>(stereoPeak),
 				m_ChunkCaptured3DVoiceCount,
 				m_ChunkSubmittedHostSpatialVoiceCount,
 				guestVPOutputPlaybackConfigured ? 1 : 0,
 				guestVPOutputPlaybackActive ? 1 : 0,
+				dspOutputActive ? 1 : 0,
 				useHRTFStereoFallback ? 1 : 0,
 				useNonStereoBinFallback ? 1 : 0,
 				arbitrationWinner,
