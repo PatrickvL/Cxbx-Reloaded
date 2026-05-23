@@ -522,6 +522,7 @@ uint32_t Ctz32(uint32_t value)
 	return shift;
 }
 
+// Count trailing zero bits in a 64-bit mask; return 64 when the mask is empty.
 uint32_t Ctz64(uint64_t value)
 {
 	if (value == 0) {
