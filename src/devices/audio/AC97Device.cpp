@@ -119,6 +119,10 @@ constexpr uint16_t AC97_VENDOR_SIGMATEL_1 = 0x8384;
 constexpr uint16_t AC97_VENDOR_SIGMATEL_2 = 0x7608;
 constexpr uint32_t AC97_OUTPUT_CHANNELS = 2;
 constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_CHANNELS;
+constexpr uint32_t AC97_PCM_INPUT_CHANNELS = 2;
+constexpr uint32_t AC97_PCM_INPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_PCM_INPUT_CHANNELS;
+constexpr uint32_t AC97_MIC_INPUT_CHANNELS = 1;
+constexpr uint32_t AC97_MIC_INPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_MIC_INPUT_CHANNELS;
 constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
 constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 2048;
 constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_OUTPUT_BYTES_PER_FRAME;
@@ -431,6 +435,19 @@ uint16_t ClampSampleRateRegister(uint16_t value)
 		return AC97_RATE_48KHZ;
 	}
 	return std::clamp(value, AC97_MIN_RATE, AC97_RATE_48KHZ);
+}
+
+uint32_t GetBusMasterFrameBytes(uint32_t channelBase)
+{
+	switch (channelBase) {
+	case NABM_PI_BASE:
+		return AC97_PCM_INPUT_BYTES_PER_FRAME;
+	case NABM_MC_BASE:
+		return AC97_MIC_INPUT_BYTES_PER_FRAME;
+	case NABM_PO_BASE:
+	default:
+		return AC97_OUTPUT_BYTES_PER_FRAME;
+	}
 }
 
 }
@@ -1414,39 +1431,46 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 			const uint16_t descriptorRemainingBeforeConsume = remaining;
 			uint32_t descriptorAddress = 0;
 			uint16_t descriptorLength = 0;
-			if (channelBase == NABM_PO_BASE) {
-				const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
-				const uint32_t descriptorBase = ReadRegister(bdbarAddr, sizeof(uint32_t)) & ~0x7u;
-				uint32_t descriptorControl = 0;
-				if (descriptorBase == 0 ||
-					!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE, descriptorAddress) ||
-					!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl)) {
-					m_ChannelDescriptorError[channelIndex] = true;
-					status |= SR_FIFOE;
-					break;
-				}
-				descriptorLength = static_cast<uint16_t>(descriptorControl & AC97_DESCRIPTOR_LENGTH_MASK);
+			const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
+			const uint32_t descriptorBase = ReadRegister(bdbarAddr, sizeof(uint32_t)) & ~0x7u;
+			uint32_t descriptorControl = 0;
+			if (descriptorBase == 0 ||
+				!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE, descriptorAddress) ||
+				!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl)) {
+				m_ChannelDescriptorError[channelIndex] = true;
+				status |= SR_FIFOE;
+				break;
 			}
+			descriptorLength = static_cast<uint16_t>(descriptorControl & AC97_DESCRIPTOR_LENGTH_MASK);
 
 			const uint16_t consumed = static_cast<uint16_t>(samplesToConsume > remaining ? remaining : samplesToConsume);
-			if (channelBase == NABM_PO_BASE && descriptorAddress != 0 && descriptorLength >= descriptorRemainingBeforeConsume) {
+			if (descriptorAddress != 0 && descriptorLength >= descriptorRemainingBeforeConsume) {
 				const uint16_t descriptorOffset = static_cast<uint16_t>(descriptorLength - descriptorRemainingBeforeConsume);
 				if (static_cast<uint32_t>(descriptorOffset) + consumed > descriptorLength) {
 					m_ChannelDescriptorError[channelIndex] = true;
 					status |= SR_FIFOE;
 					break;
 				}
-				const size_t pcmBytes = static_cast<size_t>(consumed) * AC97_OUTPUT_BYTES_PER_FRAME;
-				std::vector<int16_t> pcmFrames((pcmBytes + sizeof(int16_t) - 1) / sizeof(int16_t));
-				if (!pcmFrames.empty() &&
-					ReadGuestBytes(descriptorAddress + static_cast<uint32_t>(descriptorOffset) * AC97_OUTPUT_BYTES_PER_FRAME,
-						pcmFrames.data(),
-						pcmBytes)) {
-					SubmitPCMFrames(pcmFrames.data(), consumed);
-				} else if (!pcmFrames.empty()) {
-					m_ChannelDescriptorError[channelIndex] = true;
-					status |= SR_FIFOE;
-					break;
+				const uint32_t frameBytes = GetBusMasterFrameBytes(channelBase);
+				const size_t transferBytes = static_cast<size_t>(consumed) * frameBytes;
+				const uint32_t transferAddress = descriptorAddress + static_cast<uint32_t>(descriptorOffset) * frameBytes;
+				if (channelBase == NABM_PO_BASE) {
+					std::vector<int16_t> pcmFrames((transferBytes + sizeof(int16_t) - 1) / sizeof(int16_t));
+					if (!pcmFrames.empty() &&
+						ReadGuestBytes(transferAddress, pcmFrames.data(), transferBytes)) {
+						SubmitPCMFrames(pcmFrames.data(), consumed);
+					} else if (!pcmFrames.empty()) {
+						m_ChannelDescriptorError[channelIndex] = true;
+						status |= SR_FIFOE;
+						break;
+					}
+				} else if (transferBytes != 0) {
+					std::vector<uint8_t> silentCapture(transferBytes, 0);
+					if (!WriteGuestBytes(transferAddress, silentCapture.data(), transferBytes)) {
+						m_ChannelDescriptorError[channelIndex] = true;
+						status |= SR_FIFOE;
+						break;
+					}
 				}
 			}
 
@@ -1569,4 +1593,15 @@ bool AC97Device::ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) 
 bool AC97Device::ReadGuest32(uint32_t guestAddress, uint32_t& value) const
 {
 	return ReadGuestBytes(guestAddress, &value, sizeof(value));
+}
+
+bool AC97Device::WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size)
+{
+	uintptr_t hostAddress = 0;
+	if (src == nullptr || !ResolveAC97GuestMemoryPointer(guestAddress, size, hostAddress)) {
+		return false;
+	}
+
+	std::memcpy(reinterpret_cast<void*>(hostAddress), src, size);
+	return true;
 }
