@@ -2095,10 +2095,10 @@ bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 			continue;
 		}
 
-		// The current PR8 path already materializes the mixed VP submixes into the
-		// guest output buffers via WriteOutputBuffers(), so once the guest programs
-		// those buffers we can route playback through the guest-facing buffer bridge
-		// instead of relying on the temporary host-side spatial handoff path.
+		// The current VP path already materializes the mixed submixes into the guest
+		// output buffers via WriteOutputBuffers(), so once the guest programs those
+		// buffers we can route playback through the guest-facing buffer bridge instead
+		// of relying on the temporary host-side spatial handoff path.
 		return true;
 	}
 
