@@ -361,6 +361,8 @@ constexpr size_t APU_HRTF_COEFFICIENT_COUNT = APUDevice::HRTF_FILTER_TAPS;
 constexpr uint32_t APU_INVALID_HRTF_ENTRY_INDEX = 0xFFFF;
 constexpr uint32_t APU_IRQ = 5;
 constexpr float APU_HRTF_ITD_SCALE = 512.0f;
+constexpr float APU_HRTF_PAN_ITD_WEIGHT = 0.75f;
+constexpr float APU_HRTF_PAN_MAGNITUDE_WEIGHT = 0.25f;
 constexpr float APU_HRTF_PARAM_SMOOTH_ALPHA = 0.01f;
 constexpr float APU_HRTF_NORMALIZATION_EPSILON = 0.000001f;
 constexpr float APU_HRTF_MAX_DELAY_SAMPLES_FLOAT = static_cast<float>(APUDevice::HRTF_FILTER_DELAY_SAMPLES);
@@ -3379,7 +3381,11 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const float magnitudeBalance = magnitudeSum > APU_HRTF_NORMALIZATION_EPSILON
 			? ((rightMagnitude - leftMagnitude) / magnitudeSum)
 			: 0.0f;
-		guestHRTFPan = std::clamp(normalizedItd * 0.75f + magnitudeBalance * 0.25f, -1.0f, 1.0f);
+		guestHRTFPan = std::clamp(
+			normalizedItd * APU_HRTF_PAN_ITD_WEIGHT +
+			magnitudeBalance * APU_HRTF_PAN_MAGNITUDE_WEIGHT,
+			-1.0f,
+			1.0f);
 	}
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		// Streaming voices can surface VP-linear offsets, raw physical offsets, or

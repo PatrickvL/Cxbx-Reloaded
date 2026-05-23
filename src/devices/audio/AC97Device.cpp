@@ -380,7 +380,7 @@ float DecodeSpatialOutputGain(float leftGain, float rightGain)
 float ResolveSpatialPan(uint8_t routedBin, bool hasGuestHRTFPan, float guestHRTFPan)
 {
 	if (hasGuestHRTFPan) {
-		return std::clamp(guestHRTFPan, -1.0f, 1.0f);
+		return guestHRTFPan;
 	}
 
 	return (routedBin & 1u) != 0 ? 1.0f : -1.0f;
