@@ -449,11 +449,14 @@ uint32_t NormalizeAPUWordAddress(uint32_t value)
 
 bool IsVoiceEntryOffsetWithinBounds(uint32_t offset)
 {
+	// NV_PAVS_SIZE is one voice entry; keep 32-bit accesses fully inside it.
 	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
 }
 
 uint32_t GetMaskedValue(uint32_t current, uint32_t mask)
 {
+	// Extract and right-align the selected bitfield, or return the raw word for
+	// full-width masks.
 	if (mask == 0xFFFFFFFF) {
 		return current;
 	}
@@ -463,6 +466,7 @@ uint32_t GetMaskedValue(uint32_t current, uint32_t mask)
 
 uint32_t MergeMaskedValue(uint32_t current, uint32_t mask, uint32_t value)
 {
+	// Replace only the masked bitfield, preserving the rest of the current word.
 	if (mask == 0xFFFFFFFF) {
 		return value;
 	}
@@ -2701,7 +2705,8 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		}
 	}
 	// FE still expects the SE2FE idle-voice path to progress even before the guest
-	// publishes NV_PAPU_VPVADDR, because the shadow voice table keeps FE/VP state live.
+	// publishes NV_PAPU_VPVADDR; ConsumeVPMethod remains safe here because the
+	// shadow voice table backs the FE/VP state touched by that path.
 	if (!hasVoiceActivity &&
 		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
 		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
