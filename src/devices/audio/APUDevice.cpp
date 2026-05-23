@@ -747,6 +747,7 @@ void APUDevice::Reset()
 	m_VPFifoLevel = 0;
 	m_VPFifoLastUpdate = GetAPUTime();
 	m_LastAudioUpdate = m_VPFifoLastUpdate;
+	m_XGSCounter = 0;
 	m_VPInputSgeHandle = 0;
 	m_VPOutputSgeHandle = 0;
 	m_VPNotifyContextDMA = 0;
@@ -850,9 +851,9 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 	}
 
 	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
-		// XGSCNT is a live sample counter sourced from the APU clock, so ignore
-		// any previously latched register state and always expose the current time.
-		return ReadRegisterFragment(GetAPUTime(), addr - NV_PAPU_XGSCNT, size);
+		// XGSCNT reflects guest-visible rendered sample progress rather than raw
+		// host time, so it naturally freezes while XCNTMODE is disabled.
+		return ReadRegisterFragment(m_XGSCounter, addr - NV_PAPU_XGSCNT, size);
 	}
 
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
@@ -2660,6 +2661,7 @@ void APUDevice::SynchronizeAudio()
 		const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
 		RenderBasicAudioChunk(chunk);
 		m_LastAudioUpdate += static_cast<uint32_t>(chunk);
+		m_XGSCounter += static_cast<uint32_t>(chunk);
 		remaining -= static_cast<uint32_t>(chunk);
 	}
 }

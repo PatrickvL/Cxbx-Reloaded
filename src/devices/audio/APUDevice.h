@@ -189,6 +189,7 @@ private:
 	uint32_t m_VPFifoLevel = 0;
 	uint32_t m_VPFifoLastUpdate = 0;
 	uint32_t m_LastAudioUpdate = 0;
+	uint32_t m_XGSCounter = 0;
 	uint32_t m_VPInputSgeHandle = 0;
 	uint32_t m_VPOutputSgeHandle = 0;
 	uint32_t m_VPNotifyContextDMA = 0;
