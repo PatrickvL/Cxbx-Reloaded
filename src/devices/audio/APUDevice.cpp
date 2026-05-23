@@ -1194,6 +1194,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
 			NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
 		SetVoiceActiveHint(selectedHandle, true);
+		SetVoiceLocked(selectedHandle, false);
 		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_OFFSET,
 			NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
 		m_VPSSLData[selectedHandle].ssl_index = 0;
@@ -3319,6 +3320,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		shouldSkipStateWrites = true;
 		playbackState.previewDecodeFailures = 0;
 		SetVoiceActiveHint(voiceHandle, false);
+		SetVoiceLocked(voiceHandle, false);
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
 		UnlinkVoiceFromLists(voiceHandle);
