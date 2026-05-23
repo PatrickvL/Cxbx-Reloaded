@@ -3124,8 +3124,6 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		if (samplesPerBlock != APU_XADPCM_PCM_SAMPLES_PER_BLOCK) {
 			return;
 		}
-	} else if (samplesPerBlock != 1) {
-		return;
 	}
 
 	uint32_t containerSize = 0;
