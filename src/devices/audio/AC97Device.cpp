@@ -458,6 +458,11 @@ float DecodeHRTFSubmixGain(uint32_t volume)
 	return clamped == 0x0FFF ? 0.0f : std::pow(10.0f, static_cast<float>(clamped) / AC97_APU_VOLUME_DECIBEL_DIVISOR);
 }
 
+size_t RoundUpToInt16Count(size_t byteCount)
+{
+	return (byteCount + sizeof(int16_t) - 1) / sizeof(int16_t);
+}
+
 uint32_t GetBusMasterFrameBytes(uint32_t channelBase)
 {
 	switch (channelBase) {
@@ -1503,8 +1508,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 				const size_t transferBytes = static_cast<size_t>(consumed) * frameBytes;
 				const uint32_t transferAddress = descriptorAddress + static_cast<uint32_t>(descriptorOffset) * frameBytes;
 				if (channelBase == NABM_PO_BASE) {
-					// Round byte-sized DMA payloads up to whole int16_t storage units.
-					m_PlaybackDMAScratch.resize((transferBytes + sizeof(int16_t) - 1) / sizeof(int16_t));
+					m_PlaybackDMAScratch.resize(RoundUpToInt16Count(transferBytes));
 					if (!m_PlaybackDMAScratch.empty() &&
 						ReadGuestBytes(transferAddress, m_PlaybackDMAScratch.data(), transferBytes)) {
 						SubmitPCMFrames(m_PlaybackDMAScratch.data(), consumed);
