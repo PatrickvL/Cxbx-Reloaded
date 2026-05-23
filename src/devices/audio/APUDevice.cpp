@@ -325,8 +325,9 @@ constexpr uint32_t APU_VOICE_LIST_INHERIT = 0;
 constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
 constexpr size_t APU_AUDIO_CHUNK_FRAMES = 256;
 constexpr float APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
-// MCPX notifier records are 16-byte entries. Audio voice notifiers start after
-// the first two generic records and expose four per-voice slots.
+// MCPX notifier records are 16-byte entries. The hardware stores two generic
+// notifier entries before the per-voice audio notifiers, so this offset is a
+// record count rather than a byte count.
 constexpr uint32_t MCPX_HW_NOTIFIER_ENTRY_SIZE = 16;
 constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 2;
 constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 4;
@@ -1089,7 +1090,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
-		WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
+		if (GetRegister32(NV_PAPU_FENADDR) != 0) {
+			WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
+		}
 		ClearHRTFFilterState(selectedHandle);
 		InitializeVoiceEnvelopes(selectedHandle, value);
 		m_LoggedEmptyVoiceTableDiagnostics = false;
@@ -2732,6 +2735,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	bool voiceStopped = false;
 	auto stopVoice = [&]() {
 		voiceStopped = true;
+		consecutivePreviewDecodeFailures = 0;
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		playbackState = PlaybackState{};
@@ -3086,8 +3090,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float currentRight = 0.0f;
 		const uint32_t frameOffset = multipass ? static_cast<uint32_t>(frame) : currentOffset;
 		if (!decodeFrame(baseAddress, frameOffset, currentLeft, currentRight)) {
-			// stopVoice clears the cached playback state and guest active bits, so leave the
-			// render loop immediately after signaling completion for this voice.
+			// stopVoice clears the cached playback state and guest active bits; break out of
+			// the per-frame loop immediately, then let the post-loop voiceStopped check skip
+			// the remaining state writes for this voice.
 			stopVoice();
 			break;
 		}
