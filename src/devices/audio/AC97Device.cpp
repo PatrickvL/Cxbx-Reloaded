@@ -34,6 +34,7 @@
 
 #include <AL/al.h>
 #include <AL/alc.h>
+#include <AL/alext.h>
 
 #include <algorithm>
 #include <cmath>
@@ -119,6 +120,7 @@ constexpr uint16_t AC97_VENDOR_SIGMATEL_1 = 0x8384;
 constexpr uint16_t AC97_VENDOR_SIGMATEL_2 = 0x7608;
 constexpr uint32_t AC97_OUTPUT_CHANNELS = 2;
 constexpr uint32_t AC97_OUTPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_OUTPUT_CHANNELS;
+constexpr uint32_t AC97_SPATIAL_SUBMIX_COUNT = 4;
 constexpr uint32_t AC97_PCM_INPUT_CHANNELS = 2;
 constexpr uint32_t AC97_PCM_INPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_PCM_INPUT_CHANNELS;
 constexpr uint32_t AC97_MIC_INPUT_CHANNELS = 1;
@@ -361,6 +363,16 @@ const char* GetOpenALErrorName(ALenum error)
 	}
 }
 
+uint64_t MakeSpatialPlaybackSourceKey(uint32_t voiceHandle, size_t submixSlot)
+{
+	return (static_cast<uint64_t>(voiceHandle) << 3) | static_cast<uint64_t>(submixSlot & 0x7);
+}
+
+float DecodeSpatialOutputGain(float leftGain, float rightGain)
+{
+	return (leftGain + rightGain) * 0.5f;
+}
+
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
 {
 	uint32_t value = 0;
@@ -524,6 +536,7 @@ void AC97Device::Reset()
 	m_Pending3DVoices.clear();
 	m_LoggedQueueFull = false;
 	m_LoggedPlaybackStartFailure = false;
+	m_LoggedSpatialPlaybackFailure = false;
 	ResetOutputStream();
 
 	ResetBusMasterChannel(NABM_PI_BASE);
@@ -628,6 +641,21 @@ bool AC97Device::EnsureOutputDevice()
 		return false;
 	}
 
+	alGenBuffers(static_cast<ALsizei>(m_SpatialBuffers.size()), m_SpatialBuffers.data());
+	if (alGetError() != AL_NO_ERROR) {
+		EmuLog(LOG_LEVEL::WARNING, "Failed to create OpenAL spatial stream buffers");
+		alDeleteBuffers(static_cast<ALsizei>(m_OutputBuffers.size()), m_OutputBuffers.data());
+		alDeleteSources(1, &m_OutputSource);
+		m_OutputSource = 0;
+		alcMakeContextCurrent(nullptr);
+		alcDestroyContext(m_OutputContext);
+		alcCloseDevice(m_OutputDevice);
+		m_OutputContext = nullptr;
+		m_OutputDevice = nullptr;
+		m_OutputDeviceFailed = true;
+		return false;
+	}
+
 	m_OutputBufferIndex.clear();
 	for (size_t i = 0; i < m_OutputBuffers.size(); ++i) {
 		m_OutputBufferIndex.emplace(m_OutputBuffers[i], i);
@@ -639,6 +667,16 @@ bool AC97Device::EnsureOutputDevice()
 	m_LastOutputSourceState = -1;
 	m_LoggedPlaybackStartFailure = false;
 	m_OutputTestBeepPlayed = false;
+	m_SpatialBufferIndex.clear();
+	for (size_t i = 0; i < m_SpatialBuffers.size(); ++i) {
+		m_SpatialBufferIndex.emplace(m_SpatialBuffers[i], i);
+	}
+	m_FreeSpatialBuffers.assign(m_SpatialBuffers.begin(), m_SpatialBuffers.end());
+	m_SpatialBufferBytes.fill(0);
+	m_SpatialPlaybackSources.clear();
+	m_SpatialOutputScratch.clear();
+	m_HasSpatializeExtension = alIsExtensionPresent("AL_SOFT_source_spatialize") == AL_TRUE;
+	m_LoggedSpatialPlaybackFailure = false;
 	alSourcef(m_OutputSource, AL_GAIN, 1.0f);
 
 	if (!m_OutputTestBeepPlayed && GetOpenALTestBeepEnabled() && !m_FreeOutputBuffers.empty()) {
@@ -731,6 +769,7 @@ void AC97Device::LogOutputOperationFailure(const char* operation, ALenum sourceE
 void AC97Device::ResetOutputStream()
 {
 	if (m_OutputContext == nullptr || m_OutputSource == 0) {
+		ResetSpatialOutput();
 		return;
 	}
 
@@ -757,6 +796,268 @@ void AC97Device::ResetOutputStream()
 	m_StagedOutputFrames.clear();
 	m_LastOutputSourceState = -1;
 	m_LoggedPlaybackStartFailure = false;
+	ResetSpatialOutput();
+}
+
+void AC97Device::DestroySpatialSource(SpatialPlaybackSourceState& sourceState)
+{
+	if (sourceState.source == 0) {
+		return;
+	}
+
+	alSourceStop(sourceState.source);
+
+	ALint queued = 0;
+	alGetSourcei(sourceState.source, AL_BUFFERS_QUEUED, &queued);
+	while (queued > 0) {
+		ALuint buffer = 0;
+		alSourceUnqueueBuffers(sourceState.source, 1, &buffer);
+		if (alGetError() != AL_NO_ERROR) {
+			break;
+		}
+		const auto bufferIndexIt = m_SpatialBufferIndex.find(buffer);
+		if (bufferIndexIt != m_SpatialBufferIndex.end()) {
+			const size_t bufferIndex = bufferIndexIt->second;
+			m_SpatialBufferBytes[bufferIndex] = 0;
+			m_FreeSpatialBuffers.push_back(buffer);
+		}
+		--queued;
+	}
+
+	alDeleteSources(1, &sourceState.source);
+	sourceState.source = 0;
+}
+
+void AC97Device::ResetSpatialOutput()
+{
+	if (m_OutputContext != nullptr &&
+		alcGetCurrentContext() != m_OutputContext &&
+		!alcMakeContextCurrent(m_OutputContext)) {
+		return;
+	}
+
+	for (auto& [key, sourceState] : m_SpatialPlaybackSources) {
+		(void)key;
+		DestroySpatialSource(sourceState);
+	}
+	m_SpatialPlaybackSources.clear();
+	m_FreeSpatialBuffers.assign(m_SpatialBuffers.begin(), m_SpatialBuffers.end());
+	m_SpatialBufferBytes.fill(0);
+	m_SpatialOutputScratch.clear();
+	m_LoggedSpatialPlaybackFailure = false;
+}
+
+bool AC97Device::QueueSpatialVoiceSubmix(uint32_t voiceHandle, const SpatialVoiceState& voiceState,
+	size_t submixSlot, size_t frameCount, float outputGain)
+{
+	if (submixSlot >= AC97_SPATIAL_SUBMIX_COUNT || frameCount == 0 ||
+		voiceState.samples.size() < frameCount * AC97_OUTPUT_CHANNELS) {
+		return true;
+	}
+
+	const uint8_t routedBin = voiceState.hrtfSubmix[submixSlot];
+	if (routedBin <= 1) {
+		// Preserve direct stereo routing on the primary AC97 stream; only spatialize
+		// submixes that would otherwise stay off the host stereo path.
+		return true;
+	}
+
+	const float submixGain = DecodeHRTFSubmixGain(voiceState.hrtfSubmixVolumes[submixSlot]) *
+		outputGain / static_cast<float>(1u << voiceState.hrtfHeadroom);
+	if (submixGain == 0.0f) {
+		return true;
+	}
+
+	const uint64_t sourceKey = MakeSpatialPlaybackSourceKey(voiceHandle, submixSlot);
+	auto [sourceIt, inserted] = m_SpatialPlaybackSources.try_emplace(sourceKey);
+	auto& sourceState = sourceIt->second;
+	if (inserted || sourceState.source == 0) {
+		alGenSources(1, &sourceState.source);
+		const ALenum sourceError = alGetError();
+		if (sourceError != AL_NO_ERROR || sourceState.source == 0) {
+			m_SpatialPlaybackSources.erase(sourceIt);
+			EmuLog(LOG_LEVEL::WARNING,
+				"AC97 OpenAL failed to create spatial source for voice=%u slot=%zu: %s (0x%04x)",
+				voiceHandle, submixSlot,
+				GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError));
+			return false;
+		}
+
+		alSourcei(sourceState.source, AL_LOOPING, AL_FALSE);
+		alSourcei(sourceState.source, AL_SOURCE_RELATIVE, AL_FALSE);
+		alSourcef(sourceState.source, AL_ROLLOFF_FACTOR, 0.0f);
+		alSource3f(sourceState.source, AL_VELOCITY, 0.0f, 0.0f, 0.0f);
+		if (m_HasSpatializeExtension) {
+			alSourcei(sourceState.source, AL_SOURCE_SPATIALIZE_SOFT, AL_TRUE);
+		}
+	}
+
+	sourceState.voiceHandle = voiceHandle;
+	sourceState.submixSlot = static_cast<uint8_t>(submixSlot);
+	sourceState.active = true;
+	alSource3f(sourceState.source, AL_POSITION,
+		(routedBin & 1u) != 0 ? 1.0f : -1.0f,
+		0.0f,
+		routedBin <= 1 ? -1.0f : 1.0f);
+
+	ALint processed = 0;
+	alGetSourcei(sourceState.source, AL_BUFFERS_PROCESSED, &processed);
+	ALenum sourceError = alGetError();
+	if (sourceError != AL_NO_ERROR) {
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 OpenAL failed to query spatial processed buffers for voice=%u slot=%zu: %s (0x%04x)",
+			voiceHandle, submixSlot,
+			GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError));
+		return false;
+	}
+	while (processed > 0) {
+		ALuint buffer = 0;
+		alSourceUnqueueBuffers(sourceState.source, 1, &buffer);
+		if (alGetError() != AL_NO_ERROR) {
+			break;
+		}
+		const auto bufferIndexIt = m_SpatialBufferIndex.find(buffer);
+		if (bufferIndexIt != m_SpatialBufferIndex.end()) {
+			const size_t bufferIndex = bufferIndexIt->second;
+			m_SpatialBufferBytes[bufferIndex] = 0;
+			m_FreeSpatialBuffers.push_back(buffer);
+		}
+		--processed;
+	}
+
+	if (m_FreeSpatialBuffers.empty()) {
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 OpenAL spatial buffer pool exhausted for voice=%u slot=%zu",
+			voiceHandle, submixSlot);
+		return false;
+	}
+
+	const size_t sourceChannel = voiceState.sourceStereo ? (submixSlot & 1u) : 0;
+	m_SpatialOutputScratch.resize(frameCount);
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS + sourceChannel;
+		m_SpatialOutputScratch[frame] = ClampToInt16(
+			ScaleSample(voiceState.samples[sampleIndex], submixGain));
+	}
+
+	const ALuint buffer = m_FreeSpatialBuffers.back();
+	m_FreeSpatialBuffers.pop_back();
+	const auto bufferIndexIt = m_SpatialBufferIndex.find(buffer);
+	if (bufferIndexIt == m_SpatialBufferIndex.end()) {
+		m_FreeSpatialBuffers.push_back(buffer);
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 OpenAL selected unknown spatial buffer for voice=%u slot=%zu",
+			voiceHandle, submixSlot);
+		return false;
+	}
+	const size_t bufferIndex = bufferIndexIt->second;
+	const ALsizei bufferBytes = static_cast<ALsizei>(frameCount * sizeof(int16_t));
+	alBufferData(buffer, AL_FORMAT_MONO16, m_SpatialOutputScratch.data(),
+		bufferBytes, static_cast<ALsizei>(APU_TIMER_FREQUENCY));
+	sourceError = alGetError();
+	if (sourceError != AL_NO_ERROR) {
+		m_SpatialBufferBytes[bufferIndex] = 0;
+		m_FreeSpatialBuffers.push_back(buffer);
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 OpenAL failed to fill spatial buffer for voice=%u slot=%zu: %s (0x%04x)",
+			voiceHandle, submixSlot,
+			GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError));
+		return false;
+	}
+
+	alSourceQueueBuffers(sourceState.source, 1, &buffer);
+	sourceError = alGetError();
+	if (sourceError != AL_NO_ERROR) {
+		m_SpatialBufferBytes[bufferIndex] = 0;
+		m_FreeSpatialBuffers.push_back(buffer);
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 OpenAL failed to queue spatial buffer for voice=%u slot=%zu: %s (0x%04x)",
+			voiceHandle, submixSlot,
+			GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError));
+		return false;
+	}
+
+	m_SpatialBufferBytes[bufferIndex] = static_cast<uint32_t>(bufferBytes);
+
+	ALint state = AL_INITIAL;
+	alGetSourcei(sourceState.source, AL_SOURCE_STATE, &state);
+	sourceError = alGetError();
+	if (sourceError == AL_NO_ERROR && state != AL_PLAYING) {
+		alSourcePlay(sourceState.source);
+		sourceError = alGetError();
+	}
+
+	if (sourceError != AL_NO_ERROR) {
+		EmuLog(LOG_LEVEL::WARNING,
+			"AC97 OpenAL failed to start spatial source for voice=%u slot=%zu: %s (0x%04x)",
+			voiceHandle, submixSlot,
+			GetOpenALErrorName(sourceError), static_cast<unsigned>(sourceError));
+		return false;
+	}
+
+	return true;
+}
+
+bool AC97Device::SubmitPending3DVoices(size_t frameCount, float leftOutputGain, float rightOutputGain)
+{
+	for (auto& [key, sourceState] : m_SpatialPlaybackSources) {
+		(void)key;
+		sourceState.active = false;
+	}
+
+	size_t activeVoiceCount = 0;
+	size_t queuedSubmixCount = 0;
+	const float outputGain = DecodeSpatialOutputGain(leftOutputGain, rightOutputGain);
+	for (const auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
+		if (!voiceState.active || voiceState.samples.size() < frameCount * AC97_OUTPUT_CHANNELS) {
+			continue;
+		}
+
+		++activeVoiceCount;
+		for (size_t submixSlot = 0; submixSlot < AC97_SPATIAL_SUBMIX_COUNT; ++submixSlot) {
+			if (voiceState.hrtfSubmix[submixSlot] <= 1) {
+				continue;
+			}
+			if (DecodeHRTFSubmixGain(voiceState.hrtfSubmixVolumes[submixSlot]) == 0.0f) {
+				continue;
+			}
+			if (!QueueSpatialVoiceSubmix(voiceHandle, voiceState, submixSlot, frameCount, outputGain)) {
+				ResetSpatialOutput();
+				if (!m_LoggedSpatialPlaybackFailure) {
+					EmuLog(LOG_LEVEL::WARNING,
+						"AC97 OpenAL spatial submission failed, falling back to stereo fold-down for this batch");
+					m_LoggedSpatialPlaybackFailure = true;
+				}
+				return false;
+			}
+			++queuedSubmixCount;
+		}
+	}
+
+	for (auto sourceIt = m_SpatialPlaybackSources.begin(); sourceIt != m_SpatialPlaybackSources.end();) {
+		if (sourceIt->second.active) {
+			++sourceIt;
+			continue;
+		}
+
+		DestroySpatialSource(sourceIt->second);
+		sourceIt = m_SpatialPlaybackSources.erase(sourceIt);
+	}
+
+	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		if (activeVoiceCount != 0 || queuedSubmixCount != 0) {
+			EmuLog(LOG_LEVEL::INFO,
+				"AC97 OpenAL host spatial playback voices=%zu queuedSubmixes=%zu activeSources=%zu freeSpatialBuffers=%zu spatializeExt=%d",
+				activeVoiceCount,
+				queuedSubmixCount,
+				m_SpatialPlaybackSources.size(),
+				m_FreeSpatialBuffers.size(),
+				m_HasSpatializeExtension ? 1 : 0);
+		}
+	}
+
+	m_LoggedSpatialPlaybackFailure = false;
+	return true;
 }
 
 void AC97Device::Begin3DVoiceFrameBatch()
@@ -797,9 +1098,19 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	}
 
 	const size_t sampleCount = frameCount * AC97_OUTPUT_CHANNELS;
+	const uint16_t masterVolume = ReadRegister16(AC97_Master_Volume);
+	const uint16_t pcmOutVolume = ReadRegister16(AC97_PCM_Out_Volume);
+	const float leftGain = DecodeOutputAttenuation(masterVolume, true) * DecodeOutputAttenuation(pcmOutVolume, true);
+	const float rightGain = DecodeOutputAttenuation(masterVolume, false) * DecodeOutputAttenuation(pcmOutVolume, false);
+
+	bool useSpatialFallback = false;
+	if (!m_Pending3DVoices.empty() && !SubmitPending3DVoices(frameCount, leftGain, rightGain)) {
+		useSpatialFallback = true;
+	}
+
 	std::vector<int16_t> spatialFallbackMix;
 	const int16_t* spatialInput = samples;
-	if (!m_Pending3DVoices.empty()) {
+	if (useSpatialFallback) {
 		bool stereoSilent = true;
 		for (size_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
 			if (samples[sampleIndex] != 0) {
@@ -807,6 +1118,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 				break;
 			}
 		}
+
 		if (stereoSilent) {
 			// Only fold the pending 3D handoff into host stereo when the primary stereo
 			// stream is silent, so this fallback does not double-mix titles that are
@@ -848,6 +1160,14 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 			}
 			if (mixedPendingVoices) {
 				spatialInput = spatialFallbackMix.data();
+			}
+		}
+
+		for (auto voiceIt = m_Pending3DVoices.begin(); voiceIt != m_Pending3DVoices.end();) {
+			if (voiceIt->second.active) {
+				++voiceIt;
+			} else {
+				voiceIt = m_Pending3DVoices.erase(voiceIt);
 			}
 		}
 	}
@@ -896,11 +1216,6 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		return;
 	}
 
-	const uint16_t masterVolume = ReadRegister16(AC97_Master_Volume);
-	const uint16_t pcmOutVolume = ReadRegister16(AC97_PCM_Out_Volume);
-	const float leftGain = DecodeOutputAttenuation(masterVolume, true) * DecodeOutputAttenuation(pcmOutVolume, true);
-	const float rightGain = DecodeOutputAttenuation(masterVolume, false) * DecodeOutputAttenuation(pcmOutVolume, false);
-
 	const size_t outputSampleCount = frameCount * AC97_OUTPUT_CHANNELS;
 	const int16_t* output = spatialInput;
 	if (leftGain != 1.0f || rightGain != 1.0f) {
@@ -921,13 +1236,14 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		// Log the final stream payload even when register gains leave the samples unchanged.
 		if (outputPeak != 0 || leftGain != 1.0f || rightGain != 1.0f) {
 			EmuLog(LOG_LEVEL::INFO,
-				"AC97 volume registers master=0x%04x pcm-out=0x%04x gains L=%.3f R=%.3f post-gain peak=%u frames=%zu",
+				"AC97 volume registers master=0x%04x pcm-out=0x%04x gains L=%.3f R=%.3f post-gain peak=%u frames=%zu spatialFallback=%d",
 				static_cast<unsigned>(masterVolume),
 				static_cast<unsigned>(pcmOutVolume),
 				leftGain,
 				rightGain,
 				static_cast<unsigned>(outputPeak),
-				frameCount);
+				frameCount,
+				useSpatialFallback ? 1 : 0);
 		}
 	}
 
