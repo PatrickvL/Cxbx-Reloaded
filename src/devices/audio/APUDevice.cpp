@@ -325,11 +325,15 @@ constexpr uint32_t APU_VOICE_LIST_INHERIT = 0;
 constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
 constexpr size_t APU_AUDIO_CHUNK_FRAMES = 256;
 constexpr float APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
+// MCPX notifier records are 16-byte entries. Audio voice notifiers start after
+// the first two generic records and expose four per-voice slots.
+constexpr uint32_t MCPX_HW_NOTIFIER_ENTRY_SIZE = 16;
 constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 2;
 constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 4;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLA_DONE = 0;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
 constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
+// NV1BA0 reports successful notifier completion with status 0x01.
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
@@ -1557,7 +1561,8 @@ void APUDevice::WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint
 		return;
 	}
 
-	const uint32_t offset = 16 * (MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
+	const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
+		(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
 	WriteGuestWord(notifierBase + offset, value);
 }
 
@@ -1569,7 +1574,8 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 
 	const uint32_t notifierBase = GetRegister32(NV_PAPU_FENADDR);
 	if (notifierBase != 0) {
-		const uint32_t offset = 16 * (MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
+		const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
+			(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
 		WriteGuestBytes(notifierBase + offset + 14, &APU_NOTIFY_ENV_STATE_ACTIVE, sizeof(APU_NOTIFY_ENV_STATE_ACTIVE));
 		WriteGuestBytes(notifierBase + offset + 15, &status, sizeof(status));
 	}
@@ -3089,6 +3095,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		uint32_t previewOffset = currentOffset + 1;
 		if (advancePlaybackPosition(previewSSLData, previewBaseAddress, previewEndOffset, previewOffset, false)) {
 			if (!decodeFrame(previewBaseAddress, previewOffset, nextLeft, nextRight)) {
+				// If the look-ahead sample cannot be decoded, keep the current sample so
+				// interpolation continues without leaving the voice active but stalled.
 				nextLeft = currentLeft;
 				nextRight = currentRight;
 			}
