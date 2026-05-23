@@ -326,8 +326,8 @@ constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
 constexpr size_t APU_AUDIO_CHUNK_FRAMES = 256;
 constexpr float APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
 // MCPX notifier records are 16-byte entries. The hardware stores two generic
-// notifier entries before the per-voice audio notifiers, so this offset is a
-// record count rather than a byte count.
+// notifier entries before the per-voice audio notifiers, so
+// MCPX_HW_NOTIFIER_BASE_OFFSET is a record count rather than a byte count.
 constexpr uint32_t MCPX_HW_NOTIFIER_ENTRY_SIZE = 16;
 constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 2;
 // MCPX exposes four notifier slots per voice in the audio notifier table.
@@ -3092,8 +3092,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const uint32_t frameOffset = multipass ? static_cast<uint32_t>(frame) : currentOffset;
 		if (!decodeFrame(baseAddress, frameOffset, currentLeft, currentRight)) {
 			// stopVoice clears the cached playback state and guest active bits; break out of
-			// the per-frame loop immediately, then let the post-loop voiceStopped check skip
-			// the remaining state writes for this voice.
+			// the per-frame loop immediately, then let the final voiceStopped return below
+			// skip the remaining state writes for this voice.
 			stopVoice();
 			break;
 		}
@@ -3124,7 +3124,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				// interpolation continues briefly. Repeated look-ahead failures mean the next
 				// sample is persistently unreadable, so stop the voice instead of looping on
 				// the same broken preview forever.
-				if (++playbackState.previewDecodeFailures >= APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES) {
+				++playbackState.previewDecodeFailures;
+				if (playbackState.previewDecodeFailures >= APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES) {
 					stopVoice();
 					break;
 				}
