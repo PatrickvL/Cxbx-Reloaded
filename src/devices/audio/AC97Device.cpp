@@ -1933,7 +1933,7 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 					if (m_CaptureScratch.size() < transferBytes) {
 						m_CaptureScratch.resize(transferBytes);
 					}
-					std::fill_n(m_CaptureScratch.begin(), transferBytes, uint8_t{ 0 });
+					std::memset(m_CaptureScratch.data(), 0, transferBytes);
 					if (!m_LoggedCaptureStub[channelIndex]) {
 						EmuLog(LOG_LEVEL::INFO,
 							"AC97 %s capture DMA is stubbed; returning silence frames=%u bytes=%zu rate=%u",
