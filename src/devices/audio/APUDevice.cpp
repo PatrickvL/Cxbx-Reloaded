@@ -2669,6 +2669,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		if (!hasVoiceActivity) {
 			if (!m_LoggedEmptyVoiceTableDiagnostics) {
 				LogVoiceTableDiagnostics();
+				LogRecentVoiceStateDiagnostics();
 				m_LoggedEmptyVoiceTableDiagnostics = true;
 			}
 		} else {
@@ -3176,6 +3177,228 @@ void APUDevice::LogVoiceTableDiagnostics() const
 		loggedActiveHandles > 2 ? activeHandles[2] : APU_VP_VOICE_MAX_HANDLE,
 		loggedActiveHandles > 3 ? activeHandles[3] : APU_VP_VOICE_MAX_HANDLE);
 	logFEVPRegisterDiagnostics();
+}
+
+void APUDevice::LogRecentVoiceStateDiagnostics() const
+{
+	if constexpr (!audio_diagnostics::kEnableDiagnosticLogging) {
+		return;
+	}
+
+	struct VoiceDiagnosticCandidate {
+		uint32_t handle = APU_VP_VOICE_MAX_HANDLE;
+		const char* reason = nullptr;
+	};
+
+	std::array<VoiceDiagnosticCandidate, 4> candidates{};
+	size_t candidateCount = 0;
+	const auto addCandidate = [&](uint32_t handle, const char* reason) {
+		if (handle >= APU_VP_VOICE_MAX_HANDLE) {
+			return;
+		}
+		for (size_t i = 0; i < candidateCount; ++i) {
+			if (candidates[i].handle == handle) {
+				return;
+			}
+		}
+		if (candidateCount < candidates.size()) {
+			candidates[candidateCount++] = VoiceDiagnosticCandidate{ handle, reason };
+		}
+	};
+
+	addCandidate(GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE, "fecv");
+	const size_t recentMethodCount = std::min(m_RecentFEMethodCount, m_RecentFEMethods.size());
+	for (size_t i = 0; i < recentMethodCount && candidateCount < candidates.size(); ++i) {
+		const size_t recentIndex =
+			GetRecentFEMethodIndex(m_RecentFEMethodNext, m_RecentFEMethods.size(), i);
+		const auto& event = m_RecentFEMethods[recentIndex];
+		addCandidate(event.currentVoice, "recent-current");
+		addCandidate(event.targetVoice, "recent-target");
+	}
+
+	if (candidateCount == 0) {
+		EmuLog(LOG_LEVEL::INFO, "APU recent voice state diagnostics [none]");
+		return;
+	}
+
+	for (size_t candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex) {
+		const uint32_t voiceHandle = candidates[candidateIndex].handle;
+		uint32_t state = 0;
+		uint32_t format = 0;
+		uint32_t baseAddress = 0;
+		uint32_t currentOffset = 0;
+		uint32_t endOffset = 0;
+		uint32_t loopOffset = 0;
+		uint32_t bin0 = 0;
+		uint32_t bin1 = 1;
+		uint32_t volume0 = 0x0FFF;
+		uint32_t volume1 = 0x0FFF;
+		const bool hasState = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
+		const bool hasFormat = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, 0xFFFFFFFF, format);
+		const bool hasBase = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
+			NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
+		const bool hasCurrent = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET,
+			NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+		const bool hasEnd = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT,
+			NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
+		const bool hasLoop = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE,
+			NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN, bin0);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V1BIN, bin1);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME0, volume0);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME1, volume1);
+
+		const bool streaming = hasFormat && (format & NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) != 0;
+		const bool stereo = hasFormat && (format & NV_PAVS_VOICE_CFG_FMT_STEREO) != 0;
+		const uint32_t channels = stereo ? 2u : 1u;
+		const uint32_t sampleSize = hasFormat
+			? ((format & NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE))
+			: 0u;
+		const uint32_t containerSizeMode = hasFormat
+			? ((format & NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE))
+			: 0u;
+		const uint32_t samplesPerBlock = hasFormat
+			? (((format & NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK)) + 1u)
+			: 0u;
+
+		uint32_t containerSize = 0;
+		switch (containerSizeMode) {
+		case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B8:
+			containerSize = 1;
+			break;
+		case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B16:
+			containerSize = 2;
+			break;
+		case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM:
+			containerSize = XBOX_ADPCM_SRCSIZE;
+			break;
+		case NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_B32:
+			containerSize = 4;
+			break;
+		default:
+			break;
+		}
+
+		uint32_t previewAddress = 0;
+		bool previewAddressValid = hasBase && hasCurrent && containerSize != 0;
+		if (previewAddressValid) {
+			if (containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM) {
+				const uint32_t bytesPerBlock = containerSize * channels;
+				previewAddress = baseAddress + (currentOffset / std::max(samplesPerBlock, 1u)) * bytesPerBlock;
+			} else if (streaming) {
+				previewAddress = baseAddress + currentOffset * containerSize * channels;
+			} else {
+				previewAddress = baseAddress + currentOffset;
+			}
+		}
+
+		std::array<uint8_t, 8> previewBytes{};
+		bool previewRead = false;
+		if (previewAddressValid) {
+			previewRead = ReadVoiceBufferBytes(previewAddress, previewBytes.data(), previewBytes.size());
+		}
+
+		int32_t previewSampleLeft = 0;
+		int32_t previewSampleRight = 0;
+		bool decodedPreview = false;
+		if (previewAddressValid && containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM && samplesPerBlock != 0) {
+			const uint32_t bytesPerBlock = containerSize * channels;
+			std::array<uint8_t, APU_XADPCM_MAX_SOURCE_BLOCK_BYTES> encodedBlock{};
+			std::array<int16_t, APU_XADPCM_MAX_DECODED_SAMPLES> decodedSamples{};
+			if (ReadVoiceBufferBytes(previewAddress, encodedBlock.data(), bytesPerBlock)) {
+				const int decodedBytes = TXboxAdpcmDecoder_Decode_Memory(
+					encodedBlock.data(),
+					static_cast<int>(bytesPerBlock),
+					reinterpret_cast<uint8_t*>(decodedSamples.data()),
+					static_cast<int>(channels));
+				if (decodedBytes > 0) {
+					const uint32_t sampleIndex = (currentOffset % samplesPerBlock) * channels;
+					previewSampleLeft = decodedSamples[sampleIndex];
+					previewSampleRight = channels > 1 ? decodedSamples[sampleIndex + 1] : decodedSamples[sampleIndex];
+					decodedPreview = true;
+				}
+			}
+		} else if (previewRead) {
+			switch (sampleSize) {
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_U8:
+				previewSampleLeft = static_cast<int32_t>(previewBytes[0]) - 128;
+				previewSampleRight = channels > 1 ? static_cast<int32_t>(previewBytes[1]) - 128 : previewSampleLeft;
+				decodedPreview = true;
+				break;
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S16:
+				previewSampleLeft = static_cast<int32_t>(static_cast<int16_t>(
+					static_cast<uint16_t>(previewBytes[0]) | (static_cast<uint16_t>(previewBytes[1]) << 8)));
+				if (channels > 1) {
+					previewSampleRight = static_cast<int32_t>(static_cast<int16_t>(
+						static_cast<uint16_t>(previewBytes[2]) | (static_cast<uint16_t>(previewBytes[3]) << 8)));
+				} else {
+					previewSampleRight = previewSampleLeft;
+				}
+				decodedPreview = true;
+				break;
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S24: {
+				const uint32_t packedLeft = static_cast<uint32_t>(previewBytes[0]) |
+					(static_cast<uint32_t>(previewBytes[1]) << 8) |
+					(static_cast<uint32_t>(previewBytes[2]) << 16);
+				previewSampleLeft = (static_cast<int32_t>(packedLeft << 8)) >> 8;
+				if (channels > 1) {
+					const uint32_t packedRight = static_cast<uint32_t>(previewBytes[3]) |
+						(static_cast<uint32_t>(previewBytes[4]) << 8) |
+						(static_cast<uint32_t>(previewBytes[5]) << 16);
+					previewSampleRight = (static_cast<int32_t>(packedRight << 8)) >> 8;
+				} else {
+					previewSampleRight = previewSampleLeft;
+				}
+				decodedPreview = true;
+				break;
+			}
+			case NV_PAVS_VOICE_CFG_FMT_SAMPLE_SIZE_S32:
+				previewSampleLeft = static_cast<int32_t>(
+					static_cast<uint32_t>(previewBytes[0]) |
+					(static_cast<uint32_t>(previewBytes[1]) << 8) |
+					(static_cast<uint32_t>(previewBytes[2]) << 16) |
+					(static_cast<uint32_t>(previewBytes[3]) << 24));
+				if (channels > 1) {
+					previewSampleRight = static_cast<int32_t>(
+						static_cast<uint32_t>(previewBytes[4]) |
+						(static_cast<uint32_t>(previewBytes[5]) << 8) |
+						(static_cast<uint32_t>(previewBytes[6]) << 16) |
+						(static_cast<uint32_t>(previewBytes[7]) << 24));
+				} else {
+					previewSampleRight = previewSampleLeft;
+				}
+				decodedPreview = true;
+				break;
+			default:
+				break;
+			}
+		}
+
+		EmuLog(LOG_LEVEL::INFO,
+			"APU recent voice state diag reason=%s handle=%u active=%d paused=%d new=%d fmt=0x%08x base=0x%08x cbo=0x%08x ebo=0x%08x lbo=0x%08x bins=[%u,%u] volumes=[%u,%u] previewAddr=0x%08x previewRead=%d previewBytes=[%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x] previewSample=[%d,%d]",
+			candidates[candidateIndex].reason != nullptr ? candidates[candidateIndex].reason : "unknown",
+			voiceHandle,
+			hasState && (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0 ? 1 : 0,
+			hasState && (state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0 ? 1 : 0,
+			hasState && (state & NV_PAVS_VOICE_PAR_STATE_NEW_VOICE) != 0 ? 1 : 0,
+			hasFormat ? format : 0,
+			hasBase ? baseAddress : 0,
+			hasCurrent ? currentOffset : 0,
+			hasEnd ? endOffset : 0,
+			hasLoop ? loopOffset : 0,
+			bin0,
+			bin1,
+			volume0,
+			volume1,
+			previewAddressValid ? previewAddress : 0,
+			previewRead ? 1 : 0,
+			static_cast<unsigned>(previewBytes[0]), static_cast<unsigned>(previewBytes[1]),
+			static_cast<unsigned>(previewBytes[2]), static_cast<unsigned>(previewBytes[3]),
+			static_cast<unsigned>(previewBytes[4]), static_cast<unsigned>(previewBytes[5]),
+			static_cast<unsigned>(previewBytes[6]), static_cast<unsigned>(previewBytes[7]),
+			decodedPreview ? previewSampleLeft : 0,
+			decodedPreview ? previewSampleRight : 0);
+	}
 }
 
 void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,

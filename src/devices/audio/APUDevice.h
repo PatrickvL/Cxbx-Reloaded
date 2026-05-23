@@ -125,6 +125,7 @@ private:
 	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,
 		BasicVoiceDiagnosticSummary* diagnostics = nullptr);
 	void LogVoiceTableDiagnostics() const;
+	void LogRecentVoiceStateDiagnostics() const;
 	void InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue);
 	void BeginVoiceRelease(uint32_t voiceHandle);
 	float StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
