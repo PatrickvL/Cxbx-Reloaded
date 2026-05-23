@@ -51,6 +51,7 @@ class AC97Device : public PCIDevice {
 
 		uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
 		void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
+		void ServiceAudio();
 		void Begin3DVoiceFrameBatch();
 		void Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, float guestHRTFPan, bool sourceStereo,
 			const std::array<uint8_t, 4>& hrtfSubmix, const std::array<uint32_t, 4>& hrtfSubmixVolumes,

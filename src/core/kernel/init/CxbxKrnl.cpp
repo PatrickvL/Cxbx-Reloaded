@@ -1401,7 +1401,9 @@ static void CxbxrKrnlInitHacks()
 		do {
 			more_work = false;
 
-			if (g_APU != nullptr) {
+			if (g_AC97 != nullptr) {
+				g_AC97->ServiceAudio();
+			} else if (g_APU != nullptr) {
 				g_APU->SynchronizeAudio();
 			}
 
@@ -1420,7 +1422,9 @@ static void CxbxrKrnlInitHacks()
 				if (d->vblank_pending.test()) {
 					d->vblank_pending.clear();
 					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
-					if (g_APU != nullptr) {
+					if (g_AC97 != nullptr) {
+						g_AC97->ServiceAudio();
+					} else if (g_APU != nullptr) {
 						g_APU->SynchronizeAudio();
 					}
 
