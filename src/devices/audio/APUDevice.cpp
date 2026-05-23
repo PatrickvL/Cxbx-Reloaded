@@ -333,7 +333,8 @@ constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 4;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLA_DONE = 0;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
 constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
-// NV1BA0 reports successful notifier completion with status 0x01.
+// NV1BA0 reports successful notifier completion with status 0x01; 0xFF left
+// guest polling loops waiting because it does not match the hardware success code.
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
@@ -1604,6 +1605,9 @@ void APUDevice::NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status)
 uint32_t APUDevice::GetVoicePlaybackOffset(uint32_t voiceHandle) const
 {
 	uint32_t currentOffset = 0;
+	// ReadVoiceMask already emits one-shot diagnostics on failure; keep the notifier
+	// payload deterministic by falling back to zero when the guest voice table cannot
+	// currently be read.
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 	return currentOffset;
 }
@@ -3096,7 +3100,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		if (advancePlaybackPosition(previewSSLData, previewBaseAddress, previewEndOffset, previewOffset, false)) {
 			if (!decodeFrame(previewBaseAddress, previewOffset, nextLeft, nextRight)) {
 				// If the look-ahead sample cannot be decoded, keep the current sample so
-				// interpolation continues without leaving the voice active but stalled.
+				// interpolation continues; if decoding is still broken on the next real
+				// frame fetch, the main decode path above stops the voice cleanly.
 				nextLeft = currentLeft;
 				nextRight = currentRight;
 			}
