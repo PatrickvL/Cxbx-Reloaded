@@ -3230,7 +3230,7 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 		uint32_t endOffset = 0;
 		uint32_t loopOffset = 0;
 		uint32_t bin0 = 0;
-		uint32_t bin1 = 1;
+		uint32_t bin1 = 0;
 		uint32_t volume0 = 0x0FFF;
 		uint32_t volume1 = 0x0FFF;
 		const bool hasState = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
@@ -3244,7 +3244,9 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 		const bool hasLoop = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE,
 			NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN, bin0);
-		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V1BIN, bin1);
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V1BIN, bin1)) {
+			bin1 = 1;
+		}
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME0, volume0);
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_VOLA, NV_PAVS_VOICE_TAR_VOLA_VOLUME1, volume1);
 
@@ -3284,7 +3286,7 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 		if (previewAddressValid) {
 			if (containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM) {
 				const uint32_t bytesPerBlock = containerSize * channels;
-				previewAddress = baseAddress + (currentOffset / std::max(samplesPerBlock, 1u)) * bytesPerBlock;
+				previewAddress = baseAddress + (currentOffset / samplesPerBlock) * bytesPerBlock;
 			} else if (streaming) {
 				previewAddress = baseAddress + currentOffset * containerSize * channels;
 			} else {
