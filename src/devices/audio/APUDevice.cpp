@@ -447,12 +447,12 @@ uint32_t NormalizeAPUWordAddress(uint32_t value)
 	return value & ~0x3u;
 }
 
-bool IsVoiceEntryWordOffsetValid(uint32_t offset)
+bool IsVoiceEntryOffsetWithinBounds(uint32_t offset)
 {
 	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
 }
 
-uint32_t ExtractMaskedWord(uint32_t current, uint32_t mask)
+uint32_t GetMaskedValue(uint32_t current, uint32_t mask)
 {
 	if (mask == 0xFFFFFFFF) {
 		return current;
@@ -461,7 +461,7 @@ uint32_t ExtractMaskedWord(uint32_t current, uint32_t mask)
 	return (current & mask) >> Ctz32(mask);
 }
 
-uint32_t ApplyMaskedWord(uint32_t current, uint32_t mask, uint32_t value)
+uint32_t MergeMaskedValue(uint32_t current, uint32_t mask, uint32_t value)
 {
 	if (mask == 0xFFFFFFFF) {
 		return value;
@@ -741,8 +741,8 @@ void APUDevice::Reset()
 	m_VPHRTFHeadroom = 0;
 	m_VPSubmixHeadroom.fill(0);
 	m_VPVoiceLocked.fill(0);
-	// Keep the FE/VP fallback state in sync across reset even before the guest
-	// provides a voice table backing store through NV_PAPU_VPVADDR.
+	// Keep the FE/VP fallback state in sync across reset by zeroing the fallback
+	// voice hints and shadow table even before the guest provides NV_PAPU_VPVADDR.
 	m_VPActiveVoiceHints.fill(0);
 	m_VPVoiceTableShadow.fill(0);
 	m_VPOutBufferCursor.fill(0);
@@ -1740,7 +1740,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
-	if (!IsVoiceEntryWordOffsetValid(offset)) {
+	if (!IsVoiceEntryOffsetWithinBounds(offset)) {
 		return false;
 	}
 
@@ -1752,7 +1752,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 			m_VPVoiceTableShadow.size(),
 			static_cast<uint32_t>(shadowOffset),
 			sizeof(uint32_t));
-		value = ExtractMaskedWord(current, mask);
+		value = GetMaskedValue(current, mask);
 		m_LoggedVoiceTableReadFailure = false;
 		return true;
 	}
@@ -1773,7 +1773,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 		return false;
 	}
 
-	value = ExtractMaskedWord(current, mask);
+	value = GetMaskedValue(current, mask);
 	// A successful read means the voice table is reachable again, so allow a future
 	// access regression to emit a fresh one-shot diagnostic.
 	m_LoggedVoiceTableReadFailure = false;
@@ -1785,7 +1785,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
-	if (!IsVoiceEntryWordOffsetValid(offset)) {
+	if (!IsVoiceEntryOffsetWithinBounds(offset)) {
 		return false;
 	}
 
@@ -1797,7 +1797,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 			m_VPVoiceTableShadow.size(),
 			static_cast<uint32_t>(shadowOffset),
 			sizeof(uint32_t));
-		const uint32_t mergedValue = ApplyMaskedWord(current, mask, value);
+		const uint32_t mergedValue = MergeMaskedValue(current, mask, value);
 		WriteMemoryWindow(
 			m_VPVoiceTableShadow.data(),
 			m_VPVoiceTableShadow.size(),
@@ -2638,7 +2638,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
 		if (!m_LoggedMissingVoiceTableDuringRender) {
-			EmuLog(LOG_LEVEL::WARNING,
+			EmuLog(LOG_LEVEL::INFO,
 				"APU render using internal shadow voice table because NV_PAPU_VPVADDR is still zero. This is expected until the guest publishes its voice table.");
 			m_LoggedMissingVoiceTableDuringRender = true;
 		}
