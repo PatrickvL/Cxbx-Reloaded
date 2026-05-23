@@ -1048,6 +1048,12 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 			size);
 	}
 
+	if (addr >= NV1BA0_PIO_VOICE_LOCK && addr < NV1BA0_PIO_VOICE_LOCK + sizeof(uint32_t)) {
+		const uint32_t currentVoice = GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE;
+		const uint32_t lockValue = IsVoiceLocked(currentVoice) ? 1u : 0u;
+		return ReadRegisterFragment(lockValue, addr - NV1BA0_PIO_VOICE_LOCK, size);
+	}
+
 	return ReadRegister(APU_VP_BASE + addr, size);
 }
 
