@@ -2037,7 +2037,7 @@ bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
 		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
 		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
-			return false;
+			continue;
 		}
 	}
 
@@ -2125,7 +2125,7 @@ bool APUDevice::SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<u
 		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
 		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
 		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
-			return false;
+			continue;
 		}
 
 		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
@@ -2136,7 +2136,7 @@ bool APUDevice::SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<u
 					slot, bin, outBufferBase, outBufferLength);
 				m_LoggedVPOutputBufferReadFailure = true;
 			}
-			return false;
+			continue;
 		}
 
 		g_AC97->SubmitGuestSpatialSubmixFrames(static_cast<uint32_t>(slot),
