@@ -853,7 +853,8 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 
 	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
 		// XGSCNT reflects guest-visible rendered sample progress rather than raw
-		// host time, so it naturally freezes while XCNTMODE is disabled.
+		// host time; SynchronizeAudio only advances this counter while XCNTMODE
+		// allows audio progress, so MMIO reads expose the frozen value directly.
 		return ReadRegisterFragment(m_XGSCounter, addr - NV_PAPU_XGSCNT, size);
 	}
 
