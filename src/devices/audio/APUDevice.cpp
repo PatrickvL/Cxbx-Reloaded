@@ -107,6 +107,7 @@ constexpr uint32_t NV_PAPU_EPSMAXSGE = 0x000020DC;
 constexpr uint32_t NV_PAPU_EPFMAXSGE = 0x000020E0;
 
 constexpr uint32_t NV_PAPU_GPRST_GPRST = 1 << 0;
+constexpr uint32_t NV_PAPU_EPRST_EPRST = 1 << 0;
 
 constexpr uint32_t NV_PAPU_FEAV_VALUE = 0x0000FFFF;
 constexpr uint32_t NV_PAPU_FEAV_LST = 0x00030000;
@@ -1099,7 +1100,7 @@ void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 	}
 	WriteRegister(APU_EP_BASE + addr, value, size);
 	if (addr == NV_PAPU_EPRST && size == sizeof(uint32_t) &&
-		(value & NV_PAPU_GPRST_GPRST) == 0) {
+		(value & NV_PAPU_EPRST_EPRST) == 0) {
 		m_EPXMem.fill(0);
 		m_EPYMem.fill(0);
 		m_EPPMem.fill(0);
