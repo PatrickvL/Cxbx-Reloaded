@@ -473,6 +473,8 @@ bool IsVoiceEntryOffsetWithinBounds(uint32_t offset)
 	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
 }
 
+uint32_t Ctz32(uint32_t value);
+
 uint32_t GetMaskedValue(uint32_t current, uint32_t mask)
 {
 	// Extract and right-align the selected bitfield, or return the raw word for
