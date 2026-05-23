@@ -2636,7 +2636,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				renderFallbackVoice(voiceHandle);
 			}
 		}
-		renderFallbackVoice(static_cast<uint16_t>(GetRegister32(NV_PAPU_FECV)));
+		renderFallbackVoice(GetRegister32(NV_PAPU_FECV) & NV1BA0_PIO_VOICE_ON_HANDLE);
 		for (size_t i = 0; i < m_RecentFEMethodCount; ++i) {
 			const size_t recentIndex =
 				GetRecentFEMethodIndex(m_RecentFEMethodNext, m_RecentFEMethods.size(), i);
