@@ -136,7 +136,10 @@ private:
 	bool ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const;
 	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
 	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
+	void WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint32_t value);
 	void WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status);
+	void NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status);
+	uint32_t GetVoicePlaybackOffset(uint32_t voiceHandle) const;
 	bool IsVoiceLocked(uint32_t voiceHandle) const;
 	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
 	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;

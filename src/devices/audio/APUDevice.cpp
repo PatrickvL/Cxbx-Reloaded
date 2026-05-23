@@ -325,11 +325,13 @@ constexpr uint32_t APU_VOICE_LIST_INHERIT = 0;
 constexpr uint32_t APU_SGE_PAGE_SIZE = 0x1000;
 constexpr size_t APU_AUDIO_CHUNK_FRAMES = 256;
 constexpr float APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
-constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 16;
-constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 16;
+constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 2;
+constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 4;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLA_DONE = 0;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
-constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0xFF;
+constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
+constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
+constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_IN_PROGRESS = 0x80;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
 constexpr size_t APU_XADPCM_PCM_SAMPLES_PER_BLOCK = XBOX_ADPCM_DSTSIZE / sizeof(int16_t);
@@ -1081,6 +1083,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
+		WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
 		ClearHRTFFilterState(selectedHandle);
 		InitializeVoiceEnvelopes(selectedHandle, value);
 		m_LoggedEmptyVoiceTableDiagnostics = false;
@@ -1090,16 +1093,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
-		uint32_t voiceDataType = 0;
-		if (ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_DATA_TYPE, voiceDataType)) {
-			uint32_t notifier = MCPX_HW_NOTIFIER_SSLA_DONE;
-			// Streaming voices toggle between the SSLA and SSLB completion notifiers.
-			if (voiceDataType != 0 && voiceHandle < m_VPSSLData.size() &&
-				m_VPSSLData[voiceHandle].ssl_index == 1) {
-				notifier = MCPX_HW_NOTIFIER_SSLB_DONE;
-			}
-			WriteNotifierStatus(voiceHandle, notifier, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
-		}
+		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, GetVoicePlaybackOffset(voiceHandle));
+		NotifyVoiceCompletion(voiceHandle, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		if (voiceHandle < m_VPPlaybackState.size()) {
 			m_VPPlaybackState[voiceHandle] = PlaybackState{};
 		}
@@ -1129,6 +1124,12 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	}
 	case NV1BA0_PIO_GET_VOICE_POSITION:
 		m_VPLastVoicePositionHandle = value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE;
+		WriteNotifierValue(m_VPLastVoicePositionHandle,
+			MCPX_HW_NOTIFIER_VOICE_POSITION,
+			GetVoicePlaybackOffset(m_VPLastVoicePositionHandle));
+		WriteNotifierStatus(m_VPLastVoicePositionHandle,
+			MCPX_HW_NOTIFIER_VOICE_POSITION,
+			NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		return;
 	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY:
 		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
@@ -1546,8 +1547,27 @@ bool APUDevice::WriteVPScatterGatherEntry(uint32_t handle, uint32_t value)
 	return success;
 }
 
+void APUDevice::WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint32_t value)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || notifier >= MCPX_HW_NOTIFIER_COUNT) {
+		return;
+	}
+
+	const uint32_t notifierBase = GetRegister32(NV_PAPU_FENADDR);
+	if (notifierBase == 0) {
+		return;
+	}
+
+	const uint32_t offset = 16 * (MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
+	WriteGuestWord(notifierBase + offset, value);
+}
+
 void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status)
 {
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || notifier >= MCPX_HW_NOTIFIER_COUNT) {
+		return;
+	}
+
 	const uint32_t notifierBase = GetRegister32(NV_PAPU_FENADDR);
 	if (notifierBase != 0) {
 		const uint32_t offset = 16 * (MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
@@ -1557,6 +1577,30 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 
 	SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
 	RefreshInterruptStatus();
+}
+
+void APUDevice::NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status)
+{
+	uint32_t voiceDataType = 0;
+	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, NV_PAVS_VOICE_CFG_FMT_DATA_TYPE, voiceDataType)) {
+		return;
+	}
+
+	uint32_t notifier = MCPX_HW_NOTIFIER_SSLA_DONE;
+	if (voiceDataType != 0 && voiceHandle < m_VPSSLData.size() &&
+		m_VPSSLData[voiceHandle].ssl_index == 1) {
+		notifier = MCPX_HW_NOTIFIER_SSLB_DONE;
+	}
+
+	WriteNotifierValue(voiceHandle, notifier, GetVoicePlaybackOffset(voiceHandle));
+	WriteNotifierStatus(voiceHandle, notifier, status);
+}
+
+uint32_t APUDevice::GetVoicePlaybackOffset(uint32_t voiceHandle) const
+{
+	uint32_t currentOffset = 0;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+	return currentOffset;
 }
 
 bool APUDevice::IsVoiceLocked(uint32_t voiceHandle) const
@@ -2666,6 +2710,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 	auto sslData = m_VPSSLData[voiceHandle];
 	auto stopVoice = [&]() {
+		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
+		NotifyVoiceCompletion(voiceHandle, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
@@ -3091,6 +3137,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	m_VPSSLData[voiceHandle] = sslData;
 	playbackState.offset = currentOffset;
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+	WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 }
 
 void APUDevice::UpdateVPFifo()
