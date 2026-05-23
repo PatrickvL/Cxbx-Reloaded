@@ -120,6 +120,7 @@ class AC97Device : public PCIDevice {
 		std::array<bool, 3> m_ChannelAdvanceOnRestart{};
 		std::array<bool, 3> m_ChannelQueuedAfterHalt{};
 		std::array<bool, 3> m_ChannelDescriptorError{};
+		std::array<bool, 3> m_LoggedCaptureStub{};
 		std::vector<uint8_t> m_CaptureScratch{};
 		std::vector<int16_t> m_PlaybackDMAScratch{};
 		std::vector<int16_t> m_OutputScratch{};

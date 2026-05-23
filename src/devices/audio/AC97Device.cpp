@@ -572,6 +572,7 @@ void AC97Device::Reset()
 	m_ChannelAdvanceOnRestart.fill(false);
 	m_ChannelQueuedAfterHalt.fill(false);
 	m_ChannelDescriptorError.fill(false);
+	m_LoggedCaptureStub.fill(false);
 	m_Pending3DVoices.clear();
 	m_LoggedQueueFull = false;
 	m_LoggedPlaybackStartFailure = false;
@@ -1771,6 +1772,7 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 	m_ChannelAdvanceOnRestart[channelIndex] = false;
 	m_ChannelQueuedAfterHalt[channelIndex] = false;
 	m_ChannelDescriptorError[channelIndex] = false;
+	m_LoggedCaptureStub[channelIndex] = false;
 
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_BDBAR, 0, sizeof(uint32_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CIV, 0, sizeof(uint8_t));
@@ -1930,6 +1932,16 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 				} else if (transferBytes != 0) {
 					if (m_CaptureScratch.size() < transferBytes) {
 						m_CaptureScratch.resize(transferBytes);
+					}
+					std::fill_n(m_CaptureScratch.begin(), transferBytes, uint8_t{ 0 });
+					if (!m_LoggedCaptureStub[channelIndex]) {
+						EmuLog(LOG_LEVEL::INFO,
+							"AC97 %s capture DMA is stubbed; returning silence frames=%u bytes=%zu rate=%u",
+							channelBase == NABM_PI_BASE ? "PCM input" : "microphone input",
+							static_cast<unsigned>(consumed),
+							transferBytes,
+							static_cast<unsigned>(GetBusMasterSampleRate(channelBase)));
+						m_LoggedCaptureStub[channelIndex] = true;
 					}
 					if (!WriteGuestBytes(transferAddress, m_CaptureScratch.data(), transferBytes)) {
 						m_ChannelDescriptorError[channelIndex] = true;
