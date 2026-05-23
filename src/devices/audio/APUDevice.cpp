@@ -2062,6 +2062,8 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 
 void APUDevice::SynchronizeAudio()
 {
+	std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
+
 	const uint32_t now = GetAPUTime();
 	uint32_t remaining = now - m_LastAudioUpdate;
 	while (remaining > 0) {

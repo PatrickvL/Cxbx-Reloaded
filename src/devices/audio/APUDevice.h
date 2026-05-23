@@ -31,6 +31,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 #include "../PCIDevice.h"
@@ -161,6 +162,7 @@ private:
 	uint32_t GetRegister32(uint32_t addr) const;
 
 	std::array<uint8_t, APU_SIZE> m_Registers{};
+	mutable std::mutex m_AudioUpdateMutex{};
 	uint32_t m_VPFifoLevel = 0;
 	uint32_t m_VPFifoLastUpdate = 0;
 	uint32_t m_LastAudioUpdate = 0;
