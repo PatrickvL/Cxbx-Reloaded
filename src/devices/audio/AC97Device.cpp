@@ -1508,11 +1508,14 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 				const size_t transferBytes = static_cast<size_t>(consumed) * frameBytes;
 				const uint32_t transferAddress = descriptorAddress + static_cast<uint32_t>(descriptorOffset) * frameBytes;
 				if (channelBase == NABM_PO_BASE) {
-					m_PlaybackDMAScratch.resize(RoundUpToInt16Count(transferBytes));
-					if (!m_PlaybackDMAScratch.empty() &&
+					const size_t playbackScratchCount = RoundUpToInt16Count(transferBytes);
+					if (m_PlaybackDMAScratch.size() < playbackScratchCount) {
+						m_PlaybackDMAScratch.resize(playbackScratchCount);
+					}
+					if (playbackScratchCount != 0 &&
 						ReadGuestBytes(transferAddress, m_PlaybackDMAScratch.data(), transferBytes)) {
 						SubmitPCMFrames(m_PlaybackDMAScratch.data(), consumed);
-					} else if (!m_PlaybackDMAScratch.empty()) {
+					} else if (playbackScratchCount != 0) {
 						m_ChannelDescriptorError[channelIndex] = true;
 						status |= SR_FIFOE;
 						break;
