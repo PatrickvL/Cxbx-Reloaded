@@ -447,6 +447,29 @@ uint32_t NormalizeAPUWordAddress(uint32_t value)
 	return value & ~0x3u;
 }
 
+bool IsVoiceTableWordOffsetValid(uint32_t offset)
+{
+	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
+}
+
+uint32_t ReadMaskedWord(uint32_t current, uint32_t mask)
+{
+	if (mask == 0xFFFFFFFF) {
+		return current;
+	}
+
+	return (current & mask) >> Ctz32(mask);
+}
+
+uint32_t WriteMaskedWord(uint32_t current, uint32_t mask, uint32_t value)
+{
+	if (mask == 0xFFFFFFFF) {
+		return value;
+	}
+
+	return (current & ~mask) | ((value << Ctz32(mask)) & mask);
+}
+
 uint32_t AbsoluteMixMagnitude(int32_t value)
 {
 	const int64_t signedSample = static_cast<int64_t>(value);
@@ -1717,7 +1740,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
-	if (offset > NV_PAVS_SIZE - sizeof(uint32_t)) {
+	if (!IsVoiceTableWordOffsetValid(offset)) {
 		return false;
 	}
 
@@ -1729,8 +1752,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 			m_VPVoiceTableShadow.size(),
 			static_cast<uint32_t>(shadowOffset),
 			sizeof(uint32_t));
-		const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
-		value = mask == 0xFFFFFFFF ? current : ((current & mask) >> shift);
+		value = ReadMaskedWord(current, mask);
 		m_LoggedVoiceTableReadFailure = false;
 		return true;
 	}
@@ -1751,8 +1773,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 		return false;
 	}
 
-	const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
-	value = mask == 0xFFFFFFFF ? current : ((current & mask) >> shift);
+	value = ReadMaskedWord(current, mask);
 	// A successful read means the voice table is reachable again, so allow a future
 	// access regression to emit a fresh one-shot diagnostic.
 	m_LoggedVoiceTableReadFailure = false;
@@ -1764,7 +1785,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
-	if (offset > NV_PAVS_SIZE - sizeof(uint32_t)) {
+	if (!IsVoiceTableWordOffsetValid(offset)) {
 		return false;
 	}
 
@@ -1776,10 +1797,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 			m_VPVoiceTableShadow.size(),
 			static_cast<uint32_t>(shadowOffset),
 			sizeof(uint32_t));
-		const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
-		const uint32_t mergedValue = mask == 0xFFFFFFFF
-			? value
-			: ((current & ~mask) | ((value << shift) & mask));
+		const uint32_t mergedValue = WriteMaskedWord(current, mask, value);
 		WriteMemoryWindow(
 			m_VPVoiceTableShadow.data(),
 			m_VPVoiceTableShadow.size(),
@@ -2682,6 +2700,8 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			m_LoggedFallbackActiveVoiceRender = true;
 		}
 	}
+	// FE still expects the SE2FE idle-voice path to progress even before the guest
+	// publishes NV_PAPU_VPVADDR, because the shadow voice table keeps FE/VP state live.
 	if (!hasVoiceActivity &&
 		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
 		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
