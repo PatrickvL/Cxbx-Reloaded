@@ -159,8 +159,12 @@ private:
 	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
 	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;
 	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
+	bool ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
+		void* dest, size_t size) const;
 	bool WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
 		const void* src, size_t size);
+	bool HasGuestVPOutputBufferPlaybackPath() const;
+	bool MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak);
 	uint32_t ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
 	void WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
 	void WriteHRTFCoefficient(uint32_t entryIndex, size_t channel, size_t coefficientIndex, int8_t value);
@@ -199,6 +203,7 @@ private:
 	std::array<uint8_t, 32> m_VPSubmixHeadroom{};
 	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPVoiceLocked{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
+	std::array<uint32_t, 4> m_VPOutBufferPlaybackCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
 	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};
@@ -217,6 +222,10 @@ private:
 	bool m_LoggedMissingVoiceTableDuringRender = false;
 	bool m_LoggedAC97Missing = false;
 	bool m_LoggedStreamingSSLFailure = false;
+	bool m_EnableHostSpatialHandoff = true;
+	bool m_LoggedVPOutputBufferReadFailure = false;
+	size_t m_ChunkCaptured3DVoiceCount = 0;
+	size_t m_ChunkSubmittedHostSpatialVoiceCount = 0;
 };
 
 #endif

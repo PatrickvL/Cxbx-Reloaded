@@ -686,6 +686,7 @@ void APUDevice::Reset()
 	m_VPSubmixHeadroom.fill(0);
 	m_VPVoiceLocked.fill(0);
 	m_VPOutBufferCursor.fill(0);
+	m_VPOutBufferPlaybackCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
 	m_VPHRTFFilterState.fill(APUDevice::HRTFFilterState{});
@@ -698,6 +699,10 @@ void APUDevice::Reset()
 	m_LoggedVoiceTableReadFailure = false;
 	m_LoggedVoiceTableWriteFailure = false;
 	m_LoggedScatterGatherWriteFailure = false;
+	m_EnableHostSpatialHandoff = true;
+	m_LoggedVPOutputBufferReadFailure = false;
+	m_ChunkCaptured3DVoiceCount = 0;
+	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 
 	SetRegister32(NV_PAPU_ISTS, 0);
 	SetRegister32(NV_PAPU_IEN, 0);
@@ -1459,6 +1464,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			if (slot < m_VPOutBufferCursor.size()) {
 				m_VPOutBufferCursor[slot] = 0;
 			}
+			if (slot < m_VPOutBufferPlaybackCursor.size()) {
+				m_VPOutBufferPlaybackCursor[slot] = 0;
+			}
 			return;
 		}
 		if (addr >= NV1BA0_PIO_SET_OUTBUF_LEN && addr < NV1BA0_PIO_SET_OUTBUF_LEN + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_LEN) % 8) == 0) {
@@ -1466,6 +1474,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			WriteRegister(APU_VP_BASE + addr, value & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE, sizeof(uint32_t));
 			if (slot < m_VPOutBufferCursor.size()) {
 				m_VPOutBufferCursor[slot] = 0;
+			}
+			if (slot < m_VPOutBufferPlaybackCursor.size()) {
+				m_VPOutBufferPlaybackCursor[slot] = 0;
 			}
 			return;
 		}
@@ -1984,6 +1995,110 @@ bool APUDevice::WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length,
 	return true;
 }
 
+bool APUDevice::ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
+	void* dest, size_t size) const
+{
+	if (dest == nullptr || length == 0) {
+		return false;
+	}
+
+	auto* bytes = static_cast<uint8_t*>(dest);
+	size_t remaining = size;
+	cursor %= length;
+	while (remaining > 0) {
+		const uint32_t chunkLength = std::min<uint32_t>(length - cursor, static_cast<uint32_t>(remaining));
+		if (!ReadGuestBytes(guestAddress + cursor, bytes, chunkLength)) {
+			return false;
+		}
+
+		bytes += chunkLength;
+		remaining -= chunkLength;
+		cursor = (cursor + chunkLength) % length;
+	}
+
+	return true;
+}
+
+bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
+{
+	bool hasMappedOutputBuffer = false;
+	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+		const uint32_t bin = m_VPHRTFSubmix[slot];
+		if (bin <= 1 || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
+			continue;
+		}
+
+		hasMappedOutputBuffer = true;
+		const uint32_t outBufferBaseRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferLengthRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
+		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
+			return false;
+		}
+	}
+
+	return hasMappedOutputBuffer;
+}
+
+bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak)
+{
+	if (output == nullptr || frameCount == 0) {
+		return false;
+	}
+
+	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFOutputChannelMapping{ 0, 1, 0, 1 };
+	bool mixedAnySubmix = false;
+
+	if (slotPeak != nullptr) {
+		slotPeak->fill(0);
+	}
+
+	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+		const uint32_t bin = m_VPHRTFSubmix[slot];
+		if (bin <= 1 || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
+			continue;
+		}
+
+		const uint32_t outBufferBaseRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferLengthRegister =
+			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
+		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
+		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
+			return false;
+		}
+
+		std::vector<int16_t> samples(frameCount);
+		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
+			samples.data(), samples.size() * sizeof(samples[0]))) {
+			if (!m_LoggedVPOutputBufferReadFailure) {
+				EmuLog(LOG_LEVEL::WARNING,
+					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
+					slot, bin, outBufferBase, outBufferLength);
+				m_LoggedVPOutputBufferReadFailure = true;
+			}
+			return false;
+		}
+
+		const size_t outputChannel = kHRTFOutputChannelMapping[slot];
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			const size_t outputIndex = frame * 2 + outputChannel;
+			output[outputIndex] = ClampToInt16(static_cast<int32_t>(output[outputIndex]) + samples[frame]);
+		}
+		mixedAnySubmix = true;
+		if (slotPeak != nullptr) {
+			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(samples.data(), samples.size());
+		}
+	}
+
+	m_LoggedVPOutputBufferReadFailure = false;
+	return mixedAnySubmix;
+}
+
 uint32_t APUDevice::ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const
 {
 	if (data == nullptr || size == 0 || addr + size > length) {
@@ -2377,6 +2492,9 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		m_LoggedMissingVoiceTableDuringRender = false;
 	}
 
+	m_EnableHostSpatialHandoff = !HasGuestVPOutputBufferPlaybackPath();
+	m_ChunkCaptured3DVoiceCount = 0;
+	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 	if (g_AC97 != nullptr) {
 		g_AC97->Begin3DVoiceFrameBatch();
 	}
@@ -2446,7 +2564,11 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 
 		std::array<uint32_t, 4> outBufferPeak{};
 		for (size_t slot = 0; slot < outBufferPeak.size() && slot < APU_MIXBIN_COUNT; ++slot) {
-			outBufferPeak[slot] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, slot);
+			size_t sourceBin = slot;
+			if (slot < APU_HRTF_SUBMIX_COUNT && m_VPHRTFSubmix[slot] < APU_MIXBIN_COUNT) {
+				sourceBin = m_VPHRTFSubmix[slot];
+			}
+			outBufferPeak[slot] = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, sourceBin);
 			shouldLogChunkDiagnostics = shouldLogChunkDiagnostics || outBufferPeak[slot] != 0;
 		}
 
@@ -2484,10 +2606,14 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const bool stereoBinsSilent =
 		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
 		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0;
+	const bool guestVPOutputPlaybackConfigured = !m_EnableHostSpatialHandoff;
+	bool guestVPOutputPlaybackActive = false;
+	std::array<uint32_t, 4> guestVPOutputPeak{};
+	const bool hostSpatialSubmitted = m_ChunkSubmittedHostSpatialVoiceCount != 0;
 	bool useHRTFStereoFallback = false;
 	bool useNonStereoBinFallback = false;
 	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
-	if (stereoBinsSilent) {
+	if (stereoBinsSilent && !guestVPOutputPlaybackConfigured && !hostSpatialSubmitted) {
 		for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 			const uint32_t bin = m_VPHRTFSubmix[slot];
 			if (bin > 1 && bin < APU_MIXBIN_COUNT &&
@@ -2502,60 +2628,87 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	std::vector<int16_t> output(frameCount * 2);
 	for (size_t frame = 0; frame < frameCount; ++frame) {
 		// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
-		int64_t left = mixBins[frame];
-		int64_t right = mixBins[frameCount + frame];
-		if (useHRTFStereoFallback) {
-			for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
-				const uint32_t bin = m_VPHRTFSubmix[slot];
-				if (bin <= 1 || bin >= APU_MIXBIN_COUNT) {
-					continue;
-				}
+		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frame], INT16_MIN, INT16_MAX));
+		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frameCount + frame], INT16_MIN, INT16_MAX));
+	}
 
-				const size_t binBase = static_cast<size_t>(bin) * frameCount;
-				const int32_t contribution = mixBins[binBase + frame];
-				// Fold the four global HRTF submix slots back to host stereo as L,R,L,R
-				// until the dedicated OpenAL 3D handoff consumes them directly.
-				if (kHRTFFallbackChannelMapping[slot] == 0) {
-					left += contribution;
-				} else {
-					right += contribution;
+	if (guestVPOutputPlaybackConfigured) {
+		guestVPOutputPlaybackActive = MixGuestVPOutputBuffers(output.data(), frameCount, &guestVPOutputPeak);
+	}
+
+	if (!guestVPOutputPlaybackActive) {
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			int64_t left = output[frame * 2];
+			int64_t right = output[frame * 2 + 1];
+			if (useHRTFStereoFallback) {
+				for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
+					const uint32_t bin = m_VPHRTFSubmix[slot];
+					if (bin <= 1 || bin >= APU_MIXBIN_COUNT) {
+						continue;
+					}
+
+					const size_t binBase = static_cast<size_t>(bin) * frameCount;
+					const int32_t contribution = mixBins[binBase + frame];
+					// Fold the four global HRTF submix slots back to host stereo as L,R,L,R
+					// until the dedicated OpenAL 3D handoff consumes them directly.
+					if (kHRTFFallbackChannelMapping[slot] == 0) {
+						left += contribution;
+					} else {
+						right += contribution;
+					}
+				}
+			} else if (useNonStereoBinFallback) {
+				for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
+					const size_t binBase = bin * frameCount;
+					const int32_t contribution = mixBins[binBase + frame];
+					// Without the DSP/output-buffer stages, some voices only reach non-stereo
+					// mixbins. Fold them back to host stereo by bin parity so their audio stays
+					// audible until the full guest routing path is implemented. This mirrors the
+					// voice-mixing convention above where even-numbered routes originate from the
+					// left sample and odd-numbered routes originate from the right sample.
+					if ((bin & 1u) == 0) {
+						left += contribution;
+					} else {
+						right += contribution;
+					}
 				}
 			}
-		} else if (useNonStereoBinFallback) {
-			for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
-				const size_t binBase = bin * frameCount;
-				const int32_t contribution = mixBins[binBase + frame];
-				// Without the DSP/output-buffer stages, some voices only reach non-stereo
-				// mixbins. Fold them back to host stereo by bin parity so their audio stays
-				// audible until the full guest routing path is implemented. This mirrors the
-				// voice-mixing convention above where even-numbered routes originate from the
-				// left sample and odd-numbered routes originate from the right sample.
-				if ((bin & 1u) == 0) {
-					left += contribution;
-				} else {
-					right += contribution;
-				}
-			}
+
+			output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(left, INT16_MIN, INT16_MAX));
+			output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(right, INT16_MIN, INT16_MAX));
 		}
-
-		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(left, INT16_MIN, INT16_MAX));
-		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(right, INT16_MIN, INT16_MAX));
 	}
 
 	uint32_t stereoPeak = 0;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
+		const char* arbitrationWinner = guestVPOutputPlaybackActive
+			? "guest-vp-output"
+			: (hostSpatialSubmitted
+				? "host-spatial"
+				: (useHRTFStereoFallback
+					? "stereo-hrtf-fallback"
+					: (useNonStereoBinFallback ? "stereo-nonstereo-fallback" : "stereo-direct")));
 		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
 		if (hasVoiceActivity || stereoPeak != 0) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU stereo mix peak before SubmitPCMFrames=%u frames=%zu hrtfFallback=%d nonStereoFallback=%d bins=[%u,%u,%u,%u]",
-				static_cast<unsigned>(stereoPeak),
+				"APU playback arbitration frames=%zu peak=%u captured3DVoices=%zu hostSpatialVoices=%zu guestVPConfigured=%d guestVPActive=%d hrtfFallback=%d nonStereoFallback=%d winner=%s bins=[%u,%u,%u,%u] guestVPPeaks=[%u,%u,%u,%u]",
 				frameCount,
+				static_cast<unsigned>(stereoPeak),
+				m_ChunkCaptured3DVoiceCount,
+				m_ChunkSubmittedHostSpatialVoiceCount,
+				guestVPOutputPlaybackConfigured ? 1 : 0,
+				guestVPOutputPlaybackActive ? 1 : 0,
 				useHRTFStereoFallback ? 1 : 0,
 				useNonStereoBinFallback ? 1 : 0,
+				arbitrationWinner,
 				static_cast<unsigned>(m_VPHRTFSubmix[0]),
 				static_cast<unsigned>(m_VPHRTFSubmix[1]),
 				static_cast<unsigned>(m_VPHRTFSubmix[2]),
-				static_cast<unsigned>(m_VPHRTFSubmix[3]));
+				static_cast<unsigned>(m_VPHRTFSubmix[3]),
+				guestVPOutputPeak[0],
+				guestVPOutputPeak[1],
+				guestVPOutputPeak[2],
+				guestVPOutputPeak[3]);
 		}
 	}
 
@@ -2599,8 +2752,12 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 			continue;
 		}
 
+		size_t sourceBin = slot;
+		if (slot < APU_HRTF_SUBMIX_COUNT && m_VPHRTFSubmix[slot] < APU_MIXBIN_COUNT) {
+			sourceBin = m_VPHRTFSubmix[slot];
+		}
 		for (size_t frame = 0; frame < frameCount; ++frame) {
-			output[frame] = ClampToInt16(mixBins[slot * frameCount + frame]);
+			output[frame] = ClampToInt16(mixBins[sourceBin * frameCount + frame]);
 		}
 
 		WriteGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferCursor[slot],
@@ -3131,9 +3288,11 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_HRTF_TARGET,
 			NV_PAVS_VOICE_CFG_HRTF_TARGET_HANDLE, hrtfEntryIndex) &&
 		hrtfEntryIndex < m_VPHRTFEntries.size();
-	const bool capture3DForOpenAL = hrtfEnabled && g_AC97 != nullptr;
-	if (capture3DForOpenAL) {
+	const bool capture3DHandoff = hrtfEnabled && g_AC97 != nullptr;
+	const bool submit3DToAC97 = capture3DHandoff && m_EnableHostSpatialHandoff;
+	if (capture3DHandoff) {
 		m_VP3DVoiceCaptureScratch.assign(frameCount * 2, 0);
+		++m_ChunkCaptured3DVoiceCount;
 	}
 	auto storeCaptured3DSample = [&](size_t frame, float sampleLeft, float sampleRight, float envelopeGain) {
 		const size_t sampleIndex = frame * 2;
@@ -3408,7 +3567,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		}
 		if (multipass) {
 			applyLowPass(currentLeft, currentRight);
-			if (capture3DForOpenAL) {
+			if (capture3DHandoff) {
 				storeCaptured3DSample(frame, currentLeft, currentRight, envelopeGain);
 			}
 			if (hrtfEnabled) {
@@ -3449,7 +3608,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
 		applyLowPass(sampleLeft, sampleRight);
-		if (capture3DForOpenAL) {
+		if (capture3DHandoff) {
 			storeCaptured3DSample(frame, sampleLeft, sampleRight, envelopeGain);
 		}
 		if (hrtfEnabled) {
@@ -3479,7 +3638,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		return;
 	}
 
-	if (capture3DForOpenAL) {
+	if (submit3DToAC97) {
+		++m_ChunkSubmittedHostSpatialVoiceCount;
 		g_AC97->Submit3DVoiceFrames(voiceHandle, hrtfEntryIndex, stereo,
 			m_VPHRTFSubmix, hrtfSubmixVolumes, m_VPHRTFHeadroom,
 			m_VP3DVoiceCaptureScratch.data(), frameCount);
