@@ -144,6 +144,10 @@ private:
 	void WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status);
 	void NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status);
 	uint32_t GetVoicePlaybackOffset(uint32_t voiceHandle) const;
+	uint32_t GetVoiceNextHandle(uint32_t voiceHandle) const;
+	void SetVoiceNextHandle(uint32_t voiceHandle, uint32_t nextHandle);
+	void UnlinkVoiceFromList(uint32_t topRegister, uint32_t voiceHandle);
+	void UnlinkVoiceFromLists(uint32_t voiceHandle);
 	bool IsVoiceLocked(uint32_t voiceHandle) const;
 	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
 	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;

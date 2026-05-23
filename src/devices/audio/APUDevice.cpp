@@ -1017,6 +1017,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			return;
 		}
 
+		UnlinkVoiceFromLists(selectedHandle);
+
 		const uint32_t feav = GetRegister32(NV_PAPU_FEAV);
 		const uint32_t list = (feav & NV_PAPU_FEAV_LST) >> Ctz32(NV_PAPU_FEAV_LST);
 		const uint32_t antecedentVoice = feav & NV_PAPU_FEAV_VALUE;
@@ -1105,6 +1107,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		UnlinkVoiceFromLists(voiceHandle);
 		// Sample the guest-visible offset register before clearing the local playback cache so
 		// the completion notifier reflects the position software last programmed/observed.
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, GetVoicePlaybackOffset(voiceHandle));
@@ -1645,6 +1648,61 @@ uint32_t APUDevice::GetVoicePlaybackOffset(uint32_t voiceHandle) const
 	// currently be read.
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 	return currentOffset;
+}
+
+uint32_t APUDevice::GetVoiceNextHandle(uint32_t voiceHandle) const
+{
+	uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
+	if (voiceHandle < APU_VP_VOICE_MAX_HANDLE) {
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
+			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
+	}
+	return nextHandle;
+}
+
+void APUDevice::SetVoiceNextHandle(uint32_t voiceHandle, uint32_t nextHandle)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
+		return;
+	}
+
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
+		NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE,
+		std::min(nextHandle, APU_VP_VOICE_MAX_HANDLE));
+}
+
+void APUDevice::UnlinkVoiceFromList(uint32_t topRegister, uint32_t voiceHandle)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
+		return;
+	}
+
+	const uint32_t head = GetRegister32(topRegister);
+	if (head == voiceHandle) {
+		SetRegister32(topRegister, GetVoiceNextHandle(voiceHandle));
+		return;
+	}
+
+	uint32_t previousHandle = head;
+	for (size_t visited = 0; visited < APU_VP_VOICE_MAX_HANDLE && previousHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
+		const uint32_t nextHandle = GetVoiceNextHandle(previousHandle);
+		if (nextHandle == voiceHandle) {
+			SetVoiceNextHandle(previousHandle, GetVoiceNextHandle(voiceHandle));
+			return;
+		}
+		if (nextHandle == previousHandle) {
+			break;
+		}
+		previousHandle = nextHandle;
+	}
+}
+
+void APUDevice::UnlinkVoiceFromLists(uint32_t voiceHandle)
+{
+	UnlinkVoiceFromList(NV_PAPU_TVL2D, voiceHandle);
+	UnlinkVoiceFromList(NV_PAPU_TVL3D, voiceHandle);
+	UnlinkVoiceFromList(NV_PAPU_TVLMP, voiceHandle);
+	SetVoiceNextHandle(voiceHandle, APU_VP_VOICE_MAX_HANDLE);
 }
 
 bool APUDevice::IsVoiceLocked(uint32_t voiceHandle) const
@@ -2379,6 +2437,7 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 		const bool active = hasState && (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
 		if (!active) {
 			ConsumeVPMethod(SE2FE_IDLE_VOICE, voiceHandle, sizeof(uint32_t));
+			UnlinkVoiceFromLists(voiceHandle);
 		} else if (!IsVoiceLocked(voiceHandle)) {
 			RenderBasicVoice(voiceHandle, mixBins, frameCount, &diagnostics);
 		}
@@ -2767,6 +2826,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		playbackState.previewDecodeFailures = 0;
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
+		UnlinkVoiceFromLists(voiceHandle);
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
