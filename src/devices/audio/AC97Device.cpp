@@ -555,6 +555,8 @@ void AC97Device::Init()
 
 void AC97Device::Reset()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
+
 	std::memset(m_Registers.data(), 0, m_Registers.size());
 
 	WriteRegister16(AC97_Powerdown_Ctrl_Stat, AC97_POWER_READY);
@@ -589,6 +591,7 @@ void AC97Device::Reset()
 
 void AC97Device::ServiceAudio()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	UpdateBusMasterChannels();
 }
 
@@ -1112,6 +1115,7 @@ bool AC97Device::SubmitPending3DVoices(size_t frameCount, float leftOutputGain, 
 
 void AC97Device::Begin3DVoiceFrameBatch()
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	for (auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
 		(void)voiceHandle;
 		voiceState.active = false;
@@ -1123,6 +1127,7 @@ void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryInd
 	uint8_t hrtfHeadroom,
 	const int16_t* stereoSamples, size_t frameCount)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (stereoSamples == nullptr || frameCount == 0) {
 		return;
 	}
@@ -1147,6 +1152,7 @@ void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryInd
 void AC97Device::SubmitGuestSpatialSubmixFrames(uint32_t submixSlot, uint8_t routedBin,
 	const int16_t* monoSamples, size_t frameCount)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (monoSamples == nullptr || frameCount == 0 || submixSlot >= AC97_SPATIAL_SUBMIX_COUNT) {
 		return;
 	}
@@ -1176,6 +1182,7 @@ void AC97Device::SubmitGuestSpatialSubmixFrames(uint32_t submixSlot, uint8_t rou
 
 void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (samples == nullptr || frameCount == 0 || !EnsureOutputDevice()) {
 		return;
 	}
@@ -1471,6 +1478,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 
 uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (barIndex == 1) {
 		UpdateBusMasterChannels();
 	}
@@ -1487,6 +1495,7 @@ uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
 
 void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (barIndex == 1) {
 		UpdateBusMasterChannels();
 	}
@@ -1672,6 +1681,7 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 
 uint32_t AC97Device::MMIORead(int barIndex, uint32_t addr, unsigned size)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	(void)barIndex;
 
 	if (addr < AC97_MMIO_SIZE) {
@@ -1686,6 +1696,7 @@ uint32_t AC97Device::MMIORead(int barIndex, uint32_t addr, unsigned size)
 
 void AC97Device::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
+	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	(void)barIndex;
 
 	if (addr < AC97_MMIO_SIZE) {

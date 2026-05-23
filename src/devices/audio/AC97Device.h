@@ -31,6 +31,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -116,6 +117,7 @@ class AC97Device : public PCIDevice {
 		void LogOutputOperationFailure(const char* operation, ALenum sourceError) const;
 
 		std::array<uint8_t, 0x180> m_Registers{};
+		mutable std::recursive_mutex m_AudioMutex{};
 		std::array<uint32_t, 3> m_ChannelLastUpdate{};
 		std::array<uint32_t, 3> m_ChannelSampleRemainder{};
 		std::array<bool, 3> m_ChannelAdvanceOnRestart{};
