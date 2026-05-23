@@ -67,6 +67,7 @@ private:
 	struct PlaybackState {
 		uint32_t offset = 0;
 		double fraction = 0.0;
+		size_t previewDecodeFailures = 0;
 		bool valid = false;
 	};
 

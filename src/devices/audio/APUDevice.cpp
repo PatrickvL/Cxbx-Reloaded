@@ -330,6 +330,7 @@ constexpr float APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
 // record count rather than a byte count.
 constexpr uint32_t MCPX_HW_NOTIFIER_ENTRY_SIZE = 16;
 constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 2;
+// MCPX exposes four notifier slots per voice in the audio notifier table.
 constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 4;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLA_DONE = 0;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
@@ -2720,6 +2721,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	if (!playbackState.valid || playbackState.offset != currentOffset) {
 		playbackState.offset = currentOffset;
 		playbackState.fraction = 0.0;
+		playbackState.previewDecodeFailures = 0;
 		playbackState.valid = true;
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
@@ -2728,14 +2730,13 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t cachedADPCMBaseAddress = 0;
 	uint8_t cachedADPCMChannels = 0;
 	bool cachedADPCMValid = false;
-	size_t consecutivePreviewDecodeFailures = 0;
 	std::array<int16_t, APU_XADPCM_MAX_DECODED_SAMPLES> cachedADPCMSamples{};
 
 	auto sslData = m_VPSSLData[voiceHandle];
 	bool voiceStopped = false;
 	auto stopVoice = [&]() {
 		voiceStopped = true;
-		consecutivePreviewDecodeFailures = 0;
+		playbackState.previewDecodeFailures = 0;
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		playbackState = PlaybackState{};
@@ -3123,14 +3124,14 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				// interpolation continues briefly. Repeated look-ahead failures mean the next
 				// sample is persistently unreadable, so stop the voice instead of looping on
 				// the same broken preview forever.
-				if (++consecutivePreviewDecodeFailures >= APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES) {
+				if (++playbackState.previewDecodeFailures >= APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES) {
 					stopVoice();
 					break;
 				}
 				nextLeft = currentLeft;
 				nextRight = currentRight;
 			} else {
-				consecutivePreviewDecodeFailures = 0;
+				playbackState.previewDecodeFailures = 0;
 			}
 		}
 
