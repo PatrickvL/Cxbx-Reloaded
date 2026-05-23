@@ -271,7 +271,12 @@ constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE = 0x00000FFF;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME = 0x00FFF000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1 = 0x00000010;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1_EF_ATTACKRATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1_EF_DELAYTIME = 0x00FFF000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF = 0x00000014;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF_EF_DECAYRATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF_EF_HOLDTIME = 0x00FFF000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF_EF_SUSTAINLEVEL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_MISC = 0x00000018;
 constexpr uint32_t NV_PAVS_VOICE_CFG_HRTF_TARGET = 0x0000001C;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSL_START = 0x00000020;
@@ -523,6 +528,35 @@ uint32_t MergeMaskedValue(uint32_t current, uint32_t mask, uint32_t value)
 	}
 
 	return (current & ~mask) | ((value << Ctz32(mask)) & mask);
+}
+
+struct EnvelopeFieldConfig {
+	uint32_t attackRateMask;
+	uint32_t delayTimeMask;
+	uint32_t decayRateMask;
+	uint32_t holdTimeMask;
+	uint32_t sustainLevelMask;
+};
+
+const EnvelopeFieldConfig& GetEnvelopeFieldConfig(uint32_t reg0, uint32_t regA)
+{
+	static constexpr EnvelopeFieldConfig kAmplitudeEnvelopeFieldConfig{
+		NV_PAVS_VOICE_CFG_ENV0_EA_ATTACKRATE,
+		NV_PAVS_VOICE_CFG_ENV0_EA_DELAYTIME,
+		NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE,
+		NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME,
+		NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL,
+	};
+	static constexpr EnvelopeFieldConfig kFilterEnvelopeFieldConfig{
+		NV_PAVS_VOICE_CFG_ENV1_EF_ATTACKRATE,
+		NV_PAVS_VOICE_CFG_ENV1_EF_DELAYTIME,
+		NV_PAVS_VOICE_CFG_ENVF_EF_DECAYRATE,
+		NV_PAVS_VOICE_CFG_ENVF_EF_HOLDTIME,
+		NV_PAVS_VOICE_CFG_ENVF_EF_SUSTAINLEVEL,
+	};
+	return (reg0 == NV_PAVS_VOICE_CFG_ENV1 && regA == NV_PAVS_VOICE_CFG_ENVF)
+		? kFilterEnvelopeFieldConfig
+		: kAmplitudeEnvelopeFieldConfig;
 }
 
 uint32_t AbsoluteMixMagnitude(int32_t value)
@@ -2538,6 +2572,7 @@ void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnV
 	const auto initializeEnvelope = [&](uint32_t startState, uint32_t reg0, uint32_t regA,
 		uint32_t releaseRegister, uint32_t releaseMask, uint32_t levelRegister,
 		uint32_t levelMask, uint32_t countMask, uint32_t stateMask) {
+		const auto& fieldConfig = GetEnvelopeFieldConfig(reg0, regA);
 		uint32_t count = 0;
 		uint32_t level = 0xFF;
 
@@ -2545,7 +2580,7 @@ void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnV
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF:
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_DELAY:
-			ReadVoiceMask(voiceHandle, reg0, NV_PAVS_VOICE_CFG_ENV0_EA_DELAYTIME, count);
+			ReadVoiceMask(voiceHandle, reg0, fieldConfig.delayTimeMask, count);
 			count *= 16;
 			level = 0;
 			break;
@@ -2553,15 +2588,15 @@ void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnV
 			level = 0;
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD:
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME, count);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.holdTimeMask, count);
 			count *= 16;
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY:
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, count);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.decayRateMask, count);
 			count *= 16;
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN:
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, level);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.sustainLevelMask, level);
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE:
 			ReadVoiceMask(voiceHandle, releaseRegister, releaseMask, count);
@@ -2631,6 +2666,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 	uint32_t rrReg, uint32_t rrMask, uint32_t levelRegister, uint32_t levelMask,
 	uint32_t countMask, uint32_t stateMask)
 {
+	const auto& fieldConfig = GetEnvelopeFieldConfig(reg0, regA);
 	uint32_t currentState = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask, currentState)) {
 		return 1.0f;
@@ -2663,7 +2699,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		uint32_t count = 0;
 		uint32_t attackRate = 0;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
-		ReadVoiceMask(voiceHandle, reg0, NV_PAVS_VOICE_CFG_ENV0_EA_ATTACKRATE, attackRate);
+		ReadVoiceMask(voiceHandle, reg0, fieldConfig.attackRateMask, attackRate);
 
 		const uint32_t attackSpan = attackRate * 16;
 		uint32_t level = 0xFF;
@@ -2674,7 +2710,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 
 		if (attackRate == 0 || count >= attackSpan) {
 			uint32_t holdTime = 0;
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME, holdTime);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.holdTimeMask, holdTime);
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD);
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, holdTime * 16);
@@ -2691,7 +2727,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0xFF);
 		if (count == 0) {
 			uint32_t decayRate = 0;
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, decayRate);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.decayRateMask, decayRate);
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY);
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, decayRate * 16);
@@ -2705,8 +2741,8 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		uint32_t decayRate = 0;
 		uint32_t sustainLevel = 0;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
-		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, decayRate);
-		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, sustainLevel);
+		ReadVoiceMask(voiceHandle, regA, fieldConfig.decayRateMask, decayRate);
+		ReadVoiceMask(voiceHandle, regA, fieldConfig.sustainLevelMask, sustainLevel);
 
 		if (decayRate == 0 || count == 0) {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
@@ -2730,7 +2766,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 	}
 	case NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN: {
 		uint32_t sustainLevel = 0;
-		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, sustainLevel);
+		ReadVoiceMask(voiceHandle, regA, fieldConfig.sustainLevelMask, sustainLevel);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
 		WriteVoiceMask(voiceHandle, levelRegister, levelMask, sustainLevel);
 		return static_cast<float>(sustainLevel) / 255.0f;
