@@ -166,6 +166,7 @@ private:
 		void* dest, size_t size) const;
 	bool WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
 		const void* src, size_t size);
+	bool HasGuestDspExecution() const;
 	bool HasGuestVPOutputBufferPlaybackPath() const;
 	bool MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak);
 	bool SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<uint32_t, 4>* slotPeak);

@@ -2079,8 +2079,22 @@ bool APUDevice::ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, 
 	return true;
 }
 
+bool APUDevice::HasGuestDspExecution() const
+{
+	// xemu only routes monitor/output-buffer audio when the GP/EP DSP path is
+	// actually running; otherwise it bypasses VP audio straight to the host sink.
+	// Our GP/EP memory windows exist, but the DSP execution stage is still absent,
+	// so configured output buffers must not steal playback from the audible OpenAL
+	// VP bypass path.
+	return false;
+}
+
 bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 {
+	if (!HasGuestDspExecution()) {
+		return false;
+	}
+
 	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 		const uint32_t bin = m_VPHRTFSubmix[slot];
 		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
