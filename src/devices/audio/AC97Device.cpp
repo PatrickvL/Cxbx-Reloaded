@@ -1503,11 +1503,12 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 				const size_t transferBytes = static_cast<size_t>(consumed) * frameBytes;
 				const uint32_t transferAddress = descriptorAddress + static_cast<uint32_t>(descriptorOffset) * frameBytes;
 				if (channelBase == NABM_PO_BASE) {
-					std::vector<int16_t> pcmFrames((transferBytes + sizeof(int16_t) - 1) / sizeof(int16_t));
-					if (!pcmFrames.empty() &&
-						ReadGuestBytes(transferAddress, pcmFrames.data(), transferBytes)) {
-						SubmitPCMFrames(pcmFrames.data(), consumed);
-					} else if (!pcmFrames.empty()) {
+					// Round byte-sized DMA payloads up to whole int16_t storage units.
+					m_PlaybackDMAScratch.resize((transferBytes + sizeof(int16_t) - 1) / sizeof(int16_t));
+					if (!m_PlaybackDMAScratch.empty() &&
+						ReadGuestBytes(transferAddress, m_PlaybackDMAScratch.data(), transferBytes)) {
+						SubmitPCMFrames(m_PlaybackDMAScratch.data(), consumed);
+					} else if (!m_PlaybackDMAScratch.empty()) {
 						m_ChannelDescriptorError[channelIndex] = true;
 						status |= SR_FIFOE;
 						break;
