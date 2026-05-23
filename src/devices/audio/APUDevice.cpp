@@ -107,6 +107,7 @@ constexpr uint32_t NV_PAPU_EPSMAXSGE = 0x000020DC;
 constexpr uint32_t NV_PAPU_EPFMAXSGE = 0x000020E0;
 
 constexpr uint32_t NV_PAPU_GPRST_GPRST = 1 << 0;
+constexpr uint32_t NV_PAPU_EPRST_EPRST = 1 << 0;
 
 constexpr uint32_t NV_PAPU_FEAV_VALUE = 0x0000FFFF;
 constexpr uint32_t NV_PAPU_FEAV_LST = 0x00030000;
@@ -854,7 +855,8 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 
 	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
 		// XGSCNT reflects guest-visible rendered sample progress rather than raw
-		// host time, so it naturally freezes while XCNTMODE is disabled.
+		// host time; SynchronizeAudio only advances this counter while XCNTMODE
+		// allows audio progress, so MMIO reads expose the frozen value directly.
 		return ReadRegisterFragment(m_XGSCounter, addr - NV_PAPU_XGSCNT, size);
 	}
 
@@ -1101,7 +1103,7 @@ void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 	}
 	WriteRegister(APU_EP_BASE + addr, value, size);
 	if (addr == NV_PAPU_EPRST && size == sizeof(uint32_t) &&
-		(value & NV_PAPU_GPRST_GPRST) == 0) {
+		(value & NV_PAPU_EPRST_EPRST) == 0) {
 		m_EPXMem.fill(0);
 		m_EPYMem.fill(0);
 		m_EPPMem.fill(0);
