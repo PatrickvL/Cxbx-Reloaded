@@ -959,7 +959,7 @@ uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, size);
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		// PMEM is the DSP image/program window, not part of the GP scratch DMA aperture.
+		// GPPMEM is GP DSP PMEM/program storage, not part of the GP scratch DMA aperture.
 		return ReadMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, size);
 	}
 	return ReadRegister(APU_GP_BASE + addr, size);
@@ -1039,7 +1039,7 @@ uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, size);
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		// PMEM is the DSP image/program window, not part of the EP scratch DMA aperture.
+		// EPPMEM is EP DSP PMEM/program storage, not part of the EP scratch DMA aperture.
 		return ReadMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, size);
 	}
 	return ReadRegister(APU_EP_BASE + addr, size);
@@ -2639,7 +2639,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	if (voiceTableBase == 0) {
 		if (!m_LoggedMissingVoiceTableDuringRender) {
 			EmuLog(LOG_LEVEL::WARNING,
-				"APU render using internal shadow voice table because NV_PAPU_VPVADDR is still zero; this is expected until the guest publishes its voice table");
+				"APU render using internal shadow voice table because NV_PAPU_VPVADDR is still zero. This is expected until the guest publishes its voice table.");
 			m_LoggedMissingVoiceTableDuringRender = true;
 		}
 	} else {
