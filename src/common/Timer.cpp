@@ -297,12 +297,10 @@ static void dispatch_non_periodic_events()
 	dsound_worker();
 
 	// Detect stuck threads polling an APU play cursor that HLE doesn't advance.
-	// Three independent detection paths cover different game behaviours:
-	//   1. detect_apu_play_cursor_scan   — proactive memory scan (no thread suspension)
-	//   2. detect_apu_play_cursor_spin   — thread-snapshot scan for tight spin-loops
-	//   3. WaitApc in EmuKrnl.h          — cursor scan triggered by stalled KeWait stall
-	detect_apu_play_cursor_scan();
-	detect_apu_play_cursor_spin();
+	// Primary detection is in the PRESENT-STALL handler (Emu.cpp) via EDX register,
+	// and in EmuKrnl.h via WAIT-STALL / WAIT-STALL-FIN event-based detection.
+	//detect_apu_play_cursor_scan();
+	//detect_apu_play_cursor_spin();
 
 	for (int i = 0; i < MAX_BUS_INTERRUPT_LEVEL; i++) {
 		// Skip IRQ 3 (GPU/NV2A) — delivered explicitly by

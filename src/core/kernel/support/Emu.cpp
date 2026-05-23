@@ -38,6 +38,7 @@
 #include "CxbxDebugger.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
+#include "core\hle\DSOUND\DirectSound\DirectSoundGlobal.hpp"
 
 #include <Dbghelp.h>
 #include <TlHelp32.h>
@@ -498,6 +499,64 @@ void EmuPrintStackTrace(PCONTEXT ContextRecord)
     // LeaveCriticalSection(&dbgCritical);
 }
 
+// Lightweight check: scan all threads for a game-thread stuck in the APU
+// play-cursor spin-loop (EIP ~0x001987xx, EDX in contiguous memory).  If found,
+// activate cursor advancement.  Called from EmuCheckPresentStall every 5 seconds
+// while the game is stalled, supporting multi-phase audio loading.
+void EmuDumpAllThreadStacks(const char* reason);
+
+void EmuDetectSpinCursor()
+{
+    DWORD currentPid = GetCurrentProcessId();
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE) return;
+
+    THREADENTRY32 te = { sizeof(THREADENTRY32) };
+    if (Thread32First(hSnapshot, &te)) {
+        do {
+            if (te.th32OwnerProcessID != currentPid) continue;
+
+            HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT,
+                                        FALSE, te.th32ThreadID);
+            if (!hThread) continue;
+
+            DWORD suspendCount = SuspendThread(hThread);
+            if (suspendCount == (DWORD)-1) { CloseHandle(hThread); continue; }
+
+            CONTEXT ctx = {};
+            ctx.ContextFlags = CONTEXT_FULL;
+            if (GetThreadContext(hThread, &ctx)) {
+                if (ctx.Eip >= 0x00100000 && ctx.Eip < 0x00400000 &&
+                    ctx.Edx >= 0x80000000 && ctx.Edx < 0x84000000 && (ctx.Edx & 0x3) == 0) {
+                    DWORD cbo = *reinterpret_cast<volatile DWORD*>(ctx.Edx);
+                    if (cbo < 0x100000) {
+                        DWORD cursorAddr = reinterpret_cast<uintptr_t>(g_ApuPlayCursor.pCursor);
+                        if (g_ApuPlayCursor.pCursor == nullptr || ctx.Edx != cursorAddr) {
+                            LARGE_INTEGER qpc;
+                            QueryPerformanceCounter(&qpc);
+                            g_ApuPlayCursor.pCursor = reinterpret_cast<volatile DWORD*>(ctx.Edx);
+                            g_ApuPlayCursor.bufSize = 0x200000;
+                            g_ApuPlayCursor.rate = 96000;
+                            g_ApuPlayCursor.lastQPC = qpc.QuadPart;
+                            // The KEVENT the game waits on lives at a fixed .data address
+                            // (struct+0x2564, event observed at 0x001A44E4 across all runs).
+                            g_ApuPlayCursor.pEvent = reinterpret_cast<void*>(0x001A44E4);
+                            fprintf(stderr, "[APU-CURSOR] PRESENT-STALL reactivated: cursor=0x%08X (was 0x%08X) cbo=%u\n",
+                                ctx.Edx, cursorAddr, cbo);
+                            fflush(stderr);
+                        }
+                    }
+                }
+            }
+
+            ResumeThread(hThread);
+            CloseHandle(hThread);
+        } while (Thread32Next(hSnapshot, &te));
+    }
+
+    CloseHandle(hSnapshot);
+}
+
 // Dump stack traces for all threads in the current process.
 // Used to diagnose hangs when presents stop arriving.
 void EmuDumpAllThreadStacks(const char* reason)
@@ -623,12 +682,12 @@ void EmuPresentTick()
 void EmuCheckPresentStall(uint64_t stallThresholdMs)
 {
     uint64_t lastTick = g_LastPresentTick.load(std::memory_order_relaxed);
-    if (lastTick == 0) return; // No present has happened yet
+    if (lastTick == 0) return;
 
     uint64_t now = GetTickCount64();
     uint64_t elapsed = now - lastTick;
     if (elapsed > stallThresholdMs) {
-        // Only dump once per stall episode
+        // Dump stacks once per stall episode for diagnosis.
         bool expected = false;
         if (g_PresentStallDumped.compare_exchange_strong(expected, true)) {
             char reason[128];
@@ -637,5 +696,8 @@ void EmuCheckPresentStall(uint64_t stallThresholdMs)
                      elapsed / 1000.0, stallThresholdMs / 1000.0);
             EmuDumpAllThreadStacks(reason);
         }
+        // Cursor detection runs on every check (every 5s) to handle
+        // multi-phase audio loading that changes the play-cursor address.
+        EmuDetectSpinCursor();
     }
 }

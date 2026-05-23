@@ -486,23 +486,20 @@ void dsound_worker()
             if (advance > 0) {
                 DWORD cur = *g_ApuPlayCursor.pCursor;
                 DWORD next = cur + advance;
-                // Cap at buffer size (one-shot playback) — if the game uses circular
-                // buffers this will need wrapping logic, but linear is the common case
-                // for streaming audio during loading screens.
+                // Cap at buffer size (one-shot playback).
                 if (next > g_ApuPlayCursor.bufSize) {
                     next = g_ApuPlayCursor.bufSize;
                 }
                 *g_ApuPlayCursor.pCursor = next;
                 g_ApuPlayCursor.lastQPC = now.QuadPart;
+            }
 
-                // Signal the associated event (if any) to wake game threads that use
-                // KeWaitForSingleObject instead of busy-polling the cursor.
-                if (g_ApuPlayCursor.pEvent != nullptr) {
-                    auto* event = reinterpret_cast<xbox::PKEVENT>(g_ApuPlayCursor.pEvent);
-                    if (event->Header.SignalState == 0) {
-                        xbox::KeSetEvent(event, 0, FALSE);
-                    }
-                }
+            // Signal the KEVENT on every tick so the game thread continuously
+            // re-checks its condition — necessary for both event-wait and
+            // spin-loop paths to make forward progress across multi-phase loads.
+            if (g_ApuPlayCursor.pEvent != nullptr) {
+                xbox::KeSetEvent(
+                    reinterpret_cast<xbox::PKEVENT>(g_ApuPlayCursor.pEvent), 0, FALSE);
             }
         }
     }
