@@ -1328,6 +1328,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		WriteVPScatterGatherEntry(m_VPOutputSgeHandle, value & NV1BA0_PIO_SET_CURRENT_OUTBUF_SGE_OFFSET_PARAMETER);
 		return;
 	case SE2FE_IDLE_VOICE:
+		SetRegister32(NV_PAPU_FECV, value & APU_VP_VOICE_MAX_HANDLE);
 		if ((GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0) {
 			uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
 			fectl &= ~(NV_PAPU_FECTL_FEMETHMODE | NV_PAPU_FECTL_FETRAPREASON);
@@ -2190,6 +2191,12 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const size_t visited3D = RenderBasicVoiceList(NV_PAPU_TVL3D, mixBins.data(), frameCount);
 	const size_t visitedMP = RenderBasicVoiceList(NV_PAPU_TVLMP, mixBins.data(), frameCount);
 	const bool hasVoiceActivity = (visited2D + visited3D + visitedMP) != 0;
+	if (voiceTableBase != 0 &&
+		!hasVoiceActivity &&
+		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
+		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+		ConsumeVPMethod(SE2FE_IDLE_VOICE, APU_VP_VOICE_MAX_HANDLE, sizeof(uint32_t));
+	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (!hasVoiceActivity) {
 			if (!m_LoggedEmptyVoiceTableDiagnostics) {
