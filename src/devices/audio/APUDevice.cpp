@@ -524,11 +524,18 @@ uint32_t Ctz32(uint32_t value)
 
 uint32_t Ctz64(uint64_t value)
 {
+	if (value == 0) {
+		return 64;
+	}
+#if defined(__clang__) || defined(__GNUC__)
+	return static_cast<uint32_t>(__builtin_ctzll(value));
+#else
 	uint32_t shift = 0;
-	while (((value >> shift) & 1u) == 0u && shift < 64) {
+	while (((value >> shift) & 1u) == 0u) {
 		++shift;
 	}
 	return shift;
+#endif
 }
 
 bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& hostAddress)
