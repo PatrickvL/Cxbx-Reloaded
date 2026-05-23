@@ -1546,17 +1546,17 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 				continue;
 			}
 
-			const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
+			const uint8_t completedIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
 			const uint8_t lastValidIndex = static_cast<uint8_t>(ReadRegister(lviAddr, sizeof(uint8_t)) & 0x1F);
-			const uint32_t descriptorBase = ReadRegister(bdbarAddr, sizeof(uint32_t)) & ~0x7u;
-			uint32_t descriptorControl = 0;
-			if (descriptorBase != 0 &&
-				ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl) &&
-				(descriptorControl & AC97_DESCRIPTOR_IOC) != 0) {
+			const uint32_t completedDescriptorBase = ReadRegister(bdbarAddr, sizeof(uint32_t)) & ~0x7u;
+			uint32_t completedDescriptorControl = 0;
+			if (completedDescriptorBase != 0 &&
+				ReadGuest32(completedDescriptorBase + completedIndex * AC97_DESCRIPTOR_STRIDE + 4, completedDescriptorControl) &&
+				(completedDescriptorControl & AC97_DESCRIPTOR_IOC) != 0) {
 				status |= SR_BCIS;
 			}
 
-			if (currentIndex == lastValidIndex) {
+			if (completedIndex == lastValidIndex) {
 				m_ChannelAdvanceOnRestart[channelIndex] = true;
 				m_ChannelQueuedAfterHalt[channelIndex] = false;
 				status |= SR_LVBCI;
