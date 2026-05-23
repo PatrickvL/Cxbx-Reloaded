@@ -31,6 +31,7 @@
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
 #include "common/audio/XADPCM.h"
+#include "core/kernel/exports/EmuKrnl.h"
 #include "core/kernel/support/Emu.h"
 
 #include <algorithm>
@@ -357,6 +358,7 @@ static_assert(APU_HRTF_SUBMIX_COUNT <= 8, "HRTF submix handoff expects no more t
 constexpr size_t APU_HRTF_ENTRY_COUNT = 128;
 constexpr size_t APU_HRTF_COEFFICIENT_COUNT = APUDevice::HRTF_FILTER_TAPS;
 constexpr uint32_t APU_INVALID_HRTF_ENTRY_INDEX = 0xFFFF;
+constexpr uint32_t APU_IRQ = 5;
 constexpr float APU_HRTF_ITD_SCALE = 512.0f;
 constexpr float APU_HRTF_PARAM_SMOOTH_ALPHA = 0.01f;
 constexpr float APU_HRTF_NORMALIZATION_EPSILON = 0.000001f;
@@ -856,16 +858,20 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 {
 	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
-		return ReadMemoryWindow(m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, size);
 	}
 	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
-		return ReadMemoryWindow(m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, size);
 	}
 	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
-		return ReadMemoryWindow(m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, size);
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		return ReadMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, size);
 	}
 	return ReadRegister(APU_GP_BASE + addr, size);
 }
@@ -873,19 +879,23 @@ uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 void APUDevice::GPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
-		WriteMemoryWindow(m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
-		WriteMemoryWindow(m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
-		WriteMemoryWindow(m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		WriteMemoryWindow(m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
+			m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, value, size);
 		return;
 	}
 	WriteRegister(APU_GP_BASE + addr, value, size);
@@ -933,13 +943,16 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 {
 	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
-		return ReadMemoryWindow(m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, size);
 	}
 	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
-		return ReadMemoryWindow(m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, size);
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		return ReadMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, size);
+		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, size);
 	}
 	return ReadRegister(APU_EP_BASE + addr, size);
 }
@@ -947,15 +960,18 @@ uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
-		WriteMemoryWindow(m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
-		WriteMemoryWindow(m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, value, size);
 		return;
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		WriteMemoryWindow(m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, value, size);
+		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
+			m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, value, size);
 		return;
 	}
 	WriteRegister(APU_EP_BASE + addr, value, size);
@@ -1508,6 +1524,111 @@ bool APUDevice::WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint3
 	current &= ~mask;
 	current |= (value << shift) & mask;
 	return WriteGuestWord(guestAddress, current);
+}
+
+bool APUDevice::ReadScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, void* dest, size_t size) const
+{
+	if (dest == nullptr || size == 0) {
+		return false;
+	}
+
+	auto* bytes = reinterpret_cast<uint8_t*>(dest);
+	uint32_t currentAddress = addr;
+	size_t remaining = size;
+	while (remaining > 0) {
+		const uint32_t pageEntry = currentAddress / APU_SGE_PAGE_SIZE;
+		if (pageEntry > maxSge) {
+			return false;
+		}
+
+		uint32_t pageBase = 0;
+		if (!ReadGuestWord(sgeBase + pageEntry * 8, pageBase)) {
+			return false;
+		}
+
+		const uint32_t offsetInPage = currentAddress % APU_SGE_PAGE_SIZE;
+		const size_t chunk = std::min<size_t>(remaining, APU_SGE_PAGE_SIZE - offsetInPage);
+		if (!ReadGuestBytes(pageBase + offsetInPage, bytes, chunk)) {
+			return false;
+		}
+
+		bytes += chunk;
+		currentAddress += static_cast<uint32_t>(chunk);
+		remaining -= chunk;
+	}
+
+	return true;
+}
+
+bool APUDevice::WriteScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, const void* src, size_t size)
+{
+	if (src == nullptr || size == 0) {
+		return false;
+	}
+
+	const auto* bytes = reinterpret_cast<const uint8_t*>(src);
+	uint32_t currentAddress = addr;
+	size_t remaining = size;
+	while (remaining > 0) {
+		const uint32_t pageEntry = currentAddress / APU_SGE_PAGE_SIZE;
+		if (pageEntry > maxSge) {
+			return false;
+		}
+
+		uint32_t pageBase = 0;
+		if (!ReadGuestWord(sgeBase + pageEntry * 8, pageBase)) {
+			return false;
+		}
+
+		const uint32_t offsetInPage = currentAddress % APU_SGE_PAGE_SIZE;
+		const size_t chunk = std::min<size_t>(remaining, APU_SGE_PAGE_SIZE - offsetInPage);
+		if (!WriteGuestBytes(pageBase + offsetInPage, bytes, chunk)) {
+			return false;
+		}
+
+		bytes += chunk;
+		currentAddress += static_cast<uint32_t>(chunk);
+		remaining -= chunk;
+	}
+
+	return true;
+}
+
+uint32_t APUDevice::ReadScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+	const uint8_t* data, size_t length, uint32_t addr, unsigned size) const
+{
+	if (size == 0 || addr + size > length) {
+		return 0;
+	}
+
+	const uint32_t sgeBase = GetRegister32(sgeBaseRegister);
+	if (sgeBase != 0) {
+		std::array<uint8_t, sizeof(uint32_t)> scratch{};
+		if (ReadScatterGatherBytes(sgeBase, GetRegister32(maxSgeRegister), addr, scratch.data(), size)) {
+			return ReadLE(scratch.data(), 0, size);
+		}
+	}
+
+	return ReadMemoryWindow(data, length, addr, size);
+}
+
+void APUDevice::WriteScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+	uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size)
+{
+	if (size == 0 || addr + size > length) {
+		return;
+	}
+
+	const uint32_t sgeBase = GetRegister32(sgeBaseRegister);
+	if (sgeBase != 0) {
+		std::array<uint8_t, sizeof(uint32_t)> scratch{};
+		WriteLE(scratch.data(), 0, value, size);
+		if (WriteScatterGatherBytes(sgeBase, GetRegister32(maxSgeRegister), addr, scratch.data(), size)) {
+			return;
+		}
+	}
+
+	WriteMemoryWindow(data, length, addr, value, size);
 }
 
 uint32_t APUDevice::RefreshFEMemDataRegister(uint32_t fallbackValue)
@@ -3389,4 +3510,5 @@ void APUDevice::RefreshInterruptStatus()
 	}
 
 	SetRegister32(NV_PAPU_ISTS, status);
+	HalSystemInterrupts[APU_IRQ].Assert((status & NV_PAPU_ISTS_GINTSTS) != 0);
 }

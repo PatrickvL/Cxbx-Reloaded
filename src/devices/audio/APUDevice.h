@@ -135,6 +135,12 @@ private:
 	bool WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size);
 	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
 	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
+	bool ReadScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, void* dest, size_t size) const;
+	bool WriteScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, const void* src, size_t size);
+	uint32_t ReadScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+		const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
+	void WriteScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+		uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
 	uint32_t RefreshFEMemDataRegister(uint32_t fallbackValue);
 	bool ResolveOptionalGuestTableBase(uint32_t registerAddress, uint32_t fallbackGuestAddress, uint32_t& guestBase) const;
 	void SignalNotifierInterrupt();
