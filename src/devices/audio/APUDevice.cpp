@@ -3345,6 +3345,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_HRTF_TARGET,
 			NV_PAVS_VOICE_CFG_HRTF_TARGET_HANDLE, hrtfEntryIndex) &&
 		hrtfEntryIndex < m_VPHRTFEntries.size();
+	float guestHRTFPan = 0.0f;
 	const bool capture3DHandoff = hrtfEnabled && g_AC97 != nullptr;
 	const bool submit3DToAC97 = capture3DHandoff && m_EnableHostSpatialHandoff;
 	if (capture3DHandoff) {
@@ -3360,7 +3361,25 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		m_VP3DVoiceCaptureScratch[sampleIndex + 1] = ConvertFloatSampleToInt16(sampleRight * envelopeGain);
 	};
 	if (hrtfEnabled) {
-		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
+		const auto& hrtfEntry = m_VPHRTFEntries[hrtfEntryIndex];
+		SetHRTFFilterTarget(voiceHandle, hrtfEntry);
+		float leftMagnitude = 0.0f;
+		float rightMagnitude = 0.0f;
+		for (const int8_t coefficient : hrtfEntry.coeffs[0]) {
+			leftMagnitude += std::fabs(static_cast<float>(coefficient));
+		}
+		for (const int8_t coefficient : hrtfEntry.coeffs[1]) {
+			rightMagnitude += std::fabs(static_cast<float>(coefficient));
+		}
+		const float normalizedItd = std::clamp(
+			static_cast<float>(hrtfEntry.itd) / (APU_HRTF_ITD_SCALE * APU_HRTF_MAX_DELAY_SAMPLES_FLOAT),
+			-1.0f,
+			1.0f);
+		const float magnitudeSum = leftMagnitude + rightMagnitude;
+		const float magnitudeBalance = magnitudeSum > APU_HRTF_NORMALIZATION_EPSILON
+			? ((rightMagnitude - leftMagnitude) / magnitudeSum)
+			: 0.0f;
+		guestHRTFPan = std::clamp(normalizedItd * 0.75f + magnitudeBalance * 0.25f, -1.0f, 1.0f);
 	}
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		// Streaming voices can surface VP-linear offsets, raw physical offsets, or
@@ -3697,7 +3716,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 	if (submit3DToAC97) {
 		++m_ChunkSubmittedHostSpatialVoiceCount;
-		g_AC97->Submit3DVoiceFrames(voiceHandle, hrtfEntryIndex, stereo,
+		g_AC97->Submit3DVoiceFrames(voiceHandle, hrtfEntryIndex, guestHRTFPan, stereo,
 			m_VPHRTFSubmix, hrtfSubmixVolumes, m_VPHRTFHeadroom,
 			m_VP3DVoiceCaptureScratch.data(), frameCount);
 	}

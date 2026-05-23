@@ -377,23 +377,31 @@ float DecodeSpatialOutputGain(float leftGain, float rightGain)
 	return (leftGain + rightGain) * 0.5f;
 }
 
+float ResolveSpatialPan(uint8_t routedBin, bool hasGuestHRTFPan, float guestHRTFPan)
+{
+	if (hasGuestHRTFPan) {
+		return std::clamp(guestHRTFPan, -1.0f, 1.0f);
+	}
+
+	return (routedBin & 1u) != 0 ? 1.0f : -1.0f;
+}
+
 bool IsDirectStereoBin(uint8_t routedBin)
 {
 	// The guest's mixbins 0 and 1 feed the primary left/right AC97 stereo stream.
 	return routedBin <= 1;
 }
 
-std::array<float, 3> ComputeSpatialSubmixPosition(uint8_t routedBin)
+std::array<float, 3> ComputeSpatialSubmixPosition(uint8_t routedBin, bool hasGuestHRTFPan, float guestHRTFPan)
 {
 	constexpr float kSpatialPositionFront = -1.0f;
 	constexpr float kSpatialPositionRear = 1.0f;
 	// Return [x, y, z] in OpenAL listener space, where x spans left (-1.0) to
 	// right (1.0) and z spans front (-1.0) to rear (1.0). Preserve the guest's
-	// left/right mixbin affinity by bin parity and treat any non-stereo HRTF
-	// submix destination as rear-biased so it stays distinct from the primary
-	// AC97 stereo stream.
+	// non-stereo rear bias while allowing direct 3D voice handoff to override the
+	// left/right placement with a pan derived from the programmed HRTF entry.
 	return {
-		(routedBin & 1u) != 0 ? 1.0f : -1.0f,
+		ResolveSpatialPan(routedBin, hasGuestHRTFPan, guestHRTFPan),
 		0.0f,
 		IsDirectStereoBin(routedBin) ? kSpatialPositionFront : kSpatialPositionRear
 	};
@@ -927,7 +935,10 @@ bool AC97Device::QueueSpatialVoiceSubmix(uint32_t voiceHandle, const SpatialVoic
 	sourceState.voiceHandle = voiceHandle;
 	sourceState.submixSlot = static_cast<uint8_t>(submixSlot);
 	sourceState.active = true;
-	const std::array<float, 3> sourcePosition = ComputeSpatialSubmixPosition(routedBin);
+	const std::array<float, 3> sourcePosition = ComputeSpatialSubmixPosition(
+		routedBin,
+		voiceState.hasGuestHRTFPan,
+		voiceState.guestHRTFPan);
 	alSource3f(sourceState.source, AL_POSITION,
 		sourcePosition[0], sourcePosition[1], sourcePosition[2]);
 
@@ -1101,7 +1112,7 @@ void AC97Device::Begin3DVoiceFrameBatch()
 	}
 }
 
-void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, bool sourceStereo,
+void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, float guestHRTFPan, bool sourceStereo,
 	const std::array<uint8_t, 4>& hrtfSubmix, const std::array<uint32_t, 4>& hrtfSubmixVolumes,
 	uint8_t hrtfHeadroom,
 	const int16_t* stereoSamples, size_t frameCount)
@@ -1114,7 +1125,9 @@ void AC97Device::Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryInd
 	voiceState.active = true;
 	voiceState.sourceStereo = sourceStereo;
 	voiceState.guestOutputSubmix = false;
+	voiceState.hasGuestHRTFPan = true;
 	voiceState.hrtfEntryIndex = hrtfEntryIndex;
+	voiceState.guestHRTFPan = guestHRTFPan;
 	voiceState.hrtfSubmix = hrtfSubmix;
 	voiceState.hrtfSubmixVolumes = hrtfSubmixVolumes;
 	voiceState.hrtfHeadroom = hrtfHeadroom;
@@ -1136,7 +1149,9 @@ void AC97Device::SubmitGuestSpatialSubmixFrames(uint32_t submixSlot, uint8_t rou
 	voiceState.active = true;
 	voiceState.sourceStereo = false;
 	voiceState.guestOutputSubmix = true;
+	voiceState.hasGuestHRTFPan = false;
 	voiceState.hrtfEntryIndex = 0xFFFFFFFF;
+	voiceState.guestHRTFPan = 0.0f;
 	voiceState.hrtfSubmix.fill(0);
 	voiceState.hrtfSubmix[submixSlot] = routedBin;
 	voiceState.hrtfSubmixVolumes.fill(0x0FFF);

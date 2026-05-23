@@ -52,7 +52,7 @@ class AC97Device : public PCIDevice {
 		uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
 		void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
 		void Begin3DVoiceFrameBatch();
-		void Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, bool sourceStereo,
+		void Submit3DVoiceFrames(uint32_t voiceHandle, uint32_t hrtfEntryIndex, float guestHRTFPan, bool sourceStereo,
 			const std::array<uint8_t, 4>& hrtfSubmix, const std::array<uint32_t, 4>& hrtfSubmixVolumes,
 			uint8_t hrtfHeadroom,
 			const int16_t* stereoSamples, size_t frameCount);
@@ -73,7 +73,9 @@ class AC97Device : public PCIDevice {
 			bool active = false;
 			bool sourceStereo = false;
 			bool guestOutputSubmix = false;
+			bool hasGuestHRTFPan = false;
 			uint32_t hrtfEntryIndex = 0xFFFFFFFF;
+			float guestHRTFPan = 0.0f;
 			std::array<uint8_t, 4> hrtfSubmix{};
 			std::array<uint32_t, 4> hrtfSubmixVolumes{};
 			uint8_t hrtfHeadroom = 0;
