@@ -3206,7 +3206,7 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 		}
 	};
 
-	addCandidate(GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE, "fecv");
+	addCandidate(GetRegister32(NV_PAPU_FECV) & NV1BA0_PIO_VOICE_ON_HANDLE, "fecv");
 	const size_t recentMethodCount = std::min(m_RecentFEMethodCount, m_RecentFEMethods.size());
 	for (size_t i = 0; i < recentMethodCount && candidateCount < candidates.size(); ++i) {
 		const size_t recentIndex =
@@ -3315,9 +3315,12 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 					static_cast<int>(channels));
 				if (decodedBytes > 0) {
 					const uint32_t sampleIndex = (currentOffset % samplesPerBlock) * channels;
-					previewSampleLeft = decodedSamples[sampleIndex];
-					previewSampleRight = channels > 1 ? decodedSamples[sampleIndex + 1] : decodedSamples[sampleIndex];
-					decodedPreview = true;
+					if (sampleIndex < decodedSamples.size() &&
+						(channels == 1 || (sampleIndex + 1) < decodedSamples.size())) {
+						previewSampleLeft = decodedSamples[sampleIndex];
+						previewSampleRight = channels > 1 ? decodedSamples[sampleIndex + 1] : decodedSamples[sampleIndex];
+						decodedPreview = true;
+					}
 				}
 			}
 		} else if (previewRead) {
