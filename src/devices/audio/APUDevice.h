@@ -61,6 +61,7 @@ private:
 	struct SSLData {
 		uint32_t base[2]{};
 		uint8_t count[2]{};
+		std::array<bool, 2> persistCompleted{};
 		uint32_t ssl_index = 0;
 		uint32_t ssl_seg = 0;
 	};

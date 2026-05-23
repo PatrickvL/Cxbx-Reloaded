@@ -141,6 +141,7 @@ constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLA = 0x00000360;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLB = 0x00000364;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLC = 0x00000368;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_LFO_ENV = 0x0000036C;
+constexpr uint32_t NV1BA0_PIO_SET_VOICE_LFO_MOD = 0x00000370;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_FCA = 0x00000374;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_FCB = 0x00000378;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_PITCH = 0x0000037C;
@@ -223,6 +224,7 @@ const char* GetAPUVPMethodTraceName(uint32_t addr)
 	case NV1BA0_PIO_SET_HRTF_SUBMIXES: return "NV1BA0_PIO_SET_HRTF_SUBMIXES";
 	case NV1BA0_PIO_SET_CURRENT_VOICE: return "NV1BA0_PIO_SET_CURRENT_VOICE";
 	case NV1BA0_PIO_VOICE_LOCK: return "NV1BA0_PIO_VOICE_LOCK";
+	case NV1BA0_PIO_SET_VOICE_LFO_MOD: return "NV1BA0_PIO_SET_VOICE_LFO_MOD";
 	default:
 		if (addr >= NV1BA0_PIO_SET_VOICE_METHOD_FIRST && addr <= NV1BA0_PIO_SET_VOICE_METHOD_LAST) {
 			return "NV1BA0_PIO_SET_VOICE_*";
@@ -245,6 +247,7 @@ constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_V7BIN = 0x000003E0;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK = 0x001F0000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN = 0x001F0000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_MULTIPASS = 1 << 21;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_PERSIST = 1 << 23;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_DATA_TYPE = 1 << 24;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_LOOP = 1 << 25;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CLEAR_MIX = 1 << 26;
@@ -422,6 +425,7 @@ uint32_t GetFEMethodTargetVoiceOrDefault(uint32_t addr, uint32_t value, uint32_t
 	case NV1BA0_PIO_SET_VOICE_TAR_VOLB:
 	case NV1BA0_PIO_SET_VOICE_TAR_VOLC:
 	case NV1BA0_PIO_SET_VOICE_LFO_ENV:
+	case NV1BA0_PIO_SET_VOICE_LFO_MOD:
 	case NV1BA0_PIO_SET_VOICE_TAR_FCA:
 	case NV1BA0_PIO_SET_VOICE_TAR_FCB:
 	case NV1BA0_PIO_SET_VOICE_TAR_PITCH:
@@ -1377,6 +1381,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
+		m_VPSSLData[selectedHandle].persistCompleted = {};
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
 		uint32_t notifierBase = 0;
 		if (ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
@@ -1494,12 +1499,14 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		if (currentVoice() < m_VPSSLData.size()) {
 			m_VPSSLData[currentVoice()].base[0] = (value & NV1BA0_PIO_SET_VOICE_SSL_A_BASE) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_BASE);
 			m_VPSSLData[currentVoice()].count[0] = static_cast<uint8_t>((value & NV1BA0_PIO_SET_VOICE_SSL_A_COUNT) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_COUNT));
+			m_VPSSLData[currentVoice()].persistCompleted[0] = false;
 		}
 		return;
 	case NV1BA0_PIO_SET_VOICE_SSL_B:
 		if (currentVoice() < m_VPSSLData.size()) {
 			m_VPSSLData[currentVoice()].base[1] = (value & NV1BA0_PIO_SET_VOICE_SSL_A_BASE) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_BASE);
 			m_VPSSLData[currentVoice()].count[1] = static_cast<uint8_t>((value & NV1BA0_PIO_SET_VOICE_SSL_A_COUNT) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_COUNT));
+			m_VPSSLData[currentVoice()].persistCompleted[1] = false;
 		}
 		return;
 	case NV1BA0_PIO_SET_VOICE_TAR_VOLA:
@@ -1513,6 +1520,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		return;
 	case NV1BA0_PIO_SET_VOICE_LFO_ENV:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_LFO_ENV, 0xFFFFFFFF, value);
+		return;
+	case NV1BA0_PIO_SET_VOICE_LFO_MOD:
+		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_LFO_MOD, 0xFFFFFFFF, value);
 		return;
 	case NV1BA0_PIO_SET_VOICE_TAR_FCA:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_FCA, 0xFFFFFFFF, value);
@@ -3636,6 +3646,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 	const bool streaming = (format & NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) != 0;
 	const bool multipass = (format & NV_PAVS_VOICE_CFG_FMT_MULTIPASS) != 0;
+	const bool persist = (format & NV_PAVS_VOICE_CFG_FMT_PERSIST) != 0;
 	const bool clearMix = (format & NV_PAVS_VOICE_CFG_FMT_CLEAR_MIX) != 0;
 	const uint32_t multipassBin = (format & NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN);
 	const uint32_t samplesPerBlock = ((format & NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK)) + 1;
@@ -3951,6 +3962,21 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	if (hrtfEnabled) {
 		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
 	}
+	auto holdPersistentStream = [&](SSLData& voiceSSLData, uint32_t exhaustedIndex) {
+		currentOffset = 0;
+		voiceSSLData.ssl_seg = 0;
+		playbackState = PlaybackState{};
+		m_VPLowPassState[voiceHandle] = {};
+		ClearHRTFFilterState(voiceHandle);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+		if (exhaustedIndex < voiceSSLData.persistCompleted.size() &&
+			!voiceSSLData.persistCompleted[exhaustedIndex]) {
+			WriteNotifierStatus(voiceHandle,
+				exhaustedIndex == 0 ? MCPX_HW_NOTIFIER_SSLA_DONE : MCPX_HW_NOTIFIER_SSLB_DONE,
+				NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+			voiceSSLData.persistCompleted[exhaustedIndex] = true;
+		}
+	};
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		// Streaming voices can surface VP-linear offsets, raw physical offsets, or
 		// KSEG0/physical-map addresses depending on how the title programmed the SSL
@@ -3966,7 +3992,12 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			const uint32_t sslIndex = voiceSSLData.ssl_index;
 			if (voiceSSLData.count[sslIndex] == 0) {
 				if (commit) {
-					stopVoice();
+					if (persist) {
+						holdPersistentStream(voiceSSLData, sslIndex);
+					} else {
+						voiceSSLData.ssl_index = 0;
+						stopVoice();
+					}
 				}
 				return false;
 			}
@@ -4028,6 +4059,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 			segmentBaseAddress = segmentOffset;
 			segmentEndOffset = segmentSamples - 1;
+			if (sslIndex < voiceSSLData.persistCompleted.size()) {
+				voiceSSLData.persistCompleted[sslIndex] = false;
+			}
 			return true;
 		}
 
@@ -4171,6 +4205,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		return true;
 	};
 	if (!multipass && streaming && !loadStreamingSegment(sslData, baseAddress, endOffset, currentOffset, true)) {
+		if (!shouldSkipStateWrites) {
+			m_VPSSLData[voiceHandle] = sslData;
+			playbackState.offset = currentOffset;
+		}
 		return;
 	}
 
