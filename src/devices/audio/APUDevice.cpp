@@ -495,7 +495,9 @@ bool IsVoiceEntryOffsetWithinBounds(uint32_t offset)
 	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
 }
 
-// Returns the count of trailing zero bits in a 32-bit mask/value.
+// Forward declaration for the helper defined below near the other low-level
+// bitfield utilities; it returns the count of trailing zero bits in a 32-bit
+// mask/value.
 uint32_t Ctz32(uint32_t value);
 
 uint32_t GetMaskedValue(uint32_t current, uint32_t mask)
@@ -746,6 +748,11 @@ void StepVoiceLFOLevel(uint32_t delta, uint32_t& level, bool& descending)
 float DecodeSignedLFOAmount(uint32_t value)
 {
 	return static_cast<float>(static_cast<int8_t>(value & 0xFF)) / APU_LFO_MODULATION_NORMALIZER;
+}
+
+uint32_t ExtractLFOField(uint32_t value, uint32_t mask)
+{
+	return (value & mask) >> Ctz32(mask);
 }
 
 int16_t ClampToInt16(int32_t value)
@@ -3743,16 +3750,16 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		diagnostics->pitchStep = pitchStep;
 		diagnostics->maxPitchStep = pitchStep;
 	}
-	const uint32_t lfoADelta = (lfoEnv & NV_PAVS_VOICE_TAR_LFO_ENV_LFOADLT) >> Ctz32(NV_PAVS_VOICE_TAR_LFO_ENV_LFOADLT);
-	const uint32_t lfoFDelta = (lfoEnv & NV_PAVS_VOICE_TAR_LFO_ENV_LFOFDLT) >> Ctz32(NV_PAVS_VOICE_TAR_LFO_ENV_LFOFDLT);
+	const uint32_t lfoADelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOADLT);
+	const uint32_t lfoFDelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOFDLT);
 	const float lfoAmplitudeAmount = DecodeSignedLFOAmount(
-		(lfoMod & NV_PAVS_VOICE_TAR_LFO_MOD_LFOAAM) >> Ctz32(NV_PAVS_VOICE_TAR_LFO_MOD_LFOAAM));
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOAAM));
 	const float lfoAmplitudePitchAmount = DecodeSignedLFOAmount(
-		(lfoMod & NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFM) >> Ctz32(NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFM));
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFM));
 	const float lfoAmplitudeCutoffAmount = DecodeSignedLFOAmount(
-		(lfoMod & NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFC) >> Ctz32(NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFC));
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFC));
 	const float lfoPitchAmount = DecodeSignedLFOAmount(
-		(lfoMod & NV_PAVS_VOICE_TAR_LFO_MOD_LFOFFM) >> Ctz32(NV_PAVS_VOICE_TAR_LFO_MOD_LFOFFM));
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOFFM));
 	const uint32_t bytesPerFrame = adpcm ? 0u : containerSize * channels;
 	// The guest programs CBO/EBO/LBO in byte units for non-streaming PCM voices.
 	// Streaming SSL segments and ADPCM blocks still advance in decoded-sample units.
@@ -4206,6 +4213,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, lfoFDescending ? 1u : 0u);
 		const float lfoAValue = NormalizeVoiceLFOModulationLevel(lfoALevel);
 		const float lfoFValue = NormalizeVoiceLFOModulationLevel(lfoFLevel);
+		// Keep tremolo centered around unity so positive and negative swings can
+		// both attenuate and boost the decoded sample; clamping at 2.0 avoids
+		// runaway gain while still allowing the full signed guest modulation range.
 		const float amplitudeLFOModulation = std::clamp(1.0f + lfoAValue * lfoAmplitudeAmount, 0.0f, 2.0f);
 		const float cutoffLFOOctaves = lfoAValue * lfoAmplitudeCutoffAmount;
 		const double modulatedPitchStep = pitchStep * std::exp2(
