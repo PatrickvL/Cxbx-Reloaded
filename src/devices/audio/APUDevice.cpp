@@ -420,6 +420,8 @@ uint32_t GetFEMethodTargetVoiceOrDefault(uint32_t addr, uint32_t value, uint32_t
 }
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
+constexpr float APU_FILTER_ENV_MIN_GAIN = 0.0f;
+constexpr float APU_FILTER_ENV_MAX_GAIN = 1.0f;
 // Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
 constexpr float APU_FILTER_MIN_Q = 0.079407f;
 // FC1 is a 16-bit fixed-point resonance value normalized against 0x8000.
@@ -3777,17 +3779,17 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			lowPassResonance[1] = lowPassResonance[0];
 		}
 	}
-	auto applyLowPass = [&](float& sampleLeft, float& sampleRight, float filterEnvelopeGain) {
+	auto applyLowPass = [&](float& sampleLeft, float& sampleRight, float envGain) {
 		if (!lowPassEnabled) {
 			return;
 		}
-		const float clampedFilterEnvelopeGain = std::clamp(filterEnvelopeGain, 0.0f, 1.0f);
-		const float modulatedCutoff[2]{
-			APU_FILTER_MIN_FREQUENCY +
-				(lowPassCutoff[0] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain,
-			APU_FILTER_MIN_FREQUENCY +
-				(lowPassCutoff[1] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain
-		};
+		const float clampedFilterEnvelopeGain = std::clamp(
+			envGain, APU_FILTER_ENV_MIN_GAIN, APU_FILTER_ENV_MAX_GAIN);
+		float modulatedCutoff[2]{};
+		for (size_t channel = 0; channel < std::size(modulatedCutoff); ++channel) {
+			modulatedCutoff[channel] = APU_FILTER_MIN_FREQUENCY +
+				(lowPassCutoff[channel] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain;
+		}
 		auto& filterState = m_VPLowPassState[voiceHandle];
 		sampleLeft = ClampUnitSample(RunLowPassFilter(filterState[0].high, filterState[0].band, filterState[0].low,
 			modulatedCutoff[0], lowPassResonance[0], sampleLeft));
