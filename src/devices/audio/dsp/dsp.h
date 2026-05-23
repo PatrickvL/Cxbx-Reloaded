@@ -36,6 +36,10 @@ typedef void (*dsp_scratch_rw_func)(
 typedef void (*dsp_fifo_rw_func)(
     void *opaque, uint8_t *ptr, unsigned int index, size_t len, bool dir);
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 DSPState *dsp_init(void *rw_opaque,
                    dsp_scratch_rw_func scratch_rw,
                    dsp_fifo_rw_func fifo_rw);
@@ -57,5 +61,9 @@ int dsp_get_register_address(DSPState* dsp, const char *arg, uint32_t **addr, ui
 uint32_t dsp_disasm_memory(DSPState* dsp, uint32_t dsp_memdump_addr, uint32_t dsp_memdump_upper, char space);
 uint32_t dsp_disasm_address(DSPState* dsp, FILE *out, uint32_t lowerAdr, uint32_t UpperAdr);
 bool dsp_disasm_set_register(DSPState* dsp, const char *arg, uint32_t value);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* DSP_H */
