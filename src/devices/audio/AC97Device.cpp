@@ -136,6 +136,7 @@ constexpr uint16_t AC97_VOLUME_LEFT_MASK = 0x1F00;
 constexpr uint16_t AC97_VOLUME_RIGHT_MASK = 0x001F;
 constexpr uint32_t AC97_VOLUME_LEFT_SHIFT = 8;
 constexpr float AC97_VOLUME_STEP_DB = 1.5f;
+constexpr float AC97_APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
 constexpr const char* AC97_OPENAL_DEVICE_ENV = "CXBXR_OPENAL_DEVICE";
 constexpr const char* AC97_OPENAL_TEST_BEEP_ENV = "CXBXR_OPENAL_TEST_BEEP";
 constexpr size_t AC97_OPENAL_DEVICE_NAME_LIMIT = 4096;
@@ -429,12 +430,32 @@ int32_t ScaleSample(int16_t sample, float gain)
 	return static_cast<int32_t>(scaled >= 0.0f ? (scaled + 0.5f) : (scaled - 0.5f));
 }
 
+int32_t ApplyMixHeadroom(int32_t sample, uint8_t headroom)
+{
+	if (headroom == 0) {
+		return sample;
+	}
+
+	const int32_t rounding = 1 << (headroom - 1);
+	if (sample >= 0) {
+		return (sample + rounding) >> headroom;
+	}
+
+	return -(((-sample) + rounding) >> headroom);
+}
+
 uint16_t ClampSampleRateRegister(uint16_t value)
 {
 	if (value == 0) {
 		return AC97_RATE_48KHZ;
 	}
 	return std::clamp(value, AC97_MIN_RATE, AC97_RATE_48KHZ);
+}
+
+float DecodeHRTFSubmixGain(uint32_t volume)
+{
+	const uint32_t clamped = volume & 0x0FFF;
+	return clamped == 0x0FFF ? 0.0f : std::pow(10.0f, static_cast<float>(clamped) / AC97_APU_VOLUME_DECIBEL_DIVISOR);
 }
 
 uint32_t GetBusMasterFrameBytes(uint32_t channelBase)
@@ -771,22 +792,46 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	std::vector<int16_t> spatialFallbackMix;
 	const int16_t* spatialInput = samples;
 	if (!m_Pending3DVoices.empty()) {
-		const uint32_t stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(samples, sampleCount);
-		if (stereoPeak == 0) {
+		bool stereoSilent = true;
+		for (size_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+			if (samples[sampleIndex] != 0) {
+				stereoSilent = false;
+				break;
+			}
+		}
+		if (stereoSilent) {
 			// Only fold the pending 3D handoff into host stereo when the primary stereo
 			// stream is silent, so this fallback does not double-mix titles that are
 			// already audible through the existing CPU stereo path.
 			bool mixedPendingVoices = false;
 			spatialFallbackMix.assign(samples, samples + sampleCount);
+			constexpr std::array<size_t, 4> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
 			for (const auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
 				(void)voiceHandle;
 				if (!voiceState.active || voiceState.samples.size() < sampleCount) {
 					continue;
 				}
-				for (size_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
-					const int32_t mixedSample = static_cast<int32_t>(spatialFallbackMix[sampleIndex]) +
-						static_cast<int32_t>(voiceState.samples[sampleIndex]);
-					spatialFallbackMix[sampleIndex] = ClampToInt16(mixedSample);
+				for (size_t frame = 0; frame < frameCount; ++frame) {
+					const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
+					int32_t routedSamples[AC97_OUTPUT_CHANNELS]{};
+					for (size_t slot = 0; slot < voiceState.hrtfSubmixVolumes.size(); ++slot) {
+						const float gain = DecodeHRTFSubmixGain(voiceState.hrtfSubmixVolumes[slot]);
+						if (gain == 0.0f) {
+							continue;
+						}
+
+						const size_t outputChannel = kHRTFFallbackChannelMapping[slot];
+						const size_t sourceChannel = voiceState.sourceStereo ? outputChannel : 0;
+						const int32_t contribution = ApplyMixHeadroom(
+							ScaleSample(voiceState.samples[sampleIndex + sourceChannel], gain),
+							voiceState.hrtfHeadroom);
+						routedSamples[outputChannel] += contribution;
+					}
+
+					spatialFallbackMix[sampleIndex] = ClampToInt16(
+						static_cast<int32_t>(spatialFallbackMix[sampleIndex]) + routedSamples[0]);
+					spatialFallbackMix[sampleIndex + 1] = ClampToInt16(
+						static_cast<int32_t>(spatialFallbackMix[sampleIndex + 1]) + routedSamples[1]);
 				}
 				mixedPendingVoices = true;
 			}
