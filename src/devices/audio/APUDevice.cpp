@@ -442,9 +442,29 @@ bool IsAPUWordAddressRegister(uint32_t addr)
 	}
 }
 
+bool IsAPUMaxSgeRegister(uint32_t addr)
+{
+	switch (addr) {
+	case NV_PAPU_GPSMAXSGE:
+	case NV_PAPU_GPFMAXSGE:
+	case NV_PAPU_EPSMAXSGE:
+	case NV_PAPU_EPFMAXSGE:
+		return true;
+	default:
+		return false;
+	}
+}
+
 uint32_t NormalizeAPUWordAddress(uint32_t value)
 {
 	return value & ~0x3u;
+}
+
+uint32_t NormalizeAPUMaxSge(uint32_t value)
+{
+	// MCPX drivers program MAXSGE through LOW16 writes, so discard any upper
+	// garbage bits before the count feeds the DMA page walkers.
+	return value & 0xFFFFu;
 }
 
 bool IsVoiceEntryOffsetWithinBounds(uint32_t offset)
@@ -829,6 +849,8 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 	}
 
 	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
+		// XGSCNT is a live sample counter sourced from the APU clock, so ignore
+		// any previously latched register state and always expose the current time.
 		return ReadRegisterFragment(GetAPUTime(), addr - NV_PAPU_XGSCNT, size);
 	}
 
@@ -882,6 +904,12 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		(addr >= NV_PAPU_FECTL && addr < NV_PAPU_FECTL + sizeof(uint32_t))) {
 		WriteRegister(addr, value, size);
 		RefreshInterruptStatus();
+		return;
+	}
+
+	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
+		// Treat XGSCNT as read-only: guests can probe/reset it without clobbering
+		// the live counter value returned by MMIO reads.
 		return;
 	}
 
@@ -944,6 +972,8 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		if (registerBase == NV_PAPU_FEMEMADDR) {
 			RefreshFEMemDataRegister(GetRegister32(NV_PAPU_FEMEMDATA));
 		}
+	} else if (IsAPUMaxSgeRegister(registerBase)) {
+		SetRegister32(registerBase, NormalizeAPUMaxSge(GetRegister32(registerBase)));
 	}
 }
 
