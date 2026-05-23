@@ -86,6 +86,8 @@ constexpr uint32_t NV_PAPU_FETFORCE0 = 0x00001500;
 constexpr uint32_t NV_PAPU_FETFORCE1 = 0x00001504;
 constexpr uint32_t NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE = 1 << 15;
 constexpr uint32_t NV_PAPU_SECTL = 0x00002000;
+constexpr uint32_t NV_PAPU_SECTL_XCNTMODE = 0x00000018;
+constexpr uint32_t NV_PAPU_SECTL_XCNTMODE_OFF = 0;
 constexpr uint32_t NV_PAPU_XGSCNT = 0x0000200C;
 constexpr uint32_t NV_PAPU_VPVADDR = 0x0000202C;
 constexpr uint32_t NV_PAPU_VPSGEADDR = 0x00002030;
@@ -415,6 +417,29 @@ constexpr float APU_FILTER_MIN_Q = 0.079407f;
 // FC1 is a 16-bit fixed-point resonance value normalized against 0x8000.
 constexpr float APU_FILTER_Q_NORMALIZER = 32768.0f;
 
+bool IsAPUWordAddressRegister(uint32_t addr)
+{
+	switch (addr) {
+	case NV_PAPU_FENADDR:
+	case NV_PAPU_FEMEMADDR:
+	case NV_PAPU_VPVADDR:
+	case NV_PAPU_VPSGEADDR:
+	case NV_PAPU_VPSSLADDR:
+	case NV_PAPU_GPSADDR:
+	case NV_PAPU_GPFADDR:
+	case NV_PAPU_EPSADDR:
+	case NV_PAPU_EPFADDR:
+		return true;
+	default:
+		return false;
+	}
+}
+
+uint32_t NormalizeAPUWordAddress(uint32_t value)
+{
+	return value & ~0x3u;
+}
+
 uint32_t AbsoluteMixMagnitude(int32_t value)
 {
 	const int64_t signedSample = static_cast<int64_t>(value);
@@ -734,6 +759,13 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 		return ReadRegisterFragment(GetAPUTime(), addr - NV_PAPU_XGSCNT, size);
 	}
 
+	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
+		uint32_t currentValue = GetRegister32(NV_PAPU_FEMEMDATA);
+		ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), currentValue);
+		SetRegister32(NV_PAPU_FEMEMDATA, currentValue);
+		return ReadRegisterFragment(currentValue, addr - NV_PAPU_FEMEMDATA, size);
+	}
+
 	return ReadRegister(addr, size);
 }
 
@@ -785,6 +817,9 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
 		WriteRegister(addr, value, size);
 		WriteGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
+		uint32_t guestValue = GetRegister32(NV_PAPU_FEMEMDATA);
+		ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), guestValue);
+		SetRegister32(NV_PAPU_FEMEMDATA, guestValue);
 		return;
 	}
 
@@ -812,6 +847,15 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	}
 
 	WriteRegister(addr, value, size);
+	const uint32_t registerBase = addr & ~0x3u;
+	if (IsAPUWordAddressRegister(registerBase)) {
+		SetRegister32(registerBase, NormalizeAPUWordAddress(GetRegister32(registerBase)));
+		if (registerBase == NV_PAPU_FEMEMADDR) {
+			uint32_t guestValue = GetRegister32(NV_PAPU_FEMEMDATA);
+			ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), guestValue);
+			SetRegister32(NV_PAPU_FEMEMDATA, guestValue);
+		}
+	}
 }
 
 
@@ -2156,6 +2200,12 @@ void APUDevice::SynchronizeAudio()
 	std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
 
 	const uint32_t now = GetAPUTime();
+	if (((GetRegister32(NV_PAPU_SECTL) & NV_PAPU_SECTL_XCNTMODE) >> Ctz32(NV_PAPU_SECTL_XCNTMODE)) ==
+		NV_PAPU_SECTL_XCNTMODE_OFF) {
+		m_LastAudioUpdate = now;
+		return;
+	}
+
 	uint32_t remaining = now - m_LastAudioUpdate;
 	while (remaining > 0) {
 		const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
