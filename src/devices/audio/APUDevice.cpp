@@ -327,7 +327,8 @@ constexpr size_t APU_AUDIO_CHUNK_FRAMES = 256;
 constexpr float APU_VOLUME_DECIBEL_DIVISOR = 64.0f * -20.0f;
 // MCPX notifier records are 16-byte entries. The hardware stores two generic
 // notifier entries before the per-voice audio notifiers, so
-// MCPX_HW_NOTIFIER_BASE_OFFSET is a record count rather than a byte count.
+// MCPX_HW_NOTIFIER_BASE_OFFSET means 2 entries * 16 bytes = 32 bytes rather
+// than a raw byte offset literal.
 constexpr uint32_t MCPX_HW_NOTIFIER_ENTRY_SIZE = 16;
 constexpr uint32_t MCPX_HW_NOTIFIER_BASE_OFFSET = 2;
 // MCPX exposes four notifier slots per voice in the audio notifier table.
@@ -335,8 +336,8 @@ constexpr uint32_t MCPX_HW_NOTIFIER_COUNT = 4;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLA_DONE = 0;
 constexpr uint32_t MCPX_HW_NOTIFIER_SSLB_DONE = 1;
 constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
-// NV1BA0 reports successful notifier completion with status 0x01 per observed
-// hardware/guest behavior; using 0xFF caused guest polling loops to wait
+// NV1BA0 reports successful notifier completion with status 0x01 in observed
+// guest/hardware traces; using 0xFF caused guest polling loops to wait
 // indefinitely because it does not match the expected success code.
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_ERROR = 0x80;
@@ -1607,6 +1608,7 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 
 	uint32_t notifierBase = 0;
 	if (!ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
+		SignalNotifierInterrupt();
 		return;
 	}
 
@@ -2883,6 +2885,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
 	}
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
+		// Streaming voices can surface VP-linear offsets, raw physical offsets, or
+		// KSEG0/physical-map addresses depending on how the title programmed the SSL
+		// tables, so route them through the same voice-buffer translation path as
+		// non-streaming voices.
 		return ReadVoiceBufferBytes(sampleAddress, dest, size);
 	};
 	auto loadStreamingSegment = [&](SSLData& voiceSSLData, uint32_t& segmentBaseAddress, uint32_t& segmentEndOffset, uint32_t& segmentCurrentOffset, bool commit) -> bool {

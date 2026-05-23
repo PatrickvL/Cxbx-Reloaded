@@ -1431,6 +1431,11 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 			const uint16_t consumed = static_cast<uint16_t>(samplesToConsume > remaining ? remaining : samplesToConsume);
 			if (channelBase == NABM_PO_BASE && descriptorAddress != 0 && descriptorLength >= descriptorRemainingBeforeConsume) {
 				const uint16_t descriptorOffset = static_cast<uint16_t>(descriptorLength - descriptorRemainingBeforeConsume);
+				if (static_cast<uint32_t>(descriptorOffset) + consumed > descriptorLength) {
+					m_ChannelDescriptorError[channelIndex] = true;
+					status |= SR_FIFOE;
+					break;
+				}
 				const size_t pcmBytes = static_cast<size_t>(consumed) * AC97_OUTPUT_BYTES_PER_FRAME;
 				std::vector<int16_t> pcmFrames((pcmBytes + sizeof(int16_t) - 1) / sizeof(int16_t));
 				if (!pcmFrames.empty() &&
