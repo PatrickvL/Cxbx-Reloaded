@@ -365,12 +365,29 @@ const char* GetOpenALErrorName(ALenum error)
 
 uint64_t MakeSpatialPlaybackSourceKey(uint32_t voiceHandle, size_t submixSlot)
 {
-	return (static_cast<uint64_t>(voiceHandle) << 3) | static_cast<uint64_t>(submixSlot & 0x7);
+	return (static_cast<uint64_t>(voiceHandle) << 2) | static_cast<uint64_t>(submixSlot & 0x3);
 }
 
 float DecodeSpatialOutputGain(float leftGain, float rightGain)
 {
 	return (leftGain + rightGain) * 0.5f;
+}
+
+bool IsDirectStereoBin(uint8_t routedBin)
+{
+	return routedBin <= 1;
+}
+
+std::array<float, 3> ComputeSpatialSubmixPosition(uint8_t routedBin)
+{
+	// Preserve the guest's left/right mixbin affinity by bin parity and treat any
+	// non-stereo HRTF submix destination as rear-biased so it stays distinct from
+	// the primary AC97 stereo stream.
+	return {
+		(routedBin & 1u) != 0 ? 1.0f : -1.0f,
+		0.0f,
+		IsDirectStereoBin(routedBin) ? -1.0f : 1.0f
+	};
 }
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
@@ -856,7 +873,7 @@ bool AC97Device::QueueSpatialVoiceSubmix(uint32_t voiceHandle, const SpatialVoic
 	}
 
 	const uint8_t routedBin = voiceState.hrtfSubmix[submixSlot];
-	if (routedBin <= 1) {
+	if (IsDirectStereoBin(routedBin)) {
 		// Preserve direct stereo routing on the primary AC97 stream; only spatialize
 		// submixes that would otherwise stay off the host stereo path.
 		return true;
@@ -895,10 +912,9 @@ bool AC97Device::QueueSpatialVoiceSubmix(uint32_t voiceHandle, const SpatialVoic
 	sourceState.voiceHandle = voiceHandle;
 	sourceState.submixSlot = static_cast<uint8_t>(submixSlot);
 	sourceState.active = true;
+	const std::array<float, 3> sourcePosition = ComputeSpatialSubmixPosition(routedBin);
 	alSource3f(sourceState.source, AL_POSITION,
-		(routedBin & 1u) != 0 ? 1.0f : -1.0f,
-		0.0f,
-		routedBin <= 1 ? -1.0f : 1.0f);
+		sourcePosition[0], sourcePosition[1], sourcePosition[2]);
 
 	ALint processed = 0;
 	alGetSourcei(sourceState.source, AL_BUFFERS_PROCESSED, &processed);
@@ -933,7 +949,9 @@ bool AC97Device::QueueSpatialVoiceSubmix(uint32_t voiceHandle, const SpatialVoic
 	}
 
 	const size_t sourceChannel = voiceState.sourceStereo ? (submixSlot & 1u) : 0;
-	m_SpatialOutputScratch.resize(frameCount);
+	if (m_SpatialOutputScratch.size() < frameCount) {
+		m_SpatialOutputScratch.resize(frameCount);
+	}
 	for (size_t frame = 0; frame < frameCount; ++frame) {
 		const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS + sourceChannel;
 		m_SpatialOutputScratch[frame] = ClampToInt16(
@@ -1015,7 +1033,7 @@ bool AC97Device::SubmitPending3DVoices(size_t frameCount, float leftOutputGain, 
 
 		++activeVoiceCount;
 		for (size_t submixSlot = 0; submixSlot < AC97_SPATIAL_SUBMIX_COUNT; ++submixSlot) {
-			if (voiceState.hrtfSubmix[submixSlot] <= 1) {
+			if (IsDirectStereoBin(voiceState.hrtfSubmix[submixSlot])) {
 				continue;
 			}
 			if (DecodeHRTFSubmixGain(voiceState.hrtfSubmixVolumes[submixSlot]) == 0.0f) {
