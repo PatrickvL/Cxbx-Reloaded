@@ -898,9 +898,12 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	const float leftGain = DecodeOutputAttenuation(masterVolume, true) * DecodeOutputAttenuation(pcmOutVolume, true);
 	const float rightGain = DecodeOutputAttenuation(masterVolume, false) * DecodeOutputAttenuation(pcmOutVolume, false);
 
+	const size_t outputSampleCount = frameCount * AC97_OUTPUT_CHANNELS;
 	const int16_t* output = spatialInput;
 	if (leftGain != 1.0f || rightGain != 1.0f) {
-		m_OutputScratch.resize(frameCount * AC97_OUTPUT_CHANNELS);
+		if (m_OutputScratch.size() < outputSampleCount) {
+			m_OutputScratch.resize(outputSampleCount);
+		}
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
 			m_OutputScratch[sampleIndex] = ClampToInt16(ScaleSample(spatialInput[sampleIndex], leftGain));
