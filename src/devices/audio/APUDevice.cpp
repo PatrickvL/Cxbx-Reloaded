@@ -2025,14 +2025,12 @@ bool APUDevice::ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, 
 
 bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 {
-	bool hasMappedOutputBuffer = false;
 	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 		const uint32_t bin = m_VPHRTFSubmix[slot];
 		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
 			continue;
 		}
 
-		hasMappedOutputBuffer = true;
 		const uint32_t outBufferBaseRegister =
 			GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
 		const uint32_t outBufferLengthRegister =
@@ -2042,9 +2040,11 @@ bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
 			continue;
 		}
+
+		return true;
 	}
 
-	return hasMappedOutputBuffer;
+	return false;
 }
 
 bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak)
