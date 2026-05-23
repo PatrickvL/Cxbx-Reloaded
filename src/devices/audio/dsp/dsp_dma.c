@@ -112,15 +112,15 @@ static void dsp_dma_run(DSPDMAState *s)
         int block_space = DSP_SPACE_X;
 
         if (addr < 0x1800) {
-            assert(addr+6 < 0x1800);
+            assert(addr <= 0x1800 - 6);
             block_space = DSP_SPACE_X;
             block_addr = addr;
         } else if (addr >= 0x1800 && addr < 0x2000) { //?
-            assert(addr+6 < 0x2000);
+            assert(addr <= 0x2000 - 6);
             block_space = DSP_SPACE_Y;
             block_addr = addr - 0x1800;
         } else if (addr >= 0x2800 && addr < 0x3800) { //?
-            assert(addr+6 < 0x3800);
+            assert(addr <= 0x3800 - 6);
             block_space = DSP_SPACE_P;
             block_addr = addr - 0x2800;
         } else {
@@ -174,7 +174,7 @@ static void dsp_dma_run(DSPDMAState *s)
             item_mask = 0x00ffffff;
             break;
         default:
-            fprintf(stderr, "Unknown dsp dma format: 0x%x\n", format);
+            fprintf(stderr, "Unknown DSP DMA format 0x%x (expected 0x1, 0x2, or 0x6)\n", format);
             assert(!"Unknown dsp dma format");
             break;
         }
@@ -200,12 +200,12 @@ static void dsp_dma_run(DSPDMAState *s)
             assert(!"Dsp dma offset out of range");
         }
 
-        size_t transfer_size = count * item_size;
+        size_t transfer_size = (size_t)count * item_size;
 
         // FIXME: Remove this intermediate buffer
-        if (count * item_size > s->scratch_buf_size) {
+        if (transfer_size > s->scratch_buf_size) {
             free(s->scratch_buf);
-            s->scratch_buf_size = count * item_size;
+            s->scratch_buf_size = transfer_size;
             s->scratch_buf = malloc(s->scratch_buf_size);
         }
         uint8_t *scratch_buf = s->scratch_buf;
@@ -279,7 +279,7 @@ static void dsp_dma_run(DSPDMAState *s)
             } else if (buf_id == 0xf) {
                 s->scratch_rw(s->rw_opaque, scratch_buf, scratch_addr, transfer_size, 0);
             } else {
-                fprintf(stderr, "Unhandled DSP DMA buffer: 0x%x\n", buf_id);
+                fprintf(stderr, "Unhandled DSP DMA buffer 0x%x (expected 0xE scratch-circular or 0xF scratch)\n", buf_id);
                 assert(!"Unhandled dsp dma buffer");
             }
 

@@ -1353,7 +1353,11 @@ void APUDevice::CaptureEPFifoOutput(uint8_t* ptr, size_t len)
 {
 	if (ptr == nullptr || len == 0 || (len % sizeof(int16_t)) != 0) {
 		if (!m_LoggedDSPOutputCaptureFailure) {
-			EmuLog(LOG_LEVEL::WARNING, "APU DSP EP output capture received an unexpected payload size=%zu", len);
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU DSP EP output capture rejected payload ptr=%p len=%zu aligned=%d",
+				ptr,
+				len,
+				(len % sizeof(int16_t)) == 0 ? 1 : 0);
 			m_LoggedDSPOutputCaptureFailure = true;
 		}
 		return;
@@ -1479,8 +1483,17 @@ bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t 
 	}
 
 	if (m_DSPOutputScratch.size() != frameCount * 2) {
+		if (!m_LoggedDSPOutputCaptureFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU DSP frame produced %zu samples, expected %zu for %zu stereo frames; falling back to non-DSP host mix",
+				m_DSPOutputScratch.size(),
+				frameCount * 2,
+				frameCount);
+			m_LoggedDSPOutputCaptureFailure = true;
+		}
 		return false;
 	}
+	m_LoggedDSPOutputCaptureFailure = false;
 	std::copy(m_DSPOutputScratch.begin(), m_DSPOutputScratch.end(), output);
 	return true;
 }

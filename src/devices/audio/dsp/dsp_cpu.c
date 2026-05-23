@@ -421,7 +421,7 @@ static const OpcodeEntry *lookup_opcode_slow(uint32_t op) {
         }
     }
 
-    fprintf(stderr, "op = %08x\n", op);
+    fprintf(stderr, "Invalid DSP opcode: 0x%08x\n", op);
     assert(!"Invalid op code in dsp_cpu");
     return NULL;
 }
