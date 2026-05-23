@@ -352,6 +352,7 @@ constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
 constexpr size_t APU_XADPCM_MAX_SOURCE_BLOCK_BYTES = XBOX_ADPCM_SRCSIZE * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_XADPCM_MAX_DECODED_SAMPLES = APU_XADPCM_PCM_SAMPLES_PER_BLOCK * APU_XADPCM_MAX_CHANNELS;
 constexpr size_t APU_MIXBIN_COUNT = 32;
+constexpr uint32_t APU_FIRST_NON_STEREO_BIN = 2;
 constexpr uint32_t APU_MAX_3D_VOICES = static_cast<uint32_t>(APUDevice::MAX_HRTF_VOICES);
 constexpr size_t APU_HRTF_SUBMIX_COUNT = 4;
 static_assert(APU_HRTF_SUBMIX_COUNT <= 8, "HRTF submix handoff expects no more than eight voice volumes");
@@ -2024,7 +2025,7 @@ bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 	bool hasMappedOutputBuffer = false;
 	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 		const uint32_t bin = m_VPHRTFSubmix[slot];
-		if (bin <= 1 || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
+		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
 			continue;
 		}
 
@@ -2056,9 +2057,10 @@ bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std:
 		slotPeak->fill(0);
 	}
 
+	std::vector<int16_t> slotSamples(frameCount);
 	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 		const uint32_t bin = m_VPHRTFSubmix[slot];
-		if (bin <= 1 || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
+		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
 			continue;
 		}
 
@@ -2072,9 +2074,8 @@ bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std:
 			return false;
 		}
 
-		std::vector<int16_t> samples(frameCount);
 		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
-			samples.data(), samples.size() * sizeof(samples[0]))) {
+			slotSamples.data(), slotSamples.size() * sizeof(slotSamples[0]))) {
 			if (!m_LoggedVPOutputBufferReadFailure) {
 				EmuLog(LOG_LEVEL::WARNING,
 					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
@@ -2087,11 +2088,11 @@ bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std:
 		const size_t outputChannel = kHRTFOutputChannelMapping[slot];
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			const size_t outputIndex = frame * 2 + outputChannel;
-			output[outputIndex] = ClampToInt16(static_cast<int32_t>(output[outputIndex]) + samples[frame]);
+			output[outputIndex] = ClampToInt16(static_cast<int32_t>(output[outputIndex]) + slotSamples[frame]);
 		}
 		mixedAnySubmix = true;
 		if (slotPeak != nullptr) {
-			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(samples.data(), samples.size());
+			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(slotSamples.data(), slotSamples.size());
 		}
 	}
 
@@ -2616,7 +2617,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	if (stereoBinsSilent && !guestVPOutputPlaybackConfigured && !hostSpatialSubmitted) {
 		for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 			const uint32_t bin = m_VPHRTFSubmix[slot];
-			if (bin > 1 && bin < APU_MIXBIN_COUNT &&
+			if (bin >= APU_FIRST_NON_STEREO_BIN && bin < APU_MIXBIN_COUNT &&
 				PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, bin) != 0) {
 				useHRTFStereoFallback = true;
 				break;
@@ -2643,7 +2644,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			if (useHRTFStereoFallback) {
 				for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 					const uint32_t bin = m_VPHRTFSubmix[slot];
-					if (bin <= 1 || bin >= APU_MIXBIN_COUNT) {
+					if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT) {
 						continue;
 					}
 
@@ -2681,13 +2682,16 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 
 	uint32_t stereoPeak = 0;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
-		const char* arbitrationWinner = guestVPOutputPlaybackActive
-			? "guest-vp-output"
-			: (hostSpatialSubmitted
-				? "host-spatial"
-				: (useHRTFStereoFallback
-					? "stereo-hrtf-fallback"
-					: (useNonStereoBinFallback ? "stereo-nonstereo-fallback" : "stereo-direct")));
+		const char* arbitrationWinner = "stereo-direct";
+		if (guestVPOutputPlaybackActive) {
+			arbitrationWinner = "guest-vp-output";
+		} else if (hostSpatialSubmitted) {
+			arbitrationWinner = "host-spatial";
+		} else if (useHRTFStereoFallback) {
+			arbitrationWinner = "stereo-hrtf-fallback";
+		} else if (useNonStereoBinFallback) {
+			arbitrationWinner = "stereo-nonstereo-fallback";
+		}
 		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
 		if (hasVoiceActivity || stereoPeak != 0) {
 			EmuLog(LOG_LEVEL::INFO,
