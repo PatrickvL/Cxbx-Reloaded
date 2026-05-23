@@ -3322,6 +3322,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		diagnostics->pitchStep = pitchStep;
 	}
 	const uint32_t bytesPerFrame = adpcm ? 0u : containerSize * channels;
+	// The guest programs CBO/EBO/LBO in byte units for non-streaming PCM voices.
+	// Streaming SSL segments and ADPCM blocks still advance in decoded-sample units.
+	const uint32_t offsetStep = (!multipass && !streaming && !adpcm) ? bytesPerFrame : 1u;
 	const uint32_t bytesPerBlock = containerSize * channels;
 	auto& playbackState = m_VPPlaybackState[voiceHandle];
 	if (!playbackState.valid || playbackState.offset != currentOffset) {
@@ -3659,7 +3662,8 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			return true;
 		}
 
-		const uint32_t linearAddress = segmentBaseAddress + segmentCurrentOffset * bytesPerFrame;
+		const uint32_t linearAddress = segmentBaseAddress +
+			(streaming ? (segmentCurrentOffset * bytesPerFrame) : segmentCurrentOffset);
 		for (uint32_t channel = 0; channel < channels; ++channel) {
 			const uint32_t sampleAddress = linearAddress + channel * containerSize;
 			float sample = 0.0f;
@@ -3775,7 +3779,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		auto previewSSLData = sslData;
 		uint32_t previewBaseAddress = baseAddress;
 		uint32_t previewEndOffset = endOffset;
-		uint32_t previewOffset = currentOffset + 1;
+		uint32_t previewOffset = currentOffset + offsetStep;
 		if (advancePlaybackPosition(previewSSLData, previewBaseAddress, previewEndOffset, previewOffset, false)) {
 			if (!decodeFrame(previewBaseAddress, previewOffset, nextLeft, nextRight)) {
 				// If the look-ahead sample cannot be decoded, keep the current sample so
@@ -3814,9 +3818,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const uint32_t wholeFrames = static_cast<uint32_t>(nextPlaybackPosition);
 		playbackState.fraction = nextPlaybackPosition - static_cast<double>(wholeFrames);
 		for (uint32_t step = 0; step < wholeFrames; ++step) {
-			++currentOffset;
+			currentOffset += offsetStep;
 			if (captureVoiceDiagnostics) {
-				++diagnostics->offsetAdvance;
+				diagnostics->offsetAdvance += offsetStep;
 			}
 			if (!advancePlaybackPosition(sslData, baseAddress, endOffset, currentOffset, true)) {
 				frame = frameCount;
