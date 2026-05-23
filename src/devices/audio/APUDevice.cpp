@@ -817,13 +817,15 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	if ((addr >= NV_PAPU_FETFORCE0 && addr < NV_PAPU_FETFORCE0 + sizeof(uint32_t)) ||
 		(addr >= NV_PAPU_FETFORCE1 && addr < NV_PAPU_FETFORCE1 + sizeof(uint32_t))) {
 		WriteRegister(addr, value, size);
+		const bool wroteFETFORCE0 =
+			addr >= NV_PAPU_FETFORCE0 && addr < NV_PAPU_FETFORCE0 + sizeof(uint32_t);
 		uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
 		const bool idleVoiceTrapPending =
 			(fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED &&
 			(fectl & NV_PAPU_FECTL_FETRAPREASON) == NV_PAPU_FECTL_FETRAPREASON_REQUESTED;
 		if (idleVoiceTrapPending) {
 			const bool clearIdleVoiceTrap =
-				(addr >= NV_PAPU_FETFORCE0 && addr < NV_PAPU_FETFORCE0 + sizeof(uint32_t)) ||
+				wroteFETFORCE0 ||
 				((GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) == 0);
 			if (clearIdleVoiceTrap) {
 				fectl &= ~(NV_PAPU_FECTL_FEMETHMODE | NV_PAPU_FECTL_FETRAPREASON);
