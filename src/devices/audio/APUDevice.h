@@ -135,6 +135,7 @@ private:
 	bool WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size);
 	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
 	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
+	uint32_t RefreshFEMemDataRegister(uint32_t fallbackValue);
 	bool ResolveOptionalGuestTableBase(uint32_t registerAddress, uint32_t fallbackGuestAddress, uint32_t& guestBase) const;
 	void SignalNotifierInterrupt();
 	bool ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const;

@@ -760,9 +760,7 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 	}
 
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
-		uint32_t currentValue = 0;
-		ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), currentValue);
-		SetRegister32(NV_PAPU_FEMEMDATA, currentValue);
+		const uint32_t currentValue = RefreshFEMemDataRegister(0);
 		return ReadRegisterFragment(currentValue, addr - NV_PAPU_FEMEMDATA, size);
 	}
 
@@ -817,9 +815,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
 		WriteRegister(addr, value, size);
 		WriteGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
-		uint32_t guestValue = GetRegister32(NV_PAPU_FEMEMDATA);
-		ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), guestValue);
-		SetRegister32(NV_PAPU_FEMEMDATA, guestValue);
+		RefreshFEMemDataRegister(GetRegister32(NV_PAPU_FEMEMDATA));
 		return;
 	}
 
@@ -851,9 +847,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	if (IsAPUWordAddressRegister(registerBase)) {
 		SetRegister32(registerBase, NormalizeAPUWordAddress(GetRegister32(registerBase)));
 		if (registerBase == NV_PAPU_FEMEMADDR) {
-			uint32_t guestValue = GetRegister32(NV_PAPU_FEMEMDATA);
-			ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), guestValue);
-			SetRegister32(NV_PAPU_FEMEMDATA, guestValue);
+			RefreshFEMemDataRegister(GetRegister32(NV_PAPU_FEMEMDATA));
 		}
 	}
 }
@@ -1514,6 +1508,14 @@ bool APUDevice::WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint3
 	current &= ~mask;
 	current |= (value << shift) & mask;
 	return WriteGuestWord(guestAddress, current);
+}
+
+uint32_t APUDevice::RefreshFEMemDataRegister(uint32_t fallbackValue)
+{
+	uint32_t value = fallbackValue;
+	ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), value);
+	SetRegister32(NV_PAPU_FEMEMDATA, value);
+	return value;
 }
 
 bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const
