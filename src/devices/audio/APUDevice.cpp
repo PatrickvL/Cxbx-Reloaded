@@ -1088,9 +1088,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
-		if (GetRegister32(NV_PAPU_FENADDR) != 0) {
-			WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
-		}
+		WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
 		ClearHRTFFilterState(selectedHandle);
 		InitializeVoiceEnvelopes(selectedHandle, value);
 		m_LoggedEmptyVoiceTableDiagnostics = false;
@@ -1564,6 +1562,8 @@ void APUDevice::WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint
 
 	const uint32_t notifierBase = GetRegister32(NV_PAPU_FENADDR);
 	if (notifierBase == 0) {
+		SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
+		RefreshInterruptStatus();
 		return;
 	}
 
@@ -1579,12 +1579,14 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 	}
 
 	const uint32_t notifierBase = GetRegister32(NV_PAPU_FENADDR);
-	if (notifierBase != 0) {
-		const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
-			(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
-		WriteGuestBytes(notifierBase + offset + 14, &APU_NOTIFY_ENV_STATE_ACTIVE, sizeof(APU_NOTIFY_ENV_STATE_ACTIVE));
-		WriteGuestBytes(notifierBase + offset + 15, &status, sizeof(status));
+	if (notifierBase == 0) {
+		return;
 	}
+
+	const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
+		(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
+	WriteGuestBytes(notifierBase + offset + 14, &APU_NOTIFY_ENV_STATE_ACTIVE, sizeof(APU_NOTIFY_ENV_STATE_ACTIVE));
+	WriteGuestBytes(notifierBase + offset + 15, &status, sizeof(status));
 
 	SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
 	RefreshInterruptStatus();
@@ -2720,10 +2722,13 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t cachedADPCMBaseAddress = 0;
 	uint8_t cachedADPCMChannels = 0;
 	bool cachedADPCMValid = false;
+	size_t consecutivePreviewDecodeFailures = 0;
 	std::array<int16_t, APU_XADPCM_MAX_DECODED_SAMPLES> cachedADPCMSamples{};
 
 	auto sslData = m_VPSSLData[voiceHandle];
+	bool voiceStopped = false;
 	auto stopVoice = [&]() {
+		voiceStopped = true;
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		playbackState = PlaybackState{};
@@ -3107,10 +3112,17 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		if (advancePlaybackPosition(previewSSLData, previewBaseAddress, previewEndOffset, previewOffset, false)) {
 			if (!decodeFrame(previewBaseAddress, previewOffset, nextLeft, nextRight)) {
 				// If the look-ahead sample cannot be decoded, keep the current sample so
-				// interpolation continues; if decoding is still broken on the next actual
-				// frame decode in this loop, the voice-stop path above will stop it cleanly.
+				// interpolation continues briefly. Repeated look-ahead failures mean the next
+				// sample is persistently unreadable, so stop the voice instead of looping on
+				// the same broken preview forever.
+				if (++consecutivePreviewDecodeFailures >= 8) {
+					stopVoice();
+					break;
+				}
 				nextLeft = currentLeft;
 				nextRight = currentRight;
+			} else {
+				consecutivePreviewDecodeFailures = 0;
 			}
 		}
 
@@ -3143,6 +3155,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				break;
 			}
 		}
+	}
+	if (voiceStopped) {
+		return;
 	}
 
 	if (capture3DForOpenAL) {
