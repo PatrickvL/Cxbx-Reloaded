@@ -808,7 +808,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 			// The MCPX routes 3D voice HRTF output through four global submix slots;
 			// until those slots are rendered directly on the host side, fold them back
 			// to stereo as L,R,L,R to mirror the in-APU fallback routing.
-			constexpr std::array<size_t, 4> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
+			constexpr std::array<size_t, 4> HRTF_FALLBACK_CHANNEL_MAPPING{ 0, 1, 0, 1 };
 			for (const auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
 				(void)voiceHandle;
 				if (!voiceState.active || voiceState.samples.size() < sampleCount) {
@@ -823,7 +823,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 							continue;
 						}
 
-						const size_t outputChannel = kHRTFFallbackChannelMapping[slot];
+						const size_t outputChannel = HRTF_FALLBACK_CHANNEL_MAPPING[slot];
 						const size_t sourceChannel = voiceState.sourceStereo ? outputChannel : 0;
 						const int32_t contribution = ApplyMixHeadroom(
 							ScaleSample(voiceState.samples[sampleIndex + sourceChannel], gain),
