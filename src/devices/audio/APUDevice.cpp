@@ -523,7 +523,7 @@ uint32_t Ctz32(uint32_t value)
 }
 
 // Count trailing zero bits in a 64-bit mask; return 64 when the mask is empty.
-uint32_t Ctz64(uint64_t value)
+uint32_t CountTrailingZeros64(uint64_t value)
 {
 	if (value == 0) {
 		return 64;
@@ -2611,10 +2611,10 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		for (size_t wordIndex = 0; wordIndex < m_VPActiveVoiceHints.size(); ++wordIndex) {
 			uint64_t pendingVoices = m_VPActiveVoiceHints[wordIndex];
 			while (pendingVoices != 0) {
-				const uint32_t bitIndex = Ctz64(pendingVoices);
+				const uint32_t bitIndex = CountTrailingZeros64(pendingVoices);
 				const uint32_t voiceHandle = static_cast<uint32_t>(wordIndex * 64 + bitIndex);
 				pendingVoices &= ~(uint64_t{1} << bitIndex);
-				if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || IsVoiceLocked(voiceHandle)) {
+				if (voiceHandle >= MAX_VOICE_HANDLES || IsVoiceLocked(voiceHandle)) {
 					continue;
 				}
 
