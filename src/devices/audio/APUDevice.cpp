@@ -546,8 +546,9 @@ size_t GetRecentFEMethodIndex(size_t nextIndex, size_t bufferSize, size_t revers
 {
 	// Walk the fixed-size recent-method ring buffer newest-first.
 	// reverseOffset=0 returns the most recently written entry and larger offsets
-	// move progressively backward through older entries.
-	return (nextIndex + bufferSize - 1 - reverseOffset) % bufferSize;
+	// move progressively backward through older entries. Callers are expected to
+	// clamp reverseOffset to the number of valid buffered entries.
+	return (nextIndex + bufferSize - 1 - (reverseOffset % bufferSize)) % bufferSize;
 }
 
 bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& hostAddress)
@@ -2640,7 +2641,8 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			}
 		}
 		renderFallbackVoice(GetRegister32(NV_PAPU_FECV) & NV1BA0_PIO_VOICE_ON_HANDLE);
-		for (size_t i = 0; i < m_RecentFEMethodCount; ++i) {
+		const size_t recentMethodCount = std::min(m_RecentFEMethodCount, m_RecentFEMethods.size());
+		for (size_t i = 0; i < recentMethodCount; ++i) {
 			const size_t recentIndex =
 				GetRecentFEMethodIndex(m_RecentFEMethodNext, m_RecentFEMethods.size(), i);
 			const auto& event = m_RecentFEMethods[recentIndex];
