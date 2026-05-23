@@ -1048,10 +1048,30 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 			size);
 	}
 
+	if (addr >= NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY && addr < NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY + sizeof(uint32_t)) {
+		return ReadRegisterFragment(m_VPCurrentHRTFEntry, addr - NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY, size);
+	}
+
 	if (addr >= NV1BA0_PIO_VOICE_LOCK && addr < NV1BA0_PIO_VOICE_LOCK + sizeof(uint32_t)) {
 		const uint32_t currentVoice = GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE;
 		const uint32_t lockValue = IsVoiceLocked(currentVoice) ? 1u : 0u;
 		return ReadRegisterFragment(lockValue, addr - NV1BA0_PIO_VOICE_LOCK, size);
+	}
+
+	if (addr >= NV1BA0_PIO_SET_CURRENT_SSL && addr < NV1BA0_PIO_SET_CURRENT_SSL + sizeof(uint32_t)) {
+		return ReadRegisterFragment(m_VPSSLBasePage, addr - NV1BA0_PIO_SET_CURRENT_SSL, size);
+	}
+
+	if (addr >= NV1BA0_PIO_SET_HRTF_SUBMIXES && addr < NV1BA0_PIO_SET_HRTF_SUBMIXES + sizeof(uint32_t)) {
+		const uint32_t submixValue = static_cast<uint32_t>(m_VPHRTFSubmix[0])
+			| (static_cast<uint32_t>(m_VPHRTFSubmix[1]) << 8)
+			| (static_cast<uint32_t>(m_VPHRTFSubmix[2]) << 16)
+			| (static_cast<uint32_t>(m_VPHRTFSubmix[3]) << 24);
+		return ReadRegisterFragment(submixValue, addr - NV1BA0_PIO_SET_HRTF_SUBMIXES, size);
+	}
+
+	if (addr >= NV1BA0_PIO_SET_HRTF_HEADROOM && addr < NV1BA0_PIO_SET_HRTF_HEADROOM + sizeof(uint32_t)) {
+		return ReadRegisterFragment(m_VPHRTFHeadroom, addr - NV1BA0_PIO_SET_HRTF_HEADROOM, size);
 	}
 
 	return ReadRegister(APU_VP_BASE + addr, size);
