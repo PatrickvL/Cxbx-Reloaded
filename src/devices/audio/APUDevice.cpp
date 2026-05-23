@@ -765,8 +765,9 @@ void APUDevice::Reset()
 	m_VPHRTFHeadroom = 0;
 	m_VPSubmixHeadroom.fill(0);
 	m_VPVoiceLocked.fill(0);
-	// Keep the FE/VP fallback state in sync across reset by zeroing the fallback
-	// voice hints and shadow table even before the guest provides NV_PAPU_VPVADDR.
+	// Initialize the FE/VP fallback state consistently on every reset by
+	// clearing the voice hints and shadow table before the guest provides
+	// NV_PAPU_VPVADDR.
 	m_VPActiveVoiceHints.fill(0);
 	m_VPVoiceTableShadow.fill(0);
 	m_VPOutBufferCursor.fill(0);
@@ -2673,7 +2674,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	if (voiceTableBase == 0) {
 		if (!m_LoggedMissingVoiceTableDuringRender) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU render using internal shadow voice table because NV_PAPU_VPVADDR is still zero. This is expected until the guest publishes its voice table.");
+				"APU using internal shadow voice table (NV_PAPU_VPVADDR not yet initialized by guest)");
 			m_LoggedMissingVoiceTableDuringRender = true;
 		}
 	} else {
