@@ -1465,8 +1465,8 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 						break;
 					}
 				} else if (transferBytes != 0) {
-					std::vector<uint8_t> silentCapture(transferBytes, 0);
-					if (!WriteGuestBytes(transferAddress, silentCapture.data(), transferBytes)) {
+					m_CaptureScratch.assign(transferBytes, 0);
+					if (!WriteGuestBytes(transferAddress, m_CaptureScratch.data(), transferBytes)) {
 						m_ChannelDescriptorError[channelIndex] = true;
 						status |= SR_FIFOE;
 						break;
