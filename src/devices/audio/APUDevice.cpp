@@ -3243,7 +3243,9 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 			NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
 		const bool hasLoop = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE,
 			NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
-		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN, bin0);
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V0BIN, bin0)) {
+			bin0 = 0;
+		}
 		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_VBIN, NV_PAVS_VOICE_CFG_VBIN_V1BIN, bin1)) {
 			bin1 = 1;
 		}
@@ -3262,6 +3264,7 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 		const uint32_t samplesPerBlock = hasFormat
 			? (((format & NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK)) + 1u)
 			: 0u;
+		const bool adpcm = containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM;
 
 		uint32_t containerSize = 0;
 		switch (containerSizeMode) {
@@ -3284,7 +3287,7 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 		uint32_t previewAddress = 0;
 		bool previewAddressValid = hasBase && hasCurrent && containerSize != 0;
 		if (previewAddressValid) {
-			if (containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM) {
+			if (adpcm && samplesPerBlock != 0) {
 				const uint32_t bytesPerBlock = containerSize * channels;
 				previewAddress = baseAddress + (currentOffset / samplesPerBlock) * bytesPerBlock;
 			} else if (streaming) {
@@ -3303,7 +3306,7 @@ void APUDevice::LogRecentVoiceStateDiagnostics() const
 		int32_t previewSampleLeft = 0;
 		int32_t previewSampleRight = 0;
 		bool decodedPreview = false;
-		if (previewAddressValid && containerSizeMode == NV_PAVS_VOICE_CFG_FMT_CONTAINER_SIZE_ADPCM && samplesPerBlock != 0) {
+		if (previewAddressValid && adpcm && samplesPerBlock != 0) {
 			const uint32_t bytesPerBlock = containerSize * channels;
 			std::array<uint8_t, APU_XADPCM_MAX_SOURCE_BLOCK_BYTES> encodedBlock{};
 			std::array<int16_t, APU_XADPCM_MAX_DECODED_SAMPLES> decodedSamples{};
