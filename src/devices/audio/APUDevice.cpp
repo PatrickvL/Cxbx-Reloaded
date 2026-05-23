@@ -339,6 +339,7 @@ constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
 // caused guest polling loops to wait indefinitely because it does not match the
 // hardware success code.
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
+constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_ERROR = 0x80;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
 constexpr size_t APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES = 8;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
@@ -644,7 +645,6 @@ void APUDevice::Reset()
 	m_VPCurrentSSLContextDMA = 0;
 	m_VPSSLBasePage = 0;
 	m_VPCurrentHRTFEntry = 0;
-	m_VPLastVoicePositionHandle = 0;
 	m_GPXMem.fill(0);
 	m_GPMixBuf.fill(0);
 	m_GPYMem.fill(0);
@@ -1091,7 +1091,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
-		if (GetRegister32(NV_PAPU_FENADDR) != 0) {
+		uint32_t notifierBase = 0;
+		if (ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
 			WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
 		}
 		ClearHRTFFilterState(selectedHandle);
@@ -1135,11 +1136,10 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		return;
 	}
 	case NV1BA0_PIO_GET_VOICE_POSITION:
-		m_VPLastVoicePositionHandle = value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE;
-		WriteNotifierValue(m_VPLastVoicePositionHandle,
+		WriteNotifierValue(value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE,
 			MCPX_HW_NOTIFIER_VOICE_POSITION,
-			GetVoicePlaybackOffset(m_VPLastVoicePositionHandle));
-		WriteNotifierStatus(m_VPLastVoicePositionHandle,
+			GetVoicePlaybackOffset(value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE));
+		WriteNotifierStatus(value & NV1BA0_PIO_GET_VOICE_POSITION_HANDLE,
 			MCPX_HW_NOTIFIER_VOICE_POSITION,
 			NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		return;
@@ -1366,8 +1366,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			return;
 		}
 		if (addr >= NV1BA0_PIO_SET_SSL_SEGMENT_OFFSET && addr < 0x00000800) {
-			const uint32_t sslTableBase = GetRegister32(NV_PAPU_VPSSLADDR);
-			if (sslTableBase != 0) {
+			uint32_t sslTableBase = 0;
+			if (ResolveOptionalGuestTableBase(NV_PAPU_VPSSLADDR, m_VPCurrentSSLContextDMA, sslTableBase)) {
 				WriteGuestWord(sslTableBase + m_VPSSLBasePage * 8 + (addr - NV1BA0_PIO_SET_SSL_SEGMENT_OFFSET), value);
 			}
 			return;
@@ -1425,6 +1425,29 @@ bool APUDevice::WriteGuestBytes(uint32_t guestAddress, const void* src, size_t s
 
 	std::memcpy(reinterpret_cast<void*>(hostAddress), src, size);
 	return true;
+}
+
+bool APUDevice::ResolveOptionalGuestTableBase(uint32_t registerAddress, uint32_t fallbackGuestAddress, uint32_t& guestBase) const
+{
+	const uint32_t registerBase = GetRegister32(registerAddress);
+	if (registerBase != 0 && ResolveGuestMemoryPointer(registerBase, 1)) {
+		guestBase = registerBase;
+		return true;
+	}
+
+	if (fallbackGuestAddress != 0 && ResolveGuestMemoryPointer(fallbackGuestAddress, 1)) {
+		guestBase = fallbackGuestAddress;
+		return true;
+	}
+
+	guestBase = 0;
+	return false;
+}
+
+void APUDevice::SignalNotifierInterrupt()
+{
+	SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
+	RefreshInterruptStatus();
 }
 
 bool APUDevice::WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value)
@@ -1565,10 +1588,9 @@ void APUDevice::WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint
 		return;
 	}
 
-	const uint32_t notifierBase = GetRegister32(NV_PAPU_FENADDR);
-	if (notifierBase == 0) {
-		SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
-		RefreshInterruptStatus();
+	uint32_t notifierBase = 0;
+	if (!ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
+		SignalNotifierInterrupt();
 		return;
 	}
 
@@ -1583,8 +1605,8 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 		return;
 	}
 
-	const uint32_t notifierBase = GetRegister32(NV_PAPU_FENADDR);
-	if (notifierBase == 0) {
+	uint32_t notifierBase = 0;
+	if (!ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
 		return;
 	}
 
@@ -1593,8 +1615,7 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 	WriteGuestBytes(notifierBase + offset + 14, &APU_NOTIFY_ENV_STATE_ACTIVE, sizeof(APU_NOTIFY_ENV_STATE_ACTIVE));
 	WriteGuestBytes(notifierBase + offset + 15, &status, sizeof(status));
 
-	SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) | NV_PAPU_ISTS_FEVINTSTS | NV_PAPU_ISTS_FENINTSTS);
-	RefreshInterruptStatus();
+	SignalNotifierInterrupt();
 }
 
 void APUDevice::NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status)
@@ -1650,6 +1671,11 @@ void APUDevice::SetVoiceLocked(uint32_t voiceHandle, bool locked)
 
 bool APUDevice::ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const
 {
+	if (ResolveGuestMemoryPointer(linearAddress, 1)) {
+		guestAddress = linearAddress;
+		return true;
+	}
+
 	const uint32_t sgeTableBase = GetRegister32(NV_PAPU_VPSGEADDR);
 	if (sgeTableBase == 0) {
 		guestAddress = linearAddress;
@@ -2734,16 +2760,22 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 	auto sslData = m_VPSSLData[voiceHandle];
 	bool voiceStopped = false;
-	auto stopVoice = [&]() {
+	auto finishVoice = [&](uint8_t completionStatus) {
 		voiceStopped = true;
 		playbackState.previewDecodeFailures = 0;
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
-		NotifyVoiceCompletion(voiceHandle, NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+		NotifyVoiceCompletion(voiceHandle, completionStatus);
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	};
+	auto stopVoice = [&]() {
+		finishVoice(NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+	};
+	auto failVoice = [&]() {
+		finishVoice(NV1BA0_NOTIFICATION_STATUS_DONE_ERROR);
 	};
 	std::vector<int32_t> multipassSource;
 	if (multipass && clearMix) {
@@ -2851,7 +2883,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
 	}
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
-		return streaming ? ReadGuestBytes(sampleAddress, dest, size) : ReadVoiceBufferBytes(sampleAddress, dest, size);
+		return ReadVoiceBufferBytes(sampleAddress, dest, size);
 	};
 	auto loadStreamingSegment = [&](SSLData& voiceSSLData, uint32_t& segmentBaseAddress, uint32_t& segmentEndOffset, uint32_t& segmentCurrentOffset, bool commit) -> bool {
 		for (size_t attempts = 0; attempts < 4; ++attempts) {
@@ -2877,13 +2909,16 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				continue;
 			}
 
-			const uint32_t sslTableBase = GetRegister32(NV_PAPU_VPSSLADDR);
-			if (sslTableBase == 0) {
+			uint32_t sslTableBase = 0;
+			if (!ResolveOptionalGuestTableBase(NV_PAPU_VPSSLADDR, m_VPCurrentSSLContextDMA, sslTableBase)) {
 				if (!m_LoggedStreamingSSLFailure) {
 					EmuLog(LOG_LEVEL::WARNING,
-						"APU streaming voice %u needs NV_PAPU_VPSSLADDR but the SSL table base is still zero",
+						"APU streaming voice %u needs an SSL table, but neither NV_PAPU_VPSSLADDR nor the current SSL context DMA resolved to guest memory",
 						voiceHandle);
 					m_LoggedStreamingSSLFailure = true;
+				}
+				if (commit) {
+					failVoice();
 				}
 				return false;
 			}
@@ -2894,6 +2929,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			uint32_t segmentLength = 0;
 			if (!ReadGuestWord(sslTableBase + segmentPage * 8, segmentOffset) ||
 				!ReadGuestWord(sslTableBase + segmentPage * 8 + 4, segmentLength)) {
+				if (commit) {
+					failVoice();
+				}
 				return false;
 			}
 
@@ -2909,6 +2947,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			if (segmentContainerSizeMode != containerSizeMode ||
 				segmentSamplesPerBlock != samplesPerBlock ||
 				segmentStereo != stereo) {
+				if (commit) {
+					failVoice();
+				}
 				return false;
 			}
 
@@ -3094,7 +3135,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			// stopVoice clears the cached playback state and guest active bits; break out of
 			// the per-frame loop immediately, then let the final voiceStopped return below
 			// skip the remaining state writes for this voice.
-			stopVoice();
+			failVoice();
 			break;
 		}
 		if (multipass) {
@@ -3126,7 +3167,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				// the same broken preview forever.
 				++playbackState.previewDecodeFailures;
 				if (playbackState.previewDecodeFailures >= APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES) {
-					stopVoice();
+					failVoice();
 					break;
 				}
 				nextLeft = currentLeft;

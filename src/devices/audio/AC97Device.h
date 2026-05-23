@@ -89,6 +89,7 @@ class AC97Device : public PCIDevice {
 		void UpdateBusMasterStatus(uint32_t channelBase);
 		uint32_t GetBusMasterSampleRate(uint32_t channelBase) const;
 		uint8_t GetPrefetchedIndexValue(uint32_t channelBase, uint8_t currentIndex, uint8_t lastValidIndex) const;
+		bool ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const;
 		bool ReadGuest32(uint32_t guestAddress, uint32_t& value) const;
 		bool IsDescriptorErrorAcknowledged(uint32_t channelBase) const;
 		bool QueryOutputSourceSnapshot(ALint& state, ALint& queued, ALint& processed, ALenum& error) const;

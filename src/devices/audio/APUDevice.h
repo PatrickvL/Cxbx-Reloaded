@@ -135,6 +135,8 @@ private:
 	bool WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size);
 	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
 	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
+	bool ResolveOptionalGuestTableBase(uint32_t registerAddress, uint32_t fallbackGuestAddress, uint32_t& guestBase) const;
+	void SignalNotifierInterrupt();
 	bool ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const;
 	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
 	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
@@ -173,7 +175,6 @@ private:
 	uint32_t m_VPCurrentSSLContextDMA = 0;
 	uint32_t m_VPSSLBasePage = 0;
 	uint32_t m_VPCurrentHRTFEntry = 0;
-	uint32_t m_VPLastVoicePositionHandle = 0;
 	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPXMem{};
 	std::array<uint8_t, 0x400 * sizeof(uint32_t)> m_GPMixBuf{};
 	std::array<uint8_t, 0x800 * sizeof(uint32_t)> m_GPYMem{};

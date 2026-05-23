@@ -1401,6 +1401,10 @@ static void CxbxrKrnlInitHacks()
 		do {
 			more_work = false;
 
+			if (g_APU != nullptr) {
+				g_APU->SynchronizeAudio();
+			}
+
 			if (g_bEnableAllInterrupts && g_NV2A) {
 				NV2AState* d = g_NV2A->GetDeviceState();
 

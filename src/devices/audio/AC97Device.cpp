@@ -206,6 +206,32 @@ bool GetOpenALTestBeepEnabled()
 	return enabled;
 }
 
+bool ResolveAC97GuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& hostAddress)
+{
+	if (size == 0) {
+		return false;
+	}
+
+	const uint64_t startAddress = static_cast<uint64_t>(guestAddress);
+	const uint64_t span = static_cast<uint64_t>(size - 1);
+	if (span > UINT64_MAX - startAddress) {
+		return false;
+	}
+
+	const uint64_t endAddress = startAddress + span;
+	if (guestAddress >= PHYSICAL_MAP_BASE && endAddress <= PHYSICAL_MAP_END) {
+		hostAddress = static_cast<uintptr_t>(guestAddress);
+		return true;
+	}
+
+	if (guestAddress < PHYSICAL_MAP_SIZE && endAddress < PHYSICAL_MAP_SIZE) {
+		hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress);
+		return true;
+	}
+
+	return false;
+}
+
 std::vector<int16_t> BuildOpenALTestBeepFrames()
 {
 	const double sampleRate = static_cast<double>(APU_TIMER_FREQUENCY);
@@ -724,6 +750,32 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 		return;
 	}
 
+	const size_t sampleCount = frameCount * AC97_OUTPUT_CHANNELS;
+	std::vector<int16_t> spatialFallbackMix;
+	const int16_t* spatialInput = samples;
+	if (!m_Pending3DVoices.empty()) {
+		const uint32_t stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(samples, sampleCount);
+		if (stereoPeak == 0) {
+			bool mixedPendingVoices = false;
+			spatialFallbackMix.assign(samples, samples + sampleCount);
+			for (const auto& [voiceHandle, voiceState] : m_Pending3DVoices) {
+				(void)voiceHandle;
+				if (!voiceState.active || voiceState.samples.size() < sampleCount) {
+					continue;
+				}
+				for (size_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
+					const int32_t mixedSample = static_cast<int32_t>(spatialFallbackMix[sampleIndex]) +
+						static_cast<int32_t>(voiceState.samples[sampleIndex]);
+					spatialFallbackMix[sampleIndex] = ClampToInt16(mixedSample);
+				}
+				mixedPendingVoices = true;
+			}
+			if (mixedPendingVoices) {
+				spatialInput = spatialFallbackMix.data();
+			}
+		}
+	}
+
 	ALint processed = 0;
 	alGetSourcei(m_OutputSource, AL_BUFFERS_PROCESSED, &processed);
 	ALenum sourceError = alGetError();
@@ -773,13 +825,13 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	const float leftGain = DecodeOutputAttenuation(masterVolume, true) * DecodeOutputAttenuation(pcmOutVolume, true);
 	const float rightGain = DecodeOutputAttenuation(masterVolume, false) * DecodeOutputAttenuation(pcmOutVolume, false);
 
-	const int16_t* output = samples;
+	const int16_t* output = spatialInput;
 	if (leftGain != 1.0f || rightGain != 1.0f) {
 		m_OutputScratch.resize(frameCount * AC97_OUTPUT_CHANNELS);
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			const size_t sampleIndex = frame * AC97_OUTPUT_CHANNELS;
-			m_OutputScratch[sampleIndex] = ClampToInt16(ScaleSample(samples[sampleIndex], leftGain));
-			m_OutputScratch[sampleIndex + 1] = ClampToInt16(ScaleSample(samples[sampleIndex + 1], rightGain));
+			m_OutputScratch[sampleIndex] = ClampToInt16(ScaleSample(spatialInput[sampleIndex], leftGain));
+			m_OutputScratch[sampleIndex + 1] = ClampToInt16(ScaleSample(spatialInput[sampleIndex + 1], rightGain));
 		}
 		output = m_OutputScratch.data();
 	}
@@ -1356,7 +1408,40 @@ void AC97Device::UpdateBusMasterStatus(uint32_t channelBase)
 				break;
 			}
 
+			const uint16_t descriptorRemainingBeforeConsume = remaining;
+			uint32_t descriptorAddress = 0;
+			uint16_t descriptorLength = 0;
+			if (channelBase == NABM_PO_BASE) {
+				const uint8_t currentIndex = static_cast<uint8_t>(ReadRegister(civAddr, sizeof(uint8_t)) & 0x1F);
+				const uint32_t descriptorBase = ReadRegister(bdbarAddr, sizeof(uint32_t)) & ~0x7u;
+				uint32_t descriptorControl = 0;
+				if (descriptorBase == 0 ||
+					!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE, descriptorAddress) ||
+					!ReadGuest32(descriptorBase + currentIndex * AC97_DESCRIPTOR_STRIDE + 4, descriptorControl)) {
+					m_ChannelDescriptorError[channelIndex] = true;
+					status |= SR_FIFOE;
+					break;
+				}
+				descriptorLength = static_cast<uint16_t>(descriptorControl & AC97_DESCRIPTOR_LENGTH_MASK);
+			}
+
 			const uint16_t consumed = static_cast<uint16_t>(samplesToConsume > remaining ? remaining : samplesToConsume);
+			if (channelBase == NABM_PO_BASE && descriptorAddress != 0 && descriptorLength >= descriptorRemainingBeforeConsume) {
+				const uint16_t descriptorOffset = static_cast<uint16_t>(descriptorLength - descriptorRemainingBeforeConsume);
+				const size_t pcmBytes = static_cast<size_t>(consumed) * AC97_OUTPUT_BYTES_PER_FRAME;
+				std::vector<int16_t> pcmFrames((pcmBytes + sizeof(int16_t) - 1) / sizeof(int16_t));
+				if (!pcmFrames.empty() &&
+					ReadGuestBytes(descriptorAddress + static_cast<uint32_t>(descriptorOffset) * AC97_OUTPUT_BYTES_PER_FRAME,
+						pcmFrames.data(),
+						pcmBytes)) {
+					SubmitPCMFrames(pcmFrames.data(), consumed);
+				} else if (!pcmFrames.empty()) {
+					m_ChannelDescriptorError[channelIndex] = true;
+					status |= SR_FIFOE;
+					break;
+				}
+			}
+
 			remaining = static_cast<uint16_t>(remaining - consumed);
 			WriteRegister16(picbAddr, remaining);
 			samplesToConsume -= consumed;
@@ -1462,12 +1547,18 @@ uint32_t AC97Device::GetBusMasterSampleRate(uint32_t channelBase) const
 	}
 }
 
-bool AC97Device::ReadGuest32(uint32_t guestAddress, uint32_t& value) const
+bool AC97Device::ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const
 {
-	if (!IsGuestRangeAccessible(guestAddress, sizeof(uint32_t))) {
+	uintptr_t hostAddress = 0;
+	if (dest == nullptr || !ResolveAC97GuestMemoryPointer(guestAddress, size, hostAddress)) {
 		return false;
 	}
 
-	std::memcpy(&value, reinterpret_cast<const void*>(static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress)), sizeof(value));
+	std::memcpy(dest, reinterpret_cast<const void*>(hostAddress), size);
 	return true;
+}
+
+bool AC97Device::ReadGuest32(uint32_t guestAddress, uint32_t& value) const
+{
+	return ReadGuestBytes(guestAddress, &value, sizeof(value));
 }
