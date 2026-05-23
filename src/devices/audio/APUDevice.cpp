@@ -814,6 +814,26 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		return;
 	}
 
+	if ((addr >= NV_PAPU_FETFORCE0 && addr < NV_PAPU_FETFORCE0 + sizeof(uint32_t)) ||
+		(addr >= NV_PAPU_FETFORCE1 && addr < NV_PAPU_FETFORCE1 + sizeof(uint32_t))) {
+		WriteRegister(addr, value, size);
+		uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+		const bool idleVoiceTrapPending =
+			(fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED &&
+			(fectl & NV_PAPU_FECTL_FETRAPREASON) == NV_PAPU_FECTL_FETRAPREASON_REQUESTED;
+		if (idleVoiceTrapPending) {
+			const bool clearIdleVoiceTrap =
+				(addr >= NV_PAPU_FETFORCE0 && addr < NV_PAPU_FETFORCE0 + sizeof(uint32_t)) ||
+				((GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) == 0);
+			if (clearIdleVoiceTrap) {
+				fectl &= ~(NV_PAPU_FECTL_FEMETHMODE | NV_PAPU_FECTL_FETRAPREASON);
+				SetRegister32(NV_PAPU_FECTL, fectl);
+			}
+		}
+		RefreshInterruptStatus();
+		return;
+	}
+
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
 		WriteRegister(addr, value, size);
 		WriteGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
