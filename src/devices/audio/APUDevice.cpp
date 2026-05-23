@@ -495,6 +495,7 @@ bool IsVoiceEntryOffsetWithinBounds(uint32_t offset)
 	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
 }
 
+// Returns the count of trailing zero bits in a 32-bit mask/value.
 uint32_t Ctz32(uint32_t value);
 
 uint32_t GetMaskedValue(uint32_t current, uint32_t mask)
@@ -710,6 +711,9 @@ double DecodePitchStep(uint32_t pitch)
 
 float NormalizeVoiceLFOModulationLevel(uint32_t level)
 {
+	// PAR_LFO stores a 15-bit triangle-wave level where 0x4000 is the neutral
+	// midpoint; map the hardware range [0, 0x7FFF] to a bipolar [-1, 1] host
+	// modulation value.
 	const float normalized = (static_cast<float>(std::min<uint32_t>(level, APU_LFO_LEVEL_MAX)) /
 		static_cast<float>(APU_LFO_LEVEL_CENTER)) - 1.0f;
 	return std::clamp(normalized, -1.0f, 1.0f);
@@ -724,6 +728,8 @@ void StepVoiceLFOLevel(uint32_t delta, uint32_t& level, bool& descending)
 
 	int32_t value = static_cast<int32_t>(std::min<uint32_t>(level, APU_LFO_LEVEL_MAX));
 	value += descending ? -static_cast<int32_t>(delta) : static_cast<int32_t>(delta);
+	// Reflect off the 0..0x7FFF bounds and flip the direction bit so the guest-
+	// visible PAR_LFO state advances as a continuous triangle waveform.
 	while (value < 0 || value > static_cast<int32_t>(APU_LFO_LEVEL_MAX)) {
 		if (value < 0) {
 			value = -value;
