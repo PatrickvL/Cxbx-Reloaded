@@ -447,12 +447,12 @@ uint32_t NormalizeAPUWordAddress(uint32_t value)
 	return value & ~0x3u;
 }
 
-bool IsVoiceTableWordOffsetValid(uint32_t offset)
+bool IsVoiceEntryWordOffsetValid(uint32_t offset)
 {
 	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
 }
 
-uint32_t ReadMaskedWord(uint32_t current, uint32_t mask)
+uint32_t ExtractMaskedWord(uint32_t current, uint32_t mask)
 {
 	if (mask == 0xFFFFFFFF) {
 		return current;
@@ -461,7 +461,7 @@ uint32_t ReadMaskedWord(uint32_t current, uint32_t mask)
 	return (current & mask) >> Ctz32(mask);
 }
 
-uint32_t WriteMaskedWord(uint32_t current, uint32_t mask, uint32_t value)
+uint32_t ApplyMaskedWord(uint32_t current, uint32_t mask, uint32_t value)
 {
 	if (mask == 0xFFFFFFFF) {
 		return value;
@@ -1740,7 +1740,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
-	if (!IsVoiceTableWordOffsetValid(offset)) {
+	if (!IsVoiceEntryWordOffsetValid(offset)) {
 		return false;
 	}
 
@@ -1752,7 +1752,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 			m_VPVoiceTableShadow.size(),
 			static_cast<uint32_t>(shadowOffset),
 			sizeof(uint32_t));
-		value = ReadMaskedWord(current, mask);
+		value = ExtractMaskedWord(current, mask);
 		m_LoggedVoiceTableReadFailure = false;
 		return true;
 	}
@@ -1773,7 +1773,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 		return false;
 	}
 
-	value = ReadMaskedWord(current, mask);
+	value = ExtractMaskedWord(current, mask);
 	// A successful read means the voice table is reachable again, so allow a future
 	// access regression to emit a fresh one-shot diagnostic.
 	m_LoggedVoiceTableReadFailure = false;
@@ -1785,7 +1785,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
-	if (!IsVoiceTableWordOffsetValid(offset)) {
+	if (!IsVoiceEntryWordOffsetValid(offset)) {
 		return false;
 	}
 
@@ -1797,7 +1797,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 			m_VPVoiceTableShadow.size(),
 			static_cast<uint32_t>(shadowOffset),
 			sizeof(uint32_t));
-		const uint32_t mergedValue = WriteMaskedWord(current, mask, value);
+		const uint32_t mergedValue = ApplyMaskedWord(current, mask, value);
 		WriteMemoryWindow(
 			m_VPVoiceTableShadow.data(),
 			m_VPVoiceTableShadow.size(),
