@@ -1430,7 +1430,6 @@ void APUDevice::TransferDSPFifo(bool gp, uint8_t* ptr, unsigned index, size_t le
 
 	if (!gp && dir && index == 0) {
 		CaptureEPFifoOutput(ptr, len);
-		std::memset(ptr, 0, len);
 	}
 
 	const uint32_t cur = GetRegister32(curRegister) & NV_PAPU_FIFO_VALUE;
@@ -1446,12 +1445,15 @@ bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t 
 	}
 
 	m_DSPOutputScratch.clear();
-	const auto runDSP = [](DSPState* dsp) {
+	const uint64_t maxCycleBudget = std::max<size_t>(frameCount, APU_DSP_FRAME_SAMPLES) * 4096ull;
+	const auto runDSP = [maxCycleBudget](DSPState* dsp) {
 		dsp_start_frame(dsp);
 		dsp->core.is_idle = false;
 		dsp->core.cycle_count = 0;
-		for (size_t guard = 0; guard < 1024 && !dsp->core.is_idle; ++guard) {
+		uint64_t scheduledCycles = 0;
+		while (!dsp->core.is_idle && scheduledCycles < maxCycleBudget) {
 			dsp_run(dsp, 1000);
+			scheduledCycles += 1000;
 		}
 	};
 
@@ -3356,13 +3358,14 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	m_LoggedAC97Missing = false;
 
 	std::vector<int16_t> output(frameCount * 2);
-	for (size_t frame = 0; frame < frameCount; ++frame) {
-		// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
-		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frame], INT16_MIN, INT16_MAX));
-		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frameCount + frame], INT16_MIN, INT16_MAX));
-	}
-
 	const bool dspOutputActive = ProcessDSPAudio(output.data(), mixBins.data(), frameCount);
+	if (!dspOutputActive) {
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
+			output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frame], INT16_MIN, INT16_MAX));
+			output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frameCount + frame], INT16_MIN, INT16_MAX));
+		}
+	}
 	const bool stereoBinsSilent = dspOutputActive
 		? audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size()) == 0
 		: (PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&

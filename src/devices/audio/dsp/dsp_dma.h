@@ -48,6 +48,9 @@ typedef struct DSPDMAState {
     uint32_t start_block;
     uint32_t next_block;
 
+    uint8_t *scratch_buf;
+    size_t scratch_buf_size;
+
     bool error;
     bool eol;
 } DSPDMAState;
