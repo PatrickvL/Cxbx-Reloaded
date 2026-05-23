@@ -760,7 +760,7 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 	}
 
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
-		uint32_t currentValue = GetRegister32(NV_PAPU_FEMEMDATA);
+		uint32_t currentValue = 0;
 		ReadGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), currentValue);
 		SetRegister32(NV_PAPU_FEMEMDATA, currentValue);
 		return ReadRegisterFragment(currentValue, addr - NV_PAPU_FEMEMDATA, size);
