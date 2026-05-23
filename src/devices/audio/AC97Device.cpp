@@ -1696,11 +1696,6 @@ void AC97Device::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned
 	}
 }
 
-void AC97Device::ServiceAudio()
-{
-	UpdateBusMasterChannels();
-}
-
 uint32_t AC97Device::ReadRegister(uint32_t addr, unsigned size) const
 {
 	if (size == 0 || addr + size > m_Registers.size()) {
