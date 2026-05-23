@@ -880,6 +880,7 @@ struct APUDevice::BasicVoiceDiagnosticSummary {
 	uint32_t mixedPeak = 0;
 	bool visited = false;
 	bool active = false;
+	bool paused = false;
 	bool mixed = false;
 	bool decodedNonZero = false;
 	bool stereoContribution = false;
@@ -3020,6 +3021,84 @@ void APUDevice::BeginVoiceRelease(uint32_t voiceHandle)
 		NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 }
 
+void APUDevice::AdvancePausedVoiceState(uint32_t voiceHandle, size_t frameCount,
+	BasicVoiceDiagnosticSummary* diagnostics)
+{
+	const bool captureVoiceDiagnostics = diagnostics != nullptr;
+	uint32_t lfoEnv = 0;
+	uint32_t lfoMod = 0;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_LFO_ENV, 0xFFFFFFFF, lfoEnv);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_LFO_MOD, 0xFFFFFFFF, lfoMod);
+	const uint32_t lfoADelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOADLT);
+	const uint32_t lfoFDelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOFDLT);
+	const float lfoAmplitudeAmount = DecodeSignedLFOAmount(
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOAAM));
+
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		uint32_t state = 0;
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
+			(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
+			(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) == 0) {
+			break;
+		}
+
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		const float envelopeGain = StepVoiceEnvelope(
+			voiceHandle,
+			NV_PAVS_VOICE_CFG_ENV0, NV_PAVS_VOICE_CFG_ENVA,
+			NV_PAVS_VOICE_TAR_LFO_ENV, NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE,
+			NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_EALVL,
+			NV_PAVS_VOICE_CUR_ECNT_EACOUNT, NV_PAVS_VOICE_PAR_STATE_EACUR);
+		const float filterEnvelopeGain = StepVoiceEnvelope(
+			voiceHandle,
+			NV_PAVS_VOICE_CFG_ENV1, NV_PAVS_VOICE_CFG_ENVF,
+			NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE,
+			NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EFLVL,
+			NV_PAVS_VOICE_CUR_ECNT_EFCOUNT, NV_PAVS_VOICE_PAR_STATE_EFCUR);
+		if (captureVoiceDiagnostics) {
+			diagnostics->maxEnvelopeGain = std::max(diagnostics->maxEnvelopeGain, envelopeGain);
+			diagnostics->maxFilterEnvelopeGain = std::max(diagnostics->maxFilterEnvelopeGain, filterEnvelopeGain);
+		}
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
+			(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
+			(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) == 0) {
+			break;
+		}
+
+		uint32_t lfoALevel = APU_LFO_LEVEL_CENTER;
+		uint32_t lfoAReverse = 0;
+		uint32_t lfoFLevel = APU_LFO_LEVEL_CENTER;
+		uint32_t lfoFReverse = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOALVL, lfoALevel);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, lfoAReverse);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, lfoFLevel);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, lfoFReverse);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
+		bool lfoADescending = lfoAReverse != 0;
+		bool lfoFDescending = lfoFReverse != 0;
+		StepVoiceLFOLevel(
+			IsVoiceLFODelayActive(state, NV_PAVS_VOICE_PAR_STATE_LFOA_DELAYMODE, NV_PAVS_VOICE_PAR_STATE_EACUR)
+				? 0u
+				: lfoADelta,
+			lfoALevel, lfoADescending);
+		StepVoiceLFOLevel(
+			IsVoiceLFODelayActive(state, NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE, NV_PAVS_VOICE_PAR_STATE_EFCUR)
+				? 0u
+				: lfoFDelta,
+			lfoFLevel, lfoFDescending);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOALVL, lfoALevel);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, lfoADescending ? 1u : 0u);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, lfoFLevel);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, lfoFDescending ? 1u : 0u);
+		if (captureVoiceDiagnostics) {
+			const float lfoAValue = NormalizeVoiceLFOModulationLevel(lfoALevel);
+			const float amplitudeLFOModulation = std::clamp(1.0f + lfoAValue * lfoAmplitudeAmount, 0.0f, 2.0f);
+			diagnostics->maxAmplitudeLFOModulation = std::max(
+				diagnostics->maxAmplitudeLFOModulation, amplitudeLFOModulation);
+		}
+	}
+}
+
 float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
 	uint32_t rrReg, uint32_t rrMask, uint32_t levelRegister, uint32_t levelMask,
 	uint32_t countMask, uint32_t stateMask)
@@ -3557,7 +3636,7 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 		// 1) decode produced signal but none of it reached stereo bins,
 		// 2) the active voice stayed silent all the way through decode,
 		// 3) frames rendered without any offset advance despite a positive pitch step.
-		return diagnostics.active &&
+		return diagnostics.active && !diagnostics.paused &&
 			((diagnostics.decodedNonZero && !diagnostics.stereoContribution) ||
 			 !diagnostics.decodedNonZero ||
 			 (diagnostics.framesRendered != 0 && diagnostics.offsetAdvance == 0 && diagnostics.pitchStep > 0.0));
@@ -3619,8 +3698,9 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 				frameCount);
 			for (const auto& diagnostics : interestingVoices) {
 				EmuLog(LOG_LEVEL::INFO,
-					"APU voice diag handle=%u offsets=%u+%u frames=%zu pitchStep=%.6f/%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f filterEnvMax=%.3f lfoGainMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
+					"APU voice diag handle=%u paused=%d offsets=%u+%u frames=%zu pitchStep=%.6f/%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f filterEnvMax=%.3f lfoGainMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
 					diagnostics.voiceHandle,
+					diagnostics.paused ? 1 : 0,
 					diagnostics.startOffset,
 					diagnostics.offsetAdvance,
 					diagnostics.framesRendered,
@@ -4037,11 +4117,18 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 	uint32_t state = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
-		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
-		(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0) {
+		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
 		if ((state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
 			SetVoiceActiveHint(voiceHandle, false);
 		}
+		return;
+	}
+	if ((state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0) {
+		if (captureVoiceDiagnostics) {
+			diagnostics->active = true;
+			diagnostics->paused = true;
+		}
+		AdvancePausedVoiceState(voiceHandle, frameCount, diagnostics);
 		return;
 	}
 

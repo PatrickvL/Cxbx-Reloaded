@@ -146,6 +146,8 @@ private:
 	void LogRecentVoiceStateDiagnostics() const;
 	void InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue);
 	void BeginVoiceRelease(uint32_t voiceHandle);
+	void AdvancePausedVoiceState(uint32_t voiceHandle, size_t frameCount,
+		BasicVoiceDiagnosticSummary* diagnostics = nullptr);
 	float StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
 		uint32_t rrReg, uint32_t rrMask, uint32_t levelRegister, uint32_t levelMask,
 		uint32_t countMask, uint32_t stateMask);
