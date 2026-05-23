@@ -716,6 +716,7 @@ struct APUDevice::BasicVoiceDiagnosticSummary {
 	size_t framesRendered = 0;
 	double pitchStep = 0.0;
 	float maxEnvelopeGain = 0.0f;
+	float maxFilterEnvelopeGain = 0.0f;
 	uint32_t decodedPeak = 0;
 	uint32_t mixedPeak = 0;
 	bool visited = false;
@@ -3112,7 +3113,7 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 				frameCount);
 			for (const auto& diagnostics : interestingVoices) {
 				EmuLog(LOG_LEVEL::INFO,
-					"APU voice diag handle=%u offsets=%u+%u frames=%zu pitchStep=%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
+					"APU voice diag handle=%u offsets=%u+%u frames=%zu pitchStep=%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f filterEnvMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
 					diagnostics.voiceHandle,
 					diagnostics.startOffset,
 					diagnostics.offsetAdvance,
@@ -3121,6 +3122,7 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 					diagnostics.decodedPeak,
 					diagnostics.mixedPeak,
 					diagnostics.maxEnvelopeGain,
+					diagnostics.maxFilterEnvelopeGain,
 					diagnostics.stereoContribution ? 1 : 0,
 					diagnostics.nonStereoContribution ? 1 : 0,
 					diagnostics.bins[0], diagnostics.bins[1], diagnostics.bins[2], diagnostics.bins[3],
@@ -3775,15 +3777,22 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			lowPassResonance[1] = lowPassResonance[0];
 		}
 	}
-	auto applyLowPass = [&](float& sampleLeft, float& sampleRight) {
+	auto applyLowPass = [&](float& sampleLeft, float& sampleRight, float filterEnvelopeGain) {
 		if (!lowPassEnabled) {
 			return;
 		}
+		const float clampedFilterEnvelopeGain = std::clamp(filterEnvelopeGain, 0.0f, 1.0f);
+		const float modulatedCutoff[2]{
+			APU_FILTER_MIN_FREQUENCY +
+				(lowPassCutoff[0] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain,
+			APU_FILTER_MIN_FREQUENCY +
+				(lowPassCutoff[1] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain
+		};
 		auto& filterState = m_VPLowPassState[voiceHandle];
 		sampleLeft = ClampUnitSample(RunLowPassFilter(filterState[0].high, filterState[0].band, filterState[0].low,
-			lowPassCutoff[0], lowPassResonance[0], sampleLeft));
+			modulatedCutoff[0], lowPassResonance[0], sampleLeft));
 		sampleRight = ClampUnitSample(RunLowPassFilter(filterState[1].high, filterState[1].band, filterState[1].low,
-			lowPassCutoff[1], lowPassResonance[1], sampleRight));
+			modulatedCutoff[1], lowPassResonance[1], sampleRight));
 	};
 	uint32_t hrtfEntryIndex = APU_INVALID_HRTF_ENTRY_INDEX;
 	const bool hrtfEnabled = voiceHandle < APU_MAX_3D_VOICES &&
@@ -4073,12 +4082,15 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		if (captureVoiceDiagnostics) {
 			diagnostics->maxEnvelopeGain = std::max(diagnostics->maxEnvelopeGain, envelopeGain);
 		}
-		(void)StepVoiceEnvelope(
+		const float filterEnvelopeGain = StepVoiceEnvelope(
 			voiceHandle,
 			NV_PAVS_VOICE_CFG_ENV1, NV_PAVS_VOICE_CFG_ENVF,
 			NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE,
 			NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EFLVL,
 			NV_PAVS_VOICE_CUR_ECNT_EFCOUNT, NV_PAVS_VOICE_PAR_STATE_EFCUR);
+		if (captureVoiceDiagnostics) {
+			diagnostics->maxFilterEnvelopeGain = std::max(diagnostics->maxFilterEnvelopeGain, filterEnvelopeGain);
+		}
 
 		uint32_t activeState = 0;
 		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, activeState) ||
@@ -4097,7 +4109,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			break;
 		}
 		if (multipass) {
-			applyLowPass(currentLeft, currentRight);
+			applyLowPass(currentLeft, currentRight, filterEnvelopeGain);
 			if (capture3DHandoff) {
 				storeCaptured3DSample(frame, currentLeft, currentRight, envelopeGain);
 			}
@@ -4138,7 +4150,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const float interpolation = static_cast<float>(playbackState.fraction);
 		float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
-		applyLowPass(sampleLeft, sampleRight);
+		applyLowPass(sampleLeft, sampleRight, filterEnvelopeGain);
 		if (capture3DHandoff) {
 			storeCaptured3DSample(frame, sampleLeft, sampleRight, envelopeGain);
 		}
