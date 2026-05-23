@@ -544,6 +544,9 @@ uint32_t CountTrailingZeros64(uint64_t value)
 
 size_t GetRecentFEMethodIndex(size_t nextIndex, size_t bufferSize, size_t reverseOffset)
 {
+	// Walk the fixed-size recent-method ring buffer newest-first.
+	// reverseOffset=0 returns the most recently written entry and larger offsets
+	// move progressively backward through older entries.
 	return (nextIndex + bufferSize - 1 - reverseOffset) % bufferSize;
 }
 
@@ -2617,10 +2620,10 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		GetRegister32(NV_PAPU_TVL2D) >= APU_VP_VOICE_MAX_HANDLE &&
 		GetRegister32(NV_PAPU_TVL3D) >= APU_VP_VOICE_MAX_HANDLE &&
 		GetRegister32(NV_PAPU_TVLMP) >= APU_VP_VOICE_MAX_HANDLE) {
-		std::unordered_set<uint32_t> fallbackHandles;
+		std::unordered_set<uint32_t> renderedVoiceHandles;
 		const auto renderFallbackVoice = [&](uint32_t voiceHandle) {
 			if (voiceHandle >= MAX_VOICE_HANDLES || IsVoiceLocked(voiceHandle) ||
-				!fallbackHandles.insert(voiceHandle).second) {
+				!renderedVoiceHandles.insert(voiceHandle).second) {
 				return;
 			}
 
