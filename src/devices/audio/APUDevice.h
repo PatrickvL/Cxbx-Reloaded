@@ -45,6 +45,7 @@ public:
 	static constexpr size_t HRTF_FILTER_DELAY_SAMPLES = 42;
 	static constexpr size_t HRTF_FILTER_BUFFER_LENGTH = HRTF_FILTER_TAPS + HRTF_FILTER_DELAY_SAMPLES;
 	static constexpr size_t MAX_RECENT_FE_METHODS = 16;
+	static constexpr size_t VP_VOICE_TABLE_SHADOW_BYTES = MAX_VOICE_HANDLES * 0x80;
 
 	// PCI Functions
 	void Init();
@@ -207,6 +208,7 @@ private:
 	std::array<uint8_t, 32> m_VPSubmixHeadroom{};
 	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPVoiceLocked{};
 	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPActiveVoiceHints{};
+	std::array<uint8_t, VP_VOICE_TABLE_SHADOW_BYTES> m_VPVoiceTableShadow{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
 	std::array<uint32_t, 4> m_VPOutBufferPlaybackCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};

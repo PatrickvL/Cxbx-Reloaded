@@ -718,6 +718,8 @@ void APUDevice::Reset()
 	m_VPHRTFHeadroom = 0;
 	m_VPSubmixHeadroom.fill(0);
 	m_VPVoiceLocked.fill(0);
+	m_VPActiveVoiceHints.fill(0);
+	m_VPVoiceTableShadow.fill(0);
 	m_VPOutBufferCursor.fill(0);
 	m_VPOutBufferPlaybackCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
@@ -732,8 +734,10 @@ void APUDevice::Reset()
 	m_LoggedVoiceTableReadFailure = false;
 	m_LoggedVoiceTableWriteFailure = false;
 	m_LoggedScatterGatherWriteFailure = false;
+	m_LoggedMissingVoiceTableDuringRender = false;
 	m_EnableHostSpatialHandoff = true;
 	m_LoggedVPOutputBufferReadFailure = false;
+	m_LoggedFallbackActiveVoiceRender = false;
 	m_ChunkCaptured3DVoiceCount = 0;
 	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 
@@ -1711,18 +1715,22 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
+	if (offset > NV_PAVS_SIZE - sizeof(uint32_t)) {
+		return false;
+	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
-		if (!m_LoggedVoiceTableReadFailure) {
-			EmuLog(LOG_LEVEL::WARNING,
-				"APU ReadVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x",
-				voiceHandle,
-				offset,
-				mask);
-			m_LoggedVoiceTableReadFailure = true;
-		}
-		return false;
+		const size_t shadowOffset = static_cast<size_t>(voiceHandle) * NV_PAVS_SIZE + offset;
+		const uint32_t current = ReadMemoryWindow(
+			m_VPVoiceTableShadow.data(),
+			m_VPVoiceTableShadow.size(),
+			static_cast<uint32_t>(shadowOffset),
+			sizeof(uint32_t));
+		const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
+		value = mask == 0xFFFFFFFF ? current : ((current & mask) >> shift);
+		m_LoggedVoiceTableReadFailure = false;
+		return true;
 	}
 
 	const uint32_t voiceBase = voiceTableBase + voiceHandle * NV_PAVS_SIZE + offset;
@@ -1754,19 +1762,30 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
+	if (offset > NV_PAVS_SIZE - sizeof(uint32_t)) {
+		return false;
+	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
-		if (!m_LoggedVoiceTableWriteFailure) {
-			EmuLog(LOG_LEVEL::WARNING,
-				"APU WriteVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x value=0x%08x",
-				voiceHandle,
-				offset,
-				mask,
-				value);
-			m_LoggedVoiceTableWriteFailure = true;
-		}
-		return false;
+		const size_t shadowOffset = static_cast<size_t>(voiceHandle) * NV_PAVS_SIZE + offset;
+		const uint32_t current = ReadMemoryWindow(
+			m_VPVoiceTableShadow.data(),
+			m_VPVoiceTableShadow.size(),
+			static_cast<uint32_t>(shadowOffset),
+			sizeof(uint32_t));
+		const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
+		const uint32_t mergedValue = mask == 0xFFFFFFFF
+			? value
+			: ((current & ~mask) | ((value << shift) & mask));
+		WriteMemoryWindow(
+			m_VPVoiceTableShadow.data(),
+			m_VPVoiceTableShadow.size(),
+			static_cast<uint32_t>(shadowOffset),
+			mergedValue,
+			sizeof(uint32_t));
+		m_LoggedVoiceTableWriteFailure = false;
+		return true;
 	}
 
 	const uint32_t voiceBase = voiceTableBase + voiceHandle * NV_PAVS_SIZE + offset;
@@ -2600,7 +2619,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	if (voiceTableBase == 0) {
 		if (!m_LoggedMissingVoiceTableDuringRender) {
 			EmuLog(LOG_LEVEL::WARNING,
-				"APU render blocked because NV_PAPU_VPVADDR is still zero; FE/VP voice state is not wired to guest memory yet");
+				"APU render using internal shadow voice table because NV_PAPU_VPVADDR is still zero");
 			m_LoggedMissingVoiceTableDuringRender = true;
 		}
 	} else {
@@ -2661,8 +2680,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			m_LoggedFallbackActiveVoiceRender = true;
 		}
 	}
-	if (voiceTableBase != 0 &&
-		!hasVoiceActivity &&
+	if (!hasVoiceActivity &&
 		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
 		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
 		ConsumeVPMethod(SE2FE_IDLE_VOICE, APU_VP_VOICE_MAX_HANDLE, sizeof(uint32_t));
@@ -3124,13 +3142,7 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	};
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	if (voiceTableBase == 0) {
-		EmuLog(LOG_LEVEL::INFO,
-			"APU voice table diagnostics voiceTableBase=0x00000000 active=0 paused=0 new=0 handles=[none]");
-		logFEVPRegisterDiagnostics();
-		LogRecentFEMethodDiagnostics();
-		return;
-	}
+	const char* voiceTableSource = voiceTableBase == 0 ? "shadow" : "guest";
 
 	size_t activeVoiceCount = 0;
 	size_t pausedVoiceCount = 0;
@@ -3158,7 +3170,8 @@ void APUDevice::LogVoiceTableDiagnostics() const
 
 	if (loggedActiveHandles == 0) {
 		EmuLog(LOG_LEVEL::INFO,
-			"APU voice table diagnostics voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[none]",
+			"APU voice table diagnostics source=%s voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[none]",
+			voiceTableSource,
 			voiceTableBase,
 			activeVoiceCount,
 			pausedVoiceCount,
@@ -3169,7 +3182,8 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	}
 
 	EmuLog(LOG_LEVEL::INFO,
-		"APU voice table diagnostics voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[%u,%u,%u,%u]",
+		"APU voice table diagnostics source=%s voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[%u,%u,%u,%u]",
+		voiceTableSource,
 		voiceTableBase,
 		activeVoiceCount,
 		pausedVoiceCount,
