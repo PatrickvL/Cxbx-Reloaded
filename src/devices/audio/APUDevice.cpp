@@ -338,6 +338,7 @@ constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
 // hardware success code.
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
 constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
+constexpr size_t APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES = 8;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
 constexpr size_t APU_XADPCM_PCM_SAMPLES_PER_BLOCK = XBOX_ADPCM_DSTSIZE / sizeof(int16_t);
 constexpr size_t APU_XADPCM_MAX_CHANNELS = 2;
@@ -3115,7 +3116,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 				// interpolation continues briefly. Repeated look-ahead failures mean the next
 				// sample is persistently unreadable, so stop the voice instead of looping on
 				// the same broken preview forever.
-				if (++consecutivePreviewDecodeFailures >= 8) {
+				if (++consecutivePreviewDecodeFailures >= APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES) {
 					stopVoice();
 					break;
 				}
