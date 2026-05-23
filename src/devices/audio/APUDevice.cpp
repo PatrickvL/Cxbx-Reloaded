@@ -366,6 +366,7 @@ constexpr float APU_HRTF_PAN_MAGNITUDE_WEIGHT = 0.25f;
 constexpr float APU_HRTF_PARAM_SMOOTH_ALPHA = 0.01f;
 constexpr float APU_HRTF_NORMALIZATION_EPSILON = 0.000001f;
 constexpr float APU_HRTF_MAX_DELAY_SAMPLES_FLOAT = static_cast<float>(APUDevice::HRTF_FILTER_DELAY_SAMPLES);
+constexpr float APU_HRTF_ITD_NORMALIZER = APU_HRTF_ITD_SCALE * APU_HRTF_MAX_DELAY_SAMPLES_FLOAT;
 // Scale normalized floating-point samples to signed 16-bit PCM amplitude.
 constexpr float APU_SAMPLE_SCALE_FACTOR = 32767.0f;
 constexpr size_t APU_DIAGNOSTIC_MAX_VOICES_TO_LOG = 4;
@@ -3347,7 +3348,34 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_HRTF_TARGET,
 			NV_PAVS_VOICE_CFG_HRTF_TARGET_HANDLE, hrtfEntryIndex) &&
 		hrtfEntryIndex < m_VPHRTFEntries.size();
-	float guestHRTFPan = 0.0f;
+	const float guestHRTFPan = [&]() {
+		if (!hrtfEnabled) {
+			return 0.0f;
+		}
+
+		const auto& hrtfEntry = m_VPHRTFEntries[hrtfEntryIndex];
+		float leftMagnitude = 0.0f;
+		float rightMagnitude = 0.0f;
+		for (const int8_t coefficient : hrtfEntry.coeffs[0]) {
+			leftMagnitude += std::fabs(static_cast<float>(coefficient));
+		}
+		for (const int8_t coefficient : hrtfEntry.coeffs[1]) {
+			rightMagnitude += std::fabs(static_cast<float>(coefficient));
+		}
+		const float normalizedItd = std::clamp(
+			static_cast<float>(hrtfEntry.itd) / APU_HRTF_ITD_NORMALIZER,
+			-1.0f,
+			1.0f);
+		const float magnitudeSum = leftMagnitude + rightMagnitude;
+		const float magnitudeBalance = magnitudeSum > APU_HRTF_NORMALIZATION_EPSILON
+			? ((rightMagnitude - leftMagnitude) / magnitudeSum)
+			: 0.0f;
+		return std::clamp(
+			normalizedItd * APU_HRTF_PAN_ITD_WEIGHT +
+			magnitudeBalance * APU_HRTF_PAN_MAGNITUDE_WEIGHT,
+			-1.0f,
+			1.0f);
+	}();
 	const bool capture3DHandoff = hrtfEnabled && g_AC97 != nullptr;
 	const bool submit3DToAC97 = capture3DHandoff && m_EnableHostSpatialHandoff;
 	if (capture3DHandoff) {
@@ -3363,29 +3391,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		m_VP3DVoiceCaptureScratch[sampleIndex + 1] = ConvertFloatSampleToInt16(sampleRight * envelopeGain);
 	};
 	if (hrtfEnabled) {
-		const auto& hrtfEntry = m_VPHRTFEntries[hrtfEntryIndex];
-		SetHRTFFilterTarget(voiceHandle, hrtfEntry);
-		float leftMagnitude = 0.0f;
-		float rightMagnitude = 0.0f;
-		for (const int8_t coefficient : hrtfEntry.coeffs[0]) {
-			leftMagnitude += std::fabs(static_cast<float>(coefficient));
-		}
-		for (const int8_t coefficient : hrtfEntry.coeffs[1]) {
-			rightMagnitude += std::fabs(static_cast<float>(coefficient));
-		}
-		const float normalizedItd = std::clamp(
-			static_cast<float>(hrtfEntry.itd) / (APU_HRTF_ITD_SCALE * APU_HRTF_MAX_DELAY_SAMPLES_FLOAT),
-			-1.0f,
-			1.0f);
-		const float magnitudeSum = leftMagnitude + rightMagnitude;
-		const float magnitudeBalance = magnitudeSum > APU_HRTF_NORMALIZATION_EPSILON
-			? ((rightMagnitude - leftMagnitude) / magnitudeSum)
-			: 0.0f;
-		guestHRTFPan = std::clamp(
-			normalizedItd * APU_HRTF_PAN_ITD_WEIGHT +
-			magnitudeBalance * APU_HRTF_PAN_MAGNITUDE_WEIGHT,
-			-1.0f,
-			1.0f);
+		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
 	}
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		// Streaming voices can surface VP-linear offsets, raw physical offsets, or

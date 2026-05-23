@@ -377,7 +377,7 @@ float DecodeSpatialOutputGain(float leftGain, float rightGain)
 	return (leftGain + rightGain) * 0.5f;
 }
 
-float ResolveSpatialPan(uint8_t routedBin, bool hasGuestHRTFPan, float guestHRTFPan)
+float GetEffectiveSpatialPan(uint8_t routedBin, bool hasGuestHRTFPan, float guestHRTFPan)
 {
 	if (hasGuestHRTFPan) {
 		return guestHRTFPan;
@@ -401,7 +401,7 @@ std::array<float, 3> ComputeSpatialSubmixPosition(uint8_t routedBin, bool hasGue
 	// non-stereo rear bias while allowing direct 3D voice handoff to override the
 	// left/right placement with a pan derived from the programmed HRTF entry.
 	return {
-		ResolveSpatialPan(routedBin, hasGuestHRTFPan, guestHRTFPan),
+		GetEffectiveSpatialPan(routedBin, hasGuestHRTFPan, guestHRTFPan),
 		0.0f,
 		IsDirectStereoBin(routedBin) ? kSpatialPositionFront : kSpatialPositionRear
 	};
