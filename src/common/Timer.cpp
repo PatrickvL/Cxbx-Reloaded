@@ -168,6 +168,14 @@ static void dispatch_non_periodic_events()
 // the earliest deadline (relative to HostQPCStartTime).
 static uint64_t dispatch_periodic_events(uint64_t now)
 {
+	// g_AC97 is created during InitXboxHardware() before the system-events thread
+	// starts and is not reassigned afterward in this process; the null check is
+	// just defensive for early bring-up paths, so only the device's internal state
+	// needs synchronization here.
+	if (g_AC97 != nullptr) {
+		g_AC97->ServiceAudio();
+	}
+
 	std::array<uint64_t, 4> deadlines = {
 		pit_tick(now),
 		g_NV2A->vblank_tick(now),

@@ -29,6 +29,8 @@
 #include "AC97Device.h"
 #include "AudioDiagnostics.h"
 #include "APUTimer.h"
+#include "dsp/dsp.h"
+#include "dsp/dsp_state.h"
 #include "common/AddressRanges.h"
 #include "common/audio/XADPCM.h"
 #include "core/kernel/exports/EmuKrnl.h"
@@ -107,6 +109,32 @@ constexpr uint32_t NV_PAPU_EPSMAXSGE = 0x000020DC;
 constexpr uint32_t NV_PAPU_EPFMAXSGE = 0x000020E0;
 
 constexpr uint32_t NV_PAPU_GPRST_GPRST = 1 << 0;
+constexpr uint32_t NV_PAPU_GPRST_GPDSPRST = 1 << 1;
+constexpr uint32_t NV_PAPU_EPRST_EPRST = 1 << 0;
+constexpr uint32_t NV_PAPU_EPRST_EPDSPRST = NV_PAPU_GPRST_GPDSPRST;
+
+constexpr uint32_t NV_PAPU_GPOFBASE0 = 0x00003024;
+constexpr uint32_t NV_PAPU_GPOFEND0 = 0x00003028;
+constexpr uint32_t NV_PAPU_GPOFCUR0 = 0x0000302C;
+constexpr uint32_t NV_PAPU_GPIFBASE0 = 0x00003064;
+constexpr uint32_t NV_PAPU_GPIFEND0 = 0x00003068;
+constexpr uint32_t NV_PAPU_GPIFCUR0 = 0x0000306C;
+constexpr uint32_t NV_PAPU_EPOFBASE0 = 0x00004024;
+constexpr uint32_t NV_PAPU_EPOFEND0 = 0x00004028;
+constexpr uint32_t NV_PAPU_EPOFCUR0 = 0x0000402C;
+constexpr uint32_t NV_PAPU_EPIFBASE0 = 0x00004064;
+constexpr uint32_t NV_PAPU_EPIFEND0 = 0x00004068;
+constexpr uint32_t NV_PAPU_EPIFCUR0 = 0x0000406C;
+constexpr uint32_t NV_PAPU_FIFO_VALUE = 0x00FFFFFF;
+
+constexpr size_t APU_DSP_FRAME_SAMPLES = 32;
+constexpr size_t APU_DSP_FRAME_STEREO_SAMPLES = APU_DSP_FRAME_SAMPLES * 2;
+constexpr size_t APU_DSP_EP_FRAME_DIVIDER = 8;
+constexpr size_t APU_DSP_GP_OUTPUT_FIFO_COUNT = 4;
+constexpr size_t APU_DSP_GP_INPUT_FIFO_COUNT = 2;
+constexpr size_t APU_DSP_EP_OUTPUT_FIFO_COUNT = 4;
+constexpr size_t APU_DSP_EP_INPUT_FIFO_COUNT = 2;
+constexpr uint32_t APU_DSP_GP_MIXBUF_BASE = 0x001400;
 
 constexpr uint32_t NV_PAPU_FEAV_VALUE = 0x0000FFFF;
 constexpr uint32_t NV_PAPU_FEAV_LST = 0x00030000;
@@ -140,6 +168,7 @@ constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLA = 0x00000360;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLB = 0x00000364;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_VOLC = 0x00000368;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_LFO_ENV = 0x0000036C;
+constexpr uint32_t NV1BA0_PIO_SET_VOICE_LFO_MOD = 0x00000370;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_FCA = 0x00000374;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_FCB = 0x00000378;
 constexpr uint32_t NV1BA0_PIO_SET_VOICE_TAR_PITCH = 0x0000037C;
@@ -222,6 +251,7 @@ const char* GetAPUVPMethodTraceName(uint32_t addr)
 	case NV1BA0_PIO_SET_HRTF_SUBMIXES: return "NV1BA0_PIO_SET_HRTF_SUBMIXES";
 	case NV1BA0_PIO_SET_CURRENT_VOICE: return "NV1BA0_PIO_SET_CURRENT_VOICE";
 	case NV1BA0_PIO_VOICE_LOCK: return "NV1BA0_PIO_VOICE_LOCK";
+	case NV1BA0_PIO_SET_VOICE_LFO_MOD: return "NV1BA0_PIO_SET_VOICE_LFO_MOD";
 	default:
 		if (addr >= NV1BA0_PIO_SET_VOICE_METHOD_FIRST && addr <= NV1BA0_PIO_SET_VOICE_METHOD_LAST) {
 			return "NV1BA0_PIO_SET_VOICE_*";
@@ -244,6 +274,7 @@ constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_V7BIN = 0x000003E0;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK = 0x001F0000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN = 0x001F0000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_MULTIPASS = 1 << 21;
+constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_PERSIST = 1 << 23;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_DATA_TYPE = 1 << 24;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_LOOP = 1 << 25;
 constexpr uint32_t NV_PAVS_VOICE_CFG_FMT_CLEAR_MIX = 1 << 26;
@@ -267,7 +298,12 @@ constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE = 0x00000FFF;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME = 0x00FFF000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1 = 0x00000010;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1_EF_ATTACKRATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENV1_EF_DELAYTIME = 0x00FFF000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF = 0x00000014;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF_EF_DECAYRATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF_EF_HOLDTIME = 0x00FFF000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_ENVF_EF_SUSTAINLEVEL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_MISC = 0x00000018;
 constexpr uint32_t NV_PAVS_VOICE_CFG_HRTF_TARGET = 0x0000001C;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSL_START = 0x00000020;
@@ -311,6 +347,13 @@ constexpr uint32_t NV_PAVS_VOICE_CUR_PSL_START_BA = 0x00FFFFFF;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO = 0x00FFFFFF;
 constexpr uint32_t NV_PAVS_VOICE_CUR_ECNT_EACOUNT = 0x0000FFFF;
 constexpr uint32_t NV_PAVS_VOICE_CUR_ECNT_EFCOUNT = 0xFFFF0000;
+constexpr uint32_t NV_PAVS_VOICE_PAR_LFO = 0x00000050;
+constexpr uint32_t NV_PAVS_VOICE_PAR_LFO_LFOALVL = 0x00007FFF;
+constexpr uint32_t NV_PAVS_VOICE_PAR_LFO_LFOADR = 0x00008000;
+constexpr uint32_t NV_PAVS_VOICE_PAR_LFO_LFOFLVL = 0x7FFF0000;
+constexpr uint32_t NV_PAVS_VOICE_PAR_LFO_LFOFDR = 0x80000000;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_LFOA_DELAYMODE = 1 << 16;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE = 1 << 17;
 constexpr uint32_t NV_PAVS_VOICE_PAR_OFFSET_CBO = 0x00FFFFFF;
 constexpr uint32_t NV_PAVS_VOICE_PAR_OFFSET_EALVL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_PAR_NEXT_EBO = 0x00FFFFFF;
@@ -318,7 +361,16 @@ constexpr uint32_t NV_PAVS_VOICE_PAR_NEXT_EFLVL = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE = 0x0000FFFF;
 constexpr uint32_t NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH = 0xFFFF0000;
 constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_ENV_LFOADLT = 0x003FF000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_ENV_LFOFDLT = 0xFFC00000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_MOD = 0x00000070;
+constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_MOD_LFOAAM = 0x000000FF;
+constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFM = 0x0000FF00;
+constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFC = 0x00FF0000;
+constexpr uint32_t NV_PAVS_VOICE_TAR_LFO_MOD_LFOFFM = 0xFF000000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE = 0x00000FFF;
+constexpr uint32_t NV_PAVS_VOICE_CFG_MISC_LFOA_DELAYMODE = 0x00004000;
+constexpr uint32_t NV_PAVS_VOICE_CFG_MISC_LFOF_DELAYMODE = 0x00008000;
 constexpr uint32_t NV_PAVS_VOICE_CFG_MISC_FMODE = 0x00030000;
 constexpr uint32_t NV_PAVS_VOICE_TAR_FCA = 0x00000074;
 constexpr uint32_t NV_PAVS_VOICE_TAR_FCB = 0x00000078;
@@ -345,7 +397,6 @@ constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
 // indefinitely because it does not match the expected success code.
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_ERROR = 0x80;
-constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
 constexpr size_t APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES = 8;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
 constexpr size_t APU_XADPCM_PCM_SAMPLES_PER_BLOCK = XBOX_ADPCM_DSTSIZE / sizeof(int16_t);
@@ -405,6 +456,7 @@ uint32_t GetFEMethodTargetVoiceOrDefault(uint32_t addr, uint32_t value, uint32_t
 	case NV1BA0_PIO_SET_VOICE_TAR_VOLB:
 	case NV1BA0_PIO_SET_VOICE_TAR_VOLC:
 	case NV1BA0_PIO_SET_VOICE_LFO_ENV:
+	case NV1BA0_PIO_SET_VOICE_LFO_MOD:
 	case NV1BA0_PIO_SET_VOICE_TAR_FCA:
 	case NV1BA0_PIO_SET_VOICE_TAR_FCB:
 	case NV1BA0_PIO_SET_VOICE_TAR_PITCH:
@@ -419,10 +471,15 @@ uint32_t GetFEMethodTargetVoiceOrDefault(uint32_t addr, uint32_t value, uint32_t
 }
 // Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
 constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
+constexpr float APU_FILTER_ENV_MIN_GAIN = 0.0f;
+constexpr float APU_FILTER_ENV_MAX_GAIN = 1.0f;
 // Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
 constexpr float APU_FILTER_MIN_Q = 0.079407f;
 // FC1 is a 16-bit fixed-point resonance value normalized against 0x8000.
 constexpr float APU_FILTER_Q_NORMALIZER = 32768.0f;
+constexpr uint16_t APU_LFO_LEVEL_MAX = 0x7FFF;
+constexpr uint16_t APU_LFO_LEVEL_CENTER = 0x4000;
+constexpr float APU_LFO_MODULATION_NORMALIZER = 127.0f;
 
 bool IsAPUWordAddressRegister(uint32_t addr)
 {
@@ -442,9 +499,90 @@ bool IsAPUWordAddressRegister(uint32_t addr)
 	}
 }
 
+bool IsAPUMaxSgeRegister(uint32_t addr)
+{
+	switch (addr) {
+	case NV_PAPU_GPSMAXSGE:
+	case NV_PAPU_GPFMAXSGE:
+	case NV_PAPU_EPSMAXSGE:
+	case NV_PAPU_EPFMAXSGE:
+		return true;
+	default:
+		return false;
+	}
+}
+
 uint32_t NormalizeAPUWordAddress(uint32_t value)
 {
 	return value & ~0x3u;
+}
+
+uint32_t NormalizeAPUMaxSge(uint32_t value)
+{
+	// MCPX drivers program MAXSGE through LOW16 writes, so discard any upper
+	// garbage bits before the count feeds the DMA page walkers.
+	return value & 0xFFFFu;
+}
+
+bool IsVoiceEntryOffsetWithinBounds(uint32_t offset)
+{
+	// NV_PAVS_SIZE is one voice entry; keep 32-bit accesses fully inside it.
+	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
+}
+
+// Forward declaration for the helper defined below near the other low-level
+// bitfield utilities; it returns the count of trailing zero bits in a 32-bit
+// mask/value.
+uint32_t Ctz32(uint32_t value);
+
+uint32_t GetMaskedValue(uint32_t current, uint32_t mask)
+{
+	// Extract and right-align the selected bitfield, or return the raw word for
+	// full-width masks.
+	if (mask == 0xFFFFFFFF) {
+		return current;
+	}
+
+	return (current & mask) >> Ctz32(mask);
+}
+
+uint32_t MergeMaskedValue(uint32_t current, uint32_t mask, uint32_t value)
+{
+	// Replace only the masked bitfield, preserving the rest of the current word.
+	if (mask == 0xFFFFFFFF) {
+		return value;
+	}
+
+	return (current & ~mask) | ((value << Ctz32(mask)) & mask);
+}
+
+struct EnvelopeFieldConfig {
+	uint32_t attackRateMask;
+	uint32_t delayTimeMask;
+	uint32_t decayRateMask;
+	uint32_t holdTimeMask;
+	uint32_t sustainLevelMask;
+};
+
+const EnvelopeFieldConfig& GetEnvelopeFieldConfig(uint32_t reg0, uint32_t regA)
+{
+	static constexpr EnvelopeFieldConfig kAmplitudeEnvelopeFieldConfig{
+		NV_PAVS_VOICE_CFG_ENV0_EA_ATTACKRATE,
+		NV_PAVS_VOICE_CFG_ENV0_EA_DELAYTIME,
+		NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE,
+		NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME,
+		NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL,
+	};
+	static constexpr EnvelopeFieldConfig kFilterEnvelopeFieldConfig{
+		NV_PAVS_VOICE_CFG_ENV1_EF_ATTACKRATE,
+		NV_PAVS_VOICE_CFG_ENV1_EF_DELAYTIME,
+		NV_PAVS_VOICE_CFG_ENVF_EF_DECAYRATE,
+		NV_PAVS_VOICE_CFG_ENVF_EF_HOLDTIME,
+		NV_PAVS_VOICE_CFG_ENVF_EF_SUSTAINLEVEL,
+	};
+	return (reg0 == NV_PAVS_VOICE_CFG_ENV1 && regA == NV_PAVS_VOICE_CFG_ENVF)
+		? kFilterEnvelopeFieldConfig
+		: kAmplitudeEnvelopeFieldConfig;
 }
 
 uint32_t AbsoluteMixMagnitude(int32_t value)
@@ -512,6 +650,17 @@ uint32_t ReadRegisterFragment(uint32_t value, uint32_t byteOffset, unsigned size
 
 	const uint32_t mask = (1u << (size * 8)) - 1;
 	return (value >> shift) & mask;
+}
+
+uint32_t WriteRegisterFragment(uint32_t current, uint32_t value, uint32_t byteOffset, unsigned size)
+{
+	const uint32_t shift = byteOffset * 8;
+	if (size >= sizeof(uint32_t)) {
+		return value;
+	}
+
+	const uint32_t mask = ((1u << (size * 8)) - 1u) << shift;
+	return (current & ~mask) | ((value << shift) & mask);
 }
 
 uint32_t Ctz32(uint32_t value)
@@ -637,6 +786,63 @@ double DecodePitchStep(uint32_t pitch)
 	return std::exp2(static_cast<double>(signedPitch) / APU_PITCH_STEP_EXPONENT);
 }
 
+float NormalizeVoiceLFOModulationLevel(uint32_t level)
+{
+	// PAR_LFO stores a 15-bit triangle-wave level where 0x4000 is the neutral
+	// midpoint; map the hardware range [0, 0x7FFF] to a bipolar [-1, 1] host
+	// modulation value.
+	const float normalized = (static_cast<float>(std::min<uint32_t>(level, APU_LFO_LEVEL_MAX)) /
+		static_cast<float>(APU_LFO_LEVEL_CENTER)) - 1.0f;
+	return std::clamp(normalized, -1.0f, 1.0f);
+}
+
+void StepVoiceLFOLevel(uint32_t delta, uint32_t& level, bool& descending)
+{
+	if (delta == 0) {
+		// Voice render code uses a zero delta to hold an LFO at its current level,
+		// which is how the guest-visible delay-mode bits keep the oscillator parked
+		// at the neutral center until the corresponding envelope leaves DELAY.
+		level = std::min<uint32_t>(level, APU_LFO_LEVEL_MAX);
+		return;
+	}
+
+	const int32_t maxLevel = static_cast<int32_t>(APU_LFO_LEVEL_MAX);
+	const int32_t period = maxLevel * 2;
+	int32_t value = static_cast<int32_t>(std::min<uint32_t>(level, APU_LFO_LEVEL_MAX));
+	value += descending ? -static_cast<int32_t>(delta) : static_cast<int32_t>(delta);
+	// Reflect off the 0..0x7FFF bounds and flip the direction bit so the guest-
+	// visible PAR_LFO state advances as a continuous triangle waveform; modulo
+	// arithmetic keeps large deltas from iterating across multiple bounces.
+	value %= period;
+	if (value < 0) {
+		value += period;
+	}
+	if (value >= maxLevel) {
+		value = period - value;
+		descending = true;
+	} else {
+		descending = false;
+	}
+
+	level = static_cast<uint32_t>(value);
+}
+
+bool IsVoiceLFODelayActive(uint32_t voiceState, uint32_t delayMask, uint32_t envelopeStateMask)
+{
+	return (voiceState & delayMask) != 0 &&
+		GetMaskedValue(voiceState, envelopeStateMask) == NV_PAVS_VOICE_PAR_STATE_EFCUR_DELAY;
+}
+
+float DecodeSignedLFOAmount(uint32_t value)
+{
+	return static_cast<float>(static_cast<int8_t>(value & 0xFF)) / APU_LFO_MODULATION_NORMALIZER;
+}
+
+uint32_t ExtractLFOField(uint32_t value, uint32_t mask)
+{
+	return (value & mask) >> Ctz32(mask);
+}
+
 int16_t ClampToInt16(int32_t value)
 {
 	if (value > 32767) {
@@ -654,6 +860,17 @@ int16_t ConvertFloatSampleToInt16(float sample)
 		static_cast<double>(ClampUnitSample(sample)) * 32767.0)));
 }
 
+uint32_t ConvertInt16ToDSP24(int16_t sample)
+{
+	return static_cast<uint32_t>(static_cast<int32_t>(sample) << 8) & 0x00FFFFFF;
+}
+
+int16_t ConvertDSP24ToInt16(uint32_t sample)
+{
+	const int32_t signedSample = static_cast<int32_t>(sample << 8) >> 8;
+	return ClampToInt16(signedSample >> 8);
+}
+
 }
 
 struct APUDevice::BasicVoiceDiagnosticSummary {
@@ -665,11 +882,15 @@ struct APUDevice::BasicVoiceDiagnosticSummary {
 	uint32_t offsetAdvance = 0;
 	size_t framesRendered = 0;
 	double pitchStep = 0.0;
+	double maxPitchStep = 0.0;
 	float maxEnvelopeGain = 0.0f;
+	float maxFilterEnvelopeGain = 0.0f;
+	float maxAmplitudeLFOModulation = 1.0f;
 	uint32_t decodedPeak = 0;
 	uint32_t mixedPeak = 0;
 	bool visited = false;
 	bool active = false;
+	bool paused = false;
 	bool mixed = false;
 	bool decodedNonZero = false;
 	bool stereoContribution = false;
@@ -680,6 +901,83 @@ extern AC97Device* g_AC97;
 
 // Basic VP playback and guest-visible buffer plumbing exist here, but full
 // GP/EP DSP execution and threaded audio scheduling are still incomplete.
+
+void APUDevice::GPDspScratchRW(void* opaque, uint8_t* ptr, uint32_t addr, size_t len, bool dir)
+{
+	auto* apu = static_cast<APUDevice*>(opaque);
+	if (apu != nullptr) {
+		apu->TransferDSPScratch(true, ptr, addr, len, dir);
+	}
+}
+
+void APUDevice::EPDspScratchRW(void* opaque, uint8_t* ptr, uint32_t addr, size_t len, bool dir)
+{
+	auto* apu = static_cast<APUDevice*>(opaque);
+	if (apu != nullptr) {
+		apu->TransferDSPScratch(false, ptr, addr, len, dir);
+	}
+}
+
+void APUDevice::GPDspFifoRW(void* opaque, uint8_t* ptr, unsigned index, size_t len, bool dir)
+{
+	auto* apu = static_cast<APUDevice*>(opaque);
+	if (apu != nullptr) {
+		apu->TransferDSPFifo(true, ptr, index, len, dir);
+	}
+}
+
+void APUDevice::EPDspFifoRW(void* opaque, uint8_t* ptr, unsigned index, size_t len, bool dir)
+{
+	auto* apu = static_cast<APUDevice*>(opaque);
+	if (apu != nullptr) {
+		apu->TransferDSPFifo(false, ptr, index, len, dir);
+	}
+}
+
+void APUDevice::InitializeDSP()
+{
+	if (m_GPDsp == nullptr) {
+		m_GPDsp = dsp_init(this, &APUDevice::GPDspScratchRW, &APUDevice::GPDspFifoRW);
+	}
+	if (m_EPDsp == nullptr) {
+		m_EPDsp = dsp_init(this, &APUDevice::EPDspScratchRW, &APUDevice::EPDspFifoRW);
+	}
+}
+
+void APUDevice::ResetDSPState()
+{
+	InitializeDSP();
+	if (m_GPDsp != nullptr) {
+		dsp_reset(m_GPDsp);
+	}
+	if (m_EPDsp != nullptr) {
+		dsp_reset(m_EPDsp);
+	}
+	m_DSPFrameDivider = 0;
+	m_DSPOutputScratch.clear();
+	m_LoggedDSPOutputCaptureFailure = false;
+}
+
+bool APUDevice::IsGPDSPEnabled() const
+{
+	const uint32_t reset = GetRegister32(APU_GP_BASE + NV_PAPU_GPRST);
+	return (reset & NV_PAPU_GPRST_GPRST) != 0 &&
+		(reset & NV_PAPU_GPRST_GPDSPRST) != 0 &&
+		m_GPDsp != nullptr;
+}
+
+bool APUDevice::IsEPDSPEnabled() const
+{
+	const uint32_t reset = GetRegister32(APU_EP_BASE + NV_PAPU_EPRST);
+	return (reset & NV_PAPU_EPRST_EPRST) != 0 &&
+		(reset & NV_PAPU_EPRST_EPDSPRST) != 0 &&
+		m_EPDsp != nullptr;
+}
+
+bool APUDevice::IsAnyDSPEnabled() const
+{
+	return IsGPDSPEnabled() || IsEPDSPEnabled();
+}
 
 void APUDevice::Init()
 {
@@ -700,6 +998,7 @@ void APUDevice::Reset()
 	m_VPFifoLevel = 0;
 	m_VPFifoLastUpdate = GetAPUTime();
 	m_LastAudioUpdate = m_VPFifoLastUpdate;
+	m_XGSCounter = 0;
 	m_VPInputSgeHandle = 0;
 	m_VPOutputSgeHandle = 0;
 	m_VPNotifyContextDMA = 0;
@@ -718,10 +1017,17 @@ void APUDevice::Reset()
 	m_VPHRTFHeadroom = 0;
 	m_VPSubmixHeadroom.fill(0);
 	m_VPVoiceLocked.fill(0);
+	// Initialize the FE/VP fallback state consistently on every reset by
+	// clearing the voice hints and shadow table before the guest provides
+	// NV_PAPU_VPVADDR.
+	m_VPActiveVoiceHints.fill(0);
+	m_VPVoiceTableShadow.fill(0);
 	m_VPOutBufferCursor.fill(0);
 	m_VPOutBufferPlaybackCursor.fill(0);
+	m_VPOutBufferQueuedBytes.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
+	m_VPNotifierEnvelopeState.fill(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF);
 	m_VPHRTFFilterState.fill(APUDevice::HRTFFilterState{});
 	m_RecentFEMethods.fill(APUDevice::RecentFEMethodDiagnostic{});
 	m_RecentFEMethodCount = 0;
@@ -732,8 +1038,13 @@ void APUDevice::Reset()
 	m_LoggedVoiceTableReadFailure = false;
 	m_LoggedVoiceTableWriteFailure = false;
 	m_LoggedScatterGatherWriteFailure = false;
+	m_LoggedMissingVoiceTableDuringRender = false;
 	m_EnableHostSpatialHandoff = true;
 	m_LoggedVPOutputBufferReadFailure = false;
+	m_LoggedVPOutputBufferUnderrun = false;
+	m_LoggedVPOutputBufferOverrun = false;
+	ResetDSPState();
+	m_LoggedFallbackActiveVoiceRender = false;
 	m_ChunkCaptured3DVoiceCount = 0;
 	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 
@@ -796,7 +1107,10 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 	}
 
 	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
-		return ReadRegisterFragment(GetAPUTime(), addr - NV_PAPU_XGSCNT, size);
+		// XGSCNT reflects guest-visible rendered sample progress rather than raw
+		// host time; SynchronizeAudio only advances this counter while XCNTMODE
+		// allows audio progress, so MMIO reads expose the frozen value directly.
+		return ReadRegisterFragment(m_XGSCounter, addr - NV_PAPU_XGSCNT, size);
 	}
 
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
@@ -849,6 +1163,12 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		(addr >= NV_PAPU_FECTL && addr < NV_PAPU_FECTL + sizeof(uint32_t))) {
 		WriteRegister(addr, value, size);
 		RefreshInterruptStatus();
+		return;
+	}
+
+	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
+		// Treat XGSCNT as read-only: guests can probe/reset it without clobbering
+		// the live counter value returned by MMIO reads.
 		return;
 	}
 
@@ -911,6 +1231,8 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		if (registerBase == NV_PAPU_FEMEMADDR) {
 			RefreshFEMemDataRegister(GetRegister32(NV_PAPU_FEMEMDATA));
 		}
+	} else if (IsAPUMaxSgeRegister(registerBase)) {
+		SetRegister32(registerBase, NormalizeAPUMaxSge(GetRegister32(registerBase)));
 	}
 }
 
@@ -918,20 +1240,20 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 {
 	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_GPXMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_GPDsp, 'X', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, size);
+		const uint32_t wordAddr = APU_DSP_GP_MIXBUF_BASE + (addr - NV_PAPU_GPMIXBUF) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_GPDsp, 'X', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_GPYMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_GPDsp, 'Y', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_GPPMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_GPDsp, 'P', wordAddr), addr & 0x3u, size);
 	}
 	return ReadRegister(APU_GP_BASE + addr, size);
 }
@@ -939,33 +1261,256 @@ uint32_t APUDevice::GPRead(uint32_t addr, unsigned size)
 void APUDevice::GPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	if (addr >= NV_PAPU_GPXMEM && addr < NV_PAPU_GPXMEM + m_GPXMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPXMem.data(), m_GPXMem.size(), addr - NV_PAPU_GPXMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_GPXMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_GPXMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_GPDsp, 'X', wordAddr);
+		dsp_write_memory(m_GPDsp, 'X', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_GPMIXBUF && addr < NV_PAPU_GPMIXBUF + m_GPMixBuf.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPMixBuf.data(), m_GPMixBuf.size(), addr - NV_PAPU_GPMIXBUF, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_GPMIXBUF) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_GPMIXBUF) & 0x3u;
+		const uint32_t wordAddr = APU_DSP_GP_MIXBUF_BASE + wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_GPDsp, 'X', wordAddr);
+		dsp_write_memory(m_GPDsp, 'X', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_GPYMEM && addr < NV_PAPU_GPYMEM + m_GPYMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPYMem.data(), m_GPYMem.size(), addr - NV_PAPU_GPYMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_GPYMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_GPYMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_GPDsp, 'Y', wordAddr);
+		dsp_write_memory(m_GPDsp, 'Y', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_GPPMEM && addr < NV_PAPU_GPPMEM + m_GPPMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_GPSADDR, NV_PAPU_GPSMAXSGE,
-			m_GPPMem.data(), m_GPPMem.size(), addr - NV_PAPU_GPPMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_GPPMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_GPPMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_GPDsp, 'P', wordAddr);
+		dsp_write_memory(m_GPDsp, 'P', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
+	const uint32_t oldValue = ReadRegister(APU_GP_BASE + addr, sizeof(uint32_t));
 	WriteRegister(APU_GP_BASE + addr, value, size);
-	if (addr == NV_PAPU_GPRST && size == sizeof(uint32_t) &&
-		(value & NV_PAPU_GPRST_GPRST) == 0) {
-		m_GPXMem.fill(0);
-		m_GPMixBuf.fill(0);
-		m_GPYMem.fill(0);
-		m_GPPMem.fill(0);
+	if (addr == NV_PAPU_GPRST && size == sizeof(uint32_t)) {
+		const bool wasEnabled = (oldValue & (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
+			(NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST);
+		const bool isEnabled = (value & (NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST)) ==
+			(NV_PAPU_GPRST_GPRST | NV_PAPU_GPRST_GPDSPRST);
+		if (!isEnabled) {
+			dsp_reset(m_GPDsp);
+			m_DSPFrameDivider = 0;
+		} else if (!wasEnabled) {
+			dsp_bootstrap(m_GPDsp);
+		}
 	}
+}
+
+bool APUDevice::TransferDSPScratch(bool gp, uint8_t* ptr, uint32_t addr, size_t len, bool dir)
+{
+	if (ptr == nullptr || len == 0) {
+		return true;
+	}
+
+	const uint32_t sgeBase = GetRegister32(gp ? NV_PAPU_GPSADDR : NV_PAPU_EPSADDR);
+	const uint32_t maxSge = GetRegister32(gp ? NV_PAPU_GPSMAXSGE : NV_PAPU_EPSMAXSGE);
+	if (sgeBase == 0) {
+		if (!dir) {
+			std::memset(ptr, 0, len);
+		}
+		return false;
+	}
+
+	return dir
+		? WriteScatterGatherBytes(sgeBase, maxSge, addr, ptr, len)
+		: ReadScatterGatherBytes(sgeBase, maxSge, addr, ptr, len);
+}
+
+uint32_t APUDevice::TransferDSPCircularScatterGather(uint32_t sgeBase, uint32_t maxSge, uint8_t* ptr,
+	uint32_t base, uint32_t end, uint32_t cur, size_t len, bool dir)
+{
+	if (ptr == nullptr || len == 0 || end <= base) {
+		return base;
+	}
+	if (cur >= end) {
+		cur = base + ((cur - base) % (end - base));
+	} else if (cur < base) {
+		cur = base;
+	}
+
+	size_t remaining = len;
+	uint8_t* bytes = ptr;
+	while (remaining != 0) {
+		const uint32_t chunk = std::min<uint32_t>(end - cur, static_cast<uint32_t>(remaining));
+		const bool ok = dir
+			? WriteScatterGatherBytes(sgeBase, maxSge, cur, bytes, chunk)
+			: ReadScatterGatherBytes(sgeBase, maxSge, cur, bytes, chunk);
+		if (!ok) {
+			if (!dir) {
+				std::memset(bytes, 0, remaining);
+			}
+			break;
+		}
+		bytes += chunk;
+		remaining -= chunk;
+		cur += chunk;
+		if (cur >= end) {
+			cur = base;
+		}
+	}
+
+	return cur;
+}
+
+void APUDevice::CaptureEPFifoOutput(uint8_t* ptr, size_t len)
+{
+	if (ptr == nullptr || len == 0 || (len % sizeof(int16_t)) != 0) {
+		if (!m_LoggedDSPOutputCaptureFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU DSP EP output capture rejected payload ptr=%p len=%zu aligned=%d",
+				ptr,
+				len,
+				(len % sizeof(int16_t)) == 0 ? 1 : 0);
+			m_LoggedDSPOutputCaptureFailure = true;
+		}
+		return;
+	}
+
+	const size_t sampleCount = len / sizeof(int16_t);
+	m_DSPOutputScratch.resize(sampleCount);
+	std::memcpy(m_DSPOutputScratch.data(), ptr, len);
+	m_LoggedDSPOutputCaptureFailure = false;
+}
+
+void APUDevice::TransferDSPFifo(bool gp, uint8_t* ptr, unsigned index, size_t len, bool dir)
+{
+	if (ptr == nullptr || len == 0) {
+		return;
+	}
+
+	const uint32_t sgeBase = GetRegister32(gp ? NV_PAPU_GPFADDR : NV_PAPU_EPFADDR);
+	const uint32_t maxSge = GetRegister32(gp ? NV_PAPU_GPFMAXSGE : NV_PAPU_EPFMAXSGE);
+	if (sgeBase == 0) {
+		if (!dir) {
+			std::memset(ptr, 0, len);
+		}
+		return;
+	}
+
+	uint32_t baseRegister = 0;
+	uint32_t endRegister = 0;
+	uint32_t curRegister = 0;
+	if (gp) {
+		if (dir) {
+			if (index >= APU_DSP_GP_OUTPUT_FIFO_COUNT) {
+				return;
+			}
+			baseRegister = NV_PAPU_GPOFBASE0 + static_cast<uint32_t>(index) * 0x10;
+			endRegister = NV_PAPU_GPOFEND0 + static_cast<uint32_t>(index) * 0x10;
+			curRegister = NV_PAPU_GPOFCUR0 + static_cast<uint32_t>(index) * 0x10;
+		} else {
+			if (index >= APU_DSP_GP_INPUT_FIFO_COUNT) {
+				std::memset(ptr, 0, len);
+				return;
+			}
+			baseRegister = NV_PAPU_GPIFBASE0 + static_cast<uint32_t>(index) * 0x10;
+			endRegister = NV_PAPU_GPIFEND0 + static_cast<uint32_t>(index) * 0x10;
+			curRegister = NV_PAPU_GPIFCUR0 + static_cast<uint32_t>(index) * 0x10;
+		}
+	} else {
+		if (dir) {
+			if (index >= APU_DSP_EP_OUTPUT_FIFO_COUNT) {
+				return;
+			}
+			baseRegister = NV_PAPU_EPOFBASE0 + static_cast<uint32_t>(index) * 0x10;
+			endRegister = NV_PAPU_EPOFEND0 + static_cast<uint32_t>(index) * 0x10;
+			curRegister = NV_PAPU_EPOFCUR0 + static_cast<uint32_t>(index) * 0x10;
+		} else {
+			if (index >= APU_DSP_EP_INPUT_FIFO_COUNT) {
+				std::memset(ptr, 0, len);
+				return;
+			}
+			baseRegister = NV_PAPU_EPIFBASE0 + static_cast<uint32_t>(index) * 0x10;
+			endRegister = NV_PAPU_EPIFEND0 + static_cast<uint32_t>(index) * 0x10;
+			curRegister = NV_PAPU_EPIFCUR0 + static_cast<uint32_t>(index) * 0x10;
+		}
+	}
+
+	const uint32_t base = GetRegister32(baseRegister) & NV_PAPU_FIFO_VALUE;
+	const uint32_t end = GetRegister32(endRegister) & NV_PAPU_FIFO_VALUE;
+	if (base == 0 || end <= base) {
+		if (!dir) {
+			std::memset(ptr, 0, len);
+		}
+		return;
+	}
+
+	if (!gp && dir && index == 0) {
+		CaptureEPFifoOutput(ptr, len);
+	}
+
+	const uint32_t cur = GetRegister32(curRegister) & NV_PAPU_FIFO_VALUE;
+	const uint32_t next = TransferDSPCircularScatterGather(sgeBase, maxSge, ptr, base, end, cur, len, dir);
+	SetRegister32(curRegister, next & NV_PAPU_FIFO_VALUE);
+}
+
+bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t frameCount)
+{
+	if (output == nullptr || mixBins == nullptr || frameCount == 0 || !IsAnyDSPEnabled() ||
+		(frameCount % APU_DSP_FRAME_SAMPLES) != 0) {
+		return false;
+	}
+
+	m_DSPOutputScratch.clear();
+	const uint64_t maxCycleBudget = std::max<size_t>(frameCount, APU_DSP_FRAME_SAMPLES) * 4096ull;
+	const auto runDSP = [maxCycleBudget](DSPState* dsp) {
+		dsp_start_frame(dsp);
+		dsp->core.is_idle = false;
+		dsp->core.cycle_count = 0;
+		uint64_t scheduledCycles = 0;
+		while (!dsp->core.is_idle && scheduledCycles < maxCycleBudget) {
+			dsp_run(dsp, 1000);
+			scheduledCycles += 1000;
+		}
+	};
+
+	for (size_t frameBase = 0; frameBase < frameCount; frameBase += APU_DSP_FRAME_SAMPLES) {
+		if (IsGPDSPEnabled()) {
+			for (size_t mixbin = 0; mixbin < std::min<size_t>(APU_MIXBIN_COUNT, 32); ++mixbin) {
+				for (size_t sample = 0; sample < APU_DSP_FRAME_SAMPLES; ++sample) {
+					const int16_t value = ClampToInt16(mixBins[mixbin * frameCount + frameBase + sample]);
+					dsp_write_memory(m_GPDsp, 'X',
+						APU_DSP_GP_MIXBUF_BASE + static_cast<uint32_t>(mixbin * APU_DSP_FRAME_SAMPLES + sample),
+						ConvertInt16ToDSP24(value));
+				}
+			}
+			runDSP(m_GPDsp);
+		}
+
+		if (IsEPDSPEnabled()) {
+			++m_DSPFrameDivider;
+			if ((m_DSPFrameDivider % APU_DSP_EP_FRAME_DIVIDER) == 0) {
+				runDSP(m_EPDsp);
+			}
+		}
+	}
+
+	if (m_DSPOutputScratch.size() != frameCount * 2) {
+		if (!m_LoggedDSPOutputCaptureFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU DSP frame produced %zu samples, expected %zu for %zu stereo frames; falling back to non-DSP host mix",
+				m_DSPOutputScratch.size(),
+				frameCount * 2,
+				frameCount);
+			m_LoggedDSPOutputCaptureFailure = true;
+		}
+		return false;
+	}
+	m_LoggedDSPOutputCaptureFailure = false;
+	std::copy(m_DSPOutputScratch.begin(), m_DSPOutputScratch.end(), output);
+	return true;
 }
 
 
@@ -978,6 +1523,32 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 			GetRegister32(APU_VP_BASE + APU_VP_FREE),
 			addr - APU_VP_FREE,
 			size);
+	}
+
+	if (addr >= NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY && addr < NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY + sizeof(uint32_t)) {
+		return ReadRegisterFragment(m_VPCurrentHRTFEntry, addr - NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY, size);
+	}
+
+	if (addr >= NV1BA0_PIO_VOICE_LOCK && addr < NV1BA0_PIO_VOICE_LOCK + sizeof(uint32_t)) {
+		const uint32_t currentVoice = GetRegister32(NV_PAPU_FECV) & APU_VP_VOICE_MAX_HANDLE;
+		const uint32_t lockValue = IsVoiceLocked(currentVoice) ? 1u : 0u;
+		return ReadRegisterFragment(lockValue, addr - NV1BA0_PIO_VOICE_LOCK, size);
+	}
+
+	if (addr >= NV1BA0_PIO_SET_CURRENT_SSL && addr < NV1BA0_PIO_SET_CURRENT_SSL + sizeof(uint32_t)) {
+		return ReadRegisterFragment(m_VPSSLBasePage, addr - NV1BA0_PIO_SET_CURRENT_SSL, size);
+	}
+
+	if (addr >= NV1BA0_PIO_SET_HRTF_SUBMIXES && addr < NV1BA0_PIO_SET_HRTF_SUBMIXES + sizeof(uint32_t)) {
+		const uint32_t submixValue = static_cast<uint32_t>(m_VPHRTFSubmix[0])
+			| (static_cast<uint32_t>(m_VPHRTFSubmix[1]) << 8)
+			| (static_cast<uint32_t>(m_VPHRTFSubmix[2]) << 16)
+			| (static_cast<uint32_t>(m_VPHRTFSubmix[3]) << 24);
+		return ReadRegisterFragment(submixValue, addr - NV1BA0_PIO_SET_HRTF_SUBMIXES, size);
+	}
+
+	if (addr >= NV1BA0_PIO_SET_HRTF_HEADROOM && addr < NV1BA0_PIO_SET_HRTF_HEADROOM + sizeof(uint32_t)) {
+		return ReadRegisterFragment(m_VPHRTFHeadroom, addr - NV1BA0_PIO_SET_HRTF_HEADROOM, size);
 	}
 
 	return ReadRegister(APU_VP_BASE + addr, size);
@@ -1003,16 +1574,16 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 {
 	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_EPXMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_EPDsp, 'X', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_EPYMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_EPDsp, 'Y', wordAddr), addr & 0x3u, size);
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		return ReadScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, size);
+		const uint32_t wordAddr = (addr - NV_PAPU_EPPMEM) / sizeof(uint32_t);
+		return ReadRegisterFragment(dsp_read_memory(m_EPDsp, 'P', wordAddr), addr & 0x3u, size);
 	}
 	return ReadRegister(APU_EP_BASE + addr, size);
 }
@@ -1020,26 +1591,43 @@ uint32_t APUDevice::EPRead(uint32_t addr, unsigned size)
 void APUDevice::EPWrite(uint32_t addr, uint32_t value, unsigned size)
 {
 	if (addr >= NV_PAPU_EPXMEM && addr < NV_PAPU_EPXMEM + m_EPXMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPXMem.data(), m_EPXMem.size(), addr - NV_PAPU_EPXMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_EPXMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_EPXMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_EPDsp, 'X', wordAddr);
+		dsp_write_memory(m_EPDsp, 'X', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_EPYMEM && addr < NV_PAPU_EPYMEM + m_EPYMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPYMem.data(), m_EPYMem.size(), addr - NV_PAPU_EPYMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_EPYMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_EPYMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_EPDsp, 'Y', wordAddr);
+		dsp_write_memory(m_EPDsp, 'Y', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
 	if (addr >= NV_PAPU_EPPMEM && addr < NV_PAPU_EPPMEM + m_EPPMem.size()) {
-		WriteScratchWindowWithDMA(NV_PAPU_EPSADDR, NV_PAPU_EPSMAXSGE,
-			m_EPPMem.data(), m_EPPMem.size(), addr - NV_PAPU_EPPMEM, value, size);
+		const uint32_t wordOffset = (addr - NV_PAPU_EPPMEM) & ~0x3u;
+		const uint32_t fragmentOffset = (addr - NV_PAPU_EPPMEM) & 0x3u;
+		const uint32_t wordAddr = wordOffset / sizeof(uint32_t);
+		const uint32_t current = dsp_read_memory(m_EPDsp, 'P', wordAddr);
+		dsp_write_memory(m_EPDsp, 'P', wordAddr, WriteRegisterFragment(current, value, fragmentOffset, size));
 		return;
 	}
+	const uint32_t oldValue = ReadRegister(APU_EP_BASE + addr, sizeof(uint32_t));
 	WriteRegister(APU_EP_BASE + addr, value, size);
-	if (addr == NV_PAPU_EPRST && size == sizeof(uint32_t) &&
-		(value & NV_PAPU_GPRST_GPRST) == 0) {
-		m_EPXMem.fill(0);
-		m_EPYMem.fill(0);
-		m_EPPMem.fill(0);
+	if (addr == NV_PAPU_EPRST && size == sizeof(uint32_t)) {
+		const bool wasEnabled = (oldValue & (NV_PAPU_EPRST_EPRST | NV_PAPU_EPRST_EPDSPRST)) ==
+			(NV_PAPU_EPRST_EPRST | NV_PAPU_EPRST_EPDSPRST);
+		const bool isEnabled = (value & (NV_PAPU_EPRST_EPRST | NV_PAPU_EPRST_EPDSPRST)) ==
+			(NV_PAPU_EPRST_EPRST | NV_PAPU_EPRST_EPDSPRST);
+		if (!isEnabled) {
+			dsp_reset(m_EPDsp);
+			m_DSPFrameDivider = 0;
+		} else if (!wasEnabled) {
+			dsp_bootstrap(m_EPDsp);
+			m_DSPFrameDivider = 0;
+		}
 	}
 }
 
@@ -1209,6 +1797,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
 		m_VPSSLData[selectedHandle].ssl_index = 0;
 		m_VPSSLData[selectedHandle].ssl_seg = 0;
+		m_VPSSLData[selectedHandle].persistCompleted = {};
 		m_VPPlaybackState[selectedHandle] = PlaybackState{};
 		uint32_t notifierBase = 0;
 		if (ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
@@ -1224,6 +1813,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		SetVoiceActiveHint(voiceHandle, false);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		SetVoiceNotifierEnvelopeState(voiceHandle,
+			static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
 		UnlinkVoiceFromLists(voiceHandle);
 		// Sample the guest-visible offset register before clearing the local playback cache so
 		// the completion notifier reflects the position software last programmed/observed.
@@ -1326,12 +1917,14 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		if (currentVoice() < m_VPSSLData.size()) {
 			m_VPSSLData[currentVoice()].base[0] = (value & NV1BA0_PIO_SET_VOICE_SSL_A_BASE) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_BASE);
 			m_VPSSLData[currentVoice()].count[0] = static_cast<uint8_t>((value & NV1BA0_PIO_SET_VOICE_SSL_A_COUNT) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_COUNT));
+			m_VPSSLData[currentVoice()].persistCompleted[0] = false;
 		}
 		return;
 	case NV1BA0_PIO_SET_VOICE_SSL_B:
 		if (currentVoice() < m_VPSSLData.size()) {
 			m_VPSSLData[currentVoice()].base[1] = (value & NV1BA0_PIO_SET_VOICE_SSL_A_BASE) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_BASE);
 			m_VPSSLData[currentVoice()].count[1] = static_cast<uint8_t>((value & NV1BA0_PIO_SET_VOICE_SSL_A_COUNT) >> Ctz32(NV1BA0_PIO_SET_VOICE_SSL_A_COUNT));
+			m_VPSSLData[currentVoice()].persistCompleted[1] = false;
 		}
 		return;
 	case NV1BA0_PIO_SET_VOICE_TAR_VOLA:
@@ -1345,6 +1938,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		return;
 	case NV1BA0_PIO_SET_VOICE_LFO_ENV:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_LFO_ENV, 0xFFFFFFFF, value);
+		return;
+	case NV1BA0_PIO_SET_VOICE_LFO_MOD:
+		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_LFO_MOD, 0xFFFFFFFF, value);
 		return;
 	case NV1BA0_PIO_SET_VOICE_TAR_FCA:
 		WriteVoiceMask(currentVoice(), NV_PAVS_VOICE_TAR_FCA, 0xFFFFFFFF, value);
@@ -1503,6 +2099,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			if (slot < m_VPOutBufferPlaybackCursor.size()) {
 				m_VPOutBufferPlaybackCursor[slot] = 0;
 			}
+			if (slot < m_VPOutBufferQueuedBytes.size()) {
+				m_VPOutBufferQueuedBytes[slot] = 0;
+			}
 			return;
 		}
 		if (addr >= NV1BA0_PIO_SET_OUTBUF_LEN && addr < NV1BA0_PIO_SET_OUTBUF_LEN + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_LEN) % 8) == 0) {
@@ -1513,6 +2112,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			}
 			if (slot < m_VPOutBufferPlaybackCursor.size()) {
 				m_VPOutBufferPlaybackCursor[slot] = 0;
+			}
+			if (slot < m_VPOutBufferQueuedBytes.size()) {
+				m_VPOutBufferQueuedBytes[slot] = 0;
 			}
 			return;
 		}
@@ -1713,18 +2315,21 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
+	if (!IsVoiceEntryOffsetWithinBounds(offset)) {
+		return false;
+	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
-		if (!m_LoggedVoiceTableReadFailure) {
-			EmuLog(LOG_LEVEL::WARNING,
-				"APU ReadVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x",
-				voiceHandle,
-				offset,
-				mask);
-			m_LoggedVoiceTableReadFailure = true;
-		}
-		return false;
+		const size_t shadowOffset = static_cast<size_t>(voiceHandle) * NV_PAVS_SIZE + offset;
+		const uint32_t current = ReadMemoryWindow(
+			m_VPVoiceTableShadow.data(),
+			m_VPVoiceTableShadow.size(),
+			static_cast<uint32_t>(shadowOffset),
+			sizeof(uint32_t));
+		value = GetMaskedValue(current, mask);
+		m_LoggedVoiceTableReadFailure = false;
+		return true;
 	}
 
 	const uint32_t voiceBase = voiceTableBase + voiceHandle * NV_PAVS_SIZE + offset;
@@ -1743,8 +2348,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 		return false;
 	}
 
-	const uint32_t shift = mask == 0xFFFFFFFF ? 0 : Ctz32(mask);
-	value = mask == 0xFFFFFFFF ? current : ((current & mask) >> shift);
+	value = GetMaskedValue(current, mask);
 	// A successful read means the voice table is reachable again, so allow a future
 	// access regression to emit a fresh one-shot diagnostic.
 	m_LoggedVoiceTableReadFailure = false;
@@ -1756,19 +2360,27 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
 		return false;
 	}
+	if (!IsVoiceEntryOffsetWithinBounds(offset)) {
+		return false;
+	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
-		if (!m_LoggedVoiceTableWriteFailure) {
-			EmuLog(LOG_LEVEL::WARNING,
-				"APU WriteVoiceMask blocked voiceTableBase=0x00000000 handle=%u offset=0x%08x mask=0x%08x value=0x%08x",
-				voiceHandle,
-				offset,
-				mask,
-				value);
-			m_LoggedVoiceTableWriteFailure = true;
-		}
-		return false;
+		const size_t shadowOffset = static_cast<size_t>(voiceHandle) * NV_PAVS_SIZE + offset;
+		const uint32_t current = ReadMemoryWindow(
+			m_VPVoiceTableShadow.data(),
+			m_VPVoiceTableShadow.size(),
+			static_cast<uint32_t>(shadowOffset),
+			sizeof(uint32_t));
+		const uint32_t mergedValue = MergeMaskedValue(current, mask, value);
+		WriteMemoryWindow(
+			m_VPVoiceTableShadow.data(),
+			m_VPVoiceTableShadow.size(),
+			static_cast<uint32_t>(shadowOffset),
+			mergedValue,
+			sizeof(uint32_t));
+		m_LoggedVoiceTableWriteFailure = false;
+		return true;
 	}
 
 	const uint32_t voiceBase = voiceTableBase + voiceHandle * NV_PAVS_SIZE + offset;
@@ -1840,6 +2452,47 @@ void APUDevice::WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint
 	WriteGuestWord(notifierBase + offset, value);
 }
 
+void APUDevice::WriteNotifierEnvelopeState(uint32_t voiceHandle, uint32_t notifier, uint8_t envState)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || notifier >= MCPX_HW_NOTIFIER_COUNT) {
+		return;
+	}
+
+	uint32_t notifierBase = 0;
+	if (!ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
+		return;
+	}
+
+	const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
+		(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
+	WriteGuestBytes(notifierBase + offset + 14, &envState, sizeof(envState));
+}
+
+void APUDevice::SetVoiceNotifierEnvelopeState(uint32_t voiceHandle, uint8_t envState, bool force)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || voiceHandle >= m_VPNotifierEnvelopeState.size()) {
+		return;
+	}
+
+	if (!force && m_VPNotifierEnvelopeState[voiceHandle] == envState) {
+		return;
+	}
+
+	m_VPNotifierEnvelopeState[voiceHandle] = envState;
+	for (uint32_t notifier = 0; notifier < MCPX_HW_NOTIFIER_COUNT; ++notifier) {
+		WriteNotifierEnvelopeState(voiceHandle, notifier, envState);
+	}
+}
+
+uint8_t APUDevice::GetVoiceNotifierEnvelopeState(uint32_t voiceHandle) const
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || voiceHandle >= m_VPNotifierEnvelopeState.size()) {
+		return static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF);
+	}
+
+	return m_VPNotifierEnvelopeState[voiceHandle];
+}
+
 void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status)
 {
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || notifier >= MCPX_HW_NOTIFIER_COUNT) {
@@ -1854,7 +2507,8 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 
 	const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
 		(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
-	WriteGuestBytes(notifierBase + offset + 14, &APU_NOTIFY_ENV_STATE_ACTIVE, sizeof(APU_NOTIFY_ENV_STATE_ACTIVE));
+	const uint8_t envState = GetVoiceNotifierEnvelopeState(voiceHandle);
+	WriteGuestBytes(notifierBase + offset + 14, &envState, sizeof(envState));
 	WriteGuestBytes(notifierBase + offset + 15, &status, sizeof(status));
 
 	SignalNotifierInterrupt();
@@ -2079,22 +2733,8 @@ bool APUDevice::ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, 
 	return true;
 }
 
-bool APUDevice::HasGuestDspExecution() const
-{
-	// xemu only routes monitor/output-buffer audio when the GP/EP DSP path is
-	// actually running; otherwise it bypasses VP audio straight to the host sink.
-	// Our GP/EP memory windows exist, but the DSP execution stage is still absent,
-	// so configured output buffers must not steal playback from the audible OpenAL
-	// VP bypass path.
-	return false;
-}
-
 bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 {
-	if (!HasGuestDspExecution()) {
-		return false;
-	}
-
 	for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 		const uint32_t bin = m_VPHRTFSubmix[slot];
 		if (bin < APU_FIRST_NON_STEREO_BIN || bin >= APU_MIXBIN_COUNT || slot >= m_VPOutBufferPlaybackCursor.size()) {
@@ -2111,10 +2751,64 @@ bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 			continue;
 		}
 
+		// The VP render path already writes the mixed submixes into the programmed
+		// guest output buffers, so once the guest enables those buffers we can route
+		// playback through the guest-facing buffer bridge instead of relying on the
+		// temporary host-side spatial handoff path.
 		return true;
 	}
 
 	return false;
+}
+
+bool APUDevice::ConsumeGuestVPOutputBuffer(size_t slot, uint32_t guestAddress, uint32_t length,
+	int16_t* dest, size_t frameCount, uint32_t* peak)
+{
+	const uint32_t usableLength = length & ~uint32_t(sizeof(int16_t) - 1);
+	if (dest == nullptr || frameCount == 0 || slot >= m_VPOutBufferPlaybackCursor.size() ||
+		slot >= m_VPOutBufferQueuedBytes.size() || usableLength < sizeof(int16_t)) {
+		return false;
+	}
+
+	std::fill_n(dest, frameCount, 0);
+	if (peak != nullptr) {
+		*peak = 0;
+	}
+
+	const size_t requestedBytes = frameCount * sizeof(int16_t);
+	const uint32_t availableBytes = std::min<uint32_t>(m_VPOutBufferQueuedBytes[slot], usableLength);
+	if (availableBytes == 0) {
+		return false;
+	}
+
+	const size_t readBytes = std::min<size_t>(requestedBytes, availableBytes);
+	if (!ReadGuestCircularBuffer(guestAddress, usableLength, m_VPOutBufferPlaybackCursor[slot], dest, readBytes)) {
+		if (!m_LoggedVPOutputBufferReadFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU guest VP output-buffer playback failed for slot=%zu base=0x%08x length=%u queued=%u",
+				slot, guestAddress, usableLength, availableBytes);
+			m_LoggedVPOutputBufferReadFailure = true;
+		}
+		return false;
+	}
+
+	m_VPOutBufferQueuedBytes[slot] -= static_cast<uint32_t>(readBytes);
+	if (readBytes < requestedBytes) {
+		if (!m_LoggedVPOutputBufferUnderrun) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU guest VP output-buffer underrun slot=%zu requested=%zu available=%u length=%u; zero-filling remainder",
+				slot, requestedBytes, availableBytes, usableLength);
+			m_LoggedVPOutputBufferUnderrun = true;
+		}
+	} else {
+		m_LoggedVPOutputBufferUnderrun = false;
+	}
+
+	m_LoggedVPOutputBufferReadFailure = false;
+	if (peak != nullptr) {
+		*peak = audio_diagnostics::PeakAbsoluteSampleAmplitude(dest, frameCount);
+	}
+	return true;
 }
 
 bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak)
@@ -2147,14 +2841,8 @@ bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std:
 			continue;
 		}
 
-		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
-			slotSamples.data(), slotSamples.size() * sizeof(slotSamples[0]))) {
-			if (!m_LoggedVPOutputBufferReadFailure) {
-				EmuLog(LOG_LEVEL::WARNING,
-					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
-					slot, bin, outBufferBase, outBufferLength);
-				m_LoggedVPOutputBufferReadFailure = true;
-			}
+		uint32_t peakValue = 0;
+		if (!ConsumeGuestVPOutputBuffer(slot, outBufferBase, outBufferLength, slotSamples.data(), frameCount, &peakValue)) {
 			continue;
 		}
 
@@ -2165,11 +2853,10 @@ bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std:
 		}
 		mixedAnySubmix = true;
 		if (slotPeak != nullptr) {
-			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(slotSamples.data(), slotSamples.size());
+			(*slotPeak)[slot] = peakValue;
 		}
 	}
 
-	m_LoggedVPOutputBufferReadFailure = false;
 	return mixedAnySubmix;
 }
 
@@ -2201,14 +2888,8 @@ bool APUDevice::SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<u
 			continue;
 		}
 
-		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
-			slotSamples.data(), slotSamples.size() * sizeof(slotSamples[0]))) {
-			if (!m_LoggedVPOutputBufferReadFailure) {
-				EmuLog(LOG_LEVEL::WARNING,
-					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
-					slot, bin, outBufferBase, outBufferLength);
-				m_LoggedVPOutputBufferReadFailure = true;
-			}
+		uint32_t peakValue = 0;
+		if (!ConsumeGuestVPOutputBuffer(slot, outBufferBase, outBufferLength, slotSamples.data(), frameCount, &peakValue)) {
 			continue;
 		}
 
@@ -2218,11 +2899,10 @@ bool APUDevice::SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<u
 			frameCount);
 		stagedAnySubmix = true;
 		if (slotPeak != nullptr) {
-			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(slotSamples.data(), slotSamples.size());
+			(*slotPeak)[slot] = peakValue;
 		}
 	}
 
-	m_LoggedVPOutputBufferReadFailure = false;
 	return stagedAnySubmix;
 }
 
@@ -2351,6 +3031,7 @@ void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnV
 	const auto initializeEnvelope = [&](uint32_t startState, uint32_t reg0, uint32_t regA,
 		uint32_t releaseRegister, uint32_t releaseMask, uint32_t levelRegister,
 		uint32_t levelMask, uint32_t countMask, uint32_t stateMask) {
+		const auto& fieldConfig = GetEnvelopeFieldConfig(reg0, regA);
 		uint32_t count = 0;
 		uint32_t level = 0xFF;
 
@@ -2358,7 +3039,7 @@ void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnV
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF:
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_DELAY:
-			ReadVoiceMask(voiceHandle, reg0, NV_PAVS_VOICE_CFG_ENV0_EA_DELAYTIME, count);
+			ReadVoiceMask(voiceHandle, reg0, fieldConfig.delayTimeMask, count);
 			count *= 16;
 			level = 0;
 			break;
@@ -2366,15 +3047,15 @@ void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnV
 			level = 0;
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD:
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME, count);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.holdTimeMask, count);
 			count *= 16;
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY:
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, count);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.decayRateMask, count);
 			count *= 16;
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN:
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, level);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.sustainLevelMask, level);
 			break;
 		case NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE:
 			ReadVoiceMask(voiceHandle, releaseRegister, releaseMask, count);
@@ -2405,6 +3086,22 @@ void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnV
 		NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE,
 		NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EFLVL,
 		NV_PAVS_VOICE_CUR_ECNT_EFCOUNT, NV_PAVS_VOICE_PAR_STATE_EFCUR);
+
+	uint32_t misc = 0;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_MISC, 0xFFFFFFFF, misc);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOALVL, APU_LFO_LEVEL_CENTER);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, APU_LFO_LEVEL_CENTER);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE,
+		NV_PAVS_VOICE_PAR_STATE_LFOA_DELAYMODE,
+		(misc & NV_PAVS_VOICE_CFG_MISC_LFOA_DELAYMODE) != 0 ? 1u : 0u);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE,
+		NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE,
+		(misc & NV_PAVS_VOICE_CFG_MISC_LFOF_DELAYMODE) != 0 ? 1u : 0u);
+	uint32_t envelopeState = NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_EACUR, envelopeState);
+	SetVoiceNotifierEnvelopeState(voiceHandle, static_cast<uint8_t>(envelopeState), true);
 }
 
 void APUDevice::BeginVoiceRelease(uint32_t voiceHandle)
@@ -2425,12 +3122,93 @@ void APUDevice::BeginVoiceRelease(uint32_t voiceHandle)
 		NV_PAVS_VOICE_PAR_STATE_EFCUR, NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE);
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE,
 		NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	SetVoiceNotifierEnvelopeState(voiceHandle,
+		static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE), true);
+}
+
+void APUDevice::AdvancePausedVoiceState(uint32_t voiceHandle, size_t frameCount,
+	BasicVoiceDiagnosticSummary* diagnostics)
+{
+	const bool captureVoiceDiagnostics = diagnostics != nullptr;
+	uint32_t lfoEnv = 0;
+	uint32_t lfoMod = 0;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_LFO_ENV, 0xFFFFFFFF, lfoEnv);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_LFO_MOD, 0xFFFFFFFF, lfoMod);
+	const uint32_t lfoADelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOADLT);
+	const uint32_t lfoFDelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOFDLT);
+	const float lfoAmplitudeAmount = DecodeSignedLFOAmount(
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOAAM));
+
+	for (size_t frame = 0; frame < frameCount; ++frame) {
+		uint32_t state = 0;
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
+			(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
+			(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) == 0) {
+			break;
+		}
+
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		const float envelopeGain = StepVoiceEnvelope(
+			voiceHandle,
+			NV_PAVS_VOICE_CFG_ENV0, NV_PAVS_VOICE_CFG_ENVA,
+			NV_PAVS_VOICE_TAR_LFO_ENV, NV_PAVS_VOICE_TAR_LFO_ENV_EA_RELEASERATE,
+			NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_EALVL,
+			NV_PAVS_VOICE_CUR_ECNT_EACOUNT, NV_PAVS_VOICE_PAR_STATE_EACUR);
+		const float filterEnvelopeGain = StepVoiceEnvelope(
+			voiceHandle,
+			NV_PAVS_VOICE_CFG_ENV1, NV_PAVS_VOICE_CFG_ENVF,
+			NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE,
+			NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EFLVL,
+			NV_PAVS_VOICE_CUR_ECNT_EFCOUNT, NV_PAVS_VOICE_PAR_STATE_EFCUR);
+		if (captureVoiceDiagnostics) {
+			diagnostics->maxEnvelopeGain = std::max(diagnostics->maxEnvelopeGain, envelopeGain);
+			diagnostics->maxFilterEnvelopeGain = std::max(diagnostics->maxFilterEnvelopeGain, filterEnvelopeGain);
+		}
+		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
+			(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
+			(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) == 0) {
+			break;
+		}
+
+		uint32_t lfoALevel = APU_LFO_LEVEL_CENTER;
+		uint32_t lfoAReverse = 0;
+		uint32_t lfoFLevel = APU_LFO_LEVEL_CENTER;
+		uint32_t lfoFReverse = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOALVL, lfoALevel);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, lfoAReverse);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, lfoFLevel);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, lfoFReverse);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
+		bool lfoADescending = lfoAReverse != 0;
+		bool lfoFDescending = lfoFReverse != 0;
+		StepVoiceLFOLevel(
+			IsVoiceLFODelayActive(state, NV_PAVS_VOICE_PAR_STATE_LFOA_DELAYMODE, NV_PAVS_VOICE_PAR_STATE_EACUR)
+				? 0u
+				: lfoADelta,
+			lfoALevel, lfoADescending);
+		StepVoiceLFOLevel(
+			IsVoiceLFODelayActive(state, NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE, NV_PAVS_VOICE_PAR_STATE_EFCUR)
+				? 0u
+				: lfoFDelta,
+			lfoFLevel, lfoFDescending);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOALVL, lfoALevel);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, lfoADescending ? 1u : 0u);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, lfoFLevel);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, lfoFDescending ? 1u : 0u);
+		if (captureVoiceDiagnostics) {
+			const float lfoAValue = NormalizeVoiceLFOModulationLevel(lfoALevel);
+			const float amplitudeLFOModulation = std::clamp(1.0f + lfoAValue * lfoAmplitudeAmount, 0.0f, 2.0f);
+			diagnostics->maxAmplitudeLFOModulation = std::max(
+				diagnostics->maxAmplitudeLFOModulation, amplitudeLFOModulation);
+		}
+	}
 }
 
 float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
 	uint32_t rrReg, uint32_t rrMask, uint32_t levelRegister, uint32_t levelMask,
 	uint32_t countMask, uint32_t stateMask)
 {
+	const auto& fieldConfig = GetEnvelopeFieldConfig(reg0, regA);
 	uint32_t currentState = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask, currentState)) {
 		return 1.0f;
@@ -2440,6 +3218,10 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 	const auto stopVoice = [&]() {
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		if (amplitudeEnvelope) {
+			SetVoiceNotifierEnvelopeState(voiceHandle,
+				static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
+		}
 	};
 
 	switch (currentState) {
@@ -2454,6 +3236,10 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		if (count == 0) {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK);
+			if (amplitudeEnvelope) {
+				SetVoiceNotifierEnvelopeState(voiceHandle,
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK));
+			}
 		} else {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count - 1);
 		}
@@ -2463,7 +3249,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		uint32_t count = 0;
 		uint32_t attackRate = 0;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
-		ReadVoiceMask(voiceHandle, reg0, NV_PAVS_VOICE_CFG_ENV0_EA_ATTACKRATE, attackRate);
+		ReadVoiceMask(voiceHandle, reg0, fieldConfig.attackRateMask, attackRate);
 
 		const uint32_t attackSpan = attackRate * 16;
 		uint32_t level = 0xFF;
@@ -2474,9 +3260,13 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 
 		if (attackRate == 0 || count >= attackSpan) {
 			uint32_t holdTime = 0;
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME, holdTime);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.holdTimeMask, holdTime);
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD);
+			if (amplitudeEnvelope) {
+				SetVoiceNotifierEnvelopeState(voiceHandle,
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD));
+			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, holdTime * 16);
 			WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0xFF);
 			return 1.0f;
@@ -2491,9 +3281,13 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0xFF);
 		if (count == 0) {
 			uint32_t decayRate = 0;
-			ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, decayRate);
+			ReadVoiceMask(voiceHandle, regA, fieldConfig.decayRateMask, decayRate);
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY);
+			if (amplitudeEnvelope) {
+				SetVoiceNotifierEnvelopeState(voiceHandle,
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY));
+			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, decayRate * 16);
 		} else {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count - 1);
@@ -2505,12 +3299,16 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		uint32_t decayRate = 0;
 		uint32_t sustainLevel = 0;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count);
-		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE, decayRate);
-		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, sustainLevel);
+		ReadVoiceMask(voiceHandle, regA, fieldConfig.decayRateMask, decayRate);
+		ReadVoiceMask(voiceHandle, regA, fieldConfig.sustainLevelMask, sustainLevel);
 
 		if (decayRate == 0 || count == 0) {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN);
+			if (amplitudeEnvelope) {
+				SetVoiceNotifierEnvelopeState(voiceHandle,
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN));
+			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
 			WriteVoiceMask(voiceHandle, levelRegister, levelMask, sustainLevel);
 			return static_cast<float>(sustainLevel) / 255.0f;
@@ -2530,7 +3328,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 	}
 	case NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN: {
 		uint32_t sustainLevel = 0;
-		ReadVoiceMask(voiceHandle, regA, NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL, sustainLevel);
+		ReadVoiceMask(voiceHandle, regA, fieldConfig.sustainLevelMask, sustainLevel);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
 		WriteVoiceMask(voiceHandle, levelRegister, levelMask, sustainLevel);
 		return static_cast<float>(sustainLevel) / 255.0f;
@@ -2598,6 +3396,7 @@ void APUDevice::SynchronizeAudio()
 		const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
 		RenderBasicAudioChunk(chunk);
 		m_LastAudioUpdate += static_cast<uint32_t>(chunk);
+		m_XGSCounter += static_cast<uint32_t>(chunk);
 		remaining -= static_cast<uint32_t>(chunk);
 	}
 }
@@ -2611,15 +3410,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
 	if (voiceTableBase == 0) {
 		if (!m_LoggedMissingVoiceTableDuringRender) {
-			EmuLog(LOG_LEVEL::WARNING,
-				"APU render blocked because NV_PAPU_VPVADDR is still zero; FE/VP voice state is not wired to guest memory yet");
+			EmuLog(LOG_LEVEL::INFO,
+				"APU using internal shadow voice table (NV_PAPU_VPVADDR not yet initialized by guest)");
 			m_LoggedMissingVoiceTableDuringRender = true;
 		}
 	} else {
 		m_LoggedMissingVoiceTableDuringRender = false;
 	}
 
-	m_EnableHostSpatialHandoff = !HasGuestVPOutputBufferPlaybackPath();
+	m_EnableHostSpatialHandoff = !HasGuestVPOutputBufferPlaybackPath() && !IsAnyDSPEnabled();
 	m_ChunkCaptured3DVoiceCount = 0;
 	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 	if (g_AC97 != nullptr) {
@@ -2673,8 +3472,10 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			m_LoggedFallbackActiveVoiceRender = true;
 		}
 	}
-	if (voiceTableBase != 0 &&
-		!hasVoiceActivity &&
+	// FE still expects the SE2FE idle-voice path to progress even before the guest
+	// publishes NV_PAPU_VPVADDR; ConsumeVPMethod remains safe here because the
+	// shadow voice table backs the FE/VP state touched by that path.
+	if (!hasVoiceActivity &&
 		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
 		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
 		ConsumeVPMethod(SE2FE_IDLE_VOICE, APU_VP_VOICE_MAX_HANDLE, sizeof(uint32_t));
@@ -2773,17 +3574,30 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 	m_LoggedAC97Missing = false;
 
-	const bool stereoBinsSilent =
-		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
-		PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0;
-	const bool guestVPOutputPlaybackConfigured = !m_EnableHostSpatialHandoff;
+	std::vector<int16_t> output(frameCount * 2);
+	const bool dspOutputActive = ProcessDSPAudio(output.data(), mixBins.data(), frameCount);
+	if (!dspOutputActive) {
+		for (size_t frame = 0; frame < frameCount; ++frame) {
+			// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
+			output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frame], INT16_MIN, INT16_MAX));
+			output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frameCount + frame], INT16_MIN, INT16_MAX));
+		}
+	}
+	const bool stereoBinsSilent = dspOutputActive
+		? audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size()) == 0
+		: (PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0) == 0 &&
+			PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1) == 0);
+	const bool guestVPOutputPlaybackConfigured = !m_EnableHostSpatialHandoff && !dspOutputActive;
 	bool guestVPOutputPlaybackActive = false;
+	bool guestVPOutputStereoMixed = false;
 	std::array<uint32_t, 4> guestVPOutputPeak{};
 	const bool hostSpatialSubmitted = m_ChunkSubmittedHostSpatialVoiceCount != 0;
 	bool useHRTFStereoFallback = false;
 	bool useNonStereoBinFallback = false;
+	bool blendFallbackIntoStereo = false;
 	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
-	if (stereoBinsSilent && !guestVPOutputPlaybackConfigured && !hostSpatialSubmitted) {
+	if (!guestVPOutputPlaybackConfigured && !hostSpatialSubmitted && !dspOutputActive) {
+		blendFallbackIntoStereo = !stereoBinsSilent;
 		for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 			const uint32_t bin = m_VPHRTFSubmix[slot];
 			if (bin >= APU_FIRST_NON_STEREO_BIN && bin < APU_MIXBIN_COUNT &&
@@ -2792,21 +3606,24 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				break;
 			}
 		}
-		useNonStereoBinFallback = !useHRTFStereoFallback;
-	}
-
-	std::vector<int16_t> output(frameCount * 2);
-	for (size_t frame = 0; frame < frameCount; ++frame) {
-		// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
-		output[frame * 2] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frame], INT16_MIN, INT16_MAX));
-		output[frame * 2 + 1] = static_cast<int16_t>(std::clamp<int64_t>(mixBins[frameCount + frame], INT16_MIN, INT16_MAX));
+		if (!useHRTFStereoFallback) {
+			for (size_t bin = APU_FIRST_NON_STEREO_BIN; bin < APU_MIXBIN_COUNT; ++bin) {
+				if (PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, bin) != 0) {
+					useNonStereoBinFallback = true;
+					break;
+				}
+			}
+		}
 	}
 
 	if (guestVPOutputPlaybackConfigured) {
 		guestVPOutputPlaybackActive = SubmitGuestVPOutputBuffersToAC97(frameCount, &guestVPOutputPeak);
+		if (!guestVPOutputPlaybackActive) {
+			guestVPOutputStereoMixed = MixGuestVPOutputBuffers(output.data(), frameCount, &guestVPOutputPeak);
+		}
 	}
 
-	if (!guestVPOutputPlaybackActive) {
+	if (!guestVPOutputPlaybackActive && !guestVPOutputStereoMixed && !dspOutputActive) {
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			int64_t left = output[frame * 2];
 			int64_t right = output[frame * 2 + 1];
@@ -2818,9 +3635,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 					}
 
 					const size_t binBase = static_cast<size_t>(bin) * frameCount;
-					const int32_t contribution = mixBins[binBase + frame];
+					int32_t contribution = mixBins[binBase + frame];
+					if (blendFallbackIntoStereo) {
+						contribution /= 2;
+					}
 					// Fold the four global HRTF submix slots back to host stereo as L,R,L,R
-					// until the dedicated OpenAL 3D handoff consumes them directly.
+					// until the dedicated OpenAL 3D handoff consumes them directly. If stereo
+					// bins already contain signal, blend the fallback at half strength so
+					// routed-only content stays audible without doubling fully duplicated dry
+					// paths as aggressively.
 					if (kHRTFFallbackChannelMapping[slot] == 0) {
 						left += contribution;
 					} else {
@@ -2830,12 +3653,19 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			} else if (useNonStereoBinFallback) {
 				for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
 					const size_t binBase = bin * frameCount;
-					const int32_t contribution = mixBins[binBase + frame];
+					int32_t contribution = mixBins[binBase + frame];
+					if (blendFallbackIntoStereo) {
+						contribution /= 2;
+					}
 					// Without the DSP/output-buffer stages, some voices only reach non-stereo
 					// mixbins. Fold them back to host stereo by bin parity so their audio stays
-					// audible until the full guest routing path is implemented. This mirrors the
-					// voice-mixing convention above where even-numbered routes originate from the
-					// left sample and odd-numbered routes originate from the right sample.
+					// audible until the full guest routing path is implemented, even when a
+					// small amount of direct stereo signal is already present. When stereo bins
+					// are already active, blend the fallback at half strength to reduce obvious
+					// double-mixing of paths that intentionally target both stereo and effect
+					// bins. This mirrors the voice-mixing convention above where even-numbered
+					// routes originate from the left sample and odd-numbered routes originate
+					// from the right sample.
 					if ((bin & 1u) == 0) {
 						left += contribution;
 					} else {
@@ -2852,8 +3682,12 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	uint32_t stereoPeak = 0;
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		const char* arbitrationWinner = "stereo-direct";
-		if (guestVPOutputPlaybackActive) {
+		if (dspOutputActive) {
+			arbitrationWinner = "gp-ep-dsp";
+		} else if (guestVPOutputPlaybackActive) {
 			arbitrationWinner = "guest-vp-spatial";
+		} else if (guestVPOutputStereoMixed) {
+			arbitrationWinner = "guest-vp-stereo";
 		} else if (hostSpatialSubmitted) {
 			arbitrationWinner = "host-spatial";
 		} else if (useHRTFStereoFallback) {
@@ -2864,13 +3698,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		stereoPeak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), output.size());
 		if (hasVoiceActivity || stereoPeak != 0) {
 			EmuLog(LOG_LEVEL::INFO,
-				"APU playback arbitration frames=%zu peak=%u captured3DVoices=%zu hostSpatialVoices=%zu guestVPConfigured=%d guestVPActive=%d hrtfFallback=%d nonStereoFallback=%d winner=%s bins=[%u,%u,%u,%u] guestVPPeaks=[%u,%u,%u,%u]",
+				"APU playback arbitration frames=%zu peak=%u captured3DVoices=%zu hostSpatialVoices=%zu guestVPConfigured=%d guestVPActive=%d guestVPStereo=%d dspActive=%d hrtfFallback=%d nonStereoFallback=%d winner=%s bins=[%u,%u,%u,%u] guestVPPeaks=[%u,%u,%u,%u]",
 				frameCount,
 				static_cast<unsigned>(stereoPeak),
 				m_ChunkCaptured3DVoiceCount,
 				m_ChunkSubmittedHostSpatialVoiceCount,
 				guestVPOutputPlaybackConfigured ? 1 : 0,
 				guestVPOutputPlaybackActive ? 1 : 0,
+				guestVPOutputStereoMixed ? 1 : 0,
+				dspOutputActive ? 1 : 0,
 				useHRTFStereoFallback ? 1 : 0,
 				useNonStereoBinFallback ? 1 : 0,
 				arbitrationWinner,
@@ -2919,9 +3755,16 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 		const uint32_t outBufferBaseRegister = GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
 		const uint32_t outBufferLengthRegister = GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
 		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
-		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		const uint32_t outBufferLength = (outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE) &
+			~uint32_t(sizeof(int16_t) - 1);
 		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
 			m_VPOutBufferCursor[slot] = 0;
+			if (slot < m_VPOutBufferPlaybackCursor.size()) {
+				m_VPOutBufferPlaybackCursor[slot] = 0;
+			}
+			if (slot < m_VPOutBufferQueuedBytes.size()) {
+				m_VPOutBufferQueuedBytes[slot] = 0;
+			}
 			continue;
 		}
 
@@ -2933,8 +3776,30 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 			output[frame] = ClampToInt16(mixBins[sourceBin * frameCount + frame]);
 		}
 
-		WriteGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferCursor[slot],
-			output.data(), output.size() * sizeof(output[0]));
+		const uint32_t writtenBytes = static_cast<uint32_t>(output.size() * sizeof(output[0]));
+		if (!WriteGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferCursor[slot],
+			output.data(), writtenBytes)) {
+			continue;
+		}
+
+		if (slot < m_VPOutBufferQueuedBytes.size() && slot < m_VPOutBufferPlaybackCursor.size()) {
+			const uint64_t queuedAfterWrite = static_cast<uint64_t>(m_VPOutBufferQueuedBytes[slot]) + writtenBytes;
+			if (queuedAfterWrite > outBufferLength) {
+				const uint32_t droppedBytes = static_cast<uint32_t>(queuedAfterWrite - outBufferLength);
+				m_VPOutBufferPlaybackCursor[slot] =
+					(m_VPOutBufferPlaybackCursor[slot] + droppedBytes) % outBufferLength;
+				m_VPOutBufferQueuedBytes[slot] = outBufferLength;
+				if (!m_LoggedVPOutputBufferOverrun) {
+					EmuLog(LOG_LEVEL::INFO,
+						"APU guest VP output-buffer overrun slot=%zu dropped=%u length=%u; keeping newest audio",
+						slot, droppedBytes, outBufferLength);
+					m_LoggedVPOutputBufferOverrun = true;
+				}
+			} else {
+				m_VPOutBufferQueuedBytes[slot] = static_cast<uint32_t>(queuedAfterWrite);
+				m_LoggedVPOutputBufferOverrun = false;
+			}
+		}
 	}
 }
 
@@ -2954,7 +3819,7 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 		// 1) decode produced signal but none of it reached stereo bins,
 		// 2) the active voice stayed silent all the way through decode,
 		// 3) frames rendered without any offset advance despite a positive pitch step.
-		return diagnostics.active &&
+		return diagnostics.active && !diagnostics.paused &&
 			((diagnostics.decodedNonZero && !diagnostics.stereoContribution) ||
 			 !diagnostics.decodedNonZero ||
 			 (diagnostics.framesRendered != 0 && diagnostics.offsetAdvance == 0 && diagnostics.pitchStep > 0.0));
@@ -3016,15 +3881,19 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 				frameCount);
 			for (const auto& diagnostics : interestingVoices) {
 				EmuLog(LOG_LEVEL::INFO,
-					"APU voice diag handle=%u offsets=%u+%u frames=%zu pitchStep=%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
+					"APU voice diag handle=%u paused=%d offsets=%u+%u frames=%zu pitchStep=%.6f/%.6f decodedPeak=%u mixedPeak=%u envMax=%.3f filterEnvMax=%.3f lfoGainMax=%.3f stereo=%d other=%d bins=[%u,%u,%u,%u,%u,%u,%u,%u] volumes=[%u,%u,%u,%u,%u,%u,%u,%u] headroom=[%u,%u,%u,%u,%u,%u,%u,%u]",
 					diagnostics.voiceHandle,
+					diagnostics.paused ? 1 : 0,
 					diagnostics.startOffset,
 					diagnostics.offsetAdvance,
 					diagnostics.framesRendered,
 					diagnostics.pitchStep,
+					diagnostics.maxPitchStep,
 					diagnostics.decodedPeak,
 					diagnostics.mixedPeak,
 					diagnostics.maxEnvelopeGain,
+					diagnostics.maxFilterEnvelopeGain,
+					diagnostics.maxAmplitudeLFOModulation,
 					diagnostics.stereoContribution ? 1 : 0,
 					diagnostics.nonStereoContribution ? 1 : 0,
 					diagnostics.bins[0], diagnostics.bins[1], diagnostics.bins[2], diagnostics.bins[3],
@@ -3136,13 +4005,7 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	};
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	if (voiceTableBase == 0) {
-		EmuLog(LOG_LEVEL::INFO,
-			"APU voice table diagnostics voiceTableBase=0x00000000 active=0 paused=0 new=0 handles=[none]");
-		logFEVPRegisterDiagnostics();
-		LogRecentFEMethodDiagnostics();
-		return;
-	}
+	const char* voiceTableSource = voiceTableBase == 0 ? "shadow" : "guest";
 
 	size_t activeVoiceCount = 0;
 	size_t pausedVoiceCount = 0;
@@ -3170,7 +4033,8 @@ void APUDevice::LogVoiceTableDiagnostics() const
 
 	if (loggedActiveHandles == 0) {
 		EmuLog(LOG_LEVEL::INFO,
-			"APU voice table diagnostics voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[none]",
+			"APU voice table diagnostics source=%s voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[none]",
+			voiceTableSource,
 			voiceTableBase,
 			activeVoiceCount,
 			pausedVoiceCount,
@@ -3181,7 +4045,8 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	}
 
 	EmuLog(LOG_LEVEL::INFO,
-		"APU voice table diagnostics voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[%u,%u,%u,%u]",
+		"APU voice table diagnostics source=%s voiceTableBase=0x%08x active=%zu paused=%zu new=%zu handles=[%u,%u,%u,%u]",
+		voiceTableSource,
 		voiceTableBase,
 		activeVoiceCount,
 		pausedVoiceCount,
@@ -3435,11 +4300,18 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 	uint32_t state = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
-		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0 ||
-		(state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0) {
+		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
 		if ((state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
 			SetVoiceActiveHint(voiceHandle, false);
 		}
+		return;
+	}
+	if ((state & NV_PAVS_VOICE_PAR_STATE_PAUSED) != 0) {
+		if (captureVoiceDiagnostics) {
+			diagnostics->active = true;
+			diagnostics->paused = true;
+		}
+		AdvancePausedVoiceState(voiceHandle, frameCount, diagnostics);
 		return;
 	}
 
@@ -3453,6 +4325,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 	const bool streaming = (format & NV_PAVS_VOICE_CFG_FMT_DATA_TYPE) != 0;
 	const bool multipass = (format & NV_PAVS_VOICE_CFG_FMT_MULTIPASS) != 0;
+	const bool persist = (format & NV_PAVS_VOICE_CFG_FMT_PERSIST) != 0;
 	const bool clearMix = (format & NV_PAVS_VOICE_CFG_FMT_CLEAR_MIX) != 0;
 	const uint32_t multipassBin = (format & NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_MULTIPASS_BIN);
 	const uint32_t samplesPerBlock = ((format & NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK) >> Ctz32(NV_PAVS_VOICE_CFG_FMT_SAMPLES_PER_BLOCK)) + 1;
@@ -3547,11 +4420,15 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t loopOffset = 0;
 	uint32_t pitch = 0;
 	uint32_t filterMode = 0;
+	uint32_t lfoEnv = 0;
+	uint32_t lfoMod = 0;
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START, NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE, NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK, NV_PAVS_VOICE_TAR_PITCH_LINK_PITCH, pitch);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_LFO_ENV, 0xFFFFFFFF, lfoEnv);
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_LFO_MOD, 0xFFFFFFFF, lfoMod);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_FMODE, filterMode);
 
 	if (!multipass && !streaming && !loop && currentOffset > endOffset) {
@@ -3566,6 +4443,16 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		diagnostics->startOffset = currentOffset;
 		diagnostics->pitchStep = pitchStep;
 	}
+	const uint32_t lfoADelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOADLT);
+	const uint32_t lfoFDelta = ExtractLFOField(lfoEnv, NV_PAVS_VOICE_TAR_LFO_ENV_LFOFDLT);
+	const float lfoAmplitudeAmount = DecodeSignedLFOAmount(
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOAAM));
+	const float lfoAmplitudePitchAmount = DecodeSignedLFOAmount(
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFM));
+	const float lfoAmplitudeCutoffAmount = DecodeSignedLFOAmount(
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOAFC));
+	const float lfoPitchAmount = DecodeSignedLFOAmount(
+		ExtractLFOField(lfoMod, NV_PAVS_VOICE_TAR_LFO_MOD_LFOFFM));
 	const uint32_t bytesPerFrame = adpcm ? 0u : containerSize * channels;
 	// The guest programs CBO/EBO/LBO in byte units for non-streaming PCM voices.
 	// Streaming SSL segments and ADPCM blocks still advance in decoded-sample units.
@@ -3593,14 +4480,16 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		playbackState.previewDecodeFailures = 0;
 		SetVoiceActiveHint(voiceHandle, false);
 		SetVoiceLocked(voiceHandle, false);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		SetVoiceNotifierEnvelopeState(voiceHandle,
+			static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
 		UnlinkVoiceFromLists(voiceHandle);
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 	};
 	auto stopVoice = [&]() {
 		terminateVoiceWithStatus(NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
@@ -3640,9 +4529,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			if (captureVoiceDiagnostics) {
 				diagnostics->headroom[binIndex] = headroom;
 			}
-			const float headroomDivisor = static_cast<float>(1u << headroom);
-			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain /
-				headroomDivisor;
+			// Guest submix/HRTF headroom is applied after voices have accumulated into
+			// their destination mixbins (or on the AC97/OpenAL handoff path for host
+			// spatial playback). Attenuating here as well squares the headroom amount.
+			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain;
 			if (gain == 0.0f) {
 				continue;
 			}
@@ -3683,15 +4573,26 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			lowPassResonance[1] = lowPassResonance[0];
 		}
 	}
-	auto applyLowPass = [&](float& sampleLeft, float& sampleRight) {
+	auto applyLowPass = [&](float& sampleLeft, float& sampleRight, float envGain, float cutoffLFOOctaves) {
 		if (!lowPassEnabled) {
 			return;
 		}
+		const float clampedFilterEnvelopeGain = std::clamp(
+			envGain, APU_FILTER_ENV_MIN_GAIN, APU_FILTER_ENV_MAX_GAIN);
+		float modulatedCutoff[2]{};
+		for (size_t channel = 0; channel < std::size(modulatedCutoff); ++channel) {
+			modulatedCutoff[channel] = APU_FILTER_MIN_FREQUENCY +
+				(lowPassCutoff[channel] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain;
+			modulatedCutoff[channel] = std::clamp(
+				static_cast<float>(modulatedCutoff[channel] * std::exp2(cutoffLFOOctaves)),
+				APU_FILTER_MIN_FREQUENCY,
+				1.0f);
+		}
 		auto& filterState = m_VPLowPassState[voiceHandle];
 		sampleLeft = ClampUnitSample(RunLowPassFilter(filterState[0].high, filterState[0].band, filterState[0].low,
-			lowPassCutoff[0], lowPassResonance[0], sampleLeft));
+			modulatedCutoff[0], lowPassResonance[0], sampleLeft));
 		sampleRight = ClampUnitSample(RunLowPassFilter(filterState[1].high, filterState[1].band, filterState[1].low,
-			lowPassCutoff[1], lowPassResonance[1], sampleRight));
+			modulatedCutoff[1], lowPassResonance[1], sampleRight));
 	};
 	uint32_t hrtfEntryIndex = APU_INVALID_HRTF_ENTRY_INDEX;
 	const bool hrtfEnabled = voiceHandle < APU_MAX_3D_VOICES &&
@@ -3743,6 +4644,21 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	if (hrtfEnabled) {
 		SetHRTFFilterTarget(voiceHandle, m_VPHRTFEntries[hrtfEntryIndex]);
 	}
+	auto holdPersistentStream = [&](SSLData& voiceSSLData, uint32_t exhaustedIndex) {
+		currentOffset = 0;
+		voiceSSLData.ssl_seg = 0;
+		playbackState = PlaybackState{};
+		m_VPLowPassState[voiceHandle] = {};
+		ClearHRTFFilterState(voiceHandle);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+		if (exhaustedIndex < voiceSSLData.persistCompleted.size() &&
+			!voiceSSLData.persistCompleted[exhaustedIndex]) {
+			WriteNotifierStatus(voiceHandle,
+				exhaustedIndex == 0 ? MCPX_HW_NOTIFIER_SSLA_DONE : MCPX_HW_NOTIFIER_SSLB_DONE,
+				NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
+			voiceSSLData.persistCompleted[exhaustedIndex] = true;
+		}
+	};
 	auto readSampleBytes = [&](uint32_t sampleAddress, void* dest, size_t size) {
 		// Streaming voices can surface VP-linear offsets, raw physical offsets, or
 		// KSEG0/physical-map addresses depending on how the title programmed the SSL
@@ -3758,7 +4674,12 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			const uint32_t sslIndex = voiceSSLData.ssl_index;
 			if (voiceSSLData.count[sslIndex] == 0) {
 				if (commit) {
-					stopVoice();
+					if (persist) {
+						holdPersistentStream(voiceSSLData, sslIndex);
+					} else {
+						voiceSSLData.ssl_index = 0;
+						stopVoice();
+					}
 				}
 				return false;
 			}
@@ -3820,6 +4741,9 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 
 			segmentBaseAddress = segmentOffset;
 			segmentEndOffset = segmentSamples - 1;
+			if (sslIndex < voiceSSLData.persistCompleted.size()) {
+				voiceSSLData.persistCompleted[sslIndex] = false;
+			}
 			return true;
 		}
 
@@ -3963,6 +4887,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		return true;
 	};
 	if (!multipass && streaming && !loadStreamingSegment(sslData, baseAddress, endOffset, currentOffset, true)) {
+		if (!shouldSkipStateWrites) {
+			m_VPSSLData[voiceHandle] = sslData;
+			playbackState.offset = currentOffset;
+		}
 		return;
 	}
 
@@ -3981,12 +4909,57 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		if (captureVoiceDiagnostics) {
 			diagnostics->maxEnvelopeGain = std::max(diagnostics->maxEnvelopeGain, envelopeGain);
 		}
-		(void)StepVoiceEnvelope(
+		const float filterEnvelopeGain = StepVoiceEnvelope(
 			voiceHandle,
 			NV_PAVS_VOICE_CFG_ENV1, NV_PAVS_VOICE_CFG_ENVF,
 			NV_PAVS_VOICE_CFG_MISC, NV_PAVS_VOICE_CFG_MISC_EF_RELEASERATE,
 			NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EFLVL,
 			NV_PAVS_VOICE_CUR_ECNT_EFCOUNT, NV_PAVS_VOICE_PAR_STATE_EFCUR);
+		if (captureVoiceDiagnostics) {
+			diagnostics->maxFilterEnvelopeGain = std::max(diagnostics->maxFilterEnvelopeGain, filterEnvelopeGain);
+		}
+		uint32_t lfoALevel = APU_LFO_LEVEL_CENTER;
+		uint32_t lfoAReverse = 0;
+		uint32_t lfoFLevel = APU_LFO_LEVEL_CENTER;
+		uint32_t lfoFReverse = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOALVL, lfoALevel);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, lfoAReverse);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, lfoFLevel);
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, lfoFReverse);
+		uint32_t lfoState = 0;
+		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, lfoState);
+		bool lfoADescending = lfoAReverse != 0;
+		bool lfoFDescending = lfoFReverse != 0;
+		StepVoiceLFOLevel(
+			IsVoiceLFODelayActive(lfoState, NV_PAVS_VOICE_PAR_STATE_LFOA_DELAYMODE, NV_PAVS_VOICE_PAR_STATE_EACUR)
+				? 0u
+				: lfoADelta,
+			lfoALevel, lfoADescending);
+		StepVoiceLFOLevel(
+			IsVoiceLFODelayActive(lfoState, NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE, NV_PAVS_VOICE_PAR_STATE_EFCUR)
+				? 0u
+				: lfoFDelta,
+			lfoFLevel, lfoFDescending);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOALVL, lfoALevel);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOADR, lfoADescending ? 1u : 0u);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFLVL, lfoFLevel);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_LFO, NV_PAVS_VOICE_PAR_LFO_LFOFDR, lfoFDescending ? 1u : 0u);
+		const float lfoAValue = NormalizeVoiceLFOModulationLevel(lfoALevel);
+		const float lfoFValue = NormalizeVoiceLFOModulationLevel(lfoFLevel);
+		// Keep tremolo centered around unity so positive and negative swings can
+		// both attenuate and boost the decoded sample; clamping at 2.0 is a
+		// practical host-side limit that preserves the full signed guest range
+		// without allowing runaway amplification in the software mix path.
+		const float amplitudeLFOModulation = std::clamp(1.0f + lfoAValue * lfoAmplitudeAmount, 0.0f, 2.0f);
+		const float cutoffLFOOctaves = lfoAValue * lfoAmplitudeCutoffAmount;
+		const double modulatedPitchStep = pitchStep * std::exp2(
+			static_cast<double>(lfoAValue * lfoAmplitudePitchAmount + lfoFValue * lfoPitchAmount));
+		const float totalGain = envelopeGain * amplitudeLFOModulation;
+		if (captureVoiceDiagnostics) {
+			diagnostics->maxAmplitudeLFOModulation = std::max(
+				diagnostics->maxAmplitudeLFOModulation, amplitudeLFOModulation);
+			diagnostics->maxPitchStep = std::max(diagnostics->maxPitchStep, modulatedPitchStep);
+		}
 
 		uint32_t activeState = 0;
 		if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, activeState) ||
@@ -4005,14 +4978,14 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			break;
 		}
 		if (multipass) {
-			applyLowPass(currentLeft, currentRight);
+			applyLowPass(currentLeft, currentRight, filterEnvelopeGain, cutoffLFOOctaves);
 			if (capture3DHandoff) {
-				storeCaptured3DSample(frame, currentLeft, currentRight, envelopeGain);
+				storeCaptured3DSample(frame, currentLeft, currentRight, totalGain);
 			}
 			if (hrtfEnabled) {
 				ProcessHRTFSample(voiceHandle, currentLeft, currentRight);
 			}
-			mixSamples(currentLeft, currentRight, envelopeGain, frame);
+			mixSamples(currentLeft, currentRight, totalGain, frame);
 			if (captureVoiceDiagnostics) {
 				++diagnostics->framesRendered;
 			}
@@ -4046,20 +5019,20 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const float interpolation = static_cast<float>(playbackState.fraction);
 		float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
-		applyLowPass(sampleLeft, sampleRight);
+		applyLowPass(sampleLeft, sampleRight, filterEnvelopeGain, cutoffLFOOctaves);
 		if (capture3DHandoff) {
-			storeCaptured3DSample(frame, sampleLeft, sampleRight, envelopeGain);
+			storeCaptured3DSample(frame, sampleLeft, sampleRight, totalGain);
 		}
 		if (hrtfEnabled) {
 			ProcessHRTFSample(voiceHandle, sampleLeft, sampleRight);
 		}
 
-		mixSamples(sampleLeft, sampleRight, envelopeGain, frame);
+		mixSamples(sampleLeft, sampleRight, totalGain, frame);
 		if (captureVoiceDiagnostics) {
 			++diagnostics->framesRendered;
 		}
 
-		const double nextPlaybackPosition = playbackState.fraction + pitchStep;
+		const double nextPlaybackPosition = playbackState.fraction + modulatedPitchStep;
 		const uint32_t wholeFrames = static_cast<uint32_t>(nextPlaybackPosition);
 		playbackState.fraction = nextPlaybackPosition - static_cast<double>(wholeFrames);
 		for (uint32_t step = 0; step < wholeFrames; ++step) {
