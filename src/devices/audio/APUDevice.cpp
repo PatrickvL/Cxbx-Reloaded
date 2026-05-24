@@ -5084,8 +5084,9 @@ void APUDevice::UpdateVPFifo()
 
 void APUDevice::RefreshVPStatus()
 {
-	// Keep the guest-visible VP free register reporting "empty" until the FIFO
-	// semantics match the older DX11 path closely enough to avoid voice-method hangs.
+	// Preserve the older guest-visible VP_FREE=empty behavior from the dx11-sync
+	// branch until the emulated FIFO semantics are accurate enough to avoid
+	// voice-method polling hangs.
 	SetRegister32(APU_VP_BASE + APU_VP_FREE, APU_VP_STATUS_EMPTY);
 }
 
