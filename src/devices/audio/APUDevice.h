@@ -190,6 +190,8 @@ private:
 	bool WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
 		const void* src, size_t size);
 	bool HasGuestVPOutputBufferPlaybackPath() const;
+	bool ConsumeGuestVPOutputBuffer(size_t slot, uint32_t guestAddress, uint32_t length,
+		int16_t* dest, size_t frameCount, uint32_t* peak = nullptr);
 	bool MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak);
 	bool SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<uint32_t, 4>* slotPeak);
 	uint32_t ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
@@ -237,6 +239,7 @@ private:
 	std::array<uint8_t, VP_VOICE_TABLE_SHADOW_BYTES> m_VPVoiceTableShadow{};
 	std::array<uint32_t, 4> m_VPOutBufferCursor{};
 	std::array<uint32_t, 4> m_VPOutBufferPlaybackCursor{};
+	std::array<uint32_t, 4> m_VPOutBufferQueuedBytes{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
 	std::array<uint8_t, MAX_VOICE_HANDLES> m_VPNotifierEnvelopeState{};
@@ -259,6 +262,8 @@ private:
 	bool m_LoggedStreamingSSLFailure = false;
 	bool m_EnableHostSpatialHandoff = true;
 	bool m_LoggedVPOutputBufferReadFailure = false;
+	bool m_LoggedVPOutputBufferUnderrun = false;
+	bool m_LoggedVPOutputBufferOverrun = false;
 	bool m_LoggedDSPOutputCaptureFailure = false;
 	bool m_LoggedFallbackActiveVoiceRender = false;
 	size_t m_ChunkCaptured3DVoiceCount = 0;

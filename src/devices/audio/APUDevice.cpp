@@ -1024,6 +1024,7 @@ void APUDevice::Reset()
 	m_VPVoiceTableShadow.fill(0);
 	m_VPOutBufferCursor.fill(0);
 	m_VPOutBufferPlaybackCursor.fill(0);
+	m_VPOutBufferQueuedBytes.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
 	m_VPNotifierEnvelopeState.fill(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF);
@@ -1040,6 +1041,8 @@ void APUDevice::Reset()
 	m_LoggedMissingVoiceTableDuringRender = false;
 	m_EnableHostSpatialHandoff = true;
 	m_LoggedVPOutputBufferReadFailure = false;
+	m_LoggedVPOutputBufferUnderrun = false;
+	m_LoggedVPOutputBufferOverrun = false;
 	ResetDSPState();
 	m_LoggedFallbackActiveVoiceRender = false;
 	m_ChunkCaptured3DVoiceCount = 0;
@@ -2096,6 +2099,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			if (slot < m_VPOutBufferPlaybackCursor.size()) {
 				m_VPOutBufferPlaybackCursor[slot] = 0;
 			}
+			if (slot < m_VPOutBufferQueuedBytes.size()) {
+				m_VPOutBufferQueuedBytes[slot] = 0;
+			}
 			return;
 		}
 		if (addr >= NV1BA0_PIO_SET_OUTBUF_LEN && addr < NV1BA0_PIO_SET_OUTBUF_LEN + 0x20 && ((addr - NV1BA0_PIO_SET_OUTBUF_LEN) % 8) == 0) {
@@ -2106,6 +2112,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			}
 			if (slot < m_VPOutBufferPlaybackCursor.size()) {
 				m_VPOutBufferPlaybackCursor[slot] = 0;
+			}
+			if (slot < m_VPOutBufferQueuedBytes.size()) {
+				m_VPOutBufferQueuedBytes[slot] = 0;
 			}
 			return;
 		}
@@ -2752,6 +2761,56 @@ bool APUDevice::HasGuestVPOutputBufferPlaybackPath() const
 	return false;
 }
 
+bool APUDevice::ConsumeGuestVPOutputBuffer(size_t slot, uint32_t guestAddress, uint32_t length,
+	int16_t* dest, size_t frameCount, uint32_t* peak)
+{
+	const uint32_t usableLength = length & ~uint32_t(sizeof(int16_t) - 1);
+	if (dest == nullptr || frameCount == 0 || slot >= m_VPOutBufferPlaybackCursor.size() ||
+		slot >= m_VPOutBufferQueuedBytes.size() || usableLength < sizeof(int16_t)) {
+		return false;
+	}
+
+	std::fill_n(dest, frameCount, 0);
+	if (peak != nullptr) {
+		*peak = 0;
+	}
+
+	const size_t requestedBytes = frameCount * sizeof(int16_t);
+	const uint32_t availableBytes = std::min<uint32_t>(m_VPOutBufferQueuedBytes[slot], usableLength);
+	if (availableBytes == 0) {
+		return false;
+	}
+
+	const size_t readBytes = std::min<size_t>(requestedBytes, availableBytes);
+	if (!ReadGuestCircularBuffer(guestAddress, usableLength, m_VPOutBufferPlaybackCursor[slot], dest, readBytes)) {
+		if (!m_LoggedVPOutputBufferReadFailure) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU guest VP output-buffer playback failed for slot=%zu base=0x%08x length=%u queued=%u",
+				slot, guestAddress, usableLength, availableBytes);
+			m_LoggedVPOutputBufferReadFailure = true;
+		}
+		return false;
+	}
+
+	m_VPOutBufferQueuedBytes[slot] -= static_cast<uint32_t>(readBytes);
+	if (readBytes < requestedBytes) {
+		if (!m_LoggedVPOutputBufferUnderrun) {
+			EmuLog(LOG_LEVEL::INFO,
+				"APU guest VP output-buffer underrun slot=%zu requested=%zu available=%u length=%u; zero-filling remainder",
+				slot, requestedBytes, availableBytes, usableLength);
+			m_LoggedVPOutputBufferUnderrun = true;
+		}
+	} else {
+		m_LoggedVPOutputBufferUnderrun = false;
+	}
+
+	m_LoggedVPOutputBufferReadFailure = false;
+	if (peak != nullptr) {
+		*peak = audio_diagnostics::PeakAbsoluteSampleAmplitude(dest, frameCount);
+	}
+	return true;
+}
+
 bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak)
 {
 	if (output == nullptr || frameCount == 0) {
@@ -2782,14 +2841,8 @@ bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std:
 			continue;
 		}
 
-		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
-			slotSamples.data(), slotSamples.size() * sizeof(slotSamples[0]))) {
-			if (!m_LoggedVPOutputBufferReadFailure) {
-				EmuLog(LOG_LEVEL::WARNING,
-					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
-					slot, bin, outBufferBase, outBufferLength);
-				m_LoggedVPOutputBufferReadFailure = true;
-			}
+		uint32_t peakValue = 0;
+		if (!ConsumeGuestVPOutputBuffer(slot, outBufferBase, outBufferLength, slotSamples.data(), frameCount, &peakValue)) {
 			continue;
 		}
 
@@ -2800,11 +2853,10 @@ bool APUDevice::MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std:
 		}
 		mixedAnySubmix = true;
 		if (slotPeak != nullptr) {
-			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(slotSamples.data(), slotSamples.size());
+			(*slotPeak)[slot] = peakValue;
 		}
 	}
 
-	m_LoggedVPOutputBufferReadFailure = false;
 	return mixedAnySubmix;
 }
 
@@ -2836,14 +2888,8 @@ bool APUDevice::SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<u
 			continue;
 		}
 
-		if (!ReadGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferPlaybackCursor[slot],
-			slotSamples.data(), slotSamples.size() * sizeof(slotSamples[0]))) {
-			if (!m_LoggedVPOutputBufferReadFailure) {
-				EmuLog(LOG_LEVEL::WARNING,
-					"APU guest VP output-buffer playback failed for slot=%zu bin=%u base=0x%08x length=%u",
-					slot, bin, outBufferBase, outBufferLength);
-				m_LoggedVPOutputBufferReadFailure = true;
-			}
+		uint32_t peakValue = 0;
+		if (!ConsumeGuestVPOutputBuffer(slot, outBufferBase, outBufferLength, slotSamples.data(), frameCount, &peakValue)) {
 			continue;
 		}
 
@@ -2853,11 +2899,10 @@ bool APUDevice::SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<u
 			frameCount);
 		stagedAnySubmix = true;
 		if (slotPeak != nullptr) {
-			(*slotPeak)[slot] = audio_diagnostics::PeakAbsoluteSampleAmplitude(slotSamples.data(), slotSamples.size());
+			(*slotPeak)[slot] = peakValue;
 		}
 	}
 
-	m_LoggedVPOutputBufferReadFailure = false;
 	return stagedAnySubmix;
 }
 
@@ -3710,9 +3755,16 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 		const uint32_t outBufferBaseRegister = GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_BA + static_cast<uint32_t>(slot) * 8);
 		const uint32_t outBufferLengthRegister = GetRegister32(APU_VP_BASE + NV1BA0_PIO_SET_OUTBUF_LEN + static_cast<uint32_t>(slot) * 8);
 		const uint32_t outBufferBase = outBufferBaseRegister & NV1BA0_PIO_SET_OUTBUF_BA_ADDRESS;
-		const uint32_t outBufferLength = outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE;
+		const uint32_t outBufferLength = (outBufferLengthRegister & NV1BA0_PIO_SET_OUTBUF_LEN_VALUE) &
+			~uint32_t(sizeof(int16_t) - 1);
 		if (outBufferBase == 0 || outBufferLength < sizeof(int16_t)) {
 			m_VPOutBufferCursor[slot] = 0;
+			if (slot < m_VPOutBufferPlaybackCursor.size()) {
+				m_VPOutBufferPlaybackCursor[slot] = 0;
+			}
+			if (slot < m_VPOutBufferQueuedBytes.size()) {
+				m_VPOutBufferQueuedBytes[slot] = 0;
+			}
 			continue;
 		}
 
@@ -3724,8 +3776,30 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 			output[frame] = ClampToInt16(mixBins[sourceBin * frameCount + frame]);
 		}
 
-		WriteGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferCursor[slot],
-			output.data(), output.size() * sizeof(output[0]));
+		const uint32_t writtenBytes = static_cast<uint32_t>(output.size() * sizeof(output[0]));
+		if (!WriteGuestCircularBuffer(outBufferBase, outBufferLength, m_VPOutBufferCursor[slot],
+			output.data(), writtenBytes)) {
+			continue;
+		}
+
+		if (slot < m_VPOutBufferQueuedBytes.size() && slot < m_VPOutBufferPlaybackCursor.size()) {
+			const uint64_t queuedAfterWrite = static_cast<uint64_t>(m_VPOutBufferQueuedBytes[slot]) + writtenBytes;
+			if (queuedAfterWrite > outBufferLength) {
+				const uint32_t droppedBytes = static_cast<uint32_t>(queuedAfterWrite - outBufferLength);
+				m_VPOutBufferPlaybackCursor[slot] =
+					(m_VPOutBufferPlaybackCursor[slot] + droppedBytes) % outBufferLength;
+				m_VPOutBufferQueuedBytes[slot] = outBufferLength;
+				if (!m_LoggedVPOutputBufferOverrun) {
+					EmuLog(LOG_LEVEL::INFO,
+						"APU guest VP output-buffer overrun slot=%zu dropped=%u length=%u; keeping newest audio",
+						slot, droppedBytes, outBufferLength);
+					m_LoggedVPOutputBufferOverrun = true;
+				}
+			} else {
+				m_VPOutBufferQueuedBytes[slot] = static_cast<uint32_t>(queuedAfterWrite);
+				m_LoggedVPOutputBufferOverrun = false;
+			}
+		}
 	}
 }
 
