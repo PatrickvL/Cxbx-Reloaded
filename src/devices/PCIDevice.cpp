@@ -85,6 +85,30 @@ bool PCIDevice::UpdateBAR(int index, uint32_t newValue)
 	return true;
 }
 
+bool PCIDevice::RegisterConfigRegister(uint32_t reg, uint32_t defaultValue)
+{
+	if (m_ConfigRegisters.find(reg) != m_ConfigRegisters.end()) {
+		printf("PCIDevice::RegisterConfigRegister: Trying to register a config register that is already allocated (reg: 0x%X)\n", reg);
+		return false;
+	}
+
+	m_ConfigRegisters[reg] = defaultValue;
+
+	return true;
+}
+
+bool PCIDevice::UpdateConfigRegister(uint32_t reg, uint32_t value)
+{
+	auto it = m_ConfigRegisters.find(reg);
+	if (it == m_ConfigRegisters.end()) {
+		return false;
+	}
+
+	it->second = value;
+
+	return true;
+}
+
 uint32_t PCIDevice::ReadConfigRegister(uint32_t reg)
 {
 	switch (reg) {
@@ -109,8 +133,14 @@ uint32_t PCIDevice::ReadConfigRegister(uint32_t reg)
 			return it->second.reg.value;
 		}
 		default:
+		{
+			auto configIt = m_ConfigRegisters.find(reg);
+			if (configIt != m_ConfigRegisters.end()) {
+				return configIt->second;
+			}
 			printf("PCIDevice::ReadConfigRegister: Unhandled Register %X\n", reg);
 			break;
+		}
 	}
 
 	return 0;
@@ -145,6 +175,9 @@ void PCIDevice::WriteConfigRegister(uint32_t reg, uint32_t value)
 			break;
 		}
 		default:
+			if (UpdateConfigRegister(reg, value)) {
+				break;
+			}
 			printf("PCIDevice::WriteConfigRegister: Unhandled Register %X\n", reg);
 			break;
 	}
