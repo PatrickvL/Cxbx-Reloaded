@@ -1523,11 +1523,8 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 	UpdateVPFifo();
 
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
-		const uint32_t freeSlots = m_VPFifoLevel >= APU_VP_FIFO_CAPACITY
-			? 0u
-			: (APU_VP_FIFO_CAPACITY - m_VPFifoLevel);
 		return ReadRegisterFragment(
-			freeSlots,
+			GetVPFifoFreeSlots(),
 			addr - APU_VP_FREE,
 			size);
 	}
@@ -5098,10 +5095,14 @@ void APUDevice::UpdateVPFifo()
 
 void APUDevice::RefreshVPStatus()
 {
-	const uint32_t freeSlots = m_VPFifoLevel >= APU_VP_FIFO_CAPACITY
+	SetRegister32(APU_VP_BASE + APU_VP_FREE, GetVPFifoFreeSlots());
+}
+
+uint32_t APUDevice::GetVPFifoFreeSlots() const
+{
+	return m_VPFifoLevel >= APU_VP_FIFO_CAPACITY
 		? 0u
 		: (APU_VP_FIFO_CAPACITY - m_VPFifoLevel);
-	SetRegister32(APU_VP_BASE + APU_VP_FREE, freeSlots);
 }
 
 void APUDevice::RefreshInterruptStatus()

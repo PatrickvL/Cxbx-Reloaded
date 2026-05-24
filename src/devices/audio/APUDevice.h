@@ -133,6 +133,7 @@ private:
 	void CaptureEPFifoOutput(uint8_t* ptr, size_t len);
 	void ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size);
 	void UpdateVPFifo();
+	uint32_t GetVPFifoFreeSlots() const;
 	void RefreshVPStatus();
 	void RefreshInterruptStatus();
 	void RenderBasicAudioChunk(size_t frameCount);
