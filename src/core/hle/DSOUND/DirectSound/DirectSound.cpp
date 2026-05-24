@@ -33,7 +33,6 @@
 #include <dsound.h>
 #include "DirectSoundGlobal.hpp" // Global variables
 #include <common/Timer.h>
-#include "core\hle\Patches.hpp"   // GetPatchedFunctionTrampoline
 
 #include "Logging.h"
 #include "DirectSoundLogging.hpp"
@@ -126,26 +125,6 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(DirectSoundCreate)
 
     // Set this flag when this function is called
     g_bDSoundCreateCalled = TRUE;
-
-    // Call the original XDK DirectSoundCreate to initialize CMcpxAPU,
-    // allocate the voice descriptor table in contiguous memory, and write
-    // VPVADDR via MMIO.  This is required for AdvanceVoiceCursors() in the
-    // APU device to find and process voice descriptors.
-    static bool s_origCalled = false;
-    if (!s_origCalled) {
-        s_origCalled = true;
-        void* trampoline = GetPatchedFunctionTrampoline("DirectSoundCreate");
-        if (trampoline) {
-            typedef HRESULT (WINAPI *OrigFn)(LPVOID, LPDIRECTSOUND8*, LPUNKNOWN);
-            auto origFn = reinterpret_cast<OrigFn>(trampoline);
-            IDirectSound8* pOrigDS = nullptr;
-            origFn(nullptr, &pOrigDS, nullptr);
-            // The original CDirectSound object is not needed — the APU global
-            // state (VPVADDR, voice table) has been set up by CMcpxAPU::Initialize.
-            // pOrigDS->Release() would free the XDK CDirectSound but we keep it
-            // alive so CMcpxBuffer calls can reach the APU through its global state.
-        }
-    }
 
     if (!initialized || g_pDSound8 == nullptr) {
         hRet = DirectSoundCreate8(&g_XBAudio.adapterGUID, &g_pDSound8, nullptr);

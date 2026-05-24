@@ -470,9 +470,6 @@ xbox::void_xt WINAPI xbox::EMUPATCH(XInitDevices)
 		LOG_FUNC_END;
 
 	// TODO: May need to apply this delay update to LLE USB if modern hardware initialization is faster than og xbox hardware.
-	// Start initialize delay timer base on og xbox hardware's external thread process to finish initialize devices.
-	// Test cases: Lego Star Wars - Without delay timer will cause not to call the input polling even after devices are open.
-	//             Panzer Dragoon ORTA - After called and within 500 milliseconds will cause unstable crash for the emulator.
 	std::thread([]() {
 		// Set initialize state.
 		g_bIsDevicesInitializing = true;

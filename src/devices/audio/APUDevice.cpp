@@ -206,20 +206,30 @@ void APUDevice::AdvanceVoiceCursors()
         return;
     }
 
-    // Fallback: VPVADDR is 0 — scan .data section for KEVENTs (Type=0, Size=4)
-    // and register all associated voice descriptors. Re-scan every 2 seconds.
+    // Fallback: VPVADDR is 0 — scan .data section for KEVENTs
+    // (DISPATCHER_HEADER: Type=0, Size=4 DWORDs at offset 2).
+    // Re-scan every 2 seconds.
     {
         static DWORD s_lastScan = 0;
         if (s_lastScan == 0 || now - s_lastScan > 2000) {
             s_lastScan = now;
             for (DWORD* p = (DWORD*)0x11000; p < (DWORD*)0x300000; p++) {
                 uint8_t* hdr = (uint8_t*)p;
+                // Type=0 (SyncEvent), Size=4 DWORDs (sizeof(KEVENT)/4)
                 if (hdr[0] == 0 && hdr[2] == 4) {
                     uint8_t* cursorPtr = (uint8_t*)p - 0x2530;
                     if (cursorPtr >= (uint8_t*)0x11000) {
                         DWORD cursorVal = *(volatile DWORD*)cursorPtr;
                         if (cursorVal >= 0x80000000 && cursorVal < 0x84000000 && (cursorVal & 0x3) == 0) {
-                            SetFallbackVoiceBase((uint8_t*)(cursorVal - 0x58));
+                            // Validate: the voice descriptor at cursorVal-0x58 must
+                            // have a non-zero CBO (voice has been used) or non-zero
+                            // format (voice has been configured).
+                            uint8_t* vd = (uint8_t*)(cursorVal - 0x58);
+                            uint32_t fmt = *(volatile uint32_t*)(vd + 0x04);
+                            uint32_t cbo = *(volatile uint32_t*)(vd + 0x58) & 0x00FFFFFF;
+                            if (fmt != 0 || cbo > 0) {
+                                SetFallbackVoiceBase(vd);
+                            }
                         }
                     }
                 }
