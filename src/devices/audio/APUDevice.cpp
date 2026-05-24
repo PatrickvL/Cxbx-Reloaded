@@ -3238,7 +3238,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK);
 			if (amplitudeEnvelope) {
 				SetVoiceNotifierEnvelopeState(voiceHandle,
-					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK));
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK),true);
 			}
 		} else {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count - 1);
@@ -3265,7 +3265,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD);
 			if (amplitudeEnvelope) {
 				SetVoiceNotifierEnvelopeState(voiceHandle,
-					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD));
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD),true);
 			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, holdTime * 16);
 			WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0xFF);
@@ -3286,7 +3286,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY);
 			if (amplitudeEnvelope) {
 				SetVoiceNotifierEnvelopeState(voiceHandle,
-					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY));
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY),true);
 			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, decayRate * 16);
 		} else {
@@ -3307,7 +3307,7 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN);
 			if (amplitudeEnvelope) {
 				SetVoiceNotifierEnvelopeState(voiceHandle,
-					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN));
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN),true);
 			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
 			WriteVoiceMask(voiceHandle, levelRegister, levelMask, sustainLevel);
