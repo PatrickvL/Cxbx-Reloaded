@@ -720,6 +720,18 @@ bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& ho
 		return true;
 	}
 
+	// KSEG1 (uncached) mirrors KSEG0: virtual 0xA0000000 maps to physical 0x00000000.
+	// DirectSound and the kernel use KSEG1 for audio buffer DMA to avoid cache
+	// coherency issues.  Resolve it through the same CONTIGUOUS_MEMORY_BASE window
+	// that backs KSEG0.
+	if (guestAddress >= 0xA0000000 && endAddress <= 0xBFFFFFFF) {
+		const uint64_t guestPhys = startAddress - 0xA0000000;
+		if (guestPhys < PHYSICAL_MAP_SIZE && (guestPhys + span) < PHYSICAL_MAP_SIZE) {
+			hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestPhys);
+			return true;
+		}
+	}
+
 	if (guestAddress < PHYSICAL_MAP_SIZE && endAddress < PHYSICAL_MAP_SIZE) {
 		hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress);
 		return true;
