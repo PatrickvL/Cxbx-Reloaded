@@ -2610,6 +2610,8 @@ void APUDevice::ClearStoppedVoiceState(uint32_t voiceHandle)
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_LFOA_DELAYMODE, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE, 0);
 	SetVoiceNotifierEnvelopeState(voiceHandle,
 		static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
 }
