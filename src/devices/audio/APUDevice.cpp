@@ -1117,6 +1117,11 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 		return ReadRegisterFragment(currentValue, addr - NV_PAPU_FEMEMDATA, size);
 	}
 
+	if (addr >= NV_PAPU_ISTS && addr < NV_PAPU_ISTS + sizeof(uint32_t)) {
+		RefreshInterruptStatus();
+		return ReadRegisterFragment(GetRegister32(NV_PAPU_ISTS), addr - NV_PAPU_ISTS, size);
+	}
+
 	return ReadRegister(addr, size);
 }
 
