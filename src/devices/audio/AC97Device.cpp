@@ -96,6 +96,7 @@ constexpr uint32_t GLOB_STA_PO_INT = 1 << 9;
 constexpr uint32_t GLOB_STA_MC_INT = 1 << 10;
 constexpr uint32_t GLOB_STA_CHANNEL_INT_MASK = GLOB_STA_PI_INT | GLOB_STA_PO_INT | GLOB_STA_MC_INT;
 constexpr uint32_t GLOB_STA_RDY = 1 << 15;
+// The kernel HAL maps the AC'97 controller ("ACI") to system IRQ 6.
 constexpr uint32_t AC97_IRQ = 6;
 
 constexpr uint16_t SR_FIFOE = 1 << 4;
