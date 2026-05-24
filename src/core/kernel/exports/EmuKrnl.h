@@ -28,6 +28,9 @@
 #include "core\kernel\init\CxbxKrnl.h"
 #include "core\kernel\support\Emu.h"
 #include "core\kernel\support\EmuFS.h"
+#include "devices\audio\APUDevice.h"
+
+extern class APUDevice* g_APU;
 #include "EmuKrnlKi.h"
 #include "core\hle\DSOUND\DirectSound\ApuPlayCursor.h"
 #include <future>
@@ -200,9 +203,15 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 							fprintf(stderr, "  [APU-CURSOR] Activated at XDK offset: cursor=0x%08X cbo=%u event=0x%p\n",
 								expectedVal, expectedCbo, g_ApuPlayCursor.pEvent);
 							fflush(stderr);
+
+							if (g_APU) {
+								g_APU->SetFallbackVoiceBase(
+									reinterpret_cast<uint8_t*>(expectedVal - 0x58));
+							}
 						}
 					}
 					if (g_ApuPlayCursor.pCursor == nullptr) {
+					// Fallback scan
 					DWORD* scanStart = reinterpret_cast<DWORD*>(
 						(eventAddr > 0x4000) ? (eventAddr - 0x4000) : 0x00011000);
 					DWORD* scanEnd = reinterpret_cast<DWORD*>(eventAddr);

@@ -39,6 +39,7 @@
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_PageTracker.h"
 #include "core\hle\DSOUND\DirectSound\DirectSoundGlobal.hpp"
+#include "devices\audio\APUDevice.h"
 
 #include <Dbghelp.h>
 #include <TlHelp32.h>
@@ -51,6 +52,8 @@ CRITICAL_SECTION dbgCritical;
 // Present stall detection
 std::atomic<uint64_t> g_LastPresentTick{0};
 static std::atomic<bool> g_PresentStallDumped{false};
+
+extern class APUDevice* g_APU;
 
 // Global Variable(s)
 volatile thread_local  bool    g_bEmuException = false;
@@ -507,6 +510,24 @@ void EmuDumpAllThreadStacks(const char* reason);
 
 void EmuDetectSpinCursor()
 {
+    // Always attempt the event-address-based fallback first, before the
+    // expensive thread snapshot.  This handles the common case where games
+    // allocate voice descriptors via the standard XDK struct layout where
+    // the KEVENT at struct+0x2564 is at a known .data address.
+    {
+        DWORD* cursorAt = reinterpret_cast<DWORD*>(0x001A44E4 - 0x2530);
+        DWORD cursorVal = *cursorAt;
+        if (cursorVal >= 0x80000000 && cursorVal < 0x84000000 && (cursorVal & 0x3) == 0) {
+            if (g_APU) {
+                g_APU->SetFallbackVoiceBase(
+                    reinterpret_cast<uint8_t*>(cursorVal - 0x58));
+            }
+            fprintf(stderr, "[APU-CURSOR] PRESENT-STALL fallback: voiceBase registered via event addr\n");
+            fflush(stderr);
+            return;  // Fallback succeeded, no need for thread scan
+        }
+    }
+
     DWORD currentPid = GetCurrentProcessId();
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (hSnapshot == INVALID_HANDLE_VALUE) return;
@@ -544,6 +565,11 @@ void EmuDetectSpinCursor()
                             fprintf(stderr, "[APU-CURSOR] PRESENT-STALL reactivated: cursor=0x%08X (was 0x%08X) cbo=%u\n",
                                 ctx.Edx, cursorAddr, cbo);
                             fflush(stderr);
+
+                            if (g_APU) {
+                                g_APU->SetFallbackVoiceBase(
+                                    reinterpret_cast<uint8_t*>(ctx.Edx - 0x58));
+                            }
                         }
                     }
                 }

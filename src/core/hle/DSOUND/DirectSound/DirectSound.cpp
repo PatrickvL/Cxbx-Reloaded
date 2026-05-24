@@ -473,35 +473,13 @@ void dsound_worker()
     // exist — games that bypass GetCurrentPosition and read CBO directly will spin forever
     // (or block on an event that's never signaled by APU interrupts).
     // Once the stall is detected (see Timer.cpp / EmuKrnl.h), we advance the cursor here
-    // at a rate matching typical Xbox audio output (48 kHz, 16-bit, mono = 96 KB/s) and
-    // signal the associated event so KeWaitForSingleObject-based waits also unblock.
-    if (g_ApuPlayCursor.pCursor != nullptr) {
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        int64_t elapsed = now.QuadPart - g_ApuPlayCursor.lastQPC;
-        if (elapsed > 0 && g_ApuPlayCursor.rate > 0) {
-            extern int64_t HostQPCFrequency;
-            DWORD advance = static_cast<DWORD>(
-                static_cast<uint64_t>(elapsed) * g_ApuPlayCursor.rate / HostQPCFrequency);
-            if (advance > 0) {
-                DWORD cur = *g_ApuPlayCursor.pCursor;
-                DWORD next = cur + advance;
-                // Cap at buffer size (one-shot playback).
-                if (next > g_ApuPlayCursor.bufSize) {
-                    next = g_ApuPlayCursor.bufSize;
-                }
-                *g_ApuPlayCursor.pCursor = next;
-                g_ApuPlayCursor.lastQPC = now.QuadPart;
-            }
-
-            // Signal the KEVENT on every tick so the game thread continuously
-            // re-checks its condition — necessary for both event-wait and
-            // spin-loop paths to make forward progress across multi-phase loads.
-            if (g_ApuPlayCursor.pEvent != nullptr) {
-                xbox::KeSetEvent(
-                    reinterpret_cast<xbox::PKEVENT>(g_ApuPlayCursor.pEvent), 0, FALSE);
-            }
-        }
+    // Signal the KEVENT associated with the detected play cursor so that
+    // KeWaitForSingleObject-based game threads continuously re-check their
+    // condition — CBO advancement is now handled entirely by the hardware-
+    // accurate APU device via AdvanceVoiceCursors().
+    if (g_ApuPlayCursor.pEvent != nullptr) {
+        xbox::KeSetEvent(
+            reinterpret_cast<xbox::PKEVENT>(g_ApuPlayCursor.pEvent), 0, FALSE);
     }
 
     // Use try_lock to avoid blocking the system_events thread.

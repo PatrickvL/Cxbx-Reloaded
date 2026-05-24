@@ -63,6 +63,10 @@ public:
 	// Voice table base address (physical) — set by game writing NV_PAPU_VPVADDR
 	uint32_t GetVPVADDR() const { return m_vpvaddr; }
 
+	// Fallback voice descriptor base for games that bypass CMcpxAPU::Initialize
+	// and write voice descriptors directly to contiguous memory (VPVADDR = 0).
+	void SetFallbackVoiceBase(uint8_t* voiceBase) { m_fallbackVoiceBase = voiceBase; }
+
 	// Advance CBO for all active voices based on elapsed time.
 	// Called periodically from dsound_worker.
 	void AdvanceVoiceCursors();
@@ -75,8 +79,9 @@ private:
 	uint32_t VPRead(uint32_t addr, unsigned size);
 	void VPWrite(uint32_t addr, uint32_t value, unsigned size);
 
-	uint32_t m_vpvaddr = 0;      // Voice descriptor table physical address
-	uint32_t m_lastTickMs = 0;   // Last tick time for CBO advancement
+	uint32_t m_vpvaddr = 0;           // Voice descriptor table physical address
+	uint8_t* m_fallbackVoiceBase = nullptr; // Single-voice base when VPVADDR=0
+	uint32_t m_lastTickMs = 0;        // Last tick time for CBO advancement
 };
 
 #endif

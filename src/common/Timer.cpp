@@ -26,6 +26,7 @@
 // ******************************************************************
 
 #include <core\kernel\exports\xboxkrnl.h>
+#include "devices\Xbox.h"
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -296,11 +297,13 @@ static void dispatch_non_periodic_events()
 {
 	dsound_worker();
 
-	// Detect stuck threads polling an APU play cursor that HLE doesn't advance.
-	// Primary detection is in the PRESENT-STALL handler (Emu.cpp) via EDX register,
-	// and in EmuKrnl.h via WAIT-STALL / WAIT-STALL-FIN event-based detection.
-	//detect_apu_play_cursor_scan();
-	//detect_apu_play_cursor_spin();
+	// Advance APU voice CBO for games that read voice descriptors directly
+	// from contiguous memory (bypassing HLE DirectSound GetCurrentPosition).
+	// This is the hardware-accurate equivalent of the real APU advancing CBO
+	// as audio samples are consumed by the DMA engine.
+	if (g_APU) {
+		g_APU->AdvanceVoiceCursors();
+	}
 
 	for (int i = 0; i < MAX_BUS_INTERRUPT_LEVEL; i++) {
 		// Skip IRQ 3 (GPU/NV2A) — delivered explicitly by
