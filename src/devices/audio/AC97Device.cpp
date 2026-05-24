@@ -2069,7 +2069,7 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_BDBAR, 0, sizeof(uint32_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CIV, 0, sizeof(uint8_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_LVI, 0, sizeof(uint8_t));
-	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_SR, SR_DCH | SR_CELV);
+	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_SR, SR_DCH);
 	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PICB, 0);
 	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, 0);
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CR, 0, sizeof(uint8_t));
