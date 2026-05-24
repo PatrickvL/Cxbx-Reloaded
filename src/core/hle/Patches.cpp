@@ -33,11 +33,6 @@
 #include "Patches.hpp"
 #include "Intercept.hpp"
 
-// Forward declaration for DirectSound bridge patch
-namespace xbox {
-    void_xt WINAPI EMUPATCH(DirectSoundDoWork)();
-}
-
 #include <map>
 #include <unordered_map>
 #include <subhook.h>
@@ -414,11 +409,6 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("JvsScSendMidi2", xbox::EMUPATCH(JvsScSendMidi), PATCH_ALWAYS),
 	PATCH_ENTRY("JvsScSendRs323c", xbox::EMUPATCH(JvsScSendRs323c), PATCH_ALWAYS),
 	PATCH_ENTRY("JvsScSendRs323c2", xbox::EMUPATCH(JvsScSendRs323c), PATCH_ALWAYS),
-
-	// DirectSound bridge – intercepts the game's per-frame audio tick
-	// so that the LLE APU/AC97 pipeline renders every frame rather than
-	// relying on the VBlank DPC timer alone.
-	PATCH_ENTRY("DirectSoundDoWork", xbox::EMUPATCH(DirectSoundDoWork), PATCH_ALWAYS),
 };
 
 std::unordered_map<std::string, subhook::Hook> g_FunctionHooks;
