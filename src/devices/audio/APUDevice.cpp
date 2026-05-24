@@ -1168,22 +1168,37 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	// Diagnostic: log the first N VP-method writes with address/value
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		static uint32_t vpDiagIdx;
-		if (vpDiagIdx < 20) {
+		if (vpDiagIdx < 100) {
 			++vpDiagIdx;
+			const uint32_t vpOffset = addr - APU_VP_BASE;
 			EmuLog(LOG_LEVEL::INFO,
-				"APU diag: VP write #%u addr=0x%05X value=0x%08X size=%u",
-				vpDiagIdx, addr, value, size);
+				"APU diag: VP write #%u VPoff=0x%04X value=0x%08X size=%u %s",
+				vpDiagIdx, vpOffset, value, size,
+				(vpOffset == 0x124) ? "*** VOICE_ON ***" :
+				(vpOffset == 0x10C) ? "CLEAR_VOICES" :
+				(vpOffset == 0x2F8) ? "SET_CURRENT_VOICE" :
+				(vpOffset == 0x304) ? "SET_VOICE_CFG_FMT" :
+				(vpOffset == 0x318) ? "SET_VOICE_CFG_VBIN" :
+				(vpOffset == 0x31C) ? "SET_VOICE_CFG_VBOUT" : "");
+		}
+		// Always log VOICE_ON even beyond the diag limit
+		if ((addr - APU_VP_BASE) == 0x124) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU diag: VOICE_ON detected! handle=0x%04X VPVADDR=0x%08X",
+				value & 0xFFFF,
+				GetRegister32(NV_PAPU_VPVADDR));
 		}
 	}
 
-	// Diagnostic: also log first GP FIFO writes
+	// Diagnostic: also log first GP FIFO writes with more detail
 	if (addr >= APU_GP_BASE && addr < APU_GP_BASE + APU_GP_SIZE) {
 		static uint32_t gpDiagIdx;
-		if (gpDiagIdx < 10) {
+		if (gpDiagIdx < 25) {
 			++gpDiagIdx;
+			const uint32_t gpOffset = addr - APU_GP_BASE;
 			EmuLog(LOG_LEVEL::INFO,
-				"APU diag: GP write #%u addr=0x%05X value=0x%08X size=%u",
-				gpDiagIdx, addr, value, size);
+				"APU diag: GP write #%u GPoff=0x%05X value=0x%08X size=%u",
+				gpDiagIdx, gpOffset, value, size);
 		}
 	}
 
