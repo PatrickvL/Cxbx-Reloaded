@@ -1176,6 +1176,30 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		}
 	}
 
+	// Diagnostic: also log first GP FIFO writes
+	if (addr >= APU_GP_BASE && addr < APU_GP_BASE + APU_GP_SIZE) {
+		static uint32_t gpDiagIdx;
+		if (gpDiagIdx < 10) {
+			++gpDiagIdx;
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: GP write #%u addr=0x%05X value=0x%08X size=%u",
+				gpDiagIdx, addr, value, size);
+		}
+	}
+
+	// Diagnostic: log first general-region writes (non-VP, non-GP, non-EP)
+	if (!(addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) &&
+	    !(addr >= APU_GP_BASE && addr < APU_GP_BASE + APU_GP_SIZE) &&
+	    !(addr >= APU_EP_BASE && addr < APU_EP_BASE + APU_EP_SIZE)) {
+		static uint32_t genDiagIdx;
+		if (genDiagIdx < 15) {
+			++genDiagIdx;
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: general write #%u addr=0x%05X value=0x%08X size=%u",
+				genDiagIdx, addr, value, size);
+		}
+	}
+
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 			const uint32_t methodAddr = addr - APU_VP_BASE;
