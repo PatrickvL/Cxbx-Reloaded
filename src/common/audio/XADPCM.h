@@ -67,7 +67,7 @@
 
 
 typedef struct {
-    int8_t  Index;
+    int     Index;
     int16_t StepSize;
     int16_t Predictor;
 } TAdpcmState;
@@ -150,8 +150,8 @@ static int TXboxAdpcmDecoder_Decode_Memory(uint8_t *in, int inlen, uint8_t *out,
     }
     return(outlen * XBOX_ADPCM_DSTSIZE * FChannels);
 }
-static int TXboxAdpcmDecoder_guess_output_size(int SourceSize) {
-    return((SourceSize / XBOX_ADPCM_SRCSIZE) * XBOX_ADPCM_DSTSIZE);
+static int TXboxAdpcmDecoder_guess_output_size(int SourceSize, int FChannels) {
+    return((SourceSize / XBOX_ADPCM_SRCSIZE) * XBOX_ADPCM_DSTSIZE * FChannels);
 }
 
 #undef TXboxAdpcmDecoder_delimit

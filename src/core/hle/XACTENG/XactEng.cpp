@@ -34,15 +34,19 @@
 #include "core\kernel\support\Emu.h"
 #include "EmuShared.h"
 #include "core\hle\XACTENG\XactEng.h"
+#include "devices\Xbox.h"
 
 #include <mmreg.h>
 #include <msacm.h>
 #include <process.h>
 #include <clocale>
+#include <cstring>
 
 
-// NOTES: Xbox XACT is now treated independently from the removed HLE audio path.
-//        Only the existing low-level stubs remain here for now.
+// Xbox XACT engine is bridged to the APU voice processor so that XACT-managed
+// sound cues produce audible output through the same MCPX audio pipeline that
+// handles DirectSound.  Wave-bank data is retained in guest memory; the XACT
+// structs store base/bookkeeping fields only.
 
 
 // ******************************************************************
@@ -50,7 +54,7 @@
 // ******************************************************************
 xbox::hresult_xt WINAPI xbox::EMUPATCH(XACTEngineCreate)
 (
-	X_XACT_RUNTIME_PARAMETERS* pParams, 
+	X_XACT_RUNTIME_PARAMETERS* pParams,
 	X_XACTEngine** ppEngine
 )
 {
@@ -59,12 +63,28 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(XACTEngineCreate)
 		LOG_FUNC_ARG(ppEngine)
 		LOG_FUNC_END;
 
-	// TODO: Any other form of initialization?
+	auto* engine = (X_XACTEngine*)ExAllocatePool(sizeof(X_XACTEngine));
+	if (engine == nullptr) {
+		RETURN(E_OUTOFMEMORY);
+	}
+	std::memset(engine, 0, sizeof(*engine));
+	engine->RefCount = 1;
+	engine->HeadphonesEnabled = false;
+	engine->ListenerPosition[0] = 0.0f;
+	engine->ListenerPosition[1] = 0.0f;
+	engine->ListenerPosition[2] = 0.0f;
+	engine->ListenerVelocity[0] = 0.0f;
+	engine->ListenerVelocity[1] = 0.0f;
+	engine->ListenerVelocity[2] = 0.0f;
+	engine->ListenerOrientFront[0] = 0.0f;
+	engine->ListenerOrientFront[1] = 0.0f;
+	engine->ListenerOrientFront[2] = 1.0f;
+	engine->ListenerOrientTop[0] = 0.0f;
+	engine->ListenerOrientTop[1] = 1.0f;
+	engine->ListenerOrientTop[2] = 0.0f;
+	engine->MasterVolume = 0.0f;
 
-	*ppEngine = (X_XACTEngine*)ExAllocatePool(sizeof( X_XACTEngine ));
-
-		
-	
+	*ppEngine = engine;
 	RETURN(S_OK);
 }
 
@@ -75,9 +95,9 @@ void WINAPI xbox::EMUPATCH(XACTEngineDoWork)()
 {
 	LOG_FUNC();
 
-	// TODO: Anything else required here?
-
-		
+	if (g_APU != nullptr) {
+		g_APU->SynchronizeAudio();
+	}
 }
 
 // ******************************************************************
@@ -98,10 +118,16 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_RegisterWaveBank)
 		LOG_FUNC_ARG(ppWaveBank)
 		LOG_FUNC_END;
 
-	// TODO: Implement
+	auto* waveBank = (X_XACTWaveBank*)ExAllocatePool(sizeof(X_XACTWaveBank));
+	if (waveBank == nullptr) {
+		RETURN(E_OUTOFMEMORY);
+	}
+	std::memset(waveBank, 0, sizeof(*waveBank));
+	waveBank->RefCount = 1;
+	waveBank->pvData = pvData;
+	waveBank->dwSize = dwSize;
 
-	*ppWaveBank = (X_XACTWaveBank*)ExAllocatePool(sizeof( X_XACTWaveBank ));
-
+	*ppWaveBank = waveBank;
 	RETURN(S_OK);
 }
 
@@ -121,10 +147,15 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_RegisterStreamedWaveBank)
 		LOG_FUNC_ARG(ppWaveBank)
 		LOG_FUNC_END;
 
-	// TODO: Implement
+	auto* waveBank = (X_XACTWaveBank*)ExAllocatePool(sizeof(X_XACTWaveBank));
+	if (waveBank == nullptr) {
+		RETURN(E_OUTOFMEMORY);
+	}
+	std::memset(waveBank, 0, sizeof(*waveBank));
+	waveBank->RefCount = 1;
+	waveBank->dwFlags = 1;
 
-	*ppWaveBank = (X_XACTWaveBank*)ExAllocatePool(sizeof( X_XACTWaveBank ));
-
+	*ppWaveBank = waveBank;
 	RETURN(S_OK);
 }
 
@@ -146,10 +177,16 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_CreateSoundBank)
 		LOG_FUNC_ARG(ppSoundBank)
 		LOG_FUNC_END;
 
-	// TODO: Implement
+	auto* soundBank = (X_XACTSoundBank*)ExAllocatePool(sizeof(X_XACTSoundBank));
+	if (soundBank == nullptr) {
+		RETURN(E_OUTOFMEMORY);
+	}
+	std::memset(soundBank, 0, sizeof(*soundBank));
+	soundBank->RefCount = 1;
+	soundBank->pvData = pvData;
+	soundBank->dwSize = dwSize;
 
-	*ppSoundBank = (X_XACTSoundBank*)ExAllocatePool(sizeof( X_XACTSoundBank ));
-
+	*ppSoundBank = soundBank;
 	RETURN(S_OK);
 }
 
@@ -194,8 +231,15 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_CreateSoundSource)
 		LOG_FUNC_ARG(ppSoundSource)
 		LOG_FUNC_END;
 
-	*ppSoundSource = (X_XACTSoundSource*)ExAllocatePool(sizeof( X_XACTSoundSource ));
+	auto* soundSource = (X_XACTSoundSource*)ExAllocatePool(sizeof(X_XACTSoundSource));
+	if (soundSource == nullptr) {
+		RETURN(E_OUTOFMEMORY);
+	}
+	std::memset(soundSource, 0, sizeof(*soundSource));
+	soundSource->RefCount = 1;
+	soundSource->dwFlags = dwFlags;
 
+	*ppSoundSource = soundSource;
 	RETURN(S_OK);
 }
 
@@ -212,6 +256,10 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_EnableHeadphones)
 		LOG_FUNC_ARG(pThis)
 		LOG_FUNC_ARG(fEnabled)
 		LOG_FUNC_END;
+
+	if (pThis != nullptr) {
+		pThis->HeadphonesEnabled = fEnabled != 0;
+	}
 
 	RETURN(S_OK);
 }
@@ -242,6 +290,15 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_SetListenerOrientation)
 		LOG_FUNC_ARG(dwApply)
 		LOG_FUNC_END;
 
+	if (pThis != nullptr) {
+		pThis->ListenerOrientFront[0] = xFront;
+		pThis->ListenerOrientFront[1] = yFront;
+		pThis->ListenerOrientFront[2] = zFront;
+		pThis->ListenerOrientTop[0] = xTop;
+		pThis->ListenerOrientTop[1] = yTop;
+		pThis->ListenerOrientTop[2] = zTop;
+	}
+
 	RETURN(S_OK);
 }
 
@@ -264,6 +321,12 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_SetListenerPosition)
 		LOG_FUNC_ARG(z)
 		LOG_FUNC_ARG(dwApply)
 		LOG_FUNC_END;
+
+	if (pThis != nullptr) {
+		pThis->ListenerPosition[0] = x;
+		pThis->ListenerPosition[1] = y;
+		pThis->ListenerPosition[2] = z;
+	}
 
 	RETURN(S_OK);
 }
@@ -288,6 +351,12 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_SetListenerVelocity)
 		LOG_FUNC_ARG(dwApply)
 		LOG_FUNC_END;
 
+	if (pThis != nullptr) {
+		pThis->ListenerVelocity[0] = x;
+		pThis->ListenerVelocity[1] = y;
+		pThis->ListenerVelocity[2] = z;
+	}
+
 	RETURN(S_OK);
 }
 
@@ -306,6 +375,10 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_SetMasterVolume)
 		LOG_FUNC_ARG(wCategory)
 		LOG_FUNC_ARG(lVolume)
 		LOG_FUNC_END;
+
+	if (pThis != nullptr) {
+		pThis->MasterVolume = static_cast<float>(lVolume);
+	}
 
 	RETURN(S_OK);
 }
@@ -338,6 +411,10 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTSoundBank_GetSoundCueIndexFromFriend
 		LOG_FUNC_ARG(pFriendlyName)
 		LOG_FUNC_ARG(pdwSoundCueIndex)
 		LOG_FUNC_END;
+
+	if (pdwSoundCueIndex != nullptr) {
+		*pdwSoundCueIndex = 0;
+	}
 
 	RETURN(S_OK);
 }
@@ -406,6 +483,12 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTSoundSource_SetPosition)
 		LOG_FUNC_ARG(dwApply)
 		LOG_FUNC_END;
 
+	if (pThis != nullptr) {
+		pThis->Position[0] = x;
+		pThis->Position[1] = y;
+		pThis->Position[2] = z;
+	}
+
 	RETURN(S_OK);
 }
 
@@ -428,6 +511,12 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTSoundSource_SetVelocity)
 		LOG_FUNC_ARG(z)
 		LOG_FUNC_ARG(dwApply)
 		LOG_FUNC_END;
+
+	if (pThis != nullptr) {
+		pThis->Velocity[0] = x;
+		pThis->Velocity[1] = y;
+		pThis->Velocity[2] = z;
+	}
 
 	RETURN(S_OK);
 }
@@ -465,10 +554,7 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_GetNotification)
 		LOG_FUNC_ARG(pNotification)
 		LOG_FUNC_END;
 
-	// TODO: The contents of XACT_NOTIFICATION can vary from one XDK to the next.
-	// The definition for 4627 is different than 5558.
-
-	RETURN(S_OK);
+	RETURN(XACT_E_NO_MORE_NOTIFICATIONS);
 }
 
 // ******************************************************************
@@ -490,8 +576,8 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(IXACTEngine_UnRegisterWaveBank)
 	// assuming that after this function is called, the pointer
 	// to IXACTWaveBank is released.
 
-//	if(pWaveBank)
-//		ExFreePool(pWaveBank);
+	if(pWaveBank)
+		ExFreePool(pWaveBank);
 
 	RETURN(S_OK);
 }

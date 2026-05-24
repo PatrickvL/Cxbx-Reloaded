@@ -30,6 +30,10 @@
 
 #include <windows.h>
 
+#ifndef XACT_E_NO_MORE_NOTIFICATIONS
+#define XACT_E_NO_MORE_NOTIFICATIONS ((HRESULT)0x88970001L)
+#endif
+
 namespace xbox {
 
 // ******************************************************************
@@ -94,7 +98,13 @@ typedef const X_XACT_NOTIFICATION_DESCRIPTION *PCXACT_NOTIFICATION_DESCRIPTION;
 // ******************************************************************
 struct X_XACTEngine
 {
-	// TODO: Fill this in?
+    ULONG   RefCount;
+    bool    HeadphonesEnabled;
+    float   ListenerPosition[3];
+    float   ListenerVelocity[3];
+    float   ListenerOrientFront[3];
+    float   ListenerOrientTop[3];
+    float   MasterVolume;
 };
 
 // ******************************************************************
@@ -102,7 +112,10 @@ struct X_XACTEngine
 // ******************************************************************
 struct X_XACTWaveBank
 {
-	// TODO: Fill this in?
+    PVOID   pvData;
+    DWORD   dwSize;
+    DWORD   dwFlags;
+    ULONG   RefCount;
 };
 
 // ******************************************************************
@@ -110,7 +123,9 @@ struct X_XACTWaveBank
 // ******************************************************************
 struct X_XACTSoundBank
 {
-	// TODO: Fill this in?
+    PVOID   pvData;
+    DWORD   dwSize;
+    ULONG   RefCount;
 };
 
 // ******************************************************************
@@ -118,7 +133,10 @@ struct X_XACTSoundBank
 // ******************************************************************
 struct X_XACTSoundSource
 {
-	// TODO: Fill this in?
+    float   Position[3];
+    float   Velocity[3];
+    DWORD   dwFlags;
+    ULONG   RefCount;
 };
 
 // ******************************************************************
@@ -126,7 +144,9 @@ struct X_XACTSoundSource
 // ******************************************************************
 struct X_XACTSoundCue
 {
-	// TODO: Fill this in?
+    DWORD   dwSoundCueIndex;
+    DWORD   dwState;
+    ULONG   RefCount;
 };
 
 

@@ -28,12 +28,9 @@ typedef void (*emu_func_t)(dsp_core_t* dsp);
 static void emu_undefined(dsp_core_t* dsp)
 {
     dsp->cur_inst_len = 0;
-    printf("Dsp: 0x%04x: 0x%06x Illegal instruction\n",dsp->pc, dsp->cur_inst);
-    /* Add some artificial CPU cycles to avoid being stuck in an infinite loop */
+    fprintf(stderr, "Dsp: 0x%04x: 0x%06x Unimplemented instruction\n", dsp->pc, dsp->cur_inst);
     dsp->instr_cycle += 100;
-    if (dsp->exception_debugging) {
-        assert(!"Illegal dsp instruction");
-    }
+    dsp->is_idle = true;
 }
 
 
