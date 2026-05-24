@@ -4433,9 +4433,10 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			if (captureVoiceDiagnostics) {
 				diagnostics->headroom[binIndex] = headroom;
 			}
-			const float headroomDivisor = static_cast<float>(1u << headroom);
-			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain /
-				headroomDivisor;
+			// Guest submix/HRTF headroom is applied after voices have accumulated into
+			// their destination mixbins (or on the AC97/OpenAL handoff path for host
+			// spatial playback). Attenuating here as well squares the headroom amount.
+			const float gain = AttenuateVoiceVolume(volumes[binIndex]) * envelopeGain;
 			if (gain == 0.0f) {
 				continue;
 			}
