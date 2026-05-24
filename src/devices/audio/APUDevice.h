@@ -169,7 +169,10 @@ private:
 	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
 	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
 	void WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint32_t value);
+	void WriteNotifierEnvelopeState(uint32_t voiceHandle, uint32_t notifier, uint8_t envState);
 	void WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status);
+	void SetVoiceNotifierEnvelopeState(uint32_t voiceHandle, uint8_t envState, bool force = false);
+	uint8_t GetVoiceNotifierEnvelopeState(uint32_t voiceHandle) const;
 	void NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status);
 	uint32_t GetVoicePlaybackOffset(uint32_t voiceHandle) const;
 	uint32_t GetVoiceNextHandle(uint32_t voiceHandle) const;
@@ -236,6 +239,7 @@ private:
 	std::array<uint32_t, 4> m_VPOutBufferPlaybackCursor{};
 	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
 	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
+	std::array<uint8_t, MAX_VOICE_HANDLES> m_VPNotifierEnvelopeState{};
 	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};
 	std::array<HRTFFilterState, MAX_HRTF_VOICES> m_VPHRTFFilterState{};
 	std::array<RecentFEMethodDiagnostic, MAX_RECENT_FE_METHODS> m_RecentFEMethods{};

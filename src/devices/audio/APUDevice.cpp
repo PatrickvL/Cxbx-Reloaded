@@ -397,7 +397,6 @@ constexpr uint32_t MCPX_HW_NOTIFIER_VOICE_POSITION = 2;
 // indefinitely because it does not match the expected success code.
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS = 0x01;
 constexpr uint8_t NV1BA0_NOTIFICATION_STATUS_DONE_ERROR = 0x80;
-constexpr uint8_t APU_NOTIFY_ENV_STATE_ACTIVE = 1;
 constexpr size_t APU_MAX_CONSECUTIVE_PREVIEW_DECODE_FAILURES = 8;
 constexpr double APU_PITCH_STEP_EXPONENT = 4096.0;
 constexpr size_t APU_XADPCM_PCM_SAMPLES_PER_BLOCK = XBOX_ADPCM_DSTSIZE / sizeof(int16_t);
@@ -1027,6 +1026,7 @@ void APUDevice::Reset()
 	m_VPOutBufferPlaybackCursor.fill(0);
 	m_VPSSLData.fill(APUDevice::SSLData{});
 	m_VPPlaybackState.fill(APUDevice::PlaybackState{});
+	m_VPNotifierEnvelopeState.fill(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF);
 	m_VPHRTFFilterState.fill(APUDevice::HRTFFilterState{});
 	m_RecentFEMethods.fill(APUDevice::RecentFEMethodDiagnostic{});
 	m_RecentFEMethodCount = 0;
@@ -1810,6 +1810,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		SetVoiceActiveHint(voiceHandle, false);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		SetVoiceNotifierEnvelopeState(voiceHandle,
+			static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
 		UnlinkVoiceFromLists(voiceHandle);
 		// Sample the guest-visible offset register before clearing the local playback cache so
 		// the completion notifier reflects the position software last programmed/observed.
@@ -2441,6 +2443,47 @@ void APUDevice::WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint
 	WriteGuestWord(notifierBase + offset, value);
 }
 
+void APUDevice::WriteNotifierEnvelopeState(uint32_t voiceHandle, uint32_t notifier, uint8_t envState)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || notifier >= MCPX_HW_NOTIFIER_COUNT) {
+		return;
+	}
+
+	uint32_t notifierBase = 0;
+	if (!ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
+		return;
+	}
+
+	const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
+		(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
+	WriteGuestBytes(notifierBase + offset + 14, &envState, sizeof(envState));
+}
+
+void APUDevice::SetVoiceNotifierEnvelopeState(uint32_t voiceHandle, uint8_t envState, bool force)
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || voiceHandle >= m_VPNotifierEnvelopeState.size()) {
+		return;
+	}
+
+	if (!force && m_VPNotifierEnvelopeState[voiceHandle] == envState) {
+		return;
+	}
+
+	m_VPNotifierEnvelopeState[voiceHandle] = envState;
+	for (uint32_t notifier = 0; notifier < MCPX_HW_NOTIFIER_COUNT; ++notifier) {
+		WriteNotifierEnvelopeState(voiceHandle, notifier, envState);
+	}
+}
+
+uint8_t APUDevice::GetVoiceNotifierEnvelopeState(uint32_t voiceHandle) const
+{
+	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || voiceHandle >= m_VPNotifierEnvelopeState.size()) {
+		return static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF);
+	}
+
+	return m_VPNotifierEnvelopeState[voiceHandle];
+}
+
 void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status)
 {
 	if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE || notifier >= MCPX_HW_NOTIFIER_COUNT) {
@@ -2455,7 +2498,8 @@ void APUDevice::WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uin
 
 	const uint32_t offset = MCPX_HW_NOTIFIER_ENTRY_SIZE *
 		(MCPX_HW_NOTIFIER_BASE_OFFSET + voiceHandle * MCPX_HW_NOTIFIER_COUNT + notifier);
-	WriteGuestBytes(notifierBase + offset + 14, &APU_NOTIFY_ENV_STATE_ACTIVE, sizeof(APU_NOTIFY_ENV_STATE_ACTIVE));
+	const uint8_t envState = GetVoiceNotifierEnvelopeState(voiceHandle);
+	WriteGuestBytes(notifierBase + offset + 14, &envState, sizeof(envState));
 	WriteGuestBytes(notifierBase + offset + 15, &status, sizeof(status));
 
 	SignalNotifierInterrupt();
@@ -3010,6 +3054,9 @@ void APUDevice::InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnV
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE,
 		NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE,
 		(misc & NV_PAVS_VOICE_CFG_MISC_LFOF_DELAYMODE) != 0 ? 1u : 0u);
+	uint32_t envelopeState = NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF;
+	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_EACUR, envelopeState);
+	SetVoiceNotifierEnvelopeState(voiceHandle, static_cast<uint8_t>(envelopeState), true);
 }
 
 void APUDevice::BeginVoiceRelease(uint32_t voiceHandle)
@@ -3030,6 +3077,8 @@ void APUDevice::BeginVoiceRelease(uint32_t voiceHandle)
 		NV_PAVS_VOICE_PAR_STATE_EFCUR, NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE);
 	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE,
 		NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	SetVoiceNotifierEnvelopeState(voiceHandle,
+		static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE), true);
 }
 
 void APUDevice::AdvancePausedVoiceState(uint32_t voiceHandle, size_t frameCount,
@@ -3124,6 +3173,10 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 	const auto stopVoice = [&]() {
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		if (amplitudeEnvelope) {
+			SetVoiceNotifierEnvelopeState(voiceHandle,
+				static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
+		}
 	};
 
 	switch (currentState) {
@@ -3138,6 +3191,10 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		if (count == 0) {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK);
+			if (amplitudeEnvelope) {
+				SetVoiceNotifierEnvelopeState(voiceHandle,
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_ATTACK));
+			}
 		} else {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count - 1);
 		}
@@ -3161,6 +3218,10 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 			ReadVoiceMask(voiceHandle, regA, fieldConfig.holdTimeMask, holdTime);
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD);
+			if (amplitudeEnvelope) {
+				SetVoiceNotifierEnvelopeState(voiceHandle,
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_HOLD));
+			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, holdTime * 16);
 			WriteVoiceMask(voiceHandle, levelRegister, levelMask, 0xFF);
 			return 1.0f;
@@ -3178,6 +3239,10 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 			ReadVoiceMask(voiceHandle, regA, fieldConfig.decayRateMask, decayRate);
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY);
+			if (amplitudeEnvelope) {
+				SetVoiceNotifierEnvelopeState(voiceHandle,
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_DECAY));
+			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, decayRate * 16);
 		} else {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, count - 1);
@@ -3195,6 +3260,10 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 		if (decayRate == 0 || count == 0) {
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, stateMask,
 				NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN);
+			if (amplitudeEnvelope) {
+				SetVoiceNotifierEnvelopeState(voiceHandle,
+					static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN));
+			}
 			WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_ECNT, countMask, 0);
 			WriteVoiceMask(voiceHandle, levelRegister, levelMask, sustainLevel);
 			return static_cast<float>(sustainLevel) / 255.0f;
@@ -4315,14 +4384,16 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		playbackState.previewDecodeFailures = 0;
 		SetVoiceActiveHint(voiceHandle, false);
 		SetVoiceLocked(voiceHandle, false);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+		SetVoiceNotifierEnvelopeState(voiceHandle,
+			static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
 		UnlinkVoiceFromLists(voiceHandle);
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
 	};
 	auto stopVoice = [&]() {
 		terminateVoiceWithStatus(NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
