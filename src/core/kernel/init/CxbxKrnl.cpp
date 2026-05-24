@@ -42,7 +42,6 @@
 #include "core\kernel\exports\EmuKrnlPs.hpp"
 #include "EmuShared.h"
 #include "core\hle\D3D8\Rendering\RenderGlobals.h" // For CxbxInitWindow, EmuD3DInit
-#include "core\hle\DSOUND\DirectSound\DirectSound.hpp" // For CxbxInitAudio
 #include "core\hle\JVS\JVS.h" // For JVS_Init
 #include "core\hle\Intercept.hpp"
 #include "core\kernel\memory-manager\VMManager.h"
@@ -260,7 +259,6 @@ void PrintCurrentConfigurationLog()
 		g_EmuShared->GetAudioSettings(&XBAudioConf);
 
 		EmuLogInit(LOG_LEVEL::INFO, "--------------------------- AUDIO CONFIG ---------------------------");
-		EmuLogInit(LOG_LEVEL::INFO, "Audio Adapter: %s", XBAudioConf.adapterGUID.Data1 == 0 ? "Primary Audio Device" : "Secondary Audio Device");
 		EmuLogInit(LOG_LEVEL::INFO, "PCM is %s", XBAudioConf.codec_pcm ? "enabled" : "disabled");
 		EmuLogInit(LOG_LEVEL::INFO, "XADPCM is %s", XBAudioConf.codec_xadpcm ? "enabled" : "disabled");
 		EmuLogInit(LOG_LEVEL::INFO, "Unknown Codec is %s", XBAudioConf.codec_unknown ? "enabled" : "disabled");
@@ -1190,8 +1188,6 @@ static void CxbxrKrnlInitHacks()
 	if (BootFlags & BOOT_SKIP_ANIMATION) {} // TODO
 	if (BootFlags & BOOT_RUN_DASHBOARD) {} // TODO
 
-	CxbxInitAudio();
-
 	// EmuHLEIntercept must be call before MapThunkTable, otherwise scanning for symbols will not work properly.
 	EmuHLEIntercept(pXbeHeader);
 
@@ -1217,10 +1213,16 @@ static void CxbxrKrnlInitHacks()
 	// so that MmIsAddressValid returns TRUE for the Buffer pointers.
 	{
 		PCHAR pModelBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskModelNumber.MaximumLength, 'dlaH');
+		if (pModelBuf == nullptr) {
+			CxbxrAbort("Could not allocate HalDiskModelNumber buffer");
+		}
 		memcpy(pModelBuf, xbox::HalDiskModelNumber.Buffer, xbox::HalDiskModelNumber.MaximumLength);
 		xbox::HalDiskModelNumber.Buffer = pModelBuf;
 
 		PCHAR pSerialBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskSerialNumber.MaximumLength, 'dlaH');
+		if (pSerialBuf == nullptr) {
+			CxbxrAbort("Could not allocate HalDiskSerialNumber buffer");
+		}
 		memcpy(pSerialBuf, xbox::HalDiskSerialNumber.Buffer, xbox::HalDiskSerialNumber.MaximumLength);
 		xbox::HalDiskSerialNumber.Buffer = pSerialBuf;
 	}
@@ -1417,6 +1419,12 @@ static void CxbxrKrnlInitHacks()
 		do {
 			more_work = false;
 
+			if (g_AC97 != nullptr) {
+				g_AC97->ServiceAudio();
+			} else if (g_APU != nullptr) {
+				g_APU->SynchronizeAudio();
+			}
+
 			if (g_bEnableAllInterrupts && g_NV2A) {
 				NV2AState* d = g_NV2A->GetDeviceState();
 
@@ -1432,6 +1440,7 @@ static void CxbxrKrnlInitHacks()
 				if (d->vblank_pending.test()) {
 					d->vblank_pending.clear();
 					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
+<<<<<<< HEAD
 					s_vblankFired++;
 
 					// Dump thread stacks 5s after overlay starts, to diagnose mid-movie hangs
@@ -1453,6 +1462,12 @@ static void CxbxrKrnlInitHacks()
 						}
 					} else {
 						s_overlayVblanks = 0;
+=======
+					if (g_AC97 != nullptr) {
+						g_AC97->ServiceAudio();
+					} else if (g_APU != nullptr) {
+						g_APU->SynchronizeAudio();
+>>>>>>> medievil/copilot/analyze-dx11-branch-differences
 					}
 
 					// Generate PVIDEO buffer completion interrupts for active overlay buffers.
@@ -1496,6 +1511,22 @@ static void CxbxrKrnlInitHacks()
 					d->pgraph.pending_interrupts &= ~NV_PGRAPH_INTR_ERROR;
 					qemu_cond_broadcast(&d->pgraph.interrupt_cond);
 				}
+<<<<<<< HEAD
+=======
+
+				// PGRAPH INTR_ERROR (D3DDevice_InsertCallback) stalls the GPU
+				// pipeline until the CPU acknowledges it. When pmc_en=0, the
+				// ISR cannot fire, so we ack directly to unblock the puller.
+				// When pmc_en=1, the game's ISR handles it naturally (reads
+				// TRAPPED_DATA_LOW, dispatches the callback, writes PGRAPH_INTR
+				// to ack). We must NOT steal the ack from the ISR because the
+				// callback dispatch is essential for game logic.
+				if (!d->pmc.enabled_interrupts &&
+				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
+					d->pgraph.pending_interrupts &= ~NV_PGRAPH_INTR_ERROR;
+					qemu_cond_broadcast(&d->pgraph.interrupt_cond);
+				}
+>>>>>>> medievil/copilot/analyze-dx11-branch-differences
 
 				if (nv2a_irq_pending &&
 				    EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
@@ -1529,6 +1560,10 @@ static void CxbxrKrnlInitHacks()
 				     ((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
 				      (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
 				      (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
+<<<<<<< HEAD
+=======
+				      (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
+>>>>>>> medievil/copilot/analyze-dx11-branch-differences
 				      (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts))) ||
 				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
 					more_work = true;

@@ -32,6 +32,8 @@
 #include "audio/APUDevice.h" // For APUDevice
 #include "SMCDevice.h" // For SMCDevice
 #include "EEPROMDevice.h" // For EEPROMDevice
+#include "audio/APUDevice.h" // For APUDevice
+#include "audio/AC97Device.h" // For AC97Device
 #include "network/NVNetDevice.h" // For NVNetDevice
 #include "ADM1032Device.h" // For ADM1032
 #include "devices\video\nv2a.h" // For NV2ADevice
@@ -82,6 +84,8 @@ extern SMBus* g_SMBus;
 extern MCPXDevice* g_MCPX;
 extern SMCDevice* g_SMC;
 extern EEPROMDevice* g_EEPROM;
+extern APUDevice* g_APU;
+extern AC97Device* g_AC97;
 extern NVNetDevice* g_NVNet;
 extern NV2ADevice* g_NV2A;
 extern APUDevice* g_APU;

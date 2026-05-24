@@ -172,8 +172,7 @@ set(WINS_LIB
  Shlwapi
  dxerr9
  ws2_32
- dsound
- winmm
+  winmm
  ddraw
  dbghelp
  comctl32
@@ -189,6 +188,7 @@ target_link_libraries(${PROJECT_NAME}
  subhook
  libtomcrypt
  SDL2
+ OpenAL::OpenAL
  imgui
  libusb
  nv2a_vsh_emulator

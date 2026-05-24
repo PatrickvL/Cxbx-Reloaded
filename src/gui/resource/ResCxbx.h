@@ -43,7 +43,6 @@
 #define IDC_LOG_D3D8                    909
 #define IDC_LOG_D3DST                   910
 #define IDC_LOG_D3DCVT                  911
-#define IDC_LOG_DSOUND                  912
 #define IDC_LOG_XAPI                    913
 #define IDC_LOG_XACT                    914
 #define IDC_LOG_XGRP                    915
@@ -89,10 +88,6 @@
 #define IDC_LOG_XC                      955
 #define IDC_LOG_XE                      956
 #define IDC_LOG_INPSYS                  957
-#define IDC_LOG_DSBUFFER                958
-#define IDC_LOG_DSSTREAM                959
-#define IDC_LOG_DS3DCALC                960
-#define IDC_LOG_XMO                     961
 #define IDC_LOG_VSHCACHE                962
 #define IDC_LOG_RINP                    963
 #define IDC_LOG_JVS                     964

@@ -24,6 +24,12 @@ add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/import/SDL2" EXCLUDE_FROM_ALL)
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/import/mio" EXCLUDE_FROM_ALL)
 
+set(ALSOFT_INSTALL OFF)
+set(ALSOFT_EXAMPLES OFF)
+set(ALSOFT_UTILS OFF)
+set(ALSOFT_TESTS OFF)
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/import/openal-soft" EXCLUDE_FROM_ALL)
+
 # Optional: detect Vulkan SDK for future backend work
 find_package(Vulkan QUIET)
 if(Vulkan_FOUND)
@@ -185,17 +191,6 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbPushBuffer.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbVertexBuffer.h"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbVertexShader.h"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/common/windows/WFXformat.hpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSound.hpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSoundGlobal.hpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/ApuPlayCursor.h"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSoundInline.hpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSoundLogging.hpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DSStream_PacketManager.hpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/XbDSoundFuncs.hpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/XbDSoundLogging.hpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/XbDSoundTypes.h"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/common/XbInternalStruct.hpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/Intercept.hpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/Patches.hpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/XACTENG/XactEng.h"
@@ -236,6 +231,22 @@ file (GLOB CXBXR_HEADER_EMU
  "${CXBXR_ROOT_DIR}/src/core/kernel/support/NativeHandle.h"
  "${CXBXR_ROOT_DIR}/src/core/kernel/support/PatchRdtsc.hpp"
  "${CXBXR_ROOT_DIR}/src/devices/ADM1032Device.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/AC97Device.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/APUDevice.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/APUTimer.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/debug.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_cpu.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_cpu_regs.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_dis.c.inc"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_dma.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_dma_regs.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_emu.c.inc"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_state.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/qemu/bswap.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/qemu/compiler.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/qemu/osdep.h"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/trace.h"
  "${CXBXR_ROOT_DIR}/src/devices/Chihiro/JvsIo.h"
  "${CXBXR_ROOT_DIR}/src/devices/Chihiro/MediaBoard.h"
  "${CXBXR_ROOT_DIR}/src/devices/EEPROMDevice.h"
@@ -386,17 +397,6 @@ file (GLOB CXBXR_SOURCE_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/XbPushBuffer.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_VertexShader.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/D3D8/Rendering/Backend/Backend_D3D11_PixelShader.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSound.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSound3DCalculator.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSoundBuffer.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSoundGlobal.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSoundLogging.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DirectSoundStream.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/DSStream_PacketManager.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSound/XFileMediaObject.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/XbDSoundLogging.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/common/XbInternalDSVoice.cpp"
- "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/common/XbInternalStruct.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/Intercept.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/JVS/JVS.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/Patches.cpp"
@@ -434,6 +434,12 @@ file (GLOB CXBXR_SOURCE_EMU
  "${CXBXR_ROOT_DIR}/src/core/kernel/support/NativeHandle.cpp"
  "${CXBXR_ROOT_DIR}/src/core/kernel/support/PatchRdtsc.cpp"
  "${CXBXR_ROOT_DIR}/src/devices/ADM1032Device.cpp"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/AC97Device.cpp"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/APUDevice.cpp"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/APUTimer.cpp"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp.c"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_cpu.c"
+ "${CXBXR_ROOT_DIR}/src/devices/audio/dsp/dsp_dma.c"
  "${CXBXR_ROOT_DIR}/src/devices/Chihiro/JvsIo.cpp"
  "${CXBXR_ROOT_DIR}/src/devices/Chihiro/MediaBoard.cpp"
  "${CXBXR_ROOT_DIR}/src/devices/EEPROMDevice.cpp"
@@ -500,7 +506,7 @@ add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/projects/cxbxr-emu")
 set(cxbxr_INSTALL_files "COPYING" "README.md")
 
 # Cxbx-Reloaded project with third-party libraries
-set_target_properties(cxbx cxbxr-ldr cxbxr-emu misc-batch SDL2 subhook libXbSymbolDatabase libtommath libtomcrypt imgui libusb
+set_target_properties(cxbx cxbxr-ldr cxbxr-emu misc-batch SDL2 OpenAL subhook libXbSymbolDatabase libtommath libtomcrypt imgui libusb
  PROPERTIES FOLDER Cxbx-Reloaded
 )
 
@@ -722,5 +728,9 @@ install(PROGRAMS $<TARGET_FILE_DIR:cxbx>/${CMAKE_SHARED_LIBRARY_PREFIX}subhook${
 )
 
 install(PROGRAMS $<TARGET_FILE_DIR:cxbx>/${CMAKE_SHARED_LIBRARY_PREFIX}SDL2${CMAKE_SHARED_LIBRARY_SUFFIX}
+  DESTINATION bin
+)
+
+install(PROGRAMS $<TARGET_FILE:OpenAL>
   DESTINATION bin
 )

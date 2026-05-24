@@ -39,6 +39,8 @@ SMBus* g_SMBus;
 MCPXDevice* g_MCPX;
 SMCDevice* g_SMC;
 EEPROMDevice* g_EEPROM;
+APUDevice* g_APU;
+AC97Device* g_AC97;
 NVNetDevice* g_NVNet;
 NV2ADevice* g_NV2A;
 APUDevice* g_APU;
@@ -161,6 +163,8 @@ void InitXboxHardware(HardwareModel hardwareModel)
 	                                                                        // SMC uses different AV_PACK values than the Kernel
 	                                                                        // See https://xboxdevwiki.net/PIC#The_AV_Pack
 	g_EEPROM = new EEPROMDevice();
+	g_APU = new APUDevice();
+	g_AC97 = new AC97Device();
 	g_NVNet = new NVNetDevice();
 	g_NV2A = new NV2ADevice();
 	g_APU = new APUDevice();
@@ -198,6 +202,7 @@ void InitXboxHardware(HardwareModel hardwareModel)
 	// Stub devices for PCI slots that are present on real hardware but not fully emulated
 	static PCIStubDevice s_HostBridge(PCI_VENDOR_ID_NVIDIA, 0x02A5, 0x060000A1); // Host bridge
 	static PCIStubDevice s_ISABridge(PCI_VENDOR_ID_NVIDIA, 0x01B2, 0x060100A1);  // ISA bridge (MCPX)
+	static PCIStubDevice s_APU(PCI_VENDOR_ID_NVIDIA, 0x01B0, 0x040100A1);        // Audio (APU)
 	static PCIStubDevice s_AC97(PCI_VENDOR_ID_NVIDIA, 0x01B1, 0x070300A1);       // AC97 modem interface
 	static PCIStubDevice s_IDE(PCI_VENDOR_ID_NVIDIA, 0x01BC, 0x010180A1);        // IDE controller
 
@@ -207,7 +212,7 @@ void InitXboxHardware(HardwareModel hardwareModel)
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(4, 0)), g_NVNet);
 	//g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(4, 1)), g_MCPX); // MCPX device ID = 0x0808 ?
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(5, 0)), g_APU);
-	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(6, 0)), &s_AC97);
+	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(6, 0)), g_AC97);
 	g_PCIBus->ConnectDevice(PCI_DEVID(0, PCI_DEVFN(9, 0)), &s_IDE);
 	g_PCIBus->ConnectDevice(PCI_DEVID(1, PCI_DEVFN(0, 0)), g_NV2A);
 	// ergo720: according to some research done by LukeUsher, only Xbox Alpha Kits have a two HCs configuration. This seems to also be confirmed by the xboxdevwiki,

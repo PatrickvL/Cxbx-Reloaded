@@ -28,30 +28,25 @@
 #ifndef _APU_H_
 #define _APU_H_
 
-#include "../PCIDevice.h"
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
 #include <vector>
-#include <thread>
-#include <atomic>
 
-// VP register offsets (relative to VP base 0x20000)
-#define NV_PAPU_VPVADDR_OFF   0x002C  // Voice descriptor table physical address
-#define NV_PAPU_VPSGEADDR_OFF 0x0030  // SGE table physical address
-
-// Voice descriptor field offsets
-#define NV_PAVS_VOICE_CFG_FMT_OFF      0x04
-#define NV_PAVS_VOICE_PAR_STATE_OFF    0x54
-#define NV_PAVS_VOICE_PAR_OFFSET_OFF   0x58  // Contains CBO (Current Buffer Offset)
-
-// Voice descriptor size
-#define NV_PAVS_VOICE_SIZE    0x80
-#define NV_PAVS_MAX_VOICES    256
-
-// Masks
-#define NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK 0x00FFFFFF
-
+#include "../PCIDevice.h"
+struct DSPState;
 class APUDevice : public PCIDevice {
 public:
 	using PCIDevice::PCIDevice;
+
+	static constexpr size_t MAX_VOICE_HANDLES = 0xFFFF;
+	static constexpr size_t MAX_HRTF_VOICES = 64;
+	static constexpr size_t HRTF_FILTER_TAPS = 31;
+	static constexpr size_t HRTF_FILTER_DELAY_SAMPLES = 42;
+	static constexpr size_t HRTF_FILTER_BUFFER_LENGTH = HRTF_FILTER_TAPS + HRTF_FILTER_DELAY_SAMPLES;
+	static constexpr size_t MAX_RECENT_FE_METHODS = 16;
+	static constexpr size_t VP_VOICE_TABLE_SHADOW_BYTES = MAX_VOICE_HANDLES * 0x80;
 
 	// PCI Functions
 	void Init();
@@ -62,41 +57,219 @@ public:
 
 	uint32_t MMIORead(int barIndex, uint32_t addr, unsigned size);
 	void MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size);
-
-	// Voice table base address (physical) — set by game writing NV_PAPU_VPVADDR
-	uint32_t GetVPVADDR() const { return m_vpvaddr; }
-
-	// Fallback voice descriptor base for games that bypass CMcpxAPU::Initialize
-	// and write voice descriptors directly to contiguous memory (VPVADDR = 0).
-	void SetFallbackVoiceBase(uint8_t* voiceBase) {
-		// Add to list of tracked voices (don't add duplicates)
-		for (auto* v : m_fallbackVoices) { if (v == voiceBase) return; }
-		m_fallbackVoices.push_back(voiceBase);
-	}
-
-	// Advance CBO for all active voices based on elapsed time.
-	// Called periodically from the APU worker thread.
-	void AdvanceVoiceCursors();
-
-	// Start the APU voice processing thread (like pfifo_puller for NV2A)
-	void StartVoiceProcessingThread();
-
-	// Stop the APU voice processing thread
-	void StopVoiceProcessingThread();
-
+	void SynchronizeAudio();
 private:
+	struct SSLData {
+		uint32_t base[2]{};
+		uint8_t count[2]{};
+		std::array<bool, 2> persistCompleted{};
+		uint32_t ssl_index = 0;
+		uint32_t ssl_seg = 0;
+	};
+
+	struct PlaybackState {
+		uint32_t offset = 0;
+		double fraction = 0.0;
+		size_t previewDecodeFailures = 0;
+		bool valid = false;
+	};
+
+	struct LowPassFilterState {
+		float high = 0.0f;
+		float band = 0.0f;
+		float low = 0.0f;
+	};
+
+	struct HRTFEntryState {
+		std::array<std::array<int8_t, HRTF_FILTER_TAPS>, 2> coeffs{};
+		int16_t itd = 0;
+	};
+
+	struct HRTFFilterChannelState {
+		std::array<float, HRTF_FILTER_BUFFER_LENGTH> buf{};
+		std::array<float, HRTF_FILTER_TAPS> hrir_coeff_cur{};
+		std::array<float, HRTF_FILTER_TAPS> hrir_coeff_tar{};
+	};
+
+	struct HRTFFilterState {
+		size_t buf_pos = 0;
+		std::array<HRTFFilterChannelState, 2> ch{};
+		float itd_cur = 0.0f;
+		float itd_tar = 0.0f;
+	};
+
+	struct RecentFEMethodDiagnostic {
+		uint32_t sequence = 0;
+		uint32_t addr = 0;
+		uint32_t value = 0;
+		uint32_t currentVoice = 0;
+		uint32_t targetVoice = 0;
+		uint32_t feav = 0;
+		uint32_t vpvaddr = 0;
+		uint32_t vpsgeaddr = 0;
+		uint32_t vpssladdr = 0;
+	};
+
 	uint32_t GPRead(uint32_t addr, unsigned size);
 	void GPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t EPRead(uint32_t addr, unsigned size);
 	void EPWrite(uint32_t addr, uint32_t value, unsigned size);
 	uint32_t VPRead(uint32_t addr, unsigned size);
 	void VPWrite(uint32_t addr, uint32_t value, unsigned size);
+	void InitializeDSP();
+	void ResetDSPState();
+	bool IsGPDSPEnabled() const;
+	bool IsEPDSPEnabled() const;
+	bool IsAnyDSPEnabled() const;
+	static void GPDspScratchRW(void* opaque, uint8_t* ptr, uint32_t addr, size_t len, bool dir);
+	static void EPDspScratchRW(void* opaque, uint8_t* ptr, uint32_t addr, size_t len, bool dir);
+	static void GPDspFifoRW(void* opaque, uint8_t* ptr, unsigned index, size_t len, bool dir);
+	static void EPDspFifoRW(void* opaque, uint8_t* ptr, unsigned index, size_t len, bool dir);
+	bool ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t frameCount);
+	bool TransferDSPScratch(bool gp, uint8_t* ptr, uint32_t addr, size_t len, bool dir);
+	uint32_t TransferDSPCircularScatterGather(uint32_t sgeBase, uint32_t maxSge, uint8_t* ptr,
+		uint32_t base, uint32_t end, uint32_t cur, size_t len, bool dir);
+	void TransferDSPFifo(bool gp, uint8_t* ptr, unsigned index, size_t len, bool dir);
+	void CaptureEPFifoOutput(uint8_t* ptr, size_t len);
+	void ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size);
+	void UpdateVPFifo();
+	uint32_t GetVPFifoFreeSlots() const;
+	void RefreshVPStatus();
+	void RefreshInterruptStatus();
+	void RenderBasicAudioChunk(size_t frameCount);
+	void ApplySubmixHeadroom(int32_t* mixBins, size_t frameCount);
+	void WriteOutputBuffers(const int32_t* mixBins, size_t frameCount);
+	size_t RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount);
+	struct BasicVoiceDiagnosticSummary;
+	void RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t frameCount,
+		BasicVoiceDiagnosticSummary* diagnostics = nullptr);
+	void LogVoiceTableDiagnostics() const;
+	void LogRecentVoiceStateDiagnostics() const;
+	void InitializeVoiceEnvelopes(uint32_t voiceHandle, uint32_t voiceOnValue);
+	void BeginVoiceRelease(uint32_t voiceHandle);
+	void AdvancePausedVoiceState(uint32_t voiceHandle, size_t frameCount,
+		BasicVoiceDiagnosticSummary* diagnostics = nullptr);
+	float StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t regA,
+		uint32_t rrReg, uint32_t rrMask, uint32_t levelRegister, uint32_t levelMask,
+		uint32_t countMask, uint32_t stateMask);
+	bool ReadGuestWord(uint32_t guestAddress, uint32_t& value) const;
+	bool ReadGuestBytes(uint32_t guestAddress, void* dest, size_t size) const;
+	bool WriteGuestBytes(uint32_t guestAddress, const void* src, size_t size);
+	bool WriteGuestWord(uint32_t guestAddress, uint32_t value);
+	bool WriteGuestWordMasked(uint32_t guestAddress, uint32_t mask, uint32_t value);
+	bool ReadScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, void* dest, size_t size) const;
+	bool WriteScatterGatherBytes(uint32_t sgeBase, uint32_t maxSge, uint32_t addr, const void* src, size_t size);
+	uint32_t ReadScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+		const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
+	void WriteScratchWindowWithDMA(uint32_t sgeBaseRegister, uint32_t maxSgeRegister,
+		uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
+	uint32_t RefreshFEMemDataRegister(uint32_t fallbackValue);
+	bool ResolveOptionalGuestTableBase(uint32_t registerAddress, uint32_t fallbackGuestAddress, uint32_t& guestBase) const;
+	void SignalNotifierInterrupt();
+	bool ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t& value) const;
+	bool WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t mask, uint32_t value);
+	bool WriteVPScatterGatherEntry(uint32_t handle, uint32_t value);
+	void WriteNotifierValue(uint32_t voiceHandle, uint32_t notifier, uint32_t value);
+	void SetVoiceNotifierEnvelopeState(uint32_t voiceHandle, uint8_t envState, bool force);
+	void WriteNotifierEnvelopeState(uint32_t voiceHandle, uint32_t notifier, uint8_t envState);
+	void WriteNotifierStatus(uint32_t voiceHandle, uint32_t notifier, uint8_t status);
+	uint8_t GetVoiceNotifierEnvelopeState(uint32_t voiceHandle) const;
+	void NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status);
+	uint32_t GetVoicePlaybackOffset(uint32_t voiceHandle) const;
+	uint32_t GetVoiceNextHandle(uint32_t voiceHandle) const;
+	void SetVoiceNextHandle(uint32_t voiceHandle, uint32_t nextHandle);
+	void UnlinkVoiceFromList(uint32_t topRegister, uint32_t voiceHandle);
+	void UnlinkVoiceFromLists(uint32_t voiceHandle);
+	void ClearStoppedVoiceState(uint32_t voiceHandle);
+	bool IsVoiceLocked(uint32_t voiceHandle) const;
+	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
+	bool IsVoiceActiveHinted(uint32_t voiceHandle) const;
+	void SetVoiceActiveHint(uint32_t voiceHandle, bool active);
+	bool ResolveVoiceAddress(uint32_t linearAddress, uint32_t& guestAddress) const;
+	bool ReadVoiceBufferBytes(uint32_t linearAddress, void* dest, size_t size) const;
+	bool ReadGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
+		void* dest, size_t size) const;
+	bool WriteGuestCircularBuffer(uint32_t guestAddress, uint32_t length, uint32_t& cursor,
+		const void* src, size_t size);
+	bool HasGuestVPOutputBufferPlaybackPath() const;
+	bool ConsumeGuestVPOutputBuffer(size_t slot, uint32_t guestAddress, uint32_t length,
+		int16_t* dest, size_t frameCount, uint32_t* peak = nullptr);
+	bool MixGuestVPOutputBuffers(int16_t* output, size_t frameCount, std::array<uint32_t, 4>* slotPeak);
+	bool SubmitGuestVPOutputBuffersToAC97(size_t frameCount, std::array<uint32_t, 4>* slotPeak);
+	uint32_t ReadMemoryWindow(const uint8_t* data, size_t length, uint32_t addr, unsigned size) const;
+	void WriteMemoryWindow(uint8_t* data, size_t length, uint32_t addr, uint32_t value, unsigned size);
+	void WriteHRTFCoefficient(uint32_t entryIndex, size_t channel, size_t coefficientIndex, int8_t value);
+	void ClearHRTFFilterState(uint32_t voiceHandle);
+	void SetHRTFFilterTarget(uint32_t voiceHandle, const HRTFEntryState& entry);
+	void ProcessHRTFSample(uint32_t voiceHandle, float& sampleLeft, float& sampleRight);
+	void RecordRecentFEMethod(uint32_t addr, uint32_t value, uint32_t currentVoiceValue);
+	void LogRecentFEMethodDiagnostics() const;
 
-	uint32_t m_vpvaddr = 0;           // Voice descriptor table physical address
-	std::vector<uint8_t*> m_fallbackVoices; // Active voices when VPVADDR=0
-	uint32_t m_lastTickMs = 0;        // Last tick time for CBO advancement
-	std::atomic<bool> m_exit{false};  // Thread stop signal
-	std::thread m_thread;              // Voice processing thread
+	uint32_t ReadRegister(uint32_t addr, unsigned size) const;
+	void WriteRegister(uint32_t addr, uint32_t value, unsigned size);
+	void SetRegister32(uint32_t addr, uint32_t value);
+	uint32_t GetRegister32(uint32_t addr) const;
+
+	std::array<uint8_t, APU_SIZE> m_Registers{};
+	mutable std::mutex m_AudioUpdateMutex{};
+	uint32_t m_VPFifoLevel = 0;
+	uint32_t m_VPFifoLastUpdate = 0;
+	uint32_t m_LastAudioUpdate = 0;
+	uint32_t m_XGSCounter = 0;
+	uint32_t m_VPInputSgeHandle = 0;
+	uint32_t m_VPOutputSgeHandle = 0;
+	uint32_t m_VPNotifyContextDMA = 0;
+	uint32_t m_VPCurrentSSLContextDMA = 0;
+	uint32_t m_VPSSLBasePage = 0;
+	uint32_t m_VPCurrentHRTFEntry = 0;
+	DSPState* m_GPDsp = nullptr;
+	DSPState* m_EPDsp = nullptr;
+	uint32_t m_DSPFrameDivider = 0;
+	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPXMem{};
+	std::array<uint8_t, 0x400 * sizeof(uint32_t)> m_GPMixBuf{};
+	std::array<uint8_t, 0x800 * sizeof(uint32_t)> m_GPYMem{};
+	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_GPPMem{};
+	std::array<uint8_t, 0x0C00 * sizeof(uint32_t)> m_EPXMem{};
+	std::array<uint8_t, 0x0100 * sizeof(uint32_t)> m_EPYMem{};
+	std::array<uint8_t, 0x1000 * sizeof(uint32_t)> m_EPPMem{};
+	std::array<HRTFEntryState, 128> m_VPHRTFEntries{};
+	std::array<uint8_t, 4> m_VPHRTFSubmix{};
+	uint8_t m_VPHRTFHeadroom = 0;
+	std::array<uint8_t, 32> m_VPSubmixHeadroom{};
+	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPVoiceLocked{};
+	std::array<uint64_t, (MAX_VOICE_HANDLES + 63) / 64> m_VPActiveVoiceHints{};
+	std::array<uint8_t, VP_VOICE_TABLE_SHADOW_BYTES> m_VPVoiceTableShadow{};
+	std::array<uint32_t, 4> m_VPOutBufferCursor{};
+	std::array<uint32_t, 4> m_VPOutBufferPlaybackCursor{};
+	std::array<uint32_t, 4> m_VPOutBufferQueuedBytes{};
+	std::array<SSLData, MAX_VOICE_HANDLES> m_VPSSLData{};
+	std::array<PlaybackState, MAX_VOICE_HANDLES> m_VPPlaybackState{};
+	std::array<uint8_t, MAX_VOICE_HANDLES> m_VPNotifierEnvelopeState{};
+	std::array<std::array<LowPassFilterState, 2>, MAX_VOICE_HANDLES> m_VPLowPassState{};
+	std::array<HRTFFilterState, MAX_HRTF_VOICES> m_VPHRTFFilterState{};
+	std::array<RecentFEMethodDiagnostic, MAX_RECENT_FE_METHODS> m_RecentFEMethods{};
+	size_t m_RecentFEMethodCount = 0;
+	size_t m_RecentFEMethodNext = 0;
+	uint32_t m_RecentFEMethodSequence = 0;
+	std::vector<int16_t> m_VP3DVoiceCaptureScratch{};
+	std::vector<int16_t> m_DSPOutputScratch{};
+	bool m_LoggedXADPCMDecodeFailure = false;
+	bool m_LoggedEmptyVoiceTableDiagnostics = false;
+	mutable bool m_LoggedVoiceTableReadFailure = false;
+	bool m_LoggedVoiceTableWriteFailure = false;
+	bool m_LoggedScatterGatherWriteFailure = false;
+	bool m_LoggedVoiceListInsertFailure = false;
+	bool m_LoggedMissingVoiceTableDuringRender = false;
+	bool m_LoggedAC97Missing = false;
+	bool m_LoggedStreamingSSLFailure = false;
+	bool m_EnableHostSpatialHandoff = true;
+	bool m_LoggedVPOutputBufferReadFailure = false;
+	bool m_LoggedVPOutputBufferUnderrun = false;
+	bool m_LoggedVPOutputBufferOverrun = false;
+	bool m_LoggedDSPOutputCaptureFailure = false;
+	bool m_LoggedFallbackActiveVoiceRender = false;
+	size_t m_ChunkCaptured3DVoiceCount = 0;
+	size_t m_ChunkSubmittedHostSpatialVoiceCount = 0;
 };
 
 #endif

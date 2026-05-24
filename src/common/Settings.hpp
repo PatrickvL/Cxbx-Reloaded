@@ -39,7 +39,6 @@ extern std::string g_exec_filepath;
 
 // Individual library version
 extern uint16_t g_LibVersion_D3D8;
-extern uint16_t g_LibVersion_DSOUND;
 
 #define szSettings_alloc_error "ERROR: Unable to allocate Settings class."
 #define assert_check_shared_memory(type) \
@@ -85,6 +84,8 @@ public:
 	bool Save(std::string file_path = "");
 	void Delete();
 	void SyncToEmulator();
+	const std::string& GetAudioOutputDevice() const { return m_audio_output_device; }
+	void SetAudioOutputDevice(const std::string& device_name);
 	void Verify();
 	std::string GetDataLocation();
 	static CXBX_DATA FindSettingsLocation(std::string& file_path_out);
@@ -135,7 +136,7 @@ public:
 
 	// Audio settings
 	struct s_audio {
-		GUID adapterGUID;
+		int  Deprecated_AdapterGUID[4] = { 0 };
 		bool codec_pcm ;
 		bool codec_xadpcm;
 		bool codec_unknown;
@@ -199,6 +200,7 @@ private:
 	std::string m_file_path = "";
 	CSimpleIniA m_si;
 	std::string m_current_data_location;
+	std::string m_audio_output_device;
     unsigned int m_current_DataStorageToggle = -1;
 };
 

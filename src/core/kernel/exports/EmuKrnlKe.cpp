@@ -109,9 +109,7 @@ DpcData g_DpcData = { 0 }; // Note : g_DpcData is initialized in InitDpcData()
 // We store it globally (not per-thread) so that all threads—including the
 // background DPC dispatch thread—see the same suppression state.
 volatile xbox::ulong_xt g_DpcRoutineActive = 0;
-std::atomic<int> g_DpcDispatchCount{0}; // diagnostic counter
-std::atomic<int> g_DpcSetEventCount{0}; // diagnostic: KeSetEvent from DPC
-std::atomic<int> g_DpcPulseEventCount{0}; // diagnostic: KePulseEvent from DPC
+
 std::atomic_flag xbox::KeSystemTimeChanged;
 
 xbox::ulonglong_xt LARGE_INTEGER2ULONGLONG(xbox::LARGE_INTEGER value)
@@ -521,7 +519,7 @@ void ExecuteDpcQueue(bool inline_dispatch)
 		LeaveCriticalSection(&(g_DpcData.Lock));
 
 		EmuLog(LOG_LEVEL::DEBUG, "DpcQueue: dispatching DPC 0x%.8X routine 0x%.8X", pkdpc, pkdpc->DeferredRoutine);
-		g_DpcDispatchCount.fetch_add(1, std::memory_order_relaxed);
+
 
 		// Call the Deferred Procedure  :
 		pkdpc->DeferredRoutine(
@@ -807,12 +805,7 @@ XBSYSAPI EXPORTNUM(98) xbox::boolean_xt NTAPI xbox::KeConnectInterrupt
 	if (!InterruptObject->Connected)
 	{
 		if (irq > MAX_BUS_INTERRUPT_LEVEL) {
-			fprintf(stderr, "[KeConnectInterrupt] IRQ %d (vector %d) out of range\n",
-				irq, InterruptObject->BusInterruptLevel);
 		} else {
-			fprintf(stderr, "[KeConnectInterrupt] IRQ=%d (vector=%d) ServiceRoutine=%p (slot occupied=%d)\n",
-				irq, InterruptObject->BusInterruptLevel, InterruptObject->ServiceRoutine,
-				EmuInterruptList[irq] != NULL);
 			// One interrupt per IRQ - only set when not set yet :
 			if (EmuInterruptList[irq] == NULL)
 			{

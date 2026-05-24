@@ -302,12 +302,6 @@ void EmuUpdateLLEStatus(uint32_t XbLibScan)
     unsigned int FlagsLLE;
     g_EmuShared->GetFlagsLLE(&FlagsLLE);
 
-    if ((FlagsLLE & LLE_APU) == false
-        && (XbLibScan & XBSDBLIB_DSOUND) == 0) {
-        bLLE_APU = true;
-        FlagsLLE ^= LLE_APU;
-        EmuOutputMessage(XB_OUTPUT_MESSAGE_INFO, "Fallback to LLE APU.");
-    }
 #if 0 // Reenable this when LLE USB actually works
 	if ((FlagsLLE & LLE_USB) == false
 		&& (XbLibScan & XBSDBLIB_XAPILIB) == 0) {
@@ -352,23 +346,6 @@ void EmuHLEIntercept(Xbe::Header *pXbeHeader)
 				if (g_LibVersion_D3D8 < BuildVersion) {
 					g_LibVersion_D3D8 = BuildVersion;
 				}
-			}
-			else if ((XbLibFlag & XBSDBLIB_DSOUND) > 0) {
-				g_LibVersion_DSOUND = BuildVersion;
-			}
-		}
-
-		// Since XDK 4039 title does not have library version for DSOUND, let's check section header if it exists or not.
-		for (unsigned int v = 0; v < pXbeHeader->dwSections; v++) {
-			SectionName = (const char*)pSectionHeaders[v].dwSectionNameAddr;
-			if (strncmp(SectionName, LIB_DSOUND, 8) == 0) {
-				XbLibScan |= XBSDBLIB_DSOUND;
-
-				// If DSOUND version is not set, we need to force set it.
-				if (g_LibVersion_DSOUND == 0) {
-					g_LibVersion_DSOUND = xdkVersion;
-				}
-				break;
 			}
 		}
 	}

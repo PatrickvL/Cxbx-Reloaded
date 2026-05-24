@@ -159,8 +159,7 @@ set(WINS_LIB
  Shlwapi
  dxerr9
  ws2_32
- dsound
- winmm
+  winmm
  ddraw
  d3dx9
  dbghelp
@@ -175,6 +174,7 @@ target_link_libraries(${PROJECT_NAME}
  subhook
  libtomcrypt
  SDL2
+ OpenAL::OpenAL
  imgui
  libusb
  mio::mio_min_winapi

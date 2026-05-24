@@ -42,6 +42,7 @@
 #define PCI_CONFIG_BAR_3                0x1C
 #define PCI_CONFIG_BAR_4                0x20
 #define PCI_CONFIG_BAR_5                0x24
+#define PCI_CONFIG_NVIDIA_AC97_SPDIF_CONTROL 0x4C
 
 
 #define PCI_VENDOR_ID_NVIDIA			0x10DE
@@ -55,6 +56,11 @@
 #define NV2A_USER_SIZE                          0x800000
 #define APU_BASE                                0xFE800000
 #define APU_SIZE                                0x80000
+#define APU_VPVADDR_OFFSET                      0x0000202C
+#define APU_VPSGEADDR_OFFSET                    0x00002030
+#define APU_VPSSLADDR_OFFSET                    0x00002034
+#define APU_VP_METHOD_WINDOW_OFFSET             0x00020000
+#define APU_VP_METHOD_WINDOW_END                0x00030000
 #define AC97_BASE                               0xFEC00000
 #define AC97_SIZE                               0x1000
 #define USB0_BASE                               0xFED00000
@@ -69,6 +75,32 @@
 #define MCPX_SIZE                               0x200
 
 class PCIDevice;
+
+inline bool IsAPUVPBaseRegisterTrace(uint32_t addr)
+{
+	if (addr < APU_BASE || addr >= APU_BASE + APU_SIZE) {
+		return false;
+	}
+
+	switch (addr - APU_BASE) {
+	case APU_VPVADDR_OFFSET:
+	case APU_VPSGEADDR_OFFSET:
+	case APU_VPSSLADDR_OFFSET:
+		return true;
+	default:
+		return false;
+	}
+}
+
+inline bool IsAPUVPMethodTrace(uint32_t addr)
+{
+	if (addr < APU_BASE || addr >= APU_BASE + APU_SIZE) {
+		return false;
+	}
+
+	const uint32_t offset = addr - APU_BASE;
+	return offset >= APU_VP_METHOD_WINDOW_OFFSET && offset < APU_VP_METHOD_WINDOW_END;
+}
 
 typedef struct
 {
@@ -131,7 +163,11 @@ public:
 	uint32_t ReadConfigRegister(uint32_t reg);
 	void WriteConfigRegister(uint32_t reg, uint32_t value);
 protected:
+	bool RegisterConfigRegister(uint32_t reg, uint32_t defaultValue);
+	bool UpdateConfigRegister(uint32_t reg, uint32_t value);
+protected:
 	std::map<int, PCIBar> m_BAR;
+	std::map<uint32_t, uint32_t> m_ConfigRegisters;
 	uint16_t m_DeviceId;
 	uint16_t m_VendorId;
 	uint32_t m_RevisionAndClassCode = 0; // Revision ID (8) | Prog IF (8) | Subclass (8) | Class (8)

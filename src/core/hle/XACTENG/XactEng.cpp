@@ -41,11 +41,8 @@
 #include <clocale>
 
 
-// NOTES: For Xbox, the XACT library is a wrapper for DirectSound.
-//		  It is not be necesarry to emulate the entire API because of 
-//		  this, but atm only the functions containing low level code are being
-//		  emulated.
-//		  Only timing require a patch which is done in LLE.
+// NOTES: Xbox XACT is now treated independently from the removed HLE audio path.
+//        Only the existing low-level stubs remain here for now.
 
 
 // ******************************************************************
@@ -79,11 +76,6 @@ void WINAPI xbox::EMUPATCH(XACTEngineDoWork)()
 	LOG_FUNC();
 
 	// TODO: Anything else required here?
-	// AFAIK, this function just calls DirectSoundDoWork()
-
-	//
-	//EmuDirectSoundDoWork();
-	//
 
 		
 }

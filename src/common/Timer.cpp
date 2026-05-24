@@ -37,8 +37,9 @@
 #include "core\kernel\exports\EmuKrnlPs.hpp"
 #include "core\kernel\exports\EmuKrnl.h"
 #include "devices\Xbox.h"
+#include "devices\audio\AC97Device.h"
+#include "devices\audio\APUDevice.h"
 #include "devices\usb\OHCI.h"
-#include "core\hle\DSOUND\DirectSound\DirectSoundGlobal.hpp"
 #include "core\hle\D3D8\Rendering\Backend\Backend_D3D11_Profiler.h"
 
 
@@ -122,7 +123,7 @@ int64_t SleepPrecise(int64_t targetQPC)
 // ── Emulated Xbox clock ──────────────────────────────────────────
 
 // Read the host QPC and return elapsed ticks since timer_init().
-// All subsystems (NV2A, OHCI, DSound, PIT) operate in QPC ticks
+// All subsystems (NV2A, OHCI, PIT) operate in QPC ticks
 // to avoid integer truncation from µs conversion.
 uint64_t get_now()
 {
@@ -295,16 +296,6 @@ static void detect_apu_play_cursor_scan()
 
 static void dispatch_non_periodic_events()
 {
-	dsound_worker();
-
-	// Advance APU voice CBO for games that read voice descriptors directly
-	// from contiguous memory (bypassing HLE DirectSound GetCurrentPosition).
-	// This is the hardware-accurate equivalent of the real APU advancing CBO
-	// as audio samples are consumed by the DMA engine.
-	if (g_APU) {
-		g_APU->AdvanceVoiceCursors();
-	}
-
 	for (int i = 0; i < MAX_BUS_INTERRUPT_LEVEL; i++) {
 		// Skip IRQ 3 (GPU/NV2A) — delivered explicitly by
 		// nv2a_vblank_interrupt and PGRAPH INTR_ERROR mechanism.
@@ -323,12 +314,19 @@ static void dispatch_non_periodic_events()
 // the earliest deadline (relative to HostQPCStartTime).
 static uint64_t dispatch_periodic_events(uint64_t now)
 {
-	std::array<uint64_t, 5> deadlines = {
+	// g_AC97 is created during InitXboxHardware() before the system-events thread
+	// starts and is not reassigned afterward in this process; the null check is
+	// just defensive for early bring-up paths, so only the device's internal state
+	// needs synchronization here.
+	if (g_AC97 != nullptr) {
+		g_AC97->ServiceAudio();
+	}
+
+	std::array<uint64_t, 4> deadlines = {
 		pit_tick(now),
 		g_NV2A->vblank_tick(now),
 		g_NV2A->ptimer_tick(now),
-		g_USB0->m_HostController->OHCI_tick(now),
-		dsound_tick(now)
+		g_USB0->m_HostController->OHCI_tick(now)
 	};
 	return *std::min_element(deadlines.begin(), deadlines.end());
 }
@@ -352,6 +350,11 @@ xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 		// 2. Dispatch all events and find earliest next deadline
 		dispatch_non_periodic_events();
 		const uint64_t next_deadline = dispatch_periodic_events(now);
+		if (g_AC97 != nullptr) {
+			g_AC97->ServiceAudio();
+		} else if (g_APU != nullptr) {
+			g_APU->SynchronizeAudio();
+		}
 
 		// 3. Sleep until the absolute deadline (skip if no subsystem is active)
 		if (next_deadline != UINT64_MAX) {
@@ -379,4 +382,3 @@ int64_t Timer_GetScaledPerformanceCounter(int64_t Period)
 
 	return whole + part;
 }
-
