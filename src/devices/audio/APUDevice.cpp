@@ -1230,19 +1230,26 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	}
 
 	// User Method FIFO: when the kernel writes a method to 0x1400-0x1500,
-	// consume it immediately by dispatching through ConsumeVPMethod.
+	// User Method FIFO: when the kernel writes a METHOD+PARAM pair to
+	// 0x1400-0x1500, consume the method immediately.  Process only on
+	// PARAM writes (offset & 4) — the kernel writes METHOD then PARAM.
 	if (addr >= 0x1400 && addr < 0x1500) {
 		WriteRegister(addr, value, size);
-		// Even-numbered slots carry the method offset; odd slots carry the param.
-		// After writing the method, wait for the param write (next 4 bytes) then process.
-		uint32_t slot = (addr - 0x1400) & ~0x7;
-		if (slot <= 0xF8) {
+		if (addr & 4) { // param write — method already written
+			uint32_t slot = (addr - 0x1404) & ~0x7;
 			uint32_t methodOffset = GetRegister32(0x1400 + slot);
-			uint32_t paramValue   = GetRegister32(0x1404 + slot);
+			uint32_t paramValue   = value;
 			if (methodOffset != 0) {
 				ConsumeVPMethod(methodOffset, paramValue, sizeof(uint32_t));
-				// Clear so a zero write signals "consumed"
 				SetRegister32(0x1400 + slot, 0);
+				SetRegister32(0x1404 + slot, 0);
+				// Update FEUFIFOCTL(0x1340): decrement count, advance tail
+				uint32_t fifoCtl = GetRegister32(0x1340);
+				uint32_t count = fifoCtl & 0x3F;
+				uint32_t tail  = (fifoCtl >> 16) & 0x1F;
+				if (count > 0) count--;
+				tail = (tail + 1) & 0x1F;
+				SetRegister32(0x1340, (fifoCtl & ~0x1F003F) | count | (tail << 16));
 			}
 		}
 		return;
