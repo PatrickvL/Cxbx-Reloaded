@@ -30,6 +30,7 @@
 #include "AudioDiagnostics.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
+#include "core/kernel/exports/EmuKrnl.h"
 #include "core/kernel/support/Emu.h"
 
 #include <AL/al.h>
@@ -95,6 +96,7 @@ constexpr uint32_t GLOB_STA_PO_INT = 1 << 9;
 constexpr uint32_t GLOB_STA_MC_INT = 1 << 10;
 constexpr uint32_t GLOB_STA_CHANNEL_INT_MASK = GLOB_STA_PI_INT | GLOB_STA_PO_INT | GLOB_STA_MC_INT;
 constexpr uint32_t GLOB_STA_RDY = 1 << 15;
+constexpr uint32_t AC97_IRQ = 6;
 
 constexpr uint16_t SR_FIFOE = 1 << 4;
 constexpr uint16_t SR_BCIS = 1 << 3;
@@ -2033,6 +2035,7 @@ void AC97Device::UpdateGlobalStatus()
 	}
 
 	WriteRegister(AC97_NAM_SIZE + NABM_GLOB_STA, status, sizeof(uint32_t));
+	HalSystemInterrupts[AC97_IRQ].Assert((status & GLOB_STA_CHANNEL_INT_MASK) != 0);
 }
 
 void AC97Device::UpdateBusMasterChannels()
