@@ -42,7 +42,7 @@
 #define PCI_CONFIG_BAR_3                0x1C
 #define PCI_CONFIG_BAR_4                0x20
 #define PCI_CONFIG_BAR_5                0x24
-#define PCI_CONFIG_NVIDIA_AC97_4C       0x4C
+#define PCI_CONFIG_NVIDIA_AC97_SPDIF_CONTROL 0x4C
 
 
 #define PCI_VENDOR_ID_NVIDIA			0x10DE

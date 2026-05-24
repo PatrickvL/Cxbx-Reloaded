@@ -88,7 +88,7 @@ bool PCIDevice::UpdateBAR(int index, uint32_t newValue)
 bool PCIDevice::RegisterConfigRegister(uint32_t reg, uint32_t defaultValue)
 {
 	if (m_ConfigRegisters.find(reg) != m_ConfigRegisters.end()) {
-		printf("PCIDevice::RegisterConfigRegister: Trying to register a config register that is already allocated (reg: 0x%X)\n", reg);
+		printf("PCIDevice::RegisterConfigRegister: Trying to register a config register that is already registered (reg: 0x%X)\n", reg);
 		return false;
 	}
 
