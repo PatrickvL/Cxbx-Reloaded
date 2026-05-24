@@ -1165,6 +1165,17 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		}
 	}
 
+	// Diagnostic: log the first N VP-method writes with address/value
+	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
+		static uint32_t vpDiagIdx;
+		if (vpDiagIdx < 20) {
+			++vpDiagIdx;
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: VP write #%u addr=0x%05X value=0x%08X size=%u",
+				vpDiagIdx, addr, value, size);
+		}
+	}
+
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 			const uint32_t methodAddr = addr - APU_VP_BASE;
