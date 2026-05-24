@@ -157,28 +157,70 @@ void EmuX86_Mem_Write(xbox::addr_xt addr, uint32_t value, int size)
 	}
 }
 
-uint32_t EmuFlash_Read32(xbox::addr_xt addr) // TODO : Move to EmuFlash.cpp
-{
-	uint32_t r;
+namespace {
+	constexpr uint32_t FLASH_IMAGE_SIZE = KiB(256);
+	constexpr uint32_t FLASH_IMAGE_VERSION = 5838; // Matches XboxKrnlVersion's default build number.
+	constexpr uint32_t FLASH_ROM_MAGIC = 0xFF0A69F6; // https://xboxdevwiki.net/Flash_ROM
+	constexpr uint32_t FLASH_UNKNOWN_READ_VALUE = 0;
 
-    // Some games attempt to read from the BIOS ROM directly, for purposes of hardware-version detection
-    // And other (currently unknown) reasons. We can't include the entire bios, and we don't want to require it
-    // So we specifiy the specific values that games rely on.
-
-	switch (addr) {
-    case 0x08: // ? Test Case - Shenmue II attempts to read this address but never uses the resulting value? 
-        r = 0x2B16D065;
-        break;
-	case 0x78: // ROM_VERSION
-		r = 0x90; // Luke's hardware revision 1.6 Xbox returns this (also since XboxKrnlVersion is set to 5838)
-		break;
-	default:
-		EmuLog(LOG_LEVEL::WARNING, "Read32 FLASH_ROM (0x%.8X) [Unknown address]", addr);
-		return -1;
+	bool EmuFlash_ReadSynthetic32(uint32_t addr, uint32_t& value)
+	{
+		switch (addr) {
+		case 0x08: // ? Test Case - Shenmue II attempts to read this address but never uses the resulting value?
+			value = 0x2B16D065;
+			return true;
+		case 0x78: // ROM_VERSION
+			value = 0x90; // Luke's hardware revision 1.6 Xbox returns this (also since XboxKrnlVersion is set to 5838)
+			return true;
+		case 0x3FFF4:
+			value = FLASH_IMAGE_VERSION;
+			return true;
+		case 0x3FFF8:
+			value = FLASH_ROM_MAGIC;
+			return true;
+		case 0x3FFFC:
+			value = 0;
+			return true;
+		default:
+			return false;
+		}
 	}
 
-	EmuLog(LOG_LEVEL::DEBUG, "Read32 FLASH_ROM (0x%.8X) = 0x%.8X [HANDLED]", addr, r);
-	return r;
+	bool EmuFlash_ReadSynthetic8(uint32_t addr, uint8_t& value)
+	{
+		uint32_t dwordValue;
+		if (!EmuFlash_ReadSynthetic32(addr & ~0x3u, dwordValue)) {
+			return false;
+		}
+
+		value = static_cast<uint8_t>(dwordValue >> ((addr & 0x3u) * 8));
+		return true;
+	}
+}
+
+uint32_t EmuFlash_Read(xbox::addr_xt addr, int size) // TODO : Move to EmuFlash.cpp
+{
+	const uint32_t mirroredFlashOffset = (addr - (addr & ~(FLASH_DEVICEN_SIZE - 1))) % FLASH_IMAGE_SIZE;
+
+	uint32_t value = 0;
+	for (int i = 0; i < size; i++) {
+		const uint32_t byteOffset = (mirroredFlashOffset + i) % FLASH_IMAGE_SIZE;
+		uint8_t byteValue;
+		if (!EmuFlash_ReadSynthetic8(byteOffset, byteValue)) {
+			EmuLog(LOG_LEVEL::WARNING, "Read%d FLASH_ROM (0x%.8X -> 0x%.8X) [Unknown address]", size * 8, addr, byteOffset);
+			return FLASH_UNKNOWN_READ_VALUE;
+		}
+
+		value |= static_cast<uint32_t>(byteValue) << (i * 8);
+	}
+
+	EmuLog(LOG_LEVEL::DEBUG, "Read%d FLASH_ROM (0x%.8X -> 0x%.8X) = 0x%.8X [HANDLED]", size * 8, addr, mirroredFlashOffset, value);
+	return value;
+}
+
+void EmuFlash_Write(xbox::addr_xt addr, uint32_t value, int size)
+{
+	EmuLog(LOG_LEVEL::WARNING, "EmuX86_Write(0x%08X, 0x%08X, %d) [FLASH_ROM]", addr, value, size);
 }
 
 //
@@ -196,7 +238,7 @@ uint32_t EmuX86_Read(xbox::addr_xt addr, int size)
 	uint32_t value;
 
 	if (addr >= FLASH_DEVICE1_BASE) { // 0xFF000000 - 0xFFFFFFF
-		return EmuFlash_Read32((addr - FLASH_DEVICE1_BASE) % KiB(256)); // NOTE: Bios is a 256kb rom, mirrored through the address space
+		return EmuFlash_Read(addr, size); // NOTE: EmuFlash_Read mirrors the 256kb image through the flash address space
 	}
 
 	// Pass the Read to the PCI Bus, this will handle devices with BARs set to MMIO addresses
@@ -218,7 +260,7 @@ void EmuX86_Write(xbox::addr_xt addr, uint32_t value, int size)
 	}
 
 	if (addr >= FLASH_DEVICE1_BASE) { // 0xFF000000 - 0xFFFFFFF
-		EmuLog(LOG_LEVEL::WARNING, "EmuX86_Write(0x%08X, 0x%08X) [FLASH_ROM]", addr, value);
+		EmuFlash_Write(addr, value, size);
 		return;
 	}
 
