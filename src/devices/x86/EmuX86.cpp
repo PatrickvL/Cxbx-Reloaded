@@ -200,27 +200,27 @@ namespace {
 
 uint32_t EmuFlash_Read(xbox::addr_xt addr, int size) // TODO : Move to EmuFlash.cpp
 {
-	const uint32_t imageOffset = (addr - (addr & ~(FLASH_DEVICEN_SIZE - 1))) % FLASH_IMAGE_SIZE;
+	const uint32_t mirroredFlashOffset = (addr - (addr & ~(FLASH_DEVICEN_SIZE - 1))) % FLASH_IMAGE_SIZE;
 
 	uint32_t value = 0;
 	for (int i = 0; i < size; i++) {
+		const uint32_t byteOffset = (mirroredFlashOffset + i) % FLASH_IMAGE_SIZE;
 		uint8_t byteValue;
-		if (!EmuFlash_ReadSynthetic8((imageOffset + i) % FLASH_IMAGE_SIZE, byteValue)) {
-			EmuLog(LOG_LEVEL::WARNING, "Read%d FLASH_ROM (0x%.8X -> 0x%.8X) [Unknown address]", size * 8, addr, imageOffset);
+		if (!EmuFlash_ReadSynthetic8(byteOffset, byteValue)) {
+			EmuLog(LOG_LEVEL::WARNING, "Read%d FLASH_ROM (0x%.8X -> 0x%.8X) [Unknown address]", size * 8, addr, byteOffset);
 			return FLASH_UNKNOWN_READ_VALUE;
 		}
 
 		value |= static_cast<uint32_t>(byteValue) << (i * 8);
 	}
 
-	EmuLog(LOG_LEVEL::DEBUG, "Read%d FLASH_ROM (0x%.8X -> 0x%.8X) = 0x%.8X [HANDLED]", size * 8, addr, imageOffset, value);
+	EmuLog(LOG_LEVEL::DEBUG, "Read%d FLASH_ROM (0x%.8X -> 0x%.8X) = 0x%.8X [HANDLED]", size * 8, addr, mirroredFlashOffset, value);
 	return value;
 }
 
 void EmuFlash_Write(xbox::addr_xt addr, uint32_t value, int size)
 {
-	(void)size;
-	EmuLog(LOG_LEVEL::WARNING, "EmuX86_Write(0x%08X, 0x%08X) [FLASH_ROM]", addr, value);
+	EmuLog(LOG_LEVEL::WARNING, "EmuX86_Write(0x%08X, 0x%08X, %d) [FLASH_ROM]", addr, value, size);
 }
 
 //
