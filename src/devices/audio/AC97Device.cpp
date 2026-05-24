@@ -629,7 +629,7 @@ void AC97Device::ServiceAudio()
 	// reset, and submission paths can run on other emulator threads, so the shared
 	// AC97 state needs the same mutex used by those entry points.
 	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
-	UpdateBusMasterChannels();
+	UpdateBusMasterChannels(true);
 }
 
 bool AC97Device::EnsureOutputDevice()
@@ -1738,7 +1738,7 @@ uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (barIndex == 1) {
-		UpdateBusMasterChannels();
+		UpdateBusMasterChannels(false);
 	}
 
 	switch (barIndex) {
@@ -1755,7 +1755,7 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 {
 	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (barIndex == 1) {
-		UpdateBusMasterChannels();
+		UpdateBusMasterChannels(false);
 	}
 
 	switch (barIndex) {
@@ -1955,7 +1955,7 @@ uint32_t AC97Device::MMIORead(int barIndex, uint32_t addr, unsigned size)
 
 	if (addr < AC97_MMIO_SIZE) {
 		if (addr >= AC97_NAM_SIZE) {
-			UpdateBusMasterChannels();
+			UpdateBusMasterChannels(false);
 		}
 		return ReadRegister(addr, size);
 	}
@@ -1970,7 +1970,7 @@ void AC97Device::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned
 
 	if (addr < AC97_MMIO_SIZE) {
 		if (addr >= AC97_NAM_SIZE) {
-			UpdateBusMasterChannels();
+			UpdateBusMasterChannels(false);
 		}
 		IOWrite(addr < AC97_NAM_SIZE ? 0 : 1, addr < AC97_NAM_SIZE ? addr : addr - AC97_NAM_SIZE, value, size);
 	}
@@ -2040,9 +2040,11 @@ void AC97Device::UpdateGlobalStatus()
 	HalSystemInterrupts[AC97_IRQ].Assert((status & GLOB_STA_CHANNEL_INT_MASK) != 0);
 }
 
-void AC97Device::UpdateBusMasterChannels()
+void AC97Device::UpdateBusMasterChannels(bool synchronizeAPU)
 {
-	if (g_APU != nullptr) {
+	// Let the system-events thread drive APU rendering, but avoid forcing that
+	// work from guest MMIO polling paths that frequently sample AC97 state.
+	if (synchronizeAPU && g_APU != nullptr) {
 		g_APU->SynchronizeAudio();
 	}
 	UpdateBusMasterStatus(NABM_PI_BASE);
