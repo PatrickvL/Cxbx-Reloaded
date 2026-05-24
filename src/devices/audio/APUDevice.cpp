@@ -1143,6 +1143,28 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	(void)barIndex;
 	SynchronizeAudio();
 
+	// Diagnostic: log every distinct register write so we can confirm
+	// the guest is actually configuring the APU.
+	{
+		static std::once_flag once;
+		static uint32_t lastLogFrame;
+		static uint32_t frameCounter;
+		std::call_once(once, []{ lastLogFrame = GetAPUTime(); });
+		++frameCounter;
+		if (GetAPUTime() - lastLogFrame >= 48000) { // every ~1 sec
+			lastLogFrame = GetAPUTime();
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: MMIO writes/sec=%u VPVADDR=0x%08X SECTL=0x%08X TVL2D=0x%04X TVL3D=0x%04X activeVoiceHints=%u",
+				frameCounter,
+				GetRegister32(NV_PAPU_VPVADDR),
+				GetRegister32(NV_PAPU_SECTL),
+				GetRegister32(NV_PAPU_TVL2D),
+				GetRegister32(NV_PAPU_TVL3D),
+				m_VPActiveVoiceHints[0] != 0 ? 1 : 0);
+			frameCounter = 0;
+		}
+	}
+
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 			const uint32_t methodAddr = addr - APU_VP_BASE;
@@ -1734,6 +1756,18 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		const uint32_t selectedHandle = value & NV1BA0_PIO_VOICE_ON_HANDLE;
 		if (selectedHandle >= APU_VP_VOICE_MAX_HANDLE) {
 			return;
+		}
+
+		{
+			static bool once;
+			if (!once) {
+				once = true;
+				EmuLog(LOG_LEVEL::INFO,
+					"APU diag: first VOICE_ON handle=%u SECTL=0x%08X VPVADDR=0x%08X",
+					selectedHandle,
+					GetRegister32(NV_PAPU_SECTL),
+					GetRegister32(NV_PAPU_VPVADDR));
+			}
 		}
 
 		UnlinkVoiceFromLists(selectedHandle);
@@ -3443,6 +3477,18 @@ void APUDevice::SynchronizeAudio()
     }
 
     uint32_t remaining = now - m_LastAudioUpdate;
+    if (remaining > 0) {
+        static uint32_t lastRenderLog;
+        if (now - lastRenderLog >= 48000) { // log at most once per second
+            lastRenderLog = now;
+            EmuLog(LOG_LEVEL::INFO,
+                "APU diag: rendering %u frames (counter=%s VPVADDR=0x%08X activeHints=%u)",
+                remaining,
+                counterOff ? "off/bypass" : "on",
+                GetRegister32(NV_PAPU_VPVADDR),
+                m_VPActiveVoiceHints[0] != 0 || m_VPActiveVoiceHints[1] != 0 ? 1 : 0);
+        }
+    }
     while (remaining > 0) {
         const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
         RenderBasicAudioChunk(chunk);
@@ -3564,6 +3610,23 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 	ApplySubmixHeadroom(mixBins.data(), frameCount);
 	WriteOutputBuffers(mixBins.data(), frameCount);
+
+	// Diagnostic: log mix-bin peaks and voice activity periodically
+	{
+		static uint32_t lastChunkLog;
+		const uint32_t now = GetAPUTime();
+		if (hasVoiceActivity && now - lastChunkLog >= 48000) {
+			lastChunkLog = now;
+			const uint32_t peak0 = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0);
+			const uint32_t peak1 = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1);
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: chunk frames=%zu voices(2D=%zu 3D=%zu MP=%zu fb=%zu) stereoPeak=[%u, %u] VPVADDR=0x%08X SECTL=0x%08X",
+				frameCount, visited2D, visited3D, visitedMP, fallbackVisited,
+				peak0, peak1,
+				GetRegister32(NV_PAPU_VPVADDR),
+				GetRegister32(NV_PAPU_SECTL));
+		}
+	}
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		uint32_t postHeadroomStereoPeak[2]{
@@ -3769,6 +3832,22 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				guestVPOutputPeak[1],
 				guestVPOutputPeak[2],
 				guestVPOutputPeak[3]);
+		}
+	}
+
+	// Diagnostic: log output peak right before submitting to AC97
+	{
+		static uint32_t lastOutputLog;
+		const uint32_t now = GetAPUTime();
+		if (now - lastOutputLog >= 48000) {
+			lastOutputLog = now;
+			const uint32_t peak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), frameCount * 2);
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: SubmitPCMFrames frames=%zu outputPeak=%u dsp=%d guestVP=%d hostSpatial=%zu",
+				frameCount, peak,
+				dspOutputActive ? 1 : 0,
+				!m_EnableHostSpatialHandoff ? 1 : 0,
+				m_ChunkSubmittedHostSpatialVoiceCount);
 		}
 	}
 
