@@ -2533,6 +2533,13 @@ void APUDevice::NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status)
 
 uint32_t APUDevice::GetVoicePlaybackOffset(uint32_t voiceHandle) const
 {
+	if (voiceHandle < m_VPPlaybackState.size()) {
+		const auto& playbackState = m_VPPlaybackState[voiceHandle];
+		if (playbackState.valid) {
+			return playbackState.offset;
+		}
+	}
+
 	uint32_t currentOffset = 0;
 	// ReadVoiceMask already emits one-shot diagnostics on failure; keep the notifier
 	// payload deterministic by falling back to zero when the guest voice table cannot
