@@ -3549,8 +3549,10 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	const bool hostSpatialSubmitted = m_ChunkSubmittedHostSpatialVoiceCount != 0;
 	bool useHRTFStereoFallback = false;
 	bool useNonStereoBinFallback = false;
+	bool blendFallbackIntoStereo = false;
 	constexpr std::array<size_t, APU_HRTF_SUBMIX_COUNT> kHRTFFallbackChannelMapping{ 0, 1, 0, 1 };
-	if (stereoBinsSilent && !guestVPOutputPlaybackConfigured && !hostSpatialSubmitted) {
+	if (!guestVPOutputPlaybackConfigured && !hostSpatialSubmitted && !dspOutputActive) {
+		blendFallbackIntoStereo = !stereoBinsSilent;
 		for (size_t slot = 0; slot < APU_HRTF_SUBMIX_COUNT; ++slot) {
 			const uint32_t bin = m_VPHRTFSubmix[slot];
 			if (bin >= APU_FIRST_NON_STEREO_BIN && bin < APU_MIXBIN_COUNT &&
@@ -3559,7 +3561,14 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 				break;
 			}
 		}
-		useNonStereoBinFallback = !useHRTFStereoFallback;
+		if (!useHRTFStereoFallback) {
+			for (size_t bin = APU_FIRST_NON_STEREO_BIN; bin < APU_MIXBIN_COUNT; ++bin) {
+				if (PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, bin) != 0) {
+					useNonStereoBinFallback = true;
+					break;
+				}
+			}
+		}
 	}
 
 	if (guestVPOutputPlaybackConfigured) {
@@ -3581,9 +3590,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 					}
 
 					const size_t binBase = static_cast<size_t>(bin) * frameCount;
-					const int32_t contribution = mixBins[binBase + frame];
+					int32_t contribution = mixBins[binBase + frame];
+					if (blendFallbackIntoStereo) {
+						contribution /= 2;
+					}
 					// Fold the four global HRTF submix slots back to host stereo as L,R,L,R
-					// until the dedicated OpenAL 3D handoff consumes them directly.
+					// until the dedicated OpenAL 3D handoff consumes them directly. If stereo
+					// bins already contain signal, blend the fallback at half strength so
+					// routed-only content stays audible without doubling fully duplicated dry
+					// paths as aggressively.
 					if (kHRTFFallbackChannelMapping[slot] == 0) {
 						left += contribution;
 					} else {
@@ -3593,12 +3608,19 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			} else if (useNonStereoBinFallback) {
 				for (size_t bin = 2; bin < APU_MIXBIN_COUNT; ++bin) {
 					const size_t binBase = bin * frameCount;
-					const int32_t contribution = mixBins[binBase + frame];
+					int32_t contribution = mixBins[binBase + frame];
+					if (blendFallbackIntoStereo) {
+						contribution /= 2;
+					}
 					// Without the DSP/output-buffer stages, some voices only reach non-stereo
 					// mixbins. Fold them back to host stereo by bin parity so their audio stays
-					// audible until the full guest routing path is implemented. This mirrors the
-					// voice-mixing convention above where even-numbered routes originate from the
-					// left sample and odd-numbered routes originate from the right sample.
+					// audible until the full guest routing path is implemented, even when a
+					// small amount of direct stereo signal is already present. When stereo bins
+					// are already active, blend the fallback at half strength to reduce obvious
+					// double-mixing of paths that intentionally target both stereo and effect
+					// bins. This mirrors the voice-mixing convention above where even-numbered
+					// routes originate from the left sample and odd-numbered routes originate
+					// from the right sample.
 					if ((bin & 1u) == 0) {
 						left += contribution;
 					} else {
