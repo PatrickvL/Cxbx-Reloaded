@@ -29,6 +29,7 @@
 #define _APU_H_
 
 #include "../PCIDevice.h"
+#include <vector>
 
 // VP register offsets (relative to VP base 0x20000)
 #define NV_PAPU_VPVADDR_OFF   0x002C  // Voice descriptor table physical address
@@ -65,7 +66,11 @@ public:
 
 	// Fallback voice descriptor base for games that bypass CMcpxAPU::Initialize
 	// and write voice descriptors directly to contiguous memory (VPVADDR = 0).
-	void SetFallbackVoiceBase(uint8_t* voiceBase) { m_fallbackVoiceBase = voiceBase; }
+	void SetFallbackVoiceBase(uint8_t* voiceBase) {
+		// Add to list of tracked voices (don't add duplicates)
+		for (auto* v : m_fallbackVoices) { if (v == voiceBase) return; }
+		m_fallbackVoices.push_back(voiceBase);
+	}
 
 	// Advance CBO for all active voices based on elapsed time.
 	// Called periodically from dsound_worker.
@@ -80,7 +85,7 @@ private:
 	void VPWrite(uint32_t addr, uint32_t value, unsigned size);
 
 	uint32_t m_vpvaddr = 0;           // Voice descriptor table physical address
-	uint8_t* m_fallbackVoiceBase = nullptr; // Single-voice base when VPVADDR=0
+	std::vector<uint8_t*> m_fallbackVoices; // Active voices when VPVADDR=0
 	uint32_t m_lastTickMs = 0;        // Last tick time for CBO advancement
 };
 

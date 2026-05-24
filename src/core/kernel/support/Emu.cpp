@@ -510,93 +510,9 @@ void EmuDumpAllThreadStacks(const char* reason);
 
 void EmuDetectSpinCursor()
 {
-    // First, scan all threads for spin-loops and unblock them directly.
-    // This handles GPU completion waits (D3D_KickOffAndWaitForIdle) where
-    // the game spins waiting for *pCounter >= 2, as well as audio CBO polls.
-    DWORD currentPid = GetCurrentProcessId();
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    static bool s_diagOnce = true;
-    if (hSnapshot == INVALID_HANDLE_VALUE) {
-        if (s_diagOnce) {
-            fprintf(stderr, "[SCAN-FAIL] CreateToolhelp32Snapshot failed err=%u\n", GetLastError());
-            fflush(stderr);
-            s_diagOnce = false;
-        }
-    } else {
-        THREADENTRY32 te = { sizeof(THREADENTRY32) };
-        if (Thread32First(hSnapshot, &te)) {
-            do {
-                if (te.th32OwnerProcessID != currentPid) continue;
-                HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, te.th32ThreadID);
-                if (!hThread) continue;
-                DWORD suspendCount = SuspendThread(hThread);
-                if (suspendCount == (DWORD)-1) { CloseHandle(hThread); continue; }
-                CONTEXT ctx = {};
-                ctx.ContextFlags = CONTEXT_FULL;
-                if (GetThreadContext(hThread, &ctx)) {
-                    if (ctx.Eip >= 0x00100000 && ctx.Eip < 0x00400000) {
-                        fprintf(stderr, "[SCAN-DBG] tid=0x%X eip=0x%08X edx=0x%08X\n",
-                            te.th32ThreadID, ctx.Eip, ctx.Edx);
-                        fflush(stderr);
-                    }
-                    if (ctx.Eip >= 0x00100000 && ctx.Eip < 0x00400000 &&
-                        ctx.Edx != 0 && (ctx.Edx & 0x3) == 0) {
-                        volatile uint32_t* pPoll = reinterpret_cast<volatile uint32_t*>(ctx.Edx);
-                        uint32_t curValue = *pPoll;
-                        *pPoll = 2;  // satisfy GPU kick-and-wait (needs counter >= 2)
-                        fprintf(stderr, "[SPIN-FIX] tid=0x%X eip=0x%08X ptr=0x%08X was=%u\n",
-                            te.th32ThreadID, ctx.Eip, ctx.Edx, curValue);
-                        fflush(stderr);
-                    }
-                    if (ctx.Eip >= 0x00100000 && ctx.Eip < 0x00400000 &&
-                        ctx.Edx >= 0x80000000 && ctx.Edx < 0x84000000 && (ctx.Edx & 0x3) == 0) {
-                        DWORD cbo = *reinterpret_cast<volatile DWORD*>(ctx.Edx);
-                        if (cbo < 0x100000) {
-                            DWORD cursorAddr = reinterpret_cast<uintptr_t>(g_ApuPlayCursor.pCursor);
-                            if (g_ApuPlayCursor.pCursor == nullptr || ctx.Edx != cursorAddr) {
-                                LARGE_INTEGER qpc;
-                                QueryPerformanceCounter(&qpc);
-                                g_ApuPlayCursor.pCursor = reinterpret_cast<volatile DWORD*>(ctx.Edx);
-                                g_ApuPlayCursor.bufSize = 0x200000;
-                                g_ApuPlayCursor.rate = 96000;
-                                g_ApuPlayCursor.lastQPC = qpc.QuadPart;
-                                g_ApuPlayCursor.pEvent = reinterpret_cast<void*>(0x001A44E4);
-                                fprintf(stderr, "[APU-CURSOR] PRESENT-STALL activated: cursor=0x%08X cbo=%u\n",
-                                    ctx.Edx, cbo);
-                                fflush(stderr);
-                                if (g_APU) {
-                                    g_APU->SetFallbackVoiceBase(
-                                        reinterpret_cast<uint8_t*>(ctx.Edx - 0x58));
-                                }
-                            }
-                        }
-                    }
-                }
-                ResumeThread(hThread);
-                CloseHandle(hThread);
-            } while (Thread32Next(hSnapshot, &te));
-        }
-        CloseHandle(hSnapshot);
-    }
-
-    // Fallback for audio: register the known voice descriptor via event address.
-    {
-        DWORD* cursorAt = reinterpret_cast<DWORD*>(0x001A44E4 - 0x2530);
-        DWORD cursorVal = *cursorAt;
-        if (cursorVal >= 0x80000000 && cursorVal < 0x84000000 && (cursorVal & 0x3) == 0) {
-            if (g_APU) {
-                g_APU->SetFallbackVoiceBase(
-                    reinterpret_cast<uint8_t*>(cursorVal - 0x58));
-            }
-            // Suppress continuous fallback spam after first registration
-            static bool fallbackDone = false;
-            if (!fallbackDone) {
-                fprintf(stderr, "[APU-CURSOR] PRESENT-STALL fallback: voiceBase registered via event addr\n");
-                fflush(stderr);
-                fallbackDone = true;
-            }
-        }
-    }
+    // Voice descriptor registration and CBO advancement are handled
+    // by APUDevice::AdvanceVoiceCursors() which scans KEVENTs in
+    // the .data section and processes all associated voice descriptors.
 }
 
 // Dump stack traces for all threads in the current process.

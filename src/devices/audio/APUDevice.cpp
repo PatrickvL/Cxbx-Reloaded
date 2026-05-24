@@ -26,8 +26,16 @@
 // ******************************************************************
 
 #include <cstdio>
+#include <vector>
+#include <algorithm>
 
 #include "APUDevice.h"
+#include "common\util\CxbxUtil.h"
+
+extern uint32_t GetAPUTime();
+
+// Cache of detected voice descriptor bases for the fallback path (VPVADDR=0).
+static std::vector<uint8_t*> s_fallbackVoices;
 #include "../../common/AddressRanges.h"
 
 #include <Windows.h>
@@ -165,81 +173,72 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 
 void APUDevice::AdvanceVoiceCursors()
 {
-	DWORD now = GetTickCount();
-	if (m_lastTickMs == 0) { m_lastTickMs = now; return; }
-	DWORD elapsed = now - m_lastTickMs;
-	if (elapsed == 0) return;
-	m_lastTickMs = now;
+    DWORD now = GetTickCount();
+    if (m_lastTickMs == 0) { m_lastTickMs = now; return; }
+    DWORD elapsedMs = now - m_lastTickMs;
+    if (elapsedMs == 0) return;
+    m_lastTickMs = now;
 
-	// Compute bytes-per-millisecond from voice format register.
-	// Format (offset 0x04) encodes sample rate, channels, and bit depth.
-	auto decodeFormat = [](uint32_t fmt) -> uint32_t {
-		// NVIDIA XBOX APU voice format register layout (bits):
-		// 0-3:   Codec (0=PCM8, 1=PCM16, 2=ADPCM)
-		// 4-7:   NumChannels (1=mono, 2=stereo)
-		// 8-19:  SampleRate (0=192000/??, actual 48000=0xBB80, 44100=0xAC44)
-		uint32_t codec   =  fmt & 0xF;
-		uint32_t chans   = (fmt >> 4) & 0xF;
-		uint32_t rate    = (fmt >> 8) & 0xFFF;
-		uint32_t bytesPerSample = (codec == 0) ? 1 : 2; // PCM8=1, PCM16=2
-		if (chans == 0) chans = 2;  // default stereo
-		if (rate == 0)  rate = 48000; // default 48kHz
-		// bytes/ms = rate * chans * bytesPerSample / 1000
-		return (rate * chans * bytesPerSample) / 1000;
-	};
+    auto decodeBytesPerMs = [](uint32_t fmt) -> uint32_t {
+        uint32_t codec  =  fmt & 0xF;
+        uint32_t chans  = (fmt >> 4) & 0xF;
+        uint32_t rate   = (fmt >> 8) & 0xFFF;
+        if (chans == 0) chans = 2;
+        if (rate == 0)  rate = 48000;
+        return (rate * chans * ((codec == 0) ? 1 : 2)) / 1000;
+    };
 
-	// Full voice table mode: VPVADDR is set → iterate all 256 voices.
-	if (m_vpvaddr != 0) {
-		uint8_t* voiceTable = (uint8_t*)(CONTIGUOUS_MEMORY_BASE + m_vpvaddr);
-		for (int v = 0; v < NV_PAVS_MAX_VOICES; v++) {
-			uint8_t* vd = voiceTable + v * NV_PAVS_VOICE_SIZE;
-			volatile uint32_t* pFmt    = (volatile uint32_t*)(vd + NV_PAVS_VOICE_CFG_FMT_OFF);
-			volatile uint32_t* pState  = (volatile uint32_t*)(vd + NV_PAVS_VOICE_PAR_STATE_OFF);
-			volatile uint32_t* pOffset = (volatile uint32_t*)(vd + NV_PAVS_VOICE_PAR_OFFSET_OFF);
+    // Full VPVADDR mode: process all 256 voices.
+    if (m_vpvaddr != 0) {
+        uint8_t* table = (uint8_t*)(CONTIGUOUS_MEMORY_BASE + m_vpvaddr);
+        for (int v = 0; v < NV_PAVS_MAX_VOICES; v++) {
+            uint8_t* vd = table + v * NV_PAVS_VOICE_SIZE;
+            volatile uint32_t* pFmt    = (volatile uint32_t*)(vd + NV_PAVS_VOICE_CFG_FMT_OFF);
+            volatile uint32_t* pOffset = (volatile uint32_t*)(vd + NV_PAVS_VOICE_PAR_OFFSET_OFF);
+            uint32_t fmt = *pFmt;
+            if (fmt == 0) continue;
+            uint32_t offReg = *pOffset;
+            uint32_t cbo = offReg & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK;
+            uint32_t newCbo = cbo + elapsedMs * decodeBytesPerMs(fmt);
+            *pOffset = (offReg & ~NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK)
+                     | (newCbo & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
+        }
+        return;
+    }
 
-			uint32_t fmt = *pFmt;
-			if (fmt == 0) continue;
+    // Fallback: VPVADDR is 0 — scan .data section for KEVENTs (Type=0, Size=4)
+    // and register all associated voice descriptors. Re-scan every 2 seconds.
+    {
+        static DWORD s_lastScan = 0;
+        if (s_lastScan == 0 || now - s_lastScan > 2000) {
+            s_lastScan = now;
+            for (DWORD* p = (DWORD*)0x11000; p < (DWORD*)0x300000; p++) {
+                uint8_t* hdr = (uint8_t*)p;
+                if (hdr[0] == 0 && hdr[2] == 4) {
+                    uint8_t* cursorPtr = (uint8_t*)p - 0x2530;
+                    if (cursorPtr >= (uint8_t*)0x11000) {
+                        DWORD cursorVal = *(volatile DWORD*)cursorPtr;
+                        if (cursorVal >= 0x80000000 && cursorVal < 0x84000000 && (cursorVal & 0x3) == 0) {
+                            SetFallbackVoiceBase((uint8_t*)(cursorVal - 0x58));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-			uint32_t bytesPerMs = decodeFormat(fmt);
-			uint32_t offset_reg = *pOffset;
-			uint32_t cbo = offset_reg & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK;
-			uint32_t newCbo = cbo + elapsed * bytesPerMs;
-			*pOffset = (offset_reg & ~NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK)
-			         | (newCbo & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
-		}
-		return;
-	}
-
-	// Fallback: single-voice mode when VPVADDR is 0 but a voice descriptor
-	// has been detected via the HLE cursor detection path.
-	if (m_fallbackVoiceBase != nullptr) {
-		uint8_t* vd = m_fallbackVoiceBase;
-		volatile uint32_t* pFmt    = (volatile uint32_t*)(vd + NV_PAVS_VOICE_CFG_FMT_OFF);
-		volatile uint32_t* pOffset = (volatile uint32_t*)(vd + NV_PAVS_VOICE_PAR_OFFSET_OFF);
-
-		uint32_t fmt = *pFmt;
-		uint32_t bytesPerMs = (fmt != 0) ? decodeFormat(fmt) : 192;
-
-		uint32_t offset_reg = *pOffset;
-		uint32_t cbo = offset_reg & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK;
-		uint32_t newCbo = cbo + elapsed * bytesPerMs;
-		*pOffset = (offset_reg & ~NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK)
-		         | (newCbo & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
-
-		static int diagCount = 0;
-		if (diagCount++ <= 5) {
-			fprintf(stderr, "[APU-FALLBACK] voiceBase=0x%p fmt=0x%08X cbo=%u newCbo=%u elapsed=%u bytes/ms=%u\n",
-				vd, fmt, cbo, newCbo, elapsed, bytesPerMs);
-			fflush(stderr);
-		}
-		// Diagnostic: verify write persisted
-		if (diagCount == 3) {
-			uint32_t verify = *pOffset;
-			fprintf(stderr, "[APU-FALLBACK] VERIFY: offset_reg after write=0x%08X (cbo=%u)\n",
-				verify, verify & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
-			fflush(stderr);
-		}
-	}
+    // Advance CBO for all registered fallback voices.
+    for (uint8_t* vd : m_fallbackVoices) {
+        volatile uint32_t* pFmt    = (volatile uint32_t*)(vd + NV_PAVS_VOICE_CFG_FMT_OFF);
+        volatile uint32_t* pOffset = (volatile uint32_t*)(vd + NV_PAVS_VOICE_PAR_OFFSET_OFF);
+        uint32_t fmt = *pFmt;
+        uint32_t bytesPerMs = (fmt != 0) ? decodeBytesPerMs(fmt) : 192;
+        uint32_t offReg = *pOffset;
+        uint32_t cbo = offReg & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK;
+        uint32_t newCbo = cbo + elapsedMs * bytesPerMs;
+        *pOffset = (offReg & ~NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK)
+                 | (newCbo & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
+    }
 }
 
 
