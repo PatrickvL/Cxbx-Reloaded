@@ -43,7 +43,6 @@ APUDevice* g_APU;
 AC97Device* g_AC97;
 NVNetDevice* g_NVNet;
 NV2ADevice* g_NV2A;
-APUDevice* g_APU;
 ADM1032Device* g_ADM1032;
 USBDevice* g_USB0;
 MediaBoard* g_MediaBoard;
