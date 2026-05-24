@@ -1520,7 +1520,7 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
 		return ReadRegisterFragment(
-			GetRegister32(APU_VP_BASE + APU_VP_FREE),
+			APU_VP_STATUS_EMPTY,
 			addr - APU_VP_FREE,
 			size);
 	}
@@ -5084,11 +5084,9 @@ void APUDevice::UpdateVPFifo()
 
 void APUDevice::RefreshVPStatus()
 {
-	uint32_t status = 0;
-	if (m_VPFifoLevel == 0) {
-		status |= APU_VP_STATUS_EMPTY;
-	}
-	SetRegister32(APU_VP_BASE + APU_VP_FREE, status);
+	// Keep the guest-visible VP free register reporting "empty" until the FIFO
+	// semantics match the older DX11 path closely enough to avoid voice-method hangs.
+	SetRegister32(APU_VP_BASE + APU_VP_FREE, APU_VP_STATUS_EMPTY);
 }
 
 void APUDevice::RefreshInterruptStatus()
