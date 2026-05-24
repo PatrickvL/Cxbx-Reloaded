@@ -571,6 +571,7 @@ void AC97Device::Init()
 	r.Raw.type = PCI_BAR_TYPE_MEMORY;
 	r.Memory.address = AC97_BASE >> 4;
 	RegisterBAR(2, AC97_SIZE, r.value);
+	RegisterConfigRegister(PCI_CONFIG_NVIDIA_AC97_SPDIF_CONTROL, 0);
 
 	m_DeviceId = 0x01B1;
 	m_VendorId = PCI_VENDOR_ID_NVIDIA;
@@ -583,6 +584,7 @@ void AC97Device::Reset()
 	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 
 	std::memset(m_Registers.data(), 0, m_Registers.size());
+	UpdateConfigRegister(PCI_CONFIG_NVIDIA_AC97_SPDIF_CONTROL, 0);
 
 	WriteRegister16(AC97_Powerdown_Ctrl_Stat, AC97_POWER_READY);
 	WriteRegister16(AC97_Extended_Audio_ID, AC97_EXT_AUDIO_ID_VRA | AC97_EXT_AUDIO_ID_VRM);
