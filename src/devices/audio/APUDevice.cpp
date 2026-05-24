@@ -227,9 +227,16 @@ void APUDevice::AdvanceVoiceCursors()
 		         | (newCbo & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
 
 		static int diagCount = 0;
-		if (diagCount++ < 5) {
-			fprintf(stderr, "[APU-FALLBACK] voiceBase=0x%p fmt=0x%08X cbo=%u newCbo=%u elapsed=%u\n",
-				vd, fmt, cbo, newCbo, elapsed);
+		if (diagCount++ <= 5) {
+			fprintf(stderr, "[APU-FALLBACK] voiceBase=0x%p fmt=0x%08X cbo=%u newCbo=%u elapsed=%u bytes/ms=%u\n",
+				vd, fmt, cbo, newCbo, elapsed, bytesPerMs);
+			fflush(stderr);
+		}
+		// Diagnostic: verify write persisted
+		if (diagCount == 3) {
+			uint32_t verify = *pOffset;
+			fprintf(stderr, "[APU-FALLBACK] VERIFY: offset_reg after write=0x%08X (cbo=%u)\n",
+				verify, verify & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
 			fflush(stderr);
 		}
 	}

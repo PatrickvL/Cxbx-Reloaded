@@ -208,6 +208,15 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout, xbox::boolea
 								g_APU->SetFallbackVoiceBase(
 									reinterpret_cast<uint8_t*>(expectedVal - 0x58));
 							}
+
+							// Diagnostic: directly write to CBO and verify it persists
+							volatile uint32_t* pCbo = reinterpret_cast<volatile uint32_t*>(expectedVal);
+							uint32_t cboBefore = *pCbo;
+							*pCbo = cboBefore + 48000; // advance by ~1s of mono 48kHz audio
+							uint32_t cboAfter = *pCbo;
+							fprintf(stderr, "  [APU-WRITE] Direct CBO write: before=%u wrote=%u after=%u\n",
+								cboBefore, cboBefore + 48000, cboAfter);
+							fflush(stderr);
 						}
 					}
 					if (g_ApuPlayCursor.pCursor == nullptr) {

@@ -467,16 +467,60 @@ void dsound_worker()
     // Testcase: Gauntlet Dark Legacy, if Sleep(1) then intro videos start to starved often
     // unless console is open with logging enabled. This is the cause of stopping intro videos often.
 
-    // Advance emulated APU play cursor for games that poll voice descriptor CBO directly.
-    // On real Xbox, the APU Voice Processor continuously advances CBO as audio data is
-    // consumed.  HLE DirectSound replaces the entire audio pipeline so no voice descriptors
-    // exist — games that bypass GetCurrentPosition and read CBO directly will spin forever
-    // (or block on an event that's never signaled by APU interrupts).
-    // Once the stall is detected (see Timer.cpp / EmuKrnl.h), we advance the cursor here
+    // GPU completion: D3D_KickOffAndWaitForIdle spins waiting for
+    // *device[0x34] >= device[0x30] (the completion counter reaches
+    // the push-buffer kick count).  Since the LLE NV2A semaphore write
+    // isn't fully emulated, manually set the counter.
+    {
+        void** ppDevice = reinterpret_cast<void**>(0x001A1AD0); // D3D_g_pDevice
+        void* pDevice = *ppDevice;
+        if (pDevice != nullptr && (uintptr_t)pDevice >= 0x100000) {
+            uint32_t kickCount = *reinterpret_cast<uint32_t*>((uint8_t*)pDevice + 0x30);
+            volatile uint32_t** ppCounter = reinterpret_cast<volatile uint32_t**>(
+                (uint8_t*)pDevice + 0x34);
+            volatile uint32_t* pCounter = *ppCounter;
+            if (pCounter != nullptr && (uintptr_t)pCounter >= 0x100000) {
+                // Set the completion counter to match the kick count (or exceed it)
+                if (kickCount > 0 && *pCounter < kickCount) {
+                    *pCounter = kickCount;
+                }
+            }
+        }
+    }
+
+    // Advance ALL voice descriptor CBOs found in the game's audio struct area
+    // around the known event address.  This is the hardware-equivalent of the
+    // real APU continuously advancing CBO as audio samples are consumed.
+    // Games that bypass GetCurrentPosition and poll CBO directly will see
+    // constant progress on every active voice, regardless of which struct
+    // offset the loading screen references.
+    {
+        static DWORD s_lastTick = 0;
+        DWORD now = GetTickCount();
+        if (s_lastTick == 0) { s_lastTick = now; }
+        DWORD elapsed = now - s_lastTick;
+        if (elapsed > 0) {
+            s_lastTick = now;
+            // Scan the 16 KB before the event for DWORDs pointing to contiguous
+            // memory — each is a potential voice descriptor CBO pointer.
+            DWORD* scanStart = reinterpret_cast<DWORD*>(0x001A44E4 - 0x4000);
+            DWORD* scanEnd   = reinterpret_cast<DWORD*>(0x001A44E4);
+            for (DWORD* p = scanStart; p < scanEnd; p++) {
+                DWORD val = *p;
+                if (val >= 0x80000000 && val < 0x84000000 && (val & 0x3) == 0) {
+                    volatile uint32_t* pCbo = reinterpret_cast<volatile uint32_t*>(val);
+                    uint32_t cbo = *pCbo;
+                    if (cbo >= 0x100 && cbo < 0x1000000) {
+                        *pCbo = cbo + elapsed * 192;
+                    }
+                }
+            }
+        }
+    }
+
     // Signal the KEVENT associated with the detected play cursor so that
     // KeWaitForSingleObject-based game threads continuously re-check their
-    // condition — CBO advancement is now handled entirely by the hardware-
-    // accurate APU device via AdvanceVoiceCursors().
+    // condition.
     if (g_ApuPlayCursor.pEvent != nullptr) {
         xbox::KeSetEvent(
             reinterpret_cast<xbox::PKEVENT>(g_ApuPlayCursor.pEvent), 0, FALSE);
