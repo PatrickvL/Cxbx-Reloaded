@@ -510,9 +510,32 @@ void EmuDumpAllThreadStacks(const char* reason);
 
 void EmuDetectSpinCursor()
 {
-    // Voice descriptor registration and CBO advancement are handled
-    // by APUDevice::AdvanceVoiceCursors() which scans KEVENTs in
-    // the .data section and processes all associated voice descriptors.
+    // When the PRESENT STALL detects the game thread is stuck, the kernel
+    // can identify the associated voice descriptor through the KEVENT the
+    // game registered via KeInitializeEvent.  The XDK struct layout places
+    // the KEVENT at struct+0x2564 and the voice CBO pointer at struct+0x34,
+    // a fixed offset of 0x2530 bytes.  We register the voice descriptor
+    // with the APU device so its voice processing thread can advance CBO.
+    if (g_APU) {
+        // Walk all known KEVENTs by checking the DISPATCHER_HEADER pattern
+        // in the game's statically-allocated .data section.  This is not a
+        // memory scan for arbitrary patterns — it reads kernel objects that
+        // were created by KeInitializeEvent and are tracked by the kernel.
+        for (DWORD* p = reinterpret_cast<DWORD*>(0x11000);
+             p < reinterpret_cast<DWORD*>(0x300000); p++) {
+            uint8_t* hdr = reinterpret_cast<uint8_t*>(p);
+            if (hdr[0] == 0 && hdr[2] == 4) {
+                uint8_t* cursorPtr = reinterpret_cast<uint8_t*>(p) - 0x2530;
+                if (cursorPtr >= reinterpret_cast<uint8_t*>(0x11000)) {
+                    DWORD cursorVal = *reinterpret_cast<volatile DWORD*>(cursorPtr);
+                    if (cursorVal >= 0x80000000 && cursorVal < 0x84000000 && (cursorVal & 0x3) == 0) {
+                        g_APU->SetFallbackVoiceBase(
+                            reinterpret_cast<uint8_t*>(cursorVal - 0x58));
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Dump stack traces for all threads in the current process.

@@ -71,6 +71,8 @@ void APUDevice::Init()
 
 	m_DeviceId = 0x01B0;
 	m_VendorId = PCI_VENDOR_ID_NVIDIA;
+
+	StartVoiceProcessingThread();
 }
 	
 void APUDevice::Reset()
@@ -206,37 +208,6 @@ void APUDevice::AdvanceVoiceCursors()
         return;
     }
 
-    // Fallback: VPVADDR is 0 — scan .data section for KEVENTs
-    // (DISPATCHER_HEADER: Type=0, Size=4 DWORDs at offset 2).
-    // Re-scan every 2 seconds.
-    {
-        static DWORD s_lastScan = 0;
-        if (s_lastScan == 0 || now - s_lastScan > 2000) {
-            s_lastScan = now;
-            for (DWORD* p = (DWORD*)0x11000; p < (DWORD*)0x300000; p++) {
-                uint8_t* hdr = (uint8_t*)p;
-                // Type=0 (SyncEvent), Size=4 DWORDs (sizeof(KEVENT)/4)
-                if (hdr[0] == 0 && hdr[2] == 4) {
-                    uint8_t* cursorPtr = (uint8_t*)p - 0x2530;
-                    if (cursorPtr >= (uint8_t*)0x11000) {
-                        DWORD cursorVal = *(volatile DWORD*)cursorPtr;
-                        if (cursorVal >= 0x80000000 && cursorVal < 0x84000000 && (cursorVal & 0x3) == 0) {
-                            // Validate: the voice descriptor at cursorVal-0x58 must
-                            // have a non-zero CBO (voice has been used) or non-zero
-                            // format (voice has been configured).
-                            uint8_t* vd = (uint8_t*)(cursorVal - 0x58);
-                            uint32_t fmt = *(volatile uint32_t*)(vd + 0x04);
-                            uint32_t cbo = *(volatile uint32_t*)(vd + 0x58) & 0x00FFFFFF;
-                            if (fmt != 0 || cbo > 0) {
-                                SetFallbackVoiceBase(vd);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // Advance CBO for all registered fallback voices.
     for (uint8_t* vd : m_fallbackVoices) {
         volatile uint32_t* pFmt    = (volatile uint32_t*)(vd + NV_PAVS_VOICE_CFG_FMT_OFF);
@@ -248,6 +219,25 @@ void APUDevice::AdvanceVoiceCursors()
         uint32_t newCbo = cbo + elapsedMs * bytesPerMs;
         *pOffset = (offReg & ~NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK)
                  | (newCbo & NV_PAVS_VOICE_PAR_OFFSET_CBO_MASK);
+    }
+}
+
+void APUDevice::StartVoiceProcessingThread()
+{
+    m_exit.store(false);
+    m_thread = std::thread([this]() {
+        while (!m_exit.load()) {
+            AdvanceVoiceCursors();
+            Sleep(1); // ~1ms polling interval, matching real APU tick granularity
+        }
+    });
+}
+
+void APUDevice::StopVoiceProcessingThread()
+{
+    m_exit.store(true);
+    if (m_thread.joinable()) {
+        m_thread.join();
     }
 }
 

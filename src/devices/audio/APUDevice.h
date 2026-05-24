@@ -30,6 +30,8 @@
 
 #include "../PCIDevice.h"
 #include <vector>
+#include <thread>
+#include <atomic>
 
 // VP register offsets (relative to VP base 0x20000)
 #define NV_PAPU_VPVADDR_OFF   0x002C  // Voice descriptor table physical address
@@ -73,8 +75,14 @@ public:
 	}
 
 	// Advance CBO for all active voices based on elapsed time.
-	// Called periodically from dsound_worker.
+	// Called periodically from the APU worker thread.
 	void AdvanceVoiceCursors();
+
+	// Start the APU voice processing thread (like pfifo_puller for NV2A)
+	void StartVoiceProcessingThread();
+
+	// Stop the APU voice processing thread
+	void StopVoiceProcessingThread();
 
 private:
 	uint32_t GPRead(uint32_t addr, unsigned size);
@@ -87,6 +95,8 @@ private:
 	uint32_t m_vpvaddr = 0;           // Voice descriptor table physical address
 	std::vector<uint8_t*> m_fallbackVoices; // Active voices when VPVADDR=0
 	uint32_t m_lastTickMs = 0;        // Last tick time for CBO advancement
+	std::atomic<bool> m_exit{false};  // Thread stop signal
+	std::thread m_thread;              // Voice processing thread
 };
 
 #endif
