@@ -400,6 +400,7 @@ file (GLOB CXBXR_SOURCE_EMU
  "${CXBXR_ROOT_DIR}/src/core/hle/JVS/JVS.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/Patches.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/XACTENG/XactEng.cpp"
+ "${CXBXR_ROOT_DIR}/src/core/hle/DSOUND/DirectSoundBridge.cpp"
  "${CXBXR_ROOT_DIR}/src/core/hle/XGRAPHIC/XGraphic.cpp"
  "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnl.cpp"
  "${CXBXR_ROOT_DIR}/src/core/kernel/exports/EmuKrnlAv.cpp"
