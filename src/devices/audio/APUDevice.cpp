@@ -1807,6 +1807,8 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		uint32_t notifierBase = 0;
 		if (ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
 			WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
+			WriteNotifierStatus(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION,
+				NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		}
 		ClearHRTFFilterState(selectedHandle);
 		InitializeVoiceEnvelopes(selectedHandle, value);
