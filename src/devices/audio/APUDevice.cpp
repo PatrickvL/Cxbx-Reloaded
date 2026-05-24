@@ -1060,7 +1060,7 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_FEMEMDATA, 0);
 	SetRegister32(NV_PAPU_FETFORCE0, 0);
 	SetRegister32(NV_PAPU_FETFORCE1, 0);
-	SetRegister32(NV_PAPU_SECTL, 0);
+	SetRegister32(NV_PAPU_SECTL, 0x00000008);
 	SetRegister32(NV_PAPU_VPVADDR, 0);
 	SetRegister32(NV_PAPU_VPSGEADDR, 0);
 	SetRegister32(NV_PAPU_VPSSLADDR, 0);
@@ -3407,23 +3407,37 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 
 void APUDevice::SynchronizeAudio()
 {
-	std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
+    std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
 
-	const uint32_t now = GetAPUTime();
-	if (((GetRegister32(NV_PAPU_SECTL) & NV_PAPU_SECTL_XCNTMODE) >> Ctz32(NV_PAPU_SECTL_XCNTMODE)) ==
-		NV_PAPU_SECTL_XCNTMODE_OFF) {
-		m_LastAudioUpdate = now;
-		return;
-	}
+    const uint32_t now = GetAPUTime();
+    const bool counterOff =
+        ((GetRegister32(NV_PAPU_SECTL) & NV_PAPU_SECTL_XCNTMODE) >> Ctz32(NV_PAPU_SECTL_XCNTMODE)) ==
+        NV_PAPU_SECTL_XCNTMODE_OFF;
+    if (counterOff) {
+        const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
+        bool hasActiveVoices = voiceTableBase != 0;
+        if (!hasActiveVoices) {
+            for (size_t i = 0; i < m_VPActiveVoiceHints.size(); ++i) {
+                if (m_VPActiveVoiceHints[i] != 0) {
+                    hasActiveVoices = true;
+                    break;
+                }
+            }
+        }
+        if (!hasActiveVoices) {
+            m_LastAudioUpdate = now;
+            return;
+        }
+    }
 
-	uint32_t remaining = now - m_LastAudioUpdate;
-	while (remaining > 0) {
-		const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
-		RenderBasicAudioChunk(chunk);
-		m_LastAudioUpdate += static_cast<uint32_t>(chunk);
-		m_XGSCounter += static_cast<uint32_t>(chunk);
-		remaining -= static_cast<uint32_t>(chunk);
-	}
+    uint32_t remaining = now - m_LastAudioUpdate;
+    while (remaining > 0) {
+        const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
+        RenderBasicAudioChunk(chunk);
+        m_LastAudioUpdate += static_cast<uint32_t>(chunk);
+        m_XGSCounter += static_cast<uint32_t>(chunk);
+        remaining -= static_cast<uint32_t>(chunk);
+    }
 }
 
 void APUDevice::RenderBasicAudioChunk(size_t frameCount)
@@ -3849,7 +3863,7 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 			 !diagnostics.decodedNonZero ||
 			 (diagnostics.framesRendered != 0 && diagnostics.offsetAdvance == 0 && diagnostics.pitchStep > 0.0));
 	};
-	for (size_t visited = 0; visited < 1024 && voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
+	for (size_t visited = 0; visited < 16384 && voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
 		uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
 			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
