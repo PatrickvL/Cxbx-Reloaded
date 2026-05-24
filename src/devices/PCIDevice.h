@@ -42,6 +42,7 @@
 #define PCI_CONFIG_BAR_3                0x1C
 #define PCI_CONFIG_BAR_4                0x20
 #define PCI_CONFIG_BAR_5                0x24
+#define PCI_CONFIG_NVIDIA_AC97_SPDIF_CONTROL 0x4C
 
 
 #define PCI_VENDOR_ID_NVIDIA			0x10DE
@@ -162,7 +163,11 @@ public:
 	uint32_t ReadConfigRegister(uint32_t reg);
 	void WriteConfigRegister(uint32_t reg, uint32_t value);
 protected:
+	bool RegisterConfigRegister(uint32_t reg, uint32_t defaultValue);
+	bool UpdateConfigRegister(uint32_t reg, uint32_t value);
+protected:
 	std::map<int, PCIBar> m_BAR;
+	std::map<uint32_t, uint32_t> m_ConfigRegisters;
 	uint16_t m_DeviceId;
 	uint16_t m_VendorId;
 	uint32_t m_RevisionAndClassCode = 0; // Revision ID (8) | Prog IF (8) | Subclass (8) | Class (8)
