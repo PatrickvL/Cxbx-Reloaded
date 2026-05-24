@@ -33,6 +33,7 @@
 #include <dsound.h>
 #include "DirectSoundGlobal.hpp" // Global variables
 #include <common/Timer.h>
+#include "core\hle\Patches.hpp"   // GetPatchedFunctionTrampoline
 
 #include "Logging.h"
 #include "DirectSoundLogging.hpp"
@@ -125,6 +126,26 @@ xbox::hresult_xt WINAPI xbox::EMUPATCH(DirectSoundCreate)
 
     // Set this flag when this function is called
     g_bDSoundCreateCalled = TRUE;
+
+    // Call the original XDK DirectSoundCreate to initialize CMcpxAPU,
+    // allocate the voice descriptor table in contiguous memory, and write
+    // VPVADDR via MMIO.  This is required for AdvanceVoiceCursors() in the
+    // APU device to find and process voice descriptors.
+    static bool s_origCalled = false;
+    if (!s_origCalled) {
+        s_origCalled = true;
+        void* trampoline = GetPatchedFunctionTrampoline("DirectSoundCreate");
+        if (trampoline) {
+            typedef HRESULT (WINAPI *OrigFn)(LPVOID, LPDIRECTSOUND8*, LPUNKNOWN);
+            auto origFn = reinterpret_cast<OrigFn>(trampoline);
+            IDirectSound8* pOrigDS = nullptr;
+            origFn(nullptr, &pOrigDS, nullptr);
+            // The original CDirectSound object is not needed — the APU global
+            // state (VPVADDR, voice table) has been set up by CMcpxAPU::Initialize.
+            // pOrigDS->Release() would free the XDK CDirectSound but we keep it
+            // alive so CMcpxBuffer calls can reach the APU through its global state.
+        }
+    }
 
     if (!initialized || g_pDSound8 == nullptr) {
         hRet = DirectSoundCreate8(&g_XBAudio.adapterGUID, &g_pDSound8, nullptr);
@@ -466,57 +487,6 @@ void dsound_worker()
 {
     // Testcase: Gauntlet Dark Legacy, if Sleep(1) then intro videos start to starved often
     // unless console is open with logging enabled. This is the cause of stopping intro videos often.
-
-    // GPU completion: D3D_KickOffAndWaitForIdle spins waiting for
-    // *device[0x34] >= device[0x30] (the completion counter reaches
-    // the push-buffer kick count).  Since the LLE NV2A semaphore write
-    // isn't fully emulated, manually set the counter.
-    {
-        void** ppDevice = reinterpret_cast<void**>(0x001A1AD0); // D3D_g_pDevice
-        void* pDevice = *ppDevice;
-        if (pDevice != nullptr && (uintptr_t)pDevice >= 0x100000) {
-            uint32_t kickCount = *reinterpret_cast<uint32_t*>((uint8_t*)pDevice + 0x30);
-            volatile uint32_t** ppCounter = reinterpret_cast<volatile uint32_t**>(
-                (uint8_t*)pDevice + 0x34);
-            volatile uint32_t* pCounter = *ppCounter;
-            if (pCounter != nullptr && (uintptr_t)pCounter >= 0x100000) {
-                // Set the completion counter to match the kick count (or exceed it)
-                if (kickCount > 0 && *pCounter < kickCount) {
-                    *pCounter = kickCount;
-                }
-            }
-        }
-    }
-
-    // Advance ALL voice descriptor CBOs found in the game's audio struct area
-    // around the known event address.  This is the hardware-equivalent of the
-    // real APU continuously advancing CBO as audio samples are consumed.
-    // Games that bypass GetCurrentPosition and poll CBO directly will see
-    // constant progress on every active voice, regardless of which struct
-    // offset the loading screen references.
-    {
-        static DWORD s_lastTick = 0;
-        DWORD now = GetTickCount();
-        if (s_lastTick == 0) { s_lastTick = now; }
-        DWORD elapsed = now - s_lastTick;
-        if (elapsed > 0) {
-            s_lastTick = now;
-            // Scan the 16 KB before the event for DWORDs pointing to contiguous
-            // memory — each is a potential voice descriptor CBO pointer.
-            DWORD* scanStart = reinterpret_cast<DWORD*>(0x001A44E4 - 0x4000);
-            DWORD* scanEnd   = reinterpret_cast<DWORD*>(0x001A44E4);
-            for (DWORD* p = scanStart; p < scanEnd; p++) {
-                DWORD val = *p;
-                if (val >= 0x80000000 && val < 0x84000000 && (val & 0x3) == 0) {
-                    volatile uint32_t* pCbo = reinterpret_cast<volatile uint32_t*>(val);
-                    uint32_t cbo = *pCbo;
-                    if (cbo >= 0x100 && cbo < 0x1000000) {
-                        *pCbo = cbo + elapsed * 192;
-                    }
-                }
-            }
-        }
-    }
 
     // Signal the KEVENT associated with the detected play cursor so that
     // KeWaitForSingleObject-based game threads continuously re-check their
