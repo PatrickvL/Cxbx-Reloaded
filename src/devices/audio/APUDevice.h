@@ -180,6 +180,7 @@ private:
 	void SetVoiceNextHandle(uint32_t voiceHandle, uint32_t nextHandle);
 	void UnlinkVoiceFromList(uint32_t topRegister, uint32_t voiceHandle);
 	void UnlinkVoiceFromLists(uint32_t voiceHandle);
+	void ClearStoppedVoiceState(uint32_t voiceHandle);
 	bool IsVoiceLocked(uint32_t voiceHandle) const;
 	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
 	bool IsVoiceActiveHinted(uint32_t voiceHandle) const;

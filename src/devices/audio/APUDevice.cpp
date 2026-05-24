@@ -1814,11 +1814,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	}
 	case NV1BA0_PIO_VOICE_OFF: {
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
-		SetVoiceActiveHint(voiceHandle, false);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
-		SetVoiceNotifierEnvelopeState(voiceHandle,
-			static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
+		ClearStoppedVoiceState(voiceHandle);
 		UnlinkVoiceFromLists(voiceHandle);
 		// Sample the guest-visible offset register before clearing the local playback cache so
 		// the completion notifier reflects the position software last programmed/observed.
@@ -2605,6 +2601,17 @@ void APUDevice::UnlinkVoiceFromLists(uint32_t voiceHandle)
 	UnlinkVoiceFromList(NV_PAPU_TVL3D, voiceHandle);
 	UnlinkVoiceFromList(NV_PAPU_TVLMP, voiceHandle);
 	SetVoiceNextHandle(voiceHandle, APU_VP_VOICE_MAX_HANDLE);
+}
+
+void APUDevice::ClearStoppedVoiceState(uint32_t voiceHandle)
+{
+	SetVoiceActiveHint(voiceHandle, false);
+	SetVoiceLocked(voiceHandle, false);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
+	SetVoiceNotifierEnvelopeState(voiceHandle,
+		static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
 }
 
 bool APUDevice::IsVoiceLocked(uint32_t voiceHandle) const
@@ -4489,12 +4496,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	auto terminateVoiceWithStatus = [&](uint8_t completionStatus) {
 		shouldSkipStateWrites = true;
 		playbackState.previewDecodeFailures = 0;
-		SetVoiceActiveHint(voiceHandle, false);
-		SetVoiceLocked(voiceHandle, false);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
-		SetVoiceNotifierEnvelopeState(voiceHandle,
-			static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
+		ClearStoppedVoiceState(voiceHandle);
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
 		UnlinkVoiceFromLists(voiceHandle);
