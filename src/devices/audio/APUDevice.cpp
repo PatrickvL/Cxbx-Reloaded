@@ -1229,6 +1229,25 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		}
 	}
 
+	// User Method FIFO: when the kernel writes a method to 0x1400-0x1500,
+	// consume it immediately by dispatching through ConsumeVPMethod.
+	if (addr >= 0x1400 && addr < 0x1500) {
+		WriteRegister(addr, value, size);
+		// Even-numbered slots carry the method offset; odd slots carry the param.
+		// After writing the method, wait for the param write (next 4 bytes) then process.
+		uint32_t slot = (addr - 0x1400) & ~0x7;
+		if (slot <= 0xF8) {
+			uint32_t methodOffset = GetRegister32(0x1400 + slot);
+			uint32_t paramValue   = GetRegister32(0x1404 + slot);
+			if (methodOffset != 0) {
+				ConsumeVPMethod(methodOffset, paramValue, sizeof(uint32_t));
+				// Clear so a zero write signals "consumed"
+				SetRegister32(0x1400 + slot, 0);
+			}
+		}
+		return;
+	}
+
 	WriteRegister(addr, value, size);
 	const uint32_t registerBase = addr & ~0x3u;
 	if (IsAPUWordAddressRegister(registerBase)) {
