@@ -50,7 +50,6 @@ constexpr uint32_t APU_VP_BASE = 0x20000;
 constexpr uint32_t APU_VP_SIZE = 0x10000;
 constexpr uint32_t APU_VP_FREE = 0x10;
 constexpr uint32_t APU_VP_FIFO_CAPACITY = 0x80;
-constexpr uint32_t APU_VP_STATUS_EMPTY = 0x80;
 constexpr uint32_t APU_VP_VOICE_MAX_HANDLE = 0xFFFF;
 
 constexpr uint32_t APU_GP_BASE = 0x30000;
@@ -1519,8 +1518,11 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 	UpdateVPFifo();
 
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
+		const uint32_t freeSlots = m_VPFifoLevel >= APU_VP_FIFO_CAPACITY
+			? 0u
+			: (APU_VP_FIFO_CAPACITY - m_VPFifoLevel);
 		return ReadRegisterFragment(
-			APU_VP_STATUS_EMPTY,
+			freeSlots,
 			addr - APU_VP_FREE,
 			size);
 	}
@@ -5091,10 +5093,10 @@ void APUDevice::UpdateVPFifo()
 
 void APUDevice::RefreshVPStatus()
 {
-	// Preserve the older guest-visible VP_FREE=empty behavior from the dx11-sync
-	// branch until the emulated FIFO semantics are accurate enough to avoid
-	// voice-method polling hangs.
-	SetRegister32(APU_VP_BASE + APU_VP_FREE, APU_VP_STATUS_EMPTY);
+	const uint32_t freeSlots = m_VPFifoLevel >= APU_VP_FIFO_CAPACITY
+		? 0u
+		: (APU_VP_FIFO_CAPACITY - m_VPFifoLevel);
+	SetRegister32(APU_VP_BASE + APU_VP_FREE, freeSlots);
 }
 
 void APUDevice::RefreshInterruptStatus()
