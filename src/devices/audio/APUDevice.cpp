@@ -2244,6 +2244,15 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 				NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		}
 		ClearHRTFFilterState(selectedHandle);
+		// Reset SVF (state-variable filter) state on voice activation, matching
+		// xemu's voice_reset_filters() which clears all filter history.
+		if (selectedHandle < m_VPLowPassState.size()) {
+			m_VPLowPassState[selectedHandle] = {};
+		}
+		// Set NEW_VOICE flag so the first frame can detect a freshly triggered voice
+		// (xemu sets this in voice_on; cleared unconditionally at the start of voice_get_samples).
+		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
+			NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 1);
 		InitializeVoiceEnvelopes(selectedHandle, value);
 		m_LoggedEmptyVoiceTableDiagnostics = false;
 		return;
@@ -2260,6 +2269,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			m_VPPlaybackState[voiceHandle] = PlaybackState{};
 		}
 		ClearHRTFFilterState(voiceHandle);
+		if (voiceHandle < m_VPLowPassState.size()) {
+			m_VPLowPassState[voiceHandle] = {};
+		}
 		m_LoggedEmptyVoiceTableDiagnostics = false;
 		return;
 	}
@@ -5715,19 +5727,20 @@ void APUDevice::RefreshInterruptStatus()
 {
 	uint32_t status = GetRegister32(NV_PAPU_ISTS) & ~NV_PAPU_ISTS_GINTSTS;
 
-	// FETINTSTS is asserted whenever FEMETHMODE is non-zero (HALTED or TRAPPED).
-	// This matches xemu's update_irq which unconditionally sets this bit based on
-	// current FE state. The guest clears FETINTSTS by writing to ISTS; if the FE
-	// is still halted/trapped on the next refresh, it will be re-asserted.
+	// FETINTSTS is asserted only when FEMETHMODE == TRAPPED (0xE0).
+	// This matches xemu's update_irq which checks for the TRAPPED mask specifically.
+	// HALTED mode (0x80) does NOT assert FETINTSTS in hardware.
 	const uint32_t feMode = GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE;
-	if (feMode != NV_PAPU_FECTL_FEMETHMODE_FREE) {
+	if (feMode == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
 		status |= NV_PAPU_ISTS_FETINTSTS;
 	}
 
-	// GINTSTS is the hardware summary bit — set it whenever any pending
-	// interrupt source is also enabled in IEN.  Unlike real hardware
-	// behaviour seen in many DSound titles, IEN bit 0 does NOT gate GINT.
-	if ((status & GetRegister32(NV_PAPU_IEN)) != 0) {
+	// GINTSTS is the hardware summary bit. Per xemu's update_irq, it requires
+	// IEN bit 0 (GINTSTS enable) to be set, AND at least one other pending+enabled
+	// interrupt source in ISTS. This two-gate approach matches real hardware.
+	const uint32_t ien = GetRegister32(NV_PAPU_IEN);
+	if ((ien & NV_PAPU_ISTS_GINTSTS) != 0 &&
+		((status & ~NV_PAPU_ISTS_GINTSTS) & ien) != 0) {
 		status |= NV_PAPU_ISTS_GINTSTS;
 	}
 
