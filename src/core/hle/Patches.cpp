@@ -32,6 +32,7 @@
 #include "core\hle\JVS\JVS.h"
 #include "Patches.hpp"
 #include "Intercept.hpp"
+#include "core\hle\DSOUND\DSoundHLE.h"
 
 #include <map>
 #include <unordered_map>
@@ -46,6 +47,7 @@ const uint32_t PATCH_ALWAYS = 1 << 0;
 const uint32_t PATCH_HLE_D3D = 1 << 1;
 const uint32_t PATCH_HLE_OHCI = 1 << 2;
 const uint32_t PATCH_IS_FIBER = 1 << 3;
+const uint32_t PATCH_HLE_DSOUND = 1 << 4;
 
 #define PATCH_ENTRY(Name, Func, Flags) \
     { Name, xbox_patch_t { (void *)&Func, Flags} }
@@ -409,6 +411,10 @@ std::map<const std::string, const xbox_patch_t> g_PatchTable = {
 	PATCH_ENTRY("JvsScSendMidi2", xbox::EMUPATCH(JvsScSendMidi), PATCH_ALWAYS),
 	PATCH_ENTRY("JvsScSendRs323c", xbox::EMUPATCH(JvsScSendRs323c), PATCH_ALWAYS),
 	PATCH_ENTRY("JvsScSendRs323c2", xbox::EMUPATCH(JvsScSendRs323c), PATCH_ALWAYS),
+
+	// DirectSound HLE bridge – prevents the native DoWork from
+	// spinning in a tight loop when there is no audio work.
+	PATCH_ENTRY("DirectSoundDoWork", xbox::EMUPATCH(DirectSoundDoWork), PATCH_HLE_DSOUND),
 };
 
 std::unordered_map<std::string, subhook::Hook> g_FunctionHooks;
