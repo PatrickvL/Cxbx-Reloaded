@@ -1652,6 +1652,18 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 	}
 
 	WriteRegister(APU_VP_BASE + addr, value, size);
+
+	// VP voice-parameter window at offsets 0x800-0xFFF maps directly
+	// to the current voice's parameter block so that games can write
+	// buffer addresses and positions without going through the method
+	// dispatcher (ConsumeVPMethod only handles recognised methods).
+	if (addr >= 0x800 && addr < 0x1000 && size == sizeof(uint32_t)) {
+		const uint32_t voiceHandle = GetRegister32(NV_PAPU_FECV);
+		if (voiceHandle < APU_VP_VOICE_MAX_HANDLE) {
+			WriteVoiceMask(voiceHandle, addr - 0x800, 0xFFFFFFFF, value);
+		}
+	}
+
 	ConsumeVPMethod(addr, value, size);
 	if (m_VPFifoLevel < APU_VP_FIFO_CAPACITY) {
 		++m_VPFifoLevel;
