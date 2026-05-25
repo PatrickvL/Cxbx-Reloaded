@@ -972,16 +972,18 @@ void APUDevice::InitializeDSP()
 		if (!std::filesystem::exists(fwPath)) {
 			fwPath = "mcpx_1.0.bin"; // try CWD
 		}
-		std::ifstream fwFile(fwPath, std::ios::binary);
+		std::ifstream fwFile(fwPath, std::ios::binary | std::ios::ate);
 		if (fwFile.is_open()) {
-			EmuLog(LOG_LEVEL::INFO, "Loading MCPX DSP firmware from %s", fwPath.string().c_str());
-			const size_t pramWords = 0x800; // 2048 words
+			const size_t fileSize = static_cast<size_t>(fwFile.tellg());
+			fwFile.seekg(0);
+			const size_t words = std::min<size_t>(fileSize / 4, 0x800); // up to 2048 words
+			EmuLog(LOG_LEVEL::INFO, "Loading MCPX DSP firmware from %s (%zu bytes, %zu words)",
+				fwPath.string().c_str(), fileSize, words);
 			for (auto* dsp : {m_GPDsp, m_EPDsp}) {
 				if (dsp == nullptr) continue;
-				for (size_t i = 0; i < pramWords; ++i) {
+				for (size_t i = 0; i < words; ++i) {
 					uint8_t buf[4]{};
 					if (!fwFile.read(reinterpret_cast<char*>(buf), 4)) {
-						EmuLog(LOG_LEVEL::WARNING, "MCPX firmware: EOF at word %zu", i);
 						break;
 					}
 					uint32_t word = buf[0] | (buf[1] << 8) |
