@@ -1396,6 +1396,13 @@ static void CxbxrKrnlInitHacks()
 		bool more_work;
 		bool isr_fired_this_iteration;
 		bool first_iteration = true;
+		// Limit back-to-back iterations to prevent tight-looping when
+		// interrupts stay pending (level-triggered). On real hardware,
+		// the ISR runs once per assertion edge or after IRQL drop; it
+		// doesn't spin indefinitely while the line is held. Allow a few
+		// retries to catch new work that arrived during ISR/DPC, then
+		// break out and wait for the next natural wake (VBlank/timer).
+		int loop_budget = 4;
 		do {
 			more_work = false;
 			isr_fired_this_iteration = false;
@@ -1522,7 +1529,7 @@ static void CxbxrKrnlInitHacks()
 					more_work = true;
 				}
 			}
-		} while (more_work);
+		} while (more_work && --loop_budget > 0);
 
 		// Check for present stalls — if no present has arrived in 5 seconds,
 		// dump all thread stacks to diagnose what's blocking progress.
