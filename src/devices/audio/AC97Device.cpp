@@ -139,6 +139,8 @@ constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_O
 // does not immediately underrun the OpenAL queue.
 constexpr uint32_t AC97_STARTUP_BUFFER_CHUNKS = 4;
 constexpr uint32_t AC97_STARTUP_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES * AC97_STARTUP_BUFFER_CHUNKS;
+// After an underrun, restart quickly with a single buffer to minimize audible gaps.
+constexpr uint32_t AC97_RESTART_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES;
 constexpr uint32_t AC97_MAX_BUFFERED_AUDIO_BYTES = AC97_MAX_QUEUED_AUDIO_BYTES * 2;
 constexpr uint16_t AC97_VOLUME_MUTE = 0x8000;
 constexpr uint16_t AC97_VOLUME_LEFT_MASK = 0x1F00;
@@ -750,6 +752,7 @@ bool AC97Device::EnsureOutputDevice()
 	m_QueuedAudioBytes = 0;
 	m_StagedOutputFrames.clear();
 	m_LastOutputSourceState = -1;
+	m_OutputHasPlayed = false;
 	m_LoggedPlaybackStartFailure = false;
 	m_OutputTestBeepPlayed = false;
 	m_SpatialBufferIndex.clear();
@@ -1099,6 +1102,7 @@ void AC97Device::ResetOutputStream()
 	m_QueuedAudioBytes = 0;
 	m_StagedOutputFrames.clear();
 	m_LastOutputSourceState = -1;
+	m_OutputHasPlayed = false;
 	m_LoggedPlaybackStartFailure = false;
 	ResetSpatialOutput();
 }
@@ -1623,7 +1627,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	while (!m_FreeOutputBuffers.empty() && !m_StagedOutputFrames.empty()) {
 		const size_t stagedFrameCount = m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS;
 		const size_t minimumFramesToQueue = (m_QueuedAudioBytes == 0)
-			? static_cast<size_t>(AC97_STARTUP_BUFFER_FRAMES)
+			? static_cast<size_t>(m_OutputHasPlayed ? AC97_RESTART_BUFFER_FRAMES : AC97_STARTUP_BUFFER_FRAMES)
 			: static_cast<size_t>(AC97_STREAM_BUFFER_FRAMES);
 		if (stagedFrameCount < minimumFramesToQueue) {
 			break;
@@ -1743,6 +1747,7 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 				"AC97 OpenAL source entered AL_PLAYING, queuedBuffers=%d processedBuffers=%d queuedBytes=%u",
 				postQueued, postProcessed, m_QueuedAudioBytes);
 			m_LoggedPlaybackStartFailure = false;
+			m_OutputHasPlayed = true;
 		}
 	} else if (state == AL_PLAYING) {
 		m_LoggedPlaybackStartFailure = false;
