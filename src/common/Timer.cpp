@@ -168,17 +168,12 @@ static void dispatch_non_periodic_events()
 // the earliest deadline (relative to HostQPCStartTime).
 static uint64_t dispatch_periodic_events(uint64_t now)
 {
-	// AC97 ServiceAudio is called from apu_tick (if present) or directly
-	if (g_AC97 != nullptr) {
-		g_AC97->ServiceAudio();
-	}
-
 	std::array<uint64_t, 5> deadlines = {
 		pit_tick(now),
 		g_NV2A->vblank_tick(now),
 		g_NV2A->ptimer_tick(now),
 		g_USB0->m_HostController->OHCI_tick(now),
-		g_APU != nullptr ? g_APU->apu_tick(now) : UINT64_MAX
+		g_APU->apu_tick(now)
 	};
 	return *std::min_element(deadlines.begin(), deadlines.end());
 }
