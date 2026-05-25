@@ -1934,11 +1934,6 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 {
 	UpdateVPFifo();
 
-	// XGSCNT (VP offset 0x0C) — return the live sample counter
-	if (addr >= 0x0C && addr < 0x0C + sizeof(uint32_t)) {
-		return ReadRegisterFragment(m_XGSCounter, addr - 0x0C, size);
-	}
-
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
 		return ReadRegisterFragment(
 			GetVPFifoFreeSlots(),
