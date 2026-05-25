@@ -1973,23 +1973,24 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 				// via the VP parameter window (common in Bink/DirectSound
 				// patterns where only voice 0 gets a buffer address).
 				uint32_t bufBase = 0;
-				ReadVoiceMask(vh, NV_PAVS_VOICE_CFG_BUF_BASE, 0xFFFFFFFF, bufBase);
+				ReadVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, bufBase);
 				if (bufBase == 0) {
 					for (uint32_t donor = 0; donor < MAX_VOICE_HANDLES; ++donor) {
 						uint32_t donorBase = 0;
-						if (ReadVoiceMask(donor, NV_PAVS_VOICE_CFG_BUF_BASE,
-							0xFFFFFFFF, donorBase) && donorBase != 0) {
+						if (ReadVoiceMask(donor, NV_PAVS_VOICE_CUR_PSL_START,
+							NV_PAVS_VOICE_CUR_PSL_START_BA, donorBase) && donorBase != 0) {
 							uint32_t end = 0, cur = 0;
-							ReadVoiceMask(donor, NV_PAVS_VOICE_CFG_BUF_EBO,
-								0xFFFFFFFF, end);
-							ReadVoiceMask(donor, NV_PAVS_VOICE_BUF_CBO,
-								0xFFFFFFFF, cur);
-							WriteVoiceMask(vh, NV_PAVS_VOICE_CFG_BUF_BASE,
-								0xFFFFFFFF, donorBase);
-							if (end != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_CFG_BUF_EBO,
-								0xFFFFFFFF, end);
-							if (cur != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_BUF_CBO,
-								0xFFFFFFFF, cur);
+							ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_NEXT,
+								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
+							ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_OFFSET,
+								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
+							WriteVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
+								NV_PAVS_VOICE_CUR_PSL_START_BA, donorBase);
+							if (end != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_NEXT,
+								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
+							if (cur != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
+								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
 							EmuLog(LOG_LEVEL::INFO,
 								"APU diag: voice %u inherited buffer from voice %u base=0x%08X",
 								vh, donor, donorBase);
