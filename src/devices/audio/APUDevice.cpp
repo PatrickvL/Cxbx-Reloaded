@@ -4749,7 +4749,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t lfoMod = 0;
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START, NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
 	// Buffer inheritance: if this voice has no buffer base, copy one
-	// from a donor voice that was configured via the VP window.
+	// from a donor voice or fall back to the VP register window.
 	if (baseAddress == 0) {
 		for (uint32_t donor = 0; donor < MAX_VOICE_HANDLES; ++donor) {
 			if (ReadVoiceMask(donor, NV_PAVS_VOICE_CUR_PSL_START,
@@ -4758,8 +4758,6 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 					NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
 				ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_OFFSET,
 					NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
-				// Persist the inherited values so subsequent
-				// frames see them.
 				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
 					NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
 				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT,
@@ -4768,6 +4766,16 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 					NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 				break;
 			}
+		}
+	}
+	// The 24-bit CUR_PSL_START_BA mask truncates the upper byte of
+	// KSEG0 addresses.  Retrieve the full 32-bit value from the VP
+	// register window at offset 0x808 where the game originally
+	// wrote it.
+	if (baseAddress != 0) {
+		const uint32_t vpReg = ReadRegister(APU_VP_BASE + 0x808, sizeof(uint32_t));
+		if (vpReg >= PHYSICAL_MAP_BASE && vpReg <= PHYSICAL_MAP_END) {
+			baseAddress = vpReg;
 		}
 	}
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
