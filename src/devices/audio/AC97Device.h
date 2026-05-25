@@ -168,6 +168,7 @@ class AC97Device : public PCIDevice {
 		bool m_HasSpatializeExtension = false;
 		bool m_LoggedPCMLoopbackFallback = false;
 		bool m_LoggedQueueFull = false;
+		bool m_OutputHasPlayed = false;
 		bool m_LoggedPlaybackStartFailure = false;
 		bool m_LoggedSpatialPlaybackFailure = false;
 };

@@ -484,7 +484,9 @@ XBSYSAPI EXPORTNUM(163) xbox::void_xt FASTCALL xbox::KiUnlockDispatcherDatabase
 
 	// Xbox has a single CPU, so DpcRoutineActive is a system-wide flag.
 	// Skip dispatch if DPCs are already active (prevents re-entrant dispatch).
-	if (!g_DpcRoutineActive) {
+	// Also check per-thread DpcRoutineActive for the background DPC thread
+	// which doesn't use g_DpcRoutineActive.
+	if (!g_DpcRoutineActive && !KeGetCurrentPrcb()->DpcRoutineActive) {
 		HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 	}
 

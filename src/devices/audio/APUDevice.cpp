@@ -1170,6 +1170,7 @@ void APUDevice::Reset()
 	// Initialize FEUFIFOCTL with head=31, tail=0 so the first kernel write
 	// goes to slot 0 (head wraps 31→0), matching our tail=0 read position.
 	SetRegister32(NV_PAPU_FEUFIFOCTL, (31 << 8) | (0 << 16));
+	SetRegister32(NV_PAPU_SECTL, 0x00000008);
 	// VPVADDR sentinel — VoiceMask functions use internal shadow table
 	SetRegister32(NV_PAPU_VPVADDR, 1);
 	SetRegister32(NV_PAPU_VPSGEADDR, 0);
@@ -1285,8 +1286,12 @@ void APUDevice::ProcessVPFrame()
 		}
 	}
 
-	// Advance time by one VP frame (32 samples)
-	const size_t frameSamples = NUM_SAMPLES_PER_FRAME;
+	// Advance time by one full EP frame (8 VP sub-frames = 256 samples @ 48kHz).
+	// The EP tick fires every 5.333ms; at 48kHz that's 256 samples of real-time
+	// audio progress. Processing only 1 VP sub-frame (32 samples) per tick would
+	// yield an effective 6kHz rate, causing the game's dsound DPC to never see
+	// sufficient CBO/XGSCNT advancement and stall the present thread.
+	const size_t frameSamples = NUM_SAMPLES_PER_FRAME * EP_FRAME_DIVIDER;
 
 	// Run the audio chunk rendering
 	RenderBasicAudioChunk(frameSamples);
@@ -1379,6 +1384,20 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 	if (addr >= NV_PAPU_ISTS && addr < NV_PAPU_ISTS + sizeof(uint32_t)) {
 		RefreshInterruptStatus();
 		return ReadRegisterFragment(GetRegister32(NV_PAPU_ISTS), addr - NV_PAPU_ISTS, size);
+	}
+
+	// Hide the VPVADDR sentinel from guest reads.  Internally we store 1 to
+	// distinguish "not yet initialized" from a real physical address, but the
+	// game's native code reads VPVADDR via MMIO and dereferences it as a
+	// pointer to the voice table.  Exposing 1 causes a page fault in guest
+	// code → SEH dispatch → crash.  Return 0 so the game sees "no voice
+	// table yet" and skips the dereference.
+	if (addr >= NV_PAPU_VPVADDR && addr < NV_PAPU_VPVADDR + sizeof(uint32_t)) {
+		uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+		if (vpvaddr <= 1) {
+			return 0;
+		}
+		return ReadRegisterFragment(vpvaddr, addr - NV_PAPU_VPVADDR, size);
 	}
 
 	return ReadRegister(addr, size);
@@ -1578,7 +1597,6 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		}
 	}
 
-	// User Method FIFO: when the kernel writes a method to 0x1400-0x1500,
 	// User Method FIFO: process methods when the kernel writes FEUFIFOCTL
 	// (0x1340) with count > 0.  At that point the method and param have
 	// both been written to the FIFO slots at 0x1400-0x1500.  Consume all

@@ -506,9 +506,16 @@ void ExecuteDpcQueue(bool inline_dispatch)
 		return;
 	}
 
-	// Are there entries in the DpqQueue?
-	while (!IsListEmpty(&(g_DpcData.DpcQueue)))
+	// Drain the queue until empty, matching the working upstream dx11 repo
+	// behaviour. DPCs that re-queue themselves (poll-then-signal pattern)
+	// fire repeatedly within the same pass until they complete. A safety
+	// budget prevents truly pathological infinite re-queue loops from
+	// locking the system — if hit, remaining DPCs fire on the next wake.
+	ULONG dispatchBudget = 64;
+
+	while (dispatchBudget > 0 && !IsListEmpty(&(g_DpcData.DpcQueue)))
 	{
+		dispatchBudget--;
 		// Extract the head entry and retrieve the containing KDPC pointer for it:
 		pkdpc = CONTAINING_RECORD(RemoveHeadList(&(g_DpcData.DpcQueue)), xbox::KDPC, DpcListEntry);
 		// Mark it as no longer linked into the DpcQueue
@@ -534,8 +541,10 @@ void ExecuteDpcQueue(bool inline_dispatch)
 		KeGetCurrentPrcb()->DpcRoutineActive = FALSE;
 	}
 
-	// NOTE: IsDpcPending is now cleared at the start of the DPC loop iteration
-	// (in CxbxKrnlMain) to prevent lost-wake races. Do NOT clear it here.
+	// NOTE: Do NOT re-signal IsDpcPending here when DPCs remain in the queue.
+	// Remaining DPCs (beyond the safety budget) will be picked up on the next
+	// natural wake event (VBlank at 60 Hz, timer expiration, or another
+	// thread's KeInsertQueueDpc call).
 
 	LeaveCriticalSection(&(g_DpcData.Lock));
 }
@@ -1485,10 +1494,21 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 			ExecuteDpcQueue(true);
 			// Release the reservation now that inline dispatch is complete.
 			g_DpcRoutineActive = FALSE;
-		} else {
-			// Signal the background DPC thread to dispatch later
+		} else if (!Pcr->PrcbData.DpcRoutineActive) {
+			// Signal the background DPC thread to dispatch later.
+			// Skip this when we're already inside a DPC routine — on real
+			// Xbox, a DPC that re-queues itself fires on the NEXT hardware
+			// interrupt (VBlank/timer), not immediately. Setting the pending
+			// DISPATCH_LEVEL bit here would cause KfLowerIrql (called by
+			// KeSetEvent/KiUnlockDispatcherDatabase inside the DPC routine)
+			// to re-dispatch the DPC before the current one even finishes,
+			// creating a tight loop.
 			HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 		}
+		// else: DPC was re-queued from within a DPC routine. Leave it in
+		// the queue — it will fire on the next natural dispatch opportunity
+		// (VBlank, timer expiration, or another KeInsertQueueDpc call from
+		// non-DPC context).
 	}
 	else {
 		LeaveCriticalSection(&(g_DpcData.Lock));
