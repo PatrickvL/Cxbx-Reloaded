@@ -1376,6 +1376,20 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 		return ReadRegisterFragment(GetRegister32(NV_PAPU_ISTS), addr - NV_PAPU_ISTS, size);
 	}
 
+	// Hide the VPVADDR sentinel from guest reads.  Internally we store 1 to
+	// distinguish "not yet initialized" from a real physical address, but the
+	// game's native code reads VPVADDR via MMIO and dereferences it as a
+	// pointer to the voice table.  Exposing 1 causes a page fault in guest
+	// code → SEH dispatch → crash.  Return 0 so the game sees "no voice
+	// table yet" and skips the dereference.
+	if (addr >= NV_PAPU_VPVADDR && addr < NV_PAPU_VPVADDR + sizeof(uint32_t)) {
+		uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+		if (vpvaddr <= 1) {
+			return 0;
+		}
+		return ReadRegisterFragment(vpvaddr, addr - NV_PAPU_VPVADDR, size);
+	}
+
 	return ReadRegister(addr, size);
 }
 
