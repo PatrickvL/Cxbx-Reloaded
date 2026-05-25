@@ -1958,6 +1958,19 @@ bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t 
 
 uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 {
+	// Log first 20 GetCaps reads for diagnosis
+	static int vpDiag = 0;
+	if (vpDiag < 20 && addr >= 0x0C && addr < 0x24) {
+		uint32_t r = GetRegister32(APU_VP_BASE + addr);
+		fprintf(stderr, "[APU-R] VPRead 0x%X (FEMAX%s) = 0x%08X\n",
+			addr,
+			addr == 0x0C ? "V" : addr == 0x10 ? "TV" : addr == 0x14 ? "HT" :
+			addr == 0x18 ? "SESSL" : addr == 0x1C ? "SESGE" : addr == 0x20 ? "MB" : "?",
+			r);
+		fflush(stderr);
+		vpDiag++;
+	}
+
 	UpdateVPFifo();
 
 	// VP FIFO free slots at offset 0x10 — but the XDK also defines FEMAXTV
@@ -1965,9 +1978,13 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 	// examining the register value), return the stored value so GetCaps
 	// readback succeeds.  FIFO_FREE is still available through RefreshVPStatus.
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
-		uint32_t femaxTv = GetRegister32(APU_VP_BASE + addr);
-		if (femaxTv != 0) {
-			return ReadRegisterFragment(femaxTv, addr - APU_VP_FREE, size);
+		// Return the stored value if the guest has written (FEMAXTV readback)
+		// otherwise return the real FIFO free slot count.
+		static bool s_written = false;
+		uint32_t stored = GetRegister32(APU_VP_BASE + addr);
+		if (stored != 0) { s_written = true; }
+		if (s_written) {
+			return ReadRegisterFragment(stored, addr - APU_VP_FREE, size);
 		}
 		return ReadRegisterFragment(GetVPFifoFreeSlots(), addr - APU_VP_FREE, size);
 	}
