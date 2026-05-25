@@ -1964,81 +1964,17 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		// Stream Engine renders it.  Matches Bink/DirectSound
 		// patterns that use lock/configure/unlock to finalise voices.
 		if (!locking && wasLocked && vh < APU_VP_VOICE_MAX_HANDLE) {
-			static bool bufferScanned;
+			const bool wasActive = (GetRegister32(NV_PAPU_FECV) & NV1BA0_PIO_VOICE_ON_HANDLE) == vh
+				&& IsVoiceActiveHinted(vh);
 			uint32_t state = 0;
 			if (ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 				NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state) &&
 				(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
-				// Only scan for donor buffers on the first activation
-				// to avoid O(n) scanning on every lock/unlock cycle.
-				uint32_t bufBase = 0;
-				ReadVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
-					NV_PAVS_VOICE_CUR_PSL_START_BA, bufBase);
-				if (bufBase == 0 && !bufferScanned) {
-					bufferScanned = true;
-					for (uint32_t donor = 0; donor < MAX_VOICE_HANDLES; ++donor) {
-						uint32_t donorBase = 0;
-						if (ReadVoiceMask(donor, NV_PAVS_VOICE_CUR_PSL_START,
-							NV_PAVS_VOICE_CUR_PSL_START_BA, donorBase) && donorBase != 0) {
-							uint32_t end = 0, cur = 0;
-							ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_NEXT,
-								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
-							ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_OFFSET,
-								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
-							WriteVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
-								NV_PAVS_VOICE_CUR_PSL_START_BA, donorBase);
-							if (end != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_NEXT,
-								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
-							if (cur != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
-								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
-							bufBase = donorBase;
-							EmuLog(LOG_LEVEL::INFO,
-								"APU diag: voice %u inherited buffer from voice %u base=0x%08X",
-								vh, donor, donorBase);
-							break;
-						}
-					}
-				}
-				// Fallback: read VP window register for buffer address
-				if (bufBase == 0) {
-					const uint32_t vpWindowBase = ReadRegister(
-						APU_VP_BASE + 0x808, sizeof(uint32_t));
-					if (vpWindowBase >= PHYSICAL_MAP_BASE &&
-						vpWindowBase <= PHYSICAL_MAP_END) {
-						WriteVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
-							NV_PAVS_VOICE_CUR_PSL_START_BA, vpWindowBase);
-						constexpr uint32_t DEFAULT_BUF_SIZE = 0x10000;
-						WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_NEXT,
-							NV_PAVS_VOICE_PAR_NEXT_EBO, DEFAULT_BUF_SIZE);
-						bufBase = vpWindowBase;
-						EmuLog(LOG_LEVEL::INFO,
-							"APU diag: voice %u received buffer base=0x%08X size=0x%X from VP register window",
-							vh, vpWindowBase, DEFAULT_BUF_SIZE);
-					}
-				}
-				// Activate the voice via the same path as VOICE_ON
 				UnlinkVoiceFromLists(vh);
 				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 					NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
 				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 					NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
-				{
-					static bool firstActivation;
-					if (!firstActivation) {
-						firstActivation = true;
-						uint32_t verify = 0;
-						ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
-							0xFFFFFFFF, verify);
-						uint32_t verifyBase = 0;
-						ReadVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
-							NV_PAVS_VOICE_CUR_PSL_START_BA, verifyBase);
-						EmuLog(LOG_LEVEL::WARNING,
-							"APU diag: post-activation voice %u state=0x%08X (active=%d) base=0x%08X",
-							vh, verify,
-							(verify & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0 ? 1 : 0,
-							verifyBase);
-					}
-				}
 				SetVoiceActiveHint(vh, true);
 				SetVoiceLocked(vh, false);
 				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
