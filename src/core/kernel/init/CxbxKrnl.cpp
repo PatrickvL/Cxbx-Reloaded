@@ -1489,6 +1489,16 @@ static void CxbxrKrnlInitHacks()
 				}
 			}
 
+			// Dispatch APU (audio) interrupt when the hardware asserts
+			// its GINT line.  DirectSound games wait for this interrupt
+			// after initialising the FE.
+			if (g_bEnableAllInterrupts &&
+			    HalSystemInterrupts[5].IsEnabled() &&
+			    HalSystemInterrupts[5].IsPending() &&
+			    EmuInterruptList[5] && EmuInterruptList[5]->Connected) {
+				HalSystemInterrupts[5].Trigger(EmuInterruptList[5]);
+			}
+
 			// Dispatch all pending DPCs. This thread is the primary DPC
 			// dispatcher — timer expirations (KiTimerExpiration) and other
 			// system DPCs rely on it. The combined g_DpcRoutineActive /
