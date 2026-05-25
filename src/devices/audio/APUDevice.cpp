@@ -1589,6 +1589,12 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 			uint32_t paramValue   = GetRegister32(0x1404 + tail * 8);
 			if (methodOffset != 0) {
 				ConsumeVPMethod(methodOffset, paramValue, sizeof(uint32_t));
+				// If the FE trapped, clear immediately so the game thread
+				// doesn't spin waiting for system_events to clear it.
+				uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+				if ((fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+					SetRegister32(NV_PAPU_FECTL, fectl & ~NV_PAPU_FECTL_FEMETHMODE);
+				}
 			}
 			SetRegister32(0x1400 + tail * 8, 0);
 			SetRegister32(0x1404 + tail * 8, 0);
@@ -2004,6 +2010,11 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 	}
 
 	ConsumeVPMethod(addr, value, size);
+	// Clear FE trap immediately — same reasoning as FEUFIFO path
+	uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+	if ((fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+		SetRegister32(NV_PAPU_FECTL, fectl & ~NV_PAPU_FECTL_FEMETHMODE);
+	}
 	if (m_VPFifoLevel < APU_VP_FIFO_CAPACITY) {
 		++m_VPFifoLevel;
 	}
