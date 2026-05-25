@@ -1218,10 +1218,8 @@ uint64_t APUDevice::apu_tick(uint64_t now_qpc)
 	ProcessVPFrame();
 	m_NextFrameQpc = now_qpc + m_EPFrameQpc;
 
-	// Wake AC97 if present
-	if (g_AC97 != nullptr) {
-		g_AC97->ServiceAudio();
-	}
+	// Advance AC97 audio output progress
+	g_AC97->ServiceAudio();
 
 	return m_NextFrameQpc;
 }
