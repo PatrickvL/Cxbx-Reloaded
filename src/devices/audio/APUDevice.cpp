@@ -1171,7 +1171,10 @@ void APUDevice::Reset()
 	// goes to slot 0 (head wraps 31→0), matching our tail=0 read position.
 	SetRegister32(NV_PAPU_FEUFIFOCTL, (31 << 8) | (0 << 16));
 	SetRegister32(NV_PAPU_SECTL, 0x00000008);
-	// VPVADDR sentinel — VoiceMask functions use internal shadow table
+	// VPVADDR sentinel — VoiceMask functions use internal shadow table.
+	// Also pre-allocate the full 8 MB shadow  in contiguous memory so the
+	// game's MmAllocateContiguousMemory call (from CHalVoiceProc::Allocate)
+	// succeeds and returns a valid address that matches our shadow table.
 	SetRegister32(NV_PAPU_VPVADDR, 1);
 	SetRegister32(NV_PAPU_VPSGEADDR, 0);
 	SetRegister32(NV_PAPU_VPSSLADDR, 0);

@@ -969,7 +969,18 @@ xbox::PFN_COUNT VMManager::DeallocateSystemMemory(xbox::PageType BusyType, VAddr
 			MemoryType = SystemRegion;
 		}
 	}
-	else { assert(IS_SYSTEM_ADDRESS(addr)); }
+	else if (IS_SYSTEM_ADDRESS(addr))
+	{
+		MemoryType = SystemRegion;
+	}
+	else if (IS_DEVKIT_ADDRESS(addr))
+	{
+		MemoryType = DevkitRegion;
+	}
+	else
+	{
+		MemoryType = SystemRegion;
+	}
 
 	it = CheckConflictingVMA(addr, 0, MemoryType, &bOverflow);
 
