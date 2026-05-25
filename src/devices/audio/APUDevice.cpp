@@ -1968,10 +1968,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			if (ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 				NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state) &&
 				(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
-				// If the voice has no buffer base configured, try to
-				// inherit one from another voice that was set up earlier
-				// via the VP parameter window (common in Bink/DirectSound
-				// patterns where only voice 0 gets a buffer address).
+				// If the voice has no buffer base, scan the voice table
+				// for a donor, or fall back to the VP-window-written
+				// address that the game stored in legacy VP registers.
 				uint32_t bufBase = 0;
 				ReadVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
 					NV_PAVS_VOICE_CUR_PSL_START_BA, bufBase);
@@ -1991,11 +1990,32 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
 							if (cur != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
 								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
+							bufBase = donorBase;
 							EmuLog(LOG_LEVEL::INFO,
 								"APU diag: voice %u inherited buffer from voice %u base=0x%08X",
 								vh, donor, donorBase);
 							break;
 						}
+					}
+				}
+				// Fallback: when no voice donor supplies a buffer base,
+				// use the guest-memory-backed register window value that
+				// the game wrote to VP offset 0x808 during early init
+				// (typically a KSEG0 pointer to the PCM buffer).
+				if (bufBase == 0) {
+					const uint32_t vpWindowBase = ReadRegister(
+						APU_VP_BASE + 0x808, sizeof(uint32_t));
+					if (vpWindowBase >= PHYSICAL_MAP_BASE &&
+						vpWindowBase <= PHYSICAL_MAP_END) {
+						WriteVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
+							NV_PAVS_VOICE_CUR_PSL_START_BA, vpWindowBase);
+						constexpr uint32_t DEFAULT_BUF_SIZE = 0x10000;
+						WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_NEXT,
+							NV_PAVS_VOICE_PAR_NEXT_EBO, DEFAULT_BUF_SIZE);
+						bufBase = vpWindowBase;
+						EmuLog(LOG_LEVEL::INFO,
+							"APU diag: voice %u received buffer base=0x%08X size=0x%X from VP register window",
+							vh, vpWindowBase, DEFAULT_BUF_SIZE);
 					}
 				}
 				// Activate the voice via the same path as VOICE_ON
