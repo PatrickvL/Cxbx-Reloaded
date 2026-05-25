@@ -1667,10 +1667,22 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 	// to the current voice's parameter block so that games can write
 	// buffer addresses and positions without going through the method
 	// dispatcher (ConsumeVPMethod only handles recognised methods).
+	// When the written value looks like a KSEG0 pointer, treat it as
+	// a buffer base address (NV_PAVS_VOICE_CUR_PSL_START) regardless
+	// of the VP window offset — games use this window for DMA buffer
+	// setup and the offset mapping differs between titles.
 	if (addr >= 0x800 && addr < 0x1000 && size == sizeof(uint32_t)) {
 		const uint32_t voiceHandle = GetRegister32(NV_PAPU_FECV);
 		if (voiceHandle < APU_VP_VOICE_MAX_HANDLE) {
-			WriteVoiceMask(voiceHandle, addr - 0x800, 0xFFFFFFFF, value);
+			if (value >= PHYSICAL_MAP_BASE && value <= PHYSICAL_MAP_END) {
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, value);
+				constexpr uint32_t DEFAULT_BUF_END = 0x10000;
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT,
+					NV_PAVS_VOICE_PAR_NEXT_EBO, DEFAULT_BUF_END);
+			} else {
+				WriteVoiceMask(voiceHandle, addr - 0x800, 0xFFFFFFFF, value);
+			}
 		}
 	}
 
@@ -1973,6 +1985,30 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			if (ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 				NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state) &&
 				(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+				// If buffer base is zero, scan for a donor voice
+				uint32_t bufBase = 0;
+				ReadVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, bufBase);
+				if (bufBase == 0) {
+					for (uint32_t donor = 0; donor < MAX_VOICE_HANDLES; ++donor) {
+						uint32_t donorBase = 0;
+						if (ReadVoiceMask(donor, NV_PAVS_VOICE_CUR_PSL_START,
+							NV_PAVS_VOICE_CUR_PSL_START_BA, donorBase) && donorBase != 0) {
+							uint32_t end = 0, cur = 0;
+							ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_NEXT,
+								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
+							ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_OFFSET,
+								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
+							WriteVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
+								NV_PAVS_VOICE_CUR_PSL_START_BA, donorBase);
+							if (end != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_NEXT,
+								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
+							if (cur != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
+								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
+							break;
+						}
+					}
+				}
 				UnlinkVoiceFromLists(vh);
 				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 					NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
