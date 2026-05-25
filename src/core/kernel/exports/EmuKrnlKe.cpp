@@ -506,9 +506,20 @@ void ExecuteDpcQueue(bool inline_dispatch)
 		return;
 	}
 
-	// Are there entries in the DpqQueue?
-	while (!IsListEmpty(&(g_DpcData.DpcQueue)))
+	// Snapshot the number of DPCs currently queued. Only drain this many per
+	// pass so that a DPC routine which re-inserts itself doesn't spin the loop
+	// forever — newly queued DPCs will fire on the next dispatch opportunity,
+	// matching real Xbox/NT KiRetireDpcList behaviour.
+	ULONG dpcCount = 0;
+	for (xbox::PLIST_ENTRY entry = g_DpcData.DpcQueue.Flink;
+	     entry != &g_DpcData.DpcQueue;
+	     entry = entry->Flink) {
+		dpcCount++;
+	}
+
+	while (dpcCount > 0 && !IsListEmpty(&(g_DpcData.DpcQueue)))
 	{
+		dpcCount--;
 		// Extract the head entry and retrieve the containing KDPC pointer for it:
 		pkdpc = CONTAINING_RECORD(RemoveHeadList(&(g_DpcData.DpcQueue)), xbox::KDPC, DpcListEntry);
 		// Mark it as no longer linked into the DpcQueue
@@ -532,6 +543,13 @@ void ExecuteDpcQueue(bool inline_dispatch)
 
 		EnterCriticalSection(&(g_DpcData.Lock));
 		KeGetCurrentPrcb()->DpcRoutineActive = FALSE;
+	}
+
+	// If DPCs were added during this pass (e.g. a DPC re-queued itself), signal
+	// the background DPC thread so they fire on the next dispatch opportunity.
+	if (!IsListEmpty(&(g_DpcData.DpcQueue))) {
+		g_DpcData.IsDpcPending.test_and_set();
+		g_DpcData.IsDpcPending.notify_one();
 	}
 
 	// NOTE: IsDpcPending is now cleared at the start of the DPC loop iteration
