@@ -102,8 +102,14 @@ constexpr uint32_t NV_PAPU_GPFADDR = 0x00002044;
 constexpr uint32_t NV_PAPU_EPSADDR = 0x00002048;
 constexpr uint32_t NV_PAPU_EPFADDR = 0x0000204C;
 constexpr uint32_t NV_PAPU_TVL2D = 0x00002054;
+constexpr uint32_t NV_PAPU_CVL2D = 0x00002058;
+constexpr uint32_t NV_PAPU_NVL2D = 0x0000205C;
 constexpr uint32_t NV_PAPU_TVL3D = 0x00002060;
+constexpr uint32_t NV_PAPU_CVL3D = 0x00002064;
+constexpr uint32_t NV_PAPU_NVL3D = 0x00002068;
 constexpr uint32_t NV_PAPU_TVLMP = 0x0000206C;
+constexpr uint32_t NV_PAPU_CVLMP = 0x00002070;
+constexpr uint32_t NV_PAPU_NVLMP = 0x00002074;
 constexpr uint32_t NV_PAPU_GPSMAXSGE = 0x000020D4;
 constexpr uint32_t NV_PAPU_GPFMAXSGE = 0x000020D8;
 constexpr uint32_t NV_PAPU_EPSMAXSGE = 0x000020DC;
@@ -1139,8 +1145,14 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_EPSMAXSGE, 0);
 	SetRegister32(NV_PAPU_EPFMAXSGE, 0);
 	SetRegister32(NV_PAPU_TVL2D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_CVL2D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_NVL2D, APU_VP_VOICE_MAX_HANDLE);
 	SetRegister32(NV_PAPU_TVL3D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_CVL3D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_NVL3D, APU_VP_VOICE_MAX_HANDLE);
 	SetRegister32(NV_PAPU_TVLMP, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_CVLMP, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_NVLMP, APU_VP_VOICE_MAX_HANDLE);
 	RefreshVPStatus();
 	RefreshInterruptStatus();
 	m_EPFrameDiv = 0;
@@ -3909,16 +3921,12 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			m_LoggedFallbackActiveVoiceRender = true;
 		}
 	}
-	// The FE expects an SE2FE_IDLE_VOICE signal after every frame cycle so the
-	// guest DPC can advance.  Fire it unconditionally (matching xemu behaviour)
-	// whenever FETFORCE1 has the SE2FE bit set and the FE is not already trapped.
-	// Previously this was gated by !hasVoiceActivity, which caused the guest to
-	// stall when fallback voices were being rendered (hasVoiceActivity was true but
-	// no list-walk idle callback fired).
-	if ((GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
-		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
-		ConsumeVPMethod(SE2FE_IDLE_VOICE, APU_VP_VOICE_MAX_HANDLE, sizeof(uint32_t));
-	}
+	// xemu only fires SE2FE_IDLE_VOICE when an actual idle voice is found during
+	// the list walk (handled above in RenderBasicVoiceList). Firing it
+	// unconditionally with an invalid handle (0xFFFF) every frame was causing
+	// interference with the guest's DPC servicing — particularly for video
+	// playback titles that rely on FEVINT (notifier) interrupts for audio/video
+	// synchronization rather than the FE trap mechanism.
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (!hasVoiceActivity) {
 			if (!m_LoggedEmptyVoiceTableDiagnostics) {
@@ -4278,8 +4286,26 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 
 size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount)
 {
+	// Map top register to CVL/NVL registers (matching xemu's voice_list_regs table)
+	uint32_t cvlRegister = 0;
+	uint32_t nvlRegister = 0;
+	if (topRegister == NV_PAPU_TVL2D) {
+		cvlRegister = NV_PAPU_CVL2D;
+		nvlRegister = NV_PAPU_NVL2D;
+	} else if (topRegister == NV_PAPU_TVL3D) {
+		cvlRegister = NV_PAPU_CVL3D;
+		nvlRegister = NV_PAPU_NVL3D;
+	} else if (topRegister == NV_PAPU_TVLMP) {
+		cvlRegister = NV_PAPU_CVLMP;
+		nvlRegister = NV_PAPU_NVLMP;
+	}
+
 	uint32_t voiceHandle = GetRegister32(topRegister);
 	const uint32_t listHead = voiceHandle;
+	// Initialize CVL to the head of the list (matching xemu: d->regs[current] = d->regs[top])
+	if (cvlRegister != 0) {
+		SetRegister32(cvlRegister, voiceHandle);
+	}
 	size_t visitedVoiceCount = 0;
 	size_t activeVoiceCount = 0;
 	size_t mixedVoiceCount = 0;
@@ -4301,14 +4327,19 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 		uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
 			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
+		// Update NVL register (matching xemu: d->regs[next] = next_voice_handle)
+		if (nvlRegister != 0) {
+			SetRegister32(nvlRegister, nextHandle);
+		}
 		BasicVoiceDiagnosticSummary diagnostics;
 		uint32_t state = 0;
 		const bool hasState = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
 		const bool active = hasState && (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
 		if (!active) {
+			// Match xemu: fire SE2FE_IDLE_VOICE but do NOT unlink voice from lists.
+			// The guest is responsible for list management after being notified.
 			SetVoiceActiveHint(voiceHandle, false);
 			ConsumeVPMethod(SE2FE_IDLE_VOICE, voiceHandle, sizeof(uint32_t));
-			UnlinkVoiceFromLists(voiceHandle);
 		} else if (!IsVoiceLocked(voiceHandle)) {
 			RenderBasicVoice(voiceHandle, mixBins, frameCount, &diagnostics);
 		}
@@ -4338,6 +4369,10 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 			break;
 		}
 		voiceHandle = nextHandle;
+		// Update CVL register (matching xemu: d->regs[current] = d->regs[next])
+		if (cvlRegister != 0) {
+			SetRegister32(cvlRegister, voiceHandle);
+		}
 	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (visitedVoiceCount != 0 || !interestingVoices.empty()) {
@@ -4996,12 +5031,17 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	auto sslData = m_VPSSLData[voiceHandle];
 	bool shouldSkipStateWrites = false;
 	auto terminateVoiceWithStatus = [&](uint8_t completionStatus) {
+		// Match xemu's voice_off: clear ACTIVE_VOICE and fire the notifier, but
+		// do NOT unlink the voice from lists. The voice stays in the list and will
+		// be detected as idle on the next frame's list walk, triggering
+		// SE2FE_IDLE_VOICE to notify the guest. The guest is responsible for
+		// list management (via VOICE_OFF or reactivation).
 		shouldSkipStateWrites = true;
 		playbackState.previewDecodeFailures = 0;
-		ClearStoppedVoiceState(voiceHandle);
+		SetVoiceActiveHint(voiceHandle, false);
+		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
-		UnlinkVoiceFromLists(voiceHandle);
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
