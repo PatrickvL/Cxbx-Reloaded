@@ -3922,7 +3922,8 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	m_LoggedAC97Missing = false;
 
 	std::vector<int16_t> output(frameCount * 2);
-	const bool dspOutputActive = ProcessDSPAudio(output.data(), mixBins.data(), frameCount);
+	const bool dspOutputActive = false; // DSP path disabled: interpreter is too slow per-frame
+	(void)mixBins; (void)frameCount;
 	if (!dspOutputActive) {
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
