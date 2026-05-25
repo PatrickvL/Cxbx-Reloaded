@@ -143,8 +143,10 @@ constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_O
 // underrun the OpenAL queue.
 constexpr uint32_t AC97_STARTUP_BUFFER_CHUNKS = 8;
 constexpr uint32_t AC97_STARTUP_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES * AC97_STARTUP_BUFFER_CHUNKS;
-// After an underrun, restart with a single buffer to minimize audible gaps.
-constexpr uint32_t AC97_RESTART_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES;
+// After an underrun, accumulate four stream buffers (~21ms at 48kHz) before
+// restarting playback so scheduling jitter doesn't cause an immediate re-underrun.
+constexpr uint32_t AC97_RESTART_BUFFER_CHUNKS = 4;
+constexpr uint32_t AC97_RESTART_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES * AC97_RESTART_BUFFER_CHUNKS;
 constexpr uint32_t AC97_MAX_BUFFERED_AUDIO_BYTES = AC97_MAX_QUEUED_AUDIO_BYTES * 2;
 constexpr uint16_t AC97_VOLUME_MUTE = 0x8000;
 constexpr uint16_t AC97_VOLUME_LEFT_MASK = 0x1F00;
