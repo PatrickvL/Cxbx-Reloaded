@@ -1280,8 +1280,12 @@ void APUDevice::ProcessVPFrame()
 		}
 	}
 
-	// Advance time by one VP frame (32 samples)
-	const size_t frameSamples = NUM_SAMPLES_PER_FRAME;
+	// Advance time by one full EP frame (8 VP sub-frames = 256 samples @ 48kHz).
+	// The EP tick fires every 5.333ms; at 48kHz that's 256 samples of real-time
+	// audio progress. Processing only 1 VP sub-frame (32 samples) per tick would
+	// yield an effective 6kHz rate, causing the game's dsound DPC to never see
+	// sufficient CBO/XGSCNT advancement and stall the present thread.
+	const size_t frameSamples = NUM_SAMPLES_PER_FRAME * EP_FRAME_DIVIDER;
 
 	// Run the audio chunk rendering
 	RenderBasicAudioChunk(frameSamples);
