@@ -545,15 +545,14 @@ void ExecuteDpcQueue(bool inline_dispatch)
 		KeGetCurrentPrcb()->DpcRoutineActive = FALSE;
 	}
 
-	// If DPCs were added during this pass (e.g. a DPC re-queued itself), signal
-	// the background DPC thread so they fire on the next dispatch opportunity.
-	if (!IsListEmpty(&(g_DpcData.DpcQueue))) {
-		g_DpcData.IsDpcPending.test_and_set();
-		g_DpcData.IsDpcPending.notify_one();
-	}
-
-	// NOTE: IsDpcPending is now cleared at the start of the DPC loop iteration
-	// (in CxbxKrnlMain) to prevent lost-wake races. Do NOT clear it here.
+	// NOTE: Do NOT re-signal IsDpcPending here when DPCs remain in the queue.
+	// On real Xbox/NT, a DPC that re-queues itself fires on the NEXT hardware
+	// interrupt (VBlank/timer), not immediately. Re-signaling here would cause
+	// the background DPC thread to tight-loop when a DPC routine always
+	// re-inserts itself (the routine fires, re-queues, we signal, the thread
+	// wakes, processes it again, ad infinitum). Remaining DPCs will be picked
+	// up on the next natural wake event (VBlank at 60 Hz, timer expiration,
+	// or another thread's KeInsertQueueDpc call).
 
 	LeaveCriticalSection(&(g_DpcData.Lock));
 }
