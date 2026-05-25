@@ -1188,6 +1188,13 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 				value & 0xFFFF,
 				GetRegister32(NV_PAPU_VPVADDR));
 		}
+		// Always log buffer-base writes to identify when game sets buffer addresses
+		if ((addr - APU_VP_BASE) == 0x3A0) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU diag: CFG_BUF_BASE voice=%u value=0x%08X",
+				GetRegister32(NV_PAPU_FECV),
+				value);
+		}
 	}
 
 	// Diagnostic: also log first GP FIFO writes with more detail
@@ -1961,6 +1968,35 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			if (ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 				NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state) &&
 				(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+				// If the voice has no buffer base configured, try to
+				// inherit one from another voice that was set up earlier
+				// via the VP parameter window (common in Bink/DirectSound
+				// patterns where only voice 0 gets a buffer address).
+				uint32_t bufBase = 0;
+				ReadVoiceMask(vh, NV_PAVS_VOICE_CFG_BUF_BASE, 0xFFFFFFFF, bufBase);
+				if (bufBase == 0) {
+					for (uint32_t donor = 0; donor < MAX_VOICE_HANDLES; ++donor) {
+						uint32_t donorBase = 0;
+						if (ReadVoiceMask(donor, NV_PAVS_VOICE_CFG_BUF_BASE,
+							0xFFFFFFFF, donorBase) && donorBase != 0) {
+							uint32_t end = 0, cur = 0;
+							ReadVoiceMask(donor, NV_PAVS_VOICE_CFG_BUF_EBO,
+								0xFFFFFFFF, end);
+							ReadVoiceMask(donor, NV_PAVS_VOICE_BUF_CBO,
+								0xFFFFFFFF, cur);
+							WriteVoiceMask(vh, NV_PAVS_VOICE_CFG_BUF_BASE,
+								0xFFFFFFFF, donorBase);
+							if (end != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_CFG_BUF_EBO,
+								0xFFFFFFFF, end);
+							if (cur != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_BUF_CBO,
+								0xFFFFFFFF, cur);
+							EmuLog(LOG_LEVEL::INFO,
+								"APU diag: voice %u inherited buffer from voice %u base=0x%08X",
+								vh, donor, donorBase);
+							break;
+						}
+					}
+				}
 				// Activate the voice via the same path as VOICE_ON
 				UnlinkVoiceFromLists(vh);
 				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
