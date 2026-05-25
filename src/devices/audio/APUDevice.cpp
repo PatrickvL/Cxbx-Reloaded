@@ -93,6 +93,8 @@ constexpr uint32_t NV_PAPU_FEUFIFOCTL = 0x00001340;
 constexpr uint32_t NV_PAPU_FETFORCE0 = 0x00001500;
 constexpr uint32_t NV_PAPU_FETFORCE1 = 0x00001504;
 constexpr uint32_t NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE = 1 << 15;
+constexpr uint32_t NV_PAPU_FETIGNORE0 = 0x00001508;
+constexpr uint32_t NV_PAPU_FETIGNORE1 = 0x0000150C;
 constexpr uint32_t NV_PAPU_SECTL = 0x00002000;
 constexpr uint32_t NV_PAPU_SECTL_XCNTMODE = 0x00000018;
 constexpr uint32_t NV_PAPU_SECTL_XCNTMODE_OFF = 0;
@@ -1146,9 +1148,13 @@ void APUDevice::Reset()
 	m_ChunkCaptured3DVoiceCount = 0;
 	m_ChunkSubmittedHostSpatialVoiceCount = 0;
 
+	// Initialize APU registers to match the expected power-on/reset state.
+	// The game's native code (CHalMCP1::Allocate) writes these during boot;
+	// we pre-populate so any read-before-write returns reasonable values.
 	SetRegister32(NV_PAPU_ISTS, 0);
-	SetRegister32(NV_PAPU_IEN, 0);
-	SetRegister32(NV_PAPU_FECTL, 0);
+	SetRegister32(NV_PAPU_IEN, 0x00009440); // FETrap|FEMethodOverflow|GPMailbox|EPMailbox
+	SetRegister32(NV_PAPU_FECTL, 0x00000080); // HALTED mode
+	SetRegister32(NV_PAPU_SECTL, 0x00000008); // XCNTMODE=OFF
 	SetRegister32(NV_PAPU_FECV, 0);
 	SetRegister32(NV_PAPU_FEAV, 0);
 	SetRegister32(NV_PAPU_FENADDR, 0);
@@ -1158,14 +1164,13 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_FEMEMDATA, 0);
 	SetRegister32(NV_PAPU_FETFORCE0, 0);
 	SetRegister32(NV_PAPU_FETFORCE1, 0);
+	SetRegister32(NV_PAPU_FETIGNORE0, 0);
+	SetRegister32(NV_PAPU_FETIGNORE1, (1 << 0)); // Ignore SET_SSL_SEGMENT_LENGTH trap
 
 	// Initialize FEUFIFOCTL with head=31, tail=0 so the first kernel write
 	// goes to slot 0 (head wraps 31→0), matching our tail=0 read position.
 	SetRegister32(NV_PAPU_FEUFIFOCTL, (31 << 8) | (0 << 16));
-	SetRegister32(NV_PAPU_SECTL, 0x00000008);
-	// Set VPVADDR to a non-zero sentinel so the game's native code doesn't
-	// crash dereferencing address 0.  VoiceMask functions check for this
-	// sentinel and use the internal shadow table (same as VPVADDR=0).
+	// VPVADDR sentinel — VoiceMask functions use internal shadow table
 	SetRegister32(NV_PAPU_VPVADDR, 1);
 	SetRegister32(NV_PAPU_VPSGEADDR, 0);
 	SetRegister32(NV_PAPU_VPSSLADDR, 0);
