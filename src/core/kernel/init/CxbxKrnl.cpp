@@ -1391,80 +1391,9 @@ static void CxbxrKrnlInitHacks()
 		// to avoid races from non-atomic boolean members accessed by multiple threads.
 		// Use a do-while to re-check after processing: if new interrupts arrived during
 		// ISR/DPC execution, handle them immediately instead of risking a lost wakeup.
+		static uint64_t s_vblankFired = 0;
+		static uint64_t s_isrFired = 0;
 		bool more_work;
-		do {
-			more_work = false;
-
-			if (g_bEnableAllInterrupts && g_NV2A) {
-				NV2AState* d = g_NV2A->GetDeviceState();
-
-				// Safety net: ensure VBlank stays enabled once the game's ISR is connected.
-				// The D3D runtime may briefly write 0 to NV_PCRTC_INTR_EN during init;
-				// re-assert to avoid missing VBlanks during that window.
-				if (EmuInterruptList[3] && EmuInterruptList[3]->Connected &&
-				    !(d->pcrtc.enabled_interrupts & NV_PCRTC_INTR_0_VBLANK)) {
-					d->pcrtc.enabled_interrupts |= NV_PCRTC_INTR_0_VBLANK;
-				}
-
-				// Latch VBlank into pcrtc.pending_interrupts (like real hardware would)
-				if (d->vblank_pending.test()) {
-					d->vblank_pending.clear();
-					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
-
-					// Generate PVIDEO buffer completion interrupts for active overlay buffers.
-					if (d->enable_overlay) {
-						uint32_t pvideo_buffer = d->pvideo.regs[NV_PVIDEO_BUFFER / 4];
-						if (pvideo_buffer & NV_PVIDEO_BUFFER_0_USE)
-							d->pvideo.pending_interrupts |= NV_PVIDEO_INTR_BUFFER_0;
-						if (pvideo_buffer & NV_PVIDEO_BUFFER_1_USE)
-							d->pvideo.pending_interrupts |= NV_PVIDEO_INTR_BUFFER_1;
-						SetEvent(d->pfifo.puller_event);
-					}
-				}
-
-				// Check if any NV2A sub-unit has a pending interrupt
-				bool pvideo_pending = (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) != 0;
-				bool nv2a_irq_pending = d->pmc.enabled_interrupts &&
-					((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
-					 (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
-					 (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
-					 (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts) ||
-					 pvideo_pending);
-
-				// PGRAPH INTR_ERROR: ack directly when no ISR is connected
-				if (!d->pmc.enabled_interrupts &&
-				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
-					d->pgraph.pending_interrupts &= ~NV_PGRAPH_INTR_ERROR;
-					qemu_cond_broadcast(&d->pgraph.interrupt_cond);
-				}
-
-				if (nv2a_irq_pending &&
-				    EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
-					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
-				}
-			}
-
-			// Dispatch all pending DPCs
-			ExecuteDpcQueue();
-
-			if (g_bEnableAllInterrupts && g_NV2A) {
-				NV2AState* d = g_NV2A->GetDeviceState();
-				if (d->vblank_pending.test() ||
-				    (d->pmc.enabled_interrupts &&
-				     ((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
-				      (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
-				      (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
-				      (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts))) ||
-				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
-					more_work = true;
-				}
-			}
-		} while (more_work);
-
-		EmuCheckPresentStall(5000);
-	}
-}
-		}
 		do {
 			more_work = false;
 
