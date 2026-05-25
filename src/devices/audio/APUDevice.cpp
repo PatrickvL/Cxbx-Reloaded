@@ -965,42 +965,46 @@ void APUDevice::InitializeDSP()
 	static bool firmwareLoaded;
 	if (!firmwareLoaded) {
 		firmwareLoaded = true;
-		char exePathBuf[MAX_PATH]{};
-		GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
-		std::filesystem::path exePath(exePathBuf);
-		std::filesystem::path fwPath = exePath.parent_path() / "mcpx_1.0.bin";
-		if (!std::filesystem::exists(fwPath)) {
-			fwPath = "mcpx_1.0.bin"; // try CWD
-		}
-		std::ifstream fwFile(fwPath, std::ios::binary | std::ios::ate);
-		if (fwFile.is_open()) {
-			const size_t fileSize = static_cast<size_t>(fwFile.tellg());
-			fwFile.seekg(0);
-			const size_t words = std::min<size_t>(fileSize / 4, 0x800); // up to 2048 words
-			EmuLog(LOG_LEVEL::INFO, "Loading MCPX DSP firmware from %s (%zu bytes, %zu words)",
-				fwPath.string().c_str(), fileSize, words);
-			for (auto* dsp : {m_GPDsp, m_EPDsp}) {
-				if (dsp == nullptr) continue;
+		struct FirmwareTarget {
+			DSPState* dsp;
+			const char* filename;
+			const char* name;
+		};
+		FirmwareTarget targets[] = {
+			{m_GPDsp, "gp_firmware.bin", "GP"},
+			{m_EPDsp, "ep_firmware.bin", "EP"},
+		};
+		for (const auto& t : targets) {
+			if (t.dsp == nullptr) continue;
+			char exePathBuf[MAX_PATH]{};
+			GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
+			std::filesystem::path exePath(exePathBuf);
+			std::filesystem::path fwPath = exePath.parent_path() / t.filename;
+			if (!std::filesystem::exists(fwPath)) {
+				fwPath = t.filename;
+			}
+			std::ifstream fwFile(fwPath, std::ios::binary | std::ios::ate);
+			if (fwFile.is_open()) {
+				const size_t fileSize = static_cast<size_t>(fwFile.tellg());
+				fwFile.seekg(0);
+				const size_t words = std::min<size_t>(fileSize / 4, 0x800);
+				EmuLog(LOG_LEVEL::INFO, "Loading MCPX %s DSP firmware from %s (%zu words)",
+					t.name, fwPath.string().c_str(), words);
 				for (size_t i = 0; i < words; ++i) {
 					uint8_t buf[4]{};
-					if (!fwFile.read(reinterpret_cast<char*>(buf), 4)) {
-						break;
-					}
+					if (!fwFile.read(reinterpret_cast<char*>(buf), 4)) break;
 					uint32_t word = buf[0] | (buf[1] << 8) |
 						(buf[2] << 16) | (buf[3] << 24);
-					if (word & 0xff000000) {
-						word &= 0x00ffffff;
-					}
-					dsp->core.pram[i] = word;
+					if (word & 0xff000000) word &= 0x00ffffff;
+					t.dsp->core.pram[i] = word;
 				}
-				memset(dsp->core.pram_opcache, 0,
-					sizeof(dsp->core.pram_opcache));
-				fwFile.clear();
-				fwFile.seekg(0);
+				memset(t.dsp->core.pram_opcache, 0,
+					sizeof(t.dsp->core.pram_opcache));
+			} else {
+				EmuLog(LOG_LEVEL::WARNING,
+					"MCPX %s DSP firmware (%s) not found; audio will use VP-only path",
+					t.name, t.filename);
 			}
-		} else {
-			EmuLog(LOG_LEVEL::WARNING, "MCPX DSP firmware not found at %s; GP/EP DSP will not execute",
-				fwPath.string().c_str());
 		}
 	}
 }
