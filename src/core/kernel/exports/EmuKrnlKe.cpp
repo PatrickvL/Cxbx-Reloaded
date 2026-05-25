@@ -1502,10 +1502,21 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 			ExecuteDpcQueue(true);
 			// Release the reservation now that inline dispatch is complete.
 			g_DpcRoutineActive = FALSE;
-		} else {
-			// Signal the background DPC thread to dispatch later
+		} else if (!Pcr->PrcbData.DpcRoutineActive) {
+			// Signal the background DPC thread to dispatch later.
+			// Skip this when we're already inside a DPC routine — on real
+			// Xbox, a DPC that re-queues itself fires on the NEXT hardware
+			// interrupt (VBlank/timer), not immediately. Setting the pending
+			// DISPATCH_LEVEL bit here would cause KfLowerIrql (called by
+			// KeSetEvent/KiUnlockDispatcherDatabase inside the DPC routine)
+			// to re-dispatch the DPC before the current one even finishes,
+			// creating a tight loop.
 			HalRequestSoftwareInterrupt(DISPATCH_LEVEL);
 		}
+		// else: DPC was re-queued from within a DPC routine. Leave it in
+		// the queue — it will fire on the next natural dispatch opportunity
+		// (VBlank, timer expiration, or another KeInsertQueueDpc call from
+		// non-DPC context).
 	}
 	else {
 		LeaveCriticalSection(&(g_DpcData.Lock));
