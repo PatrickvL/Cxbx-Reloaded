@@ -3509,6 +3509,50 @@ void APUDevice::SynchronizeAudio()
     const bool counterOff =
         ((GetRegister32(NV_PAPU_SECTL) & NV_PAPU_SECTL_XCNTMODE) >> Ctz32(NV_PAPU_SECTL_XCNTMODE)) ==
         NV_PAPU_SECTL_XCNTMODE_OFF;
+
+    // Periodically scan the guest voice table for voices that were
+    // activated via direct memory write (games can set ACTIVE_VOICE
+    // without calling the VP VOICE_ON method).  When a voice is found
+    // active in guest memory but not tracked in our shadow hints,
+    // perform the activation side-effects that ConsumeVPMethod(VOICE_ON)
+    // would normally handle.
+    {
+        static uint32_t lastVoiceScan;
+        if (now - lastVoiceScan >= 4800) { // ~10 Hz
+            lastVoiceScan = now;
+            const uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+            if (vpvaddr != 0) {
+                uint32_t newlyActivated = 0;
+                for (uint32_t vh = 0; vh < MAX_VOICE_HANDLES; ++vh) {
+                    uint32_t state = 0;
+                    if (!ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+                        NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state)) {
+                        break;
+                    }
+                    const bool active = (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
+                    const bool tracked = IsVoiceActiveHinted(vh);
+                    if (active && !tracked) {
+                        UnlinkVoiceFromLists(vh);
+                        const uint32_t feav = GetRegister32(NV_PAPU_FEAV);
+                        const uint32_t list = (feav & NV_PAPU_FEAV_LST) >> Ctz32(NV_PAPU_FEAV_LST);
+                        WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+                            NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
+                        SetVoiceActiveHint(vh, true);
+                        SetVoiceLocked(vh, false);
+                        WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
+                            NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+                        ++newlyActivated;
+                    }
+                }
+                if (newlyActivated > 0) {
+                    EmuLog(LOG_LEVEL::INFO,
+                        "APU diag: guest-memory voice scan activated %u voices not tracked in VP hints",
+                        newlyActivated);
+                }
+            }
+        }
+    }
+
     if (counterOff) {
         const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
         bool hasActiveVoices = voiceTableBase != 0;
