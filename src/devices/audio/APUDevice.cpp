@@ -4619,6 +4619,21 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t state = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
 		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+		// One-shot diagnostic for first-rendered voice
+		if (voiceHandle == 64) {
+			static bool once;
+			if (!once) {
+				once = true;
+				uint32_t dbgBase = 0, dbgFmt = 0;
+				ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, dbgBase);
+				ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, 0xFFFFFFFF, dbgFmt);
+				EmuLog(LOG_LEVEL::WARNING,
+					"APU diag: RenderBasicVoice(%u) REJECTED state=0x%08X active=%u base=0x%08X fmt=0x%08X",
+					voiceHandle, state, (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0 ? 1 : 0,
+					dbgBase, dbgFmt);
+			}
+		}
 		if ((state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
 			SetVoiceActiveHint(voiceHandle, false);
 		}
