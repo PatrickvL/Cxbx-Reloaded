@@ -1213,16 +1213,10 @@ static void CxbxrKrnlInitHacks()
 	// so that MmIsAddressValid returns TRUE for the Buffer pointers.
 	{
 		PCHAR pModelBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskModelNumber.MaximumLength, 'dlaH');
-		if (pModelBuf == nullptr) {
-			CxbxrAbort("Could not allocate HalDiskModelNumber buffer");
-		}
 		memcpy(pModelBuf, xbox::HalDiskModelNumber.Buffer, xbox::HalDiskModelNumber.MaximumLength);
 		xbox::HalDiskModelNumber.Buffer = pModelBuf;
 
 		PCHAR pSerialBuf = (PCHAR)xbox::ExAllocatePoolWithTag(xbox::HalDiskSerialNumber.MaximumLength, 'dlaH');
-		if (pSerialBuf == nullptr) {
-			CxbxrAbort("Could not allocate HalDiskSerialNumber buffer");
-		}
 		memcpy(pSerialBuf, xbox::HalDiskSerialNumber.Buffer, xbox::HalDiskSerialNumber.MaximumLength);
 		xbox::HalDiskSerialNumber.Buffer = pSerialBuf;
 	}
@@ -1397,15 +1391,11 @@ static void CxbxrKrnlInitHacks()
 		// to avoid races from non-atomic boolean members accessed by multiple threads.
 		// Use a do-while to re-check after processing: if new interrupts arrived during
 		// ISR/DPC execution, handle them immediately instead of risking a lost wakeup.
+		static uint64_t s_vblankFired = 0;
+		static uint64_t s_isrFired = 0;
 		bool more_work;
 		do {
 			more_work = false;
-
-			if (g_AC97 != nullptr) {
-				g_AC97->ServiceAudio();
-			} else if (g_APU != nullptr) {
-				g_APU->SynchronizeAudio();
-			}
 
 			if (g_bEnableAllInterrupts && g_NV2A) {
 				NV2AState* d = g_NV2A->GetDeviceState();
@@ -1422,10 +1412,27 @@ static void CxbxrKrnlInitHacks()
 				if (d->vblank_pending.test()) {
 					d->vblank_pending.clear();
 					d->pcrtc.pending_interrupts |= NV_PCRTC_INTR_0_VBLANK;
-					if (g_AC97 != nullptr) {
-						g_AC97->ServiceAudio();
-					} else if (g_APU != nullptr) {
-						g_APU->SynchronizeAudio();
+					s_vblankFired++;
+
+					// Dump thread stacks 5s after overlay starts, to diagnose mid-movie hangs
+					static int s_overlayVblanks = 0;
+					static bool s_overlayDumped = false;
+					if (d->enable_overlay) {
+						s_overlayVblanks++;
+						if (!s_overlayDumped && s_overlayVblanks >= 300) {
+							s_overlayDumped = true;
+							// Print lock ownership to diagnose deadlocks
+							extern DWORD CxbxGetD3D11ContextLockOwner();
+							fprintf(stdout, "\n[LOCK-DIAG] pfifo_lock.owner = %lu\n", (unsigned long)d->pfifo.pfifo_lock.owner);
+							fprintf(stdout, "[LOCK-DIAG] pgraph_lock.owner = %lu\n", (unsigned long)d->pgraph.pgraph_lock.owner);
+							fprintf(stdout, "[LOCK-DIAG] D3D11ContextLock.owner = %lu\n", (unsigned long)CxbxGetD3D11ContextLockOwner());
+							fprintf(stdout, "[LOCK-DIAG] DMA_GET=0x%08X DMA_PUT=0x%08X\n",
+								d->pfifo.regs[0x1244/4], d->pfifo.regs[0x1240/4]);
+							fflush(stdout);
+							EmuDumpAllThreadStacks("Movie overlay active for 5 seconds - stack dump for hang diagnosis");
+						}
+					} else {
+						s_overlayVblanks = 0;
 					}
 
 					// Generate PVIDEO buffer completion interrupts for active overlay buffers.
@@ -1470,33 +1477,16 @@ static void CxbxrKrnlInitHacks()
 					qemu_cond_broadcast(&d->pgraph.interrupt_cond);
 				}
 
-				// PGRAPH INTR_ERROR (D3DDevice_InsertCallback) stalls the GPU
-				// pipeline until the CPU acknowledges it. When pmc_en=0, the
-				// ISR cannot fire, so we ack directly to unblock the puller.
-				// When pmc_en=1, the game's ISR handles it naturally (reads
-				// TRAPPED_DATA_LOW, dispatches the callback, writes PGRAPH_INTR
-				// to ack). We must NOT steal the ack from the ISR because the
-				// callback dispatch is essential for game logic.
-				if (!d->pmc.enabled_interrupts &&
-				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
-					d->pgraph.pending_interrupts &= ~NV_PGRAPH_INTR_ERROR;
-					qemu_cond_broadcast(&d->pgraph.interrupt_cond);
-				}
-
 				if (nv2a_irq_pending &&
 				    EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
 					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
+					s_isrFired++;
 				}
-			}
-
-			// Dispatch APU (audio) interrupt when the hardware asserts
-			// its GINT line.  DirectSound games wait for this interrupt
-			// after initialising the FE.
-			if (g_bEnableAllInterrupts &&
-			    HalSystemInterrupts[5].IsEnabled() &&
-			    HalSystemInterrupts[5].IsPending() &&
-			    EmuInterruptList[5] && EmuInterruptList[5]->Connected) {
-				HalSystemInterrupts[5].Trigger(EmuInterruptList[5]);
+			} else if (g_NV2A && g_NV2A->GetDeviceState()->vblank_pending.test()) {
+				static int s_cliSkips = 0;
+				if ((++s_cliSkips % 60) == 1) {
+					fprintf(stderr, "[DPC-SKIP] CLI blocked VBlank (skip #%d)\n", s_cliSkips);
+				}
 			}
 
 			// Dispatch all pending DPCs. This thread is the primary DPC
@@ -1519,17 +1509,12 @@ static void CxbxrKrnlInitHacks()
 				     ((d->pgraph.pending_interrupts & d->pgraph.enabled_interrupts) ||
 				      (d->pfifo.pending_interrupts & d->pfifo.enabled_interrupts) ||
 				      (d->pcrtc.pending_interrupts & d->pcrtc.enabled_interrupts) ||
-				      (d->pvideo.pending_interrupts & d->pvideo.enabled_interrupts) ||
 				      (d->ptimer.pending_interrupts & d->ptimer.enabled_interrupts))) ||
 				    (d->pgraph.pending_interrupts & NV_PGRAPH_INTR_ERROR)) {
 					more_work = true;
 				}
 			}
 		} while (more_work);
-
-		// Yield to the OS to prevent the DirectSound DPC-event loop
-		// from consuming 100% CPU when no GPU work is pending.
-		Sleep(0);
 
 		// Check for present stalls — if no present has arrived in 5 seconds,
 		// dump all thread stacks to diagnose what's blocking progress.

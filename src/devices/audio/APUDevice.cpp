@@ -89,6 +89,7 @@ constexpr uint32_t NV_PAPU_FEDECMETH = 0x00001300;
 constexpr uint32_t NV_PAPU_FEDECPARAM = 0x00001304;
 constexpr uint32_t NV_PAPU_FEMEMADDR = 0x00001324;
 constexpr uint32_t NV_PAPU_FEMEMDATA = 0x00001334;
+constexpr uint32_t NV_PAPU_FEUFIFOCTL = 0x00001340;
 constexpr uint32_t NV_PAPU_FETFORCE0 = 0x00001500;
 constexpr uint32_t NV_PAPU_FETFORCE1 = 0x00001504;
 constexpr uint32_t NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE = 1 << 15;
@@ -1157,8 +1158,15 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_FEMEMDATA, 0);
 	SetRegister32(NV_PAPU_FETFORCE0, 0);
 	SetRegister32(NV_PAPU_FETFORCE1, 0);
+
+	// Initialize FEUFIFOCTL with head=31, tail=0 so the first kernel write
+	// goes to slot 0 (head wraps 31→0), matching our tail=0 read position.
+	SetRegister32(NV_PAPU_FEUFIFOCTL, (31 << 8) | (0 << 16));
 	SetRegister32(NV_PAPU_SECTL, 0x00000008);
-	SetRegister32(NV_PAPU_VPVADDR, 0);
+	// Set VPVADDR to a non-zero sentinel so the game's native code doesn't
+	// crash dereferencing address 0.  VoiceMask functions check for this
+	// sentinel and use the internal shadow table (same as VPVADDR=0).
+	SetRegister32(NV_PAPU_VPVADDR, 1);
 	SetRegister32(NV_PAPU_VPSGEADDR, 0);
 	SetRegister32(NV_PAPU_VPSSLADDR, 0);
 	SetRegister32(NV_PAPU_GPSADDR, 0);
@@ -1217,6 +1225,10 @@ uint64_t APUDevice::apu_tick(uint64_t now_qpc)
 	// Process one VP frame
 	ProcessVPFrame();
 	m_NextFrameQpc = now_qpc + m_EPFrameQpc;
+
+	// Signal any pending voice completion interrupts so the game thread
+	// can wake from KeWaitForSingleObject on the voice notifier event.
+	RefreshInterruptStatus();
 
 	// Advance AC97 audio output progress
 	g_AC97->ServiceAudio();
@@ -1362,6 +1374,20 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 	if (addr >= NV_PAPU_ISTS && addr < NV_PAPU_ISTS + sizeof(uint32_t)) {
 		RefreshInterruptStatus();
 		return ReadRegisterFragment(GetRegister32(NV_PAPU_ISTS), addr - NV_PAPU_ISTS, size);
+	}
+
+	// Hide the VPVADDR sentinel from guest reads.  Internally we store 1 to
+	// distinguish "not yet initialized" from a real physical address, but the
+	// game's native code reads VPVADDR via MMIO and dereferences it as a
+	// pointer to the voice table.  Exposing 1 causes a page fault in guest
+	// code → SEH dispatch → crash.  Return 0 so the game sees "no voice
+	// table yet" and skips the dereference.
+	if (addr >= NV_PAPU_VPVADDR && addr < NV_PAPU_VPVADDR + sizeof(uint32_t)) {
+		uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+		if (vpvaddr <= 1) {
+			return 0;
+		}
+		return ReadRegisterFragment(vpvaddr, addr - NV_PAPU_VPVADDR, size);
 	}
 
 	return ReadRegister(addr, size);
@@ -1529,6 +1555,12 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		WriteRegister(addr, value, size);
 		WriteGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
 		RefreshFEMemDataRegister(GetRegister32(NV_PAPU_FEMEMDATA));
+		static int magicCnt = 0;
+		if (magicCnt++ < 5) {
+			fprintf(stderr, "[APU-MAGIC] FEMEMADDR=0x%08X FEMEMDATA=0x%08X\n",
+				GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
+			fflush(stderr);
+		}
 		return;
 	}
 
@@ -1568,6 +1600,12 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 			uint32_t paramValue   = GetRegister32(0x1404 + tail * 8);
 			if (methodOffset != 0) {
 				ConsumeVPMethod(methodOffset, paramValue, sizeof(uint32_t));
+				// If the FE trapped, clear immediately so the game thread
+				// doesn't spin waiting for system_events to clear it.
+				uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+				if ((fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+					SetRegister32(NV_PAPU_FECTL, fectl & ~NV_PAPU_FECTL_FEMETHMODE);
+				}
 			}
 			SetRegister32(0x1400 + tail * 8, 0);
 			SetRegister32(0x1404 + tail * 8, 0);
@@ -1908,11 +1946,6 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 {
 	UpdateVPFifo();
 
-	// XGSCNT (VP offset 0x0C) — return the live sample counter
-	if (addr >= 0x0C && addr < 0x0C + sizeof(uint32_t)) {
-		return ReadRegisterFragment(m_XGSCounter, addr - 0x0C, size);
-	}
-
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
 		return ReadRegisterFragment(
 			GetVPFifoFreeSlots(),
@@ -1983,6 +2016,11 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 	}
 
 	ConsumeVPMethod(addr, value, size);
+	// Clear FE trap immediately — same reasoning as FEUFIFO path
+	uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+	if ((fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+		SetRegister32(NV_PAPU_FECTL, fectl & ~NV_PAPU_FECTL_FEMETHMODE);
+	}
 	if (m_VPFifoLevel < APU_VP_FIFO_CAPACITY) {
 		++m_VPFifoLevel;
 	}
@@ -2813,7 +2851,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	if (voiceTableBase == 0) {
+	if (voiceTableBase <= 1) {
 		const size_t shadowOffset = static_cast<size_t>(voiceHandle) * NV_PAVS_SIZE + offset;
 		const uint32_t current = ReadMemoryWindow(
 			m_VPVoiceTableShadow.data(),
@@ -2858,7 +2896,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	if (voiceTableBase == 0) {
+	if (voiceTableBase <= 1) {
 		const size_t shadowOffset = static_cast<size_t>(voiceHandle) * NV_PAVS_SIZE + offset;
 		const uint32_t current = ReadMemoryWindow(
 			m_VPVoiceTableShadow.data(),
@@ -3912,7 +3950,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	if (voiceTableBase == 0) {
+	if (voiceTableBase <= 1) {
 		if (!m_LoggedMissingVoiceTableDuringRender) {
 			EmuLog(LOG_LEVEL::INFO,
 				"APU using internal shadow voice table (NV_PAPU_VPVADDR not yet initialized by guest)");
@@ -4580,7 +4618,7 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	};
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	const char* voiceTableSource = voiceTableBase == 0 ? "shadow" : "guest";
+	const char* voiceTableSource = voiceTableBase <= 1 ? "shadow" : "guest";
 
 	size_t activeVoiceCount = 0;
 	size_t pausedVoiceCount = 0;

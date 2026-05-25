@@ -160,6 +160,8 @@ static bool s_D3D11ContextLockInitialized = false;
 // corrupts driver state and crashes the Intel UMD.
 static volatile DWORD s_D3D11ContextOwnerThread = 0;
 
+DWORD CxbxGetD3D11ContextLockOwner() { return s_D3D11ContextOwnerThread; }
+
 // ******************************************************************
 // * GPU mirror buffer (64 MiB ByteAddressBuffer — DEFAULT + SRV + UAV)
 // ******************************************************************
