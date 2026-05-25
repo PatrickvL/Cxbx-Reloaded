@@ -506,20 +506,16 @@ void ExecuteDpcQueue(bool inline_dispatch)
 		return;
 	}
 
-	// Snapshot the number of DPCs currently queued. Only drain this many per
-	// pass so that a DPC routine which re-inserts itself doesn't spin the loop
-	// forever — newly queued DPCs will fire on the next dispatch opportunity,
-	// matching real Xbox/NT KiRetireDpcList behaviour.
-	ULONG dpcCount = 0;
-	for (xbox::PLIST_ENTRY entry = g_DpcData.DpcQueue.Flink;
-	     entry != &g_DpcData.DpcQueue;
-	     entry = entry->Flink) {
-		dpcCount++;
-	}
+	// Drain the queue until empty, matching the working upstream dx11 repo
+	// behaviour. DPCs that re-queue themselves (poll-then-signal pattern)
+	// fire repeatedly within the same pass until they complete. A safety
+	// budget prevents truly pathological infinite re-queue loops from
+	// locking the system — if hit, remaining DPCs fire on the next wake.
+	ULONG dispatchBudget = 64;
 
-	while (dpcCount > 0 && !IsListEmpty(&(g_DpcData.DpcQueue)))
+	while (dispatchBudget > 0 && !IsListEmpty(&(g_DpcData.DpcQueue)))
 	{
-		dpcCount--;
+		dispatchBudget--;
 		// Extract the head entry and retrieve the containing KDPC pointer for it:
 		pkdpc = CONTAINING_RECORD(RemoveHeadList(&(g_DpcData.DpcQueue)), xbox::KDPC, DpcListEntry);
 		// Mark it as no longer linked into the DpcQueue
@@ -546,13 +542,9 @@ void ExecuteDpcQueue(bool inline_dispatch)
 	}
 
 	// NOTE: Do NOT re-signal IsDpcPending here when DPCs remain in the queue.
-	// On real Xbox/NT, a DPC that re-queues itself fires on the NEXT hardware
-	// interrupt (VBlank/timer), not immediately. Re-signaling here would cause
-	// the background DPC thread to tight-loop when a DPC routine always
-	// re-inserts itself (the routine fires, re-queues, we signal, the thread
-	// wakes, processes it again, ad infinitum). Remaining DPCs will be picked
-	// up on the next natural wake event (VBlank at 60 Hz, timer expiration,
-	// or another thread's KeInsertQueueDpc call).
+	// Remaining DPCs (beyond the safety budget) will be picked up on the next
+	// natural wake event (VBlank at 60 Hz, timer expiration, or another
+	// thread's KeInsertQueueDpc call).
 
 	LeaveCriticalSection(&(g_DpcData.Lock));
 }
