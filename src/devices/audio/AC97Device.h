@@ -117,7 +117,7 @@ class AC97Device : public PCIDevice {
 		uint16_t ReadRegister16(uint32_t addr) const;
 		void WriteRegister16(uint32_t addr, uint16_t value);
 		void UpdateGlobalStatus();
-		void UpdateBusMasterChannels();
+		void UpdateBusMasterChannels(bool synchronizeAPU);
 		void ResetBusMasterChannel(uint32_t channelBase);
 		PrimeResult PrimeBusMasterChannel(uint32_t channelBase);
 		void UpdateBusMasterStatus(uint32_t channelBase);

@@ -29,9 +29,13 @@
 #define _APU_H_
 
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include "../PCIDevice.h"
@@ -48,9 +52,16 @@ public:
 	static constexpr size_t MAX_RECENT_FE_METHODS = 16;
 	static constexpr size_t VP_VOICE_TABLE_SHADOW_BYTES = MAX_VOICE_HANDLES * 0x80;
 
+	// APU frame timing constants (matching xemu's hardware model)
+	static constexpr size_t NUM_SAMPLES_PER_FRAME = 32;   // Samples per VP frame
+	static constexpr size_t EP_FRAME_DIVIDER = 8;          // EP runs every 8 VP frames
+	static constexpr int64_t EP_FRAME_US = 5333;           // 256/48000 sec in microseconds
+	static constexpr int64_t TRAPPED_SLEEP_MS = 5;         // Sleep when FE is trapped
+
 	// PCI Functions
 	void Init();
 	void Reset();
+	~APUDevice();
 
 	uint32_t IORead(int barIndex, uint32_t addr, unsigned size = sizeof(uint8_t));
 	void IOWrite(int barIndex, uint32_t addr, uint32_t data, unsigned size = sizeof(uint8_t));
@@ -133,6 +144,7 @@ private:
 	void CaptureEPFifoOutput(uint8_t* ptr, size_t len);
 	void ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size);
 	void UpdateVPFifo();
+	uint32_t GetVPFifoFreeSlots() const;
 	void RefreshVPStatus();
 	void RefreshInterruptStatus();
 	void RenderBasicAudioChunk(size_t frameCount);
@@ -179,6 +191,7 @@ private:
 	void SetVoiceNextHandle(uint32_t voiceHandle, uint32_t nextHandle);
 	void UnlinkVoiceFromList(uint32_t topRegister, uint32_t voiceHandle);
 	void UnlinkVoiceFromLists(uint32_t voiceHandle);
+	void ClearStoppedVoiceState(uint32_t voiceHandle);
 	bool IsVoiceLocked(uint32_t voiceHandle) const;
 	void SetVoiceLocked(uint32_t voiceHandle, bool locked);
 	bool IsVoiceActiveHinted(uint32_t voiceHandle) const;
@@ -208,8 +221,28 @@ private:
 	void SetRegister32(uint32_t addr, uint32_t value);
 	uint32_t GetRegister32(uint32_t addr) const;
 
+public:
+	// Process one APU VP frame — called from dispatch_periodic_events
+	// (Timer.cpp) at ~187.5 Hz alongside VBlank/PIT/OHCI.
+	// Returns absolute QPC deadline for the next VP frame.
+	uint64_t apu_tick(uint64_t now_qpc);
+
+	// Stop the APU frame thread (kept for API compatibility; timing moved to Timer.cpp)
+	void StartFrameThread() {}
+	void StopFrameThread() {}
+	void ProcessVPFrame();
+
+private:
+	bool IsAPUHaltedOrTrapped() const;
+	void WakeAPUThread();
+
 	std::array<uint8_t, APU_SIZE> m_Registers{};
 	mutable std::mutex m_AudioUpdateMutex{};
+	std::condition_variable m_APUCond{};
+	uint64_t m_NextFrameQpc = 0;
+	uint64_t m_EPFrameQpc = 0;
+	int64_t m_EPFrameUs = 5333;
+	uint32_t m_EPFrameDiv = 0;
 	uint32_t m_VPFifoLevel = 0;
 	uint32_t m_VPFifoLastUpdate = 0;
 	uint32_t m_LastAudioUpdate = 0;

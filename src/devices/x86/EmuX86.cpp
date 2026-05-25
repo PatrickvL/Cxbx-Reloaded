@@ -241,6 +241,13 @@ uint32_t EmuX86_Read(xbox::addr_xt addr, int size)
 		return EmuFlash_Read(addr, size); // NOTE: EmuFlash_Read mirrors the 256kb image through the flash address space
 	}
 
+	// KSEG1 (0xA0000000-0xBFFFFFFF) is the uncached alias of KSEG0.
+	// DirectSound uses KSEG1 for audio-buffer DMA; translate it to the
+	// KSEG0 window so the access reads physical Xbox RAM.
+	if (addr >= 0xA0000000 && addr < 0xC0000000) {
+		addr = (addr - 0xA0000000) + PHYSICAL_MAP_BASE;
+	}
+
 	// Pass the Read to the PCI Bus, this will handle devices with BARs set to MMIO addresses
 	if (g_PCIBus->MMIORead(addr, &value, size)) {
 		return value;
@@ -262,6 +269,13 @@ void EmuX86_Write(xbox::addr_xt addr, uint32_t value, int size)
 	if (addr >= FLASH_DEVICE1_BASE) { // 0xFF000000 - 0xFFFFFFF
 		EmuFlash_Write(addr, value, size);
 		return;
+	}
+
+	// KSEG1 (0xA0000000-0xBFFFFFFF) is the uncached alias of KSEG0.
+	// Translate it to the KSEG0 window before MMIO dispatch so the
+	// PCI-device BAR matching runs at the correct physical address.
+	if (addr >= 0xA0000000 && addr < 0xC0000000) {
+		addr = (addr - 0xA0000000) + PHYSICAL_MAP_BASE;
 	}
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {

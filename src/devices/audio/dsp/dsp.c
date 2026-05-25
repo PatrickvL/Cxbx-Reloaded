@@ -148,9 +148,8 @@ void dsp_run(DSPState* dsp, int cycles)
 {
     dsp->save_cycles += cycles;
 
-    if (dsp->save_cycles <= 0) return;
-
-    int dma_timer = 0;
+    bool dma_was_running = false;
+    int dma_instr_count = 0;
 
     while (dsp->save_cycles > 0)
     {
@@ -159,23 +158,23 @@ void dsp_run(DSPState* dsp, int cycles)
         dsp->core.cycle_count++;
 
         if (dsp->dma.control & DMA_CONTROL_RUNNING) {
-            dma_timer++;
-        }
-
-        if (dma_timer > 2) {
-            dma_timer = 0;
-            dsp->dma.control &= ~DMA_CONTROL_RUNNING;
-            dsp->dma.control |= DMA_CONTROL_STOPPED;
+            if (!dma_was_running) {
+                dma_was_running = true;
+                dma_instr_count = 0;
+            }
+            dma_instr_count++;
+            if (dma_instr_count > 16) {
+                dma_instr_count = 0;
+                dsp->dma.control &= ~DMA_CONTROL_RUNNING;
+                dsp->dma.control |= DMA_CONTROL_STOPPED;
+            }
+        } else {
+            dma_was_running = false;
+            dma_instr_count = 0;
         }
 
         if (dsp->core.is_idle) break;
     }
-
-    /* FIXME: DMA timing be done cleaner. Xbox enables running
-     * then polls to make sure its running. But we complete DMA instantaneously,
-     * so when is it supposed to be signaled that it stopped? Maybe just wait at
-     * least one cycle? How long does hardware wait?
-     */
 }
 
 void dsp_bootstrap(DSPState* dsp)

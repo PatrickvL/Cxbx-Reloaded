@@ -39,6 +39,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <unordered_set>
 #include <vector>
 
@@ -50,7 +52,6 @@ constexpr uint32_t APU_VP_BASE = 0x20000;
 constexpr uint32_t APU_VP_SIZE = 0x10000;
 constexpr uint32_t APU_VP_FREE = 0x10;
 constexpr uint32_t APU_VP_FIFO_CAPACITY = 0x80;
-constexpr uint32_t APU_VP_STATUS_EMPTY = 0x80;
 constexpr uint32_t APU_VP_VOICE_MAX_HANDLE = 0xFFFF;
 
 constexpr uint32_t APU_GP_BASE = 0x30000;
@@ -76,6 +77,8 @@ constexpr uint32_t NV_PAPU_ISTS_FEVINTSTS = 1 << 6;
 constexpr uint32_t NV_PAPU_IEN = 0x00001004;
 constexpr uint32_t NV_PAPU_FECTL = 0x00001100;
 constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE = 0x000000E0;
+constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE_FREE = 0x00000000;
+constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE_HALTED = 0x00000080;
 constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE_TRAPPED = 0x000000E0;
 constexpr uint32_t NV_PAPU_FECTL_FETRAPREASON = 0x00000F00;
 constexpr uint32_t NV_PAPU_FECTL_FETRAPREASON_REQUESTED = 0x00000F00;
@@ -93,6 +96,7 @@ constexpr uint32_t NV_PAPU_SECTL = 0x00002000;
 constexpr uint32_t NV_PAPU_SECTL_XCNTMODE = 0x00000018;
 constexpr uint32_t NV_PAPU_SECTL_XCNTMODE_OFF = 0;
 constexpr uint32_t NV_PAPU_XGSCNT = 0x0000200C;
+constexpr uint32_t NV_PAPU_IGSCNT = 0x0000008C;
 constexpr uint32_t NV_PAPU_VPVADDR = 0x0000202C;
 constexpr uint32_t NV_PAPU_VPSGEADDR = 0x00002030;
 constexpr uint32_t NV_PAPU_VPSSLADDR = 0x00002034;
@@ -101,8 +105,14 @@ constexpr uint32_t NV_PAPU_GPFADDR = 0x00002044;
 constexpr uint32_t NV_PAPU_EPSADDR = 0x00002048;
 constexpr uint32_t NV_PAPU_EPFADDR = 0x0000204C;
 constexpr uint32_t NV_PAPU_TVL2D = 0x00002054;
+constexpr uint32_t NV_PAPU_CVL2D = 0x00002058;
+constexpr uint32_t NV_PAPU_NVL2D = 0x0000205C;
 constexpr uint32_t NV_PAPU_TVL3D = 0x00002060;
+constexpr uint32_t NV_PAPU_CVL3D = 0x00002064;
+constexpr uint32_t NV_PAPU_NVL3D = 0x00002068;
 constexpr uint32_t NV_PAPU_TVLMP = 0x0000206C;
+constexpr uint32_t NV_PAPU_CVLMP = 0x00002070;
+constexpr uint32_t NV_PAPU_NVLMP = 0x00002074;
 constexpr uint32_t NV_PAPU_GPSMAXSGE = 0x000020D4;
 constexpr uint32_t NV_PAPU_GPFMAXSGE = 0x000020D8;
 constexpr uint32_t NV_PAPU_EPSMAXSGE = 0x000020DC;
@@ -343,6 +353,7 @@ constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_SUSTAIN = 5;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_RELEASE = 6;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EFCUR_FORCE_RELEASE = 7;
 constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EACUR = 0xF0000000;
+constexpr uint32_t NV_PAVS_VOICE_PAR_STATE_EACUR_OFF = 0;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSL_START_BA = 0x00FFFFFF;
 constexpr uint32_t NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO = 0x00FFFFFF;
 constexpr uint32_t NV_PAVS_VOICE_CUR_ECNT_EACOUNT = 0x0000FFFF;
@@ -615,7 +626,7 @@ float ClampUnitSample(float value)
 
 float RunLowPassFilter(float& high, float& band, float& low, float cutoff, float resonance, float input)
 {
-	// State-variable low-pass filter adapted to the lightweight MCPX VP path.
+	// State-variable filter adapted to the lightweight MCPX VP path.
 	// The small bias and cubic damping terms are the same stabilizers used in xemu's SVF implementation.
 	const float normalizedInput = std::sqrt(resonance / 2.0f + 0.01f) * input;
 	band -= band * band * band * 0.001f;
@@ -623,6 +634,28 @@ float RunLowPassFilter(float& high, float& band, float& low, float cutoff, float
 	band += cutoff * high;
 	low += cutoff * band;
 	return low;
+}
+
+// SVF filter mode constants matching NV_PAVS_VOICE_CFG_MISC_FMODE field values
+constexpr uint32_t APU_FILTER_MODE_OFF = 0;
+constexpr uint32_t APU_FILTER_MODE_LP = 1;
+constexpr uint32_t APU_FILTER_MODE_BP = 2;
+constexpr uint32_t APU_FILTER_MODE_HP = 3;
+
+float RunSVFilter(float& high, float& band, float& low, float cutoff, float resonance, float input, uint32_t mode)
+{
+	// State-variable filter with selectable output (LP/BP/HP).
+	// Matches xemu's setup_svf/run_svf implementation.
+	const float normalizedInput = std::sqrt(resonance / 2.0f + 0.01f) * input;
+	band -= band * band * band * 0.001f;
+	high = normalizedInput - low - resonance * band;
+	band += cutoff * high;
+	low += cutoff * band;
+	switch (mode) {
+	case APU_FILTER_MODE_BP: return band;
+	case APU_FILTER_MODE_HP: return high;
+	default: return low; // LP
+	}
 }
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
@@ -718,6 +751,18 @@ bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& ho
 		// space, so a guest physical-map VA can be dereferenced as-is here.
 		hostAddress = static_cast<uintptr_t>(guestAddress);
 		return true;
+	}
+
+	// KSEG1 (uncached) mirrors KSEG0: virtual 0xA0000000 maps to physical 0x00000000.
+	// DirectSound and the kernel use KSEG1 for audio buffer DMA to avoid cache
+	// coherency issues.  Resolve it through the same CONTIGUOUS_MEMORY_BASE window
+	// that backs KSEG0.
+	if (guestAddress >= 0xA0000000 && endAddress <= 0xBFFFFFFF) {
+		const uint64_t guestPhys = startAddress - 0xA0000000;
+		if (guestPhys < PHYSICAL_MAP_SIZE && (guestPhys + span) < PHYSICAL_MAP_SIZE) {
+			hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestPhys);
+			return true;
+		}
 	}
 
 	if (guestAddress < PHYSICAL_MAP_SIZE && endAddress < PHYSICAL_MAP_SIZE) {
@@ -938,9 +983,60 @@ void APUDevice::InitializeDSP()
 {
 	if (m_GPDsp == nullptr) {
 		m_GPDsp = dsp_init(this, &APUDevice::GPDspScratchRW, &APUDevice::GPDspFifoRW);
+		m_GPDsp->is_gp = true;
+		m_GPDsp->core.is_gp = true;
 	}
 	if (m_EPDsp == nullptr) {
 		m_EPDsp = dsp_init(this, &APUDevice::EPDspScratchRW, &APUDevice::EPDspFifoRW);
+		m_EPDsp->is_gp = false;
+		m_EPDsp->core.is_gp = false;
+	}
+
+	// Load the MCPX GP/EP DSP firmware from the emulator directory.
+	static bool firmwareLoaded;
+	if (!firmwareLoaded) {
+		firmwareLoaded = true;
+		struct FirmwareTarget {
+			DSPState* dsp;
+			const char* filename;
+			const char* name;
+		};
+		FirmwareTarget targets[] = {
+			{m_GPDsp, "gp_firmware.bin", "GP"},
+			{m_EPDsp, "ep_firmware.bin", "EP"},
+		};
+		for (const auto& t : targets) {
+			if (t.dsp == nullptr) continue;
+			char exePathBuf[MAX_PATH]{};
+			GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
+			std::filesystem::path exePath(exePathBuf);
+			std::filesystem::path fwPath = exePath.parent_path() / t.filename;
+			if (!std::filesystem::exists(fwPath)) {
+				fwPath = t.filename;
+			}
+			std::ifstream fwFile(fwPath, std::ios::binary | std::ios::ate);
+			if (fwFile.is_open()) {
+				const size_t fileSize = static_cast<size_t>(fwFile.tellg());
+				fwFile.seekg(0);
+				const size_t words = std::min<size_t>(fileSize / 4, 0x800);
+				EmuLog(LOG_LEVEL::INFO, "Loading MCPX %s DSP firmware from %s (%zu words)",
+					t.name, fwPath.string().c_str(), words);
+				for (size_t i = 0; i < words; ++i) {
+					uint8_t buf[4]{};
+					if (!fwFile.read(reinterpret_cast<char*>(buf), 4)) break;
+					uint32_t word = buf[0] | (buf[1] << 8) |
+						(buf[2] << 16) | (buf[3] << 24);
+					if (word & 0xff000000) word &= 0x00ffffff;
+					t.dsp->core.pram[i] = word;
+				}
+				memset(t.dsp->core.pram_opcache, 0,
+					sizeof(t.dsp->core.pram_opcache));
+			} else {
+				EmuLog(LOG_LEVEL::WARNING,
+					"MCPX %s DSP firmware (%s) not found; audio will use VP-only path",
+					t.name, t.filename);
+			}
+		}
 	}
 }
 
@@ -990,6 +1086,7 @@ void APUDevice::Init()
 	m_VendorId = PCI_VENDOR_ID_NVIDIA;
 
 	Reset();
+	StartFrameThread();
 }
 
 void APUDevice::Reset()
@@ -1060,7 +1157,7 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_FEMEMDATA, 0);
 	SetRegister32(NV_PAPU_FETFORCE0, 0);
 	SetRegister32(NV_PAPU_FETFORCE1, 0);
-	SetRegister32(NV_PAPU_SECTL, 0);
+	SetRegister32(NV_PAPU_SECTL, 0x00000008);
 	SetRegister32(NV_PAPU_VPVADDR, 0);
 	SetRegister32(NV_PAPU_VPSGEADDR, 0);
 	SetRegister32(NV_PAPU_VPSSLADDR, 0);
@@ -1073,10 +1170,148 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_EPSMAXSGE, 0);
 	SetRegister32(NV_PAPU_EPFMAXSGE, 0);
 	SetRegister32(NV_PAPU_TVL2D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_CVL2D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_NVL2D, APU_VP_VOICE_MAX_HANDLE);
 	SetRegister32(NV_PAPU_TVL3D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_CVL3D, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_NVL3D, APU_VP_VOICE_MAX_HANDLE);
 	SetRegister32(NV_PAPU_TVLMP, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_CVLMP, APU_VP_VOICE_MAX_HANDLE);
+	SetRegister32(NV_PAPU_NVLMP, APU_VP_VOICE_MAX_HANDLE);
 	RefreshVPStatus();
 	RefreshInterruptStatus();
+	m_EPFrameDiv = 0;
+}
+
+APUDevice::~APUDevice()
+{
+	StopFrameThread();
+}
+
+uint64_t APUDevice::apu_tick(uint64_t now_qpc)
+{
+	// First call: compute EP frame interval in QPC ticks and establish deadline
+	if (m_NextFrameQpc == 0) {
+		extern int64_t HostQPCFrequency;
+		extern uint64_t HostQPCStartTime;
+		if (m_EPFrameQpc == 0 && HostQPCFrequency > 0) {
+			m_EPFrameQpc = static_cast<uint64_t>(HostQPCFrequency) * m_EPFrameUs / 1000000;
+		}
+		m_NextFrameQpc = now_qpc;
+		return now_qpc + m_EPFrameQpc;
+	}
+
+	// If not overdue yet, return the deadline
+	if (now_qpc < m_NextFrameQpc) {
+		return m_NextFrameQpc;
+	}
+
+	// If the APU is halted or trapped, fire interrupt and skip rendering
+	if (IsAPUHaltedOrTrapped()) {
+		std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
+		RefreshInterruptStatus();
+		m_NextFrameQpc = now_qpc + m_EPFrameQpc / 4; // check again faster
+		return m_NextFrameQpc;
+	}
+
+	// Process one VP frame
+	ProcessVPFrame();
+	m_NextFrameQpc = now_qpc + m_EPFrameQpc;
+
+	// Advance AC97 audio output progress
+	g_AC97->ServiceAudio();
+
+	return m_NextFrameQpc;
+}
+
+void APUDevice::ProcessVPFrame()
+{
+	// Process one VP frame worth of audio (NUM_SAMPLES_PER_FRAME samples)
+	std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
+
+	// Periodically scan the guest voice table for voices that were
+	// activated via direct memory write (games can set ACTIVE_VOICE
+	// without calling the VP VOICE_ON method).
+	{
+		static uint32_t lastVoiceScan;
+		const uint32_t now = GetAPUTime();
+		if (now - lastVoiceScan >= 4800) { // ~10 Hz
+			lastVoiceScan = now;
+			const uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+			if (vpvaddr != 0) {
+				uint32_t newlyActivated = 0;
+				for (uint32_t vh = 0; vh < MAX_VOICE_HANDLES; ++vh) {
+					uint32_t state = 0;
+					if (!ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+						NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state)) {
+						break;
+					}
+					const bool active = (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
+					const bool tracked = IsVoiceActiveHinted(vh);
+					if (active && !tracked) {
+						UnlinkVoiceFromLists(vh);
+						WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+							NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
+						SetVoiceActiveHint(vh, true);
+						SetVoiceLocked(vh, false);
+						WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
+							NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+						++newlyActivated;
+					}
+				}
+				if (newlyActivated > 0) {
+					EmuLog(LOG_LEVEL::INFO,
+						"APU diag: guest-memory voice scan activated %u voices not tracked in VP hints",
+						newlyActivated);
+				}
+			}
+		}
+	}
+
+	// Advance time by one VP frame (32 samples)
+	const size_t frameSamples = NUM_SAMPLES_PER_FRAME;
+
+	// Run the audio chunk rendering
+	RenderBasicAudioChunk(frameSamples);
+	m_LastAudioUpdate = GetAPUTime();
+	m_XGSCounter += static_cast<uint32_t>(frameSamples);
+
+	m_EPFrameDiv++;
+}
+
+void APUDevice::WakeAPUThread()
+{
+	// APU thread removed; kept for API compatibility.
+}
+
+bool APUDevice::IsAPUHaltedOrTrapped() const
+{
+	const uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+	const uint32_t feMode = fectl & NV_PAPU_FECTL_FEMETHMODE;
+	if (feMode == NV_PAPU_FECTL_FEMETHMODE_TRAPPED ||
+		feMode == NV_PAPU_FECTL_FEMETHMODE_HALTED) {
+		return true;
+	}
+
+	const uint32_t sectl = GetRegister32(NV_PAPU_SECTL);
+	const uint32_t xcntmode = (sectl & NV_PAPU_SECTL_XCNTMODE) >> 3;
+	if (xcntmode == 0) {
+		const uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+		if (vpvaddr == 0) {
+			bool hasActiveVoices = false;
+			for (size_t i = 0; i < m_VPActiveVoiceHints.size(); ++i) {
+				if (m_VPActiveVoiceHints[i] != 0) {
+					hasActiveVoices = true;
+					break;
+				}
+			}
+			if (!hasActiveVoices) {
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 uint32_t APUDevice::IORead(int barIndex, uint32_t addr, unsigned size)
@@ -1092,7 +1327,10 @@ void APUDevice::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned si
 uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 {
 	(void)barIndex;
-	SynchronizeAudio();
+	// SynchronizeAudio is intentionally NOT called here — it is driven
+	// from ServiceAudio (DPC loop) and MMIOWrite.  Calling it from MMIORead
+	// causes the ISR-to-ISTS-read-to-FEVINT-to-GINT loop that creates an
+	// infinite interrupt storm in DirectSound titles.
 
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		return VPRead(addr - APU_VP_BASE, size);
@@ -1106,16 +1344,24 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 		return EPRead(addr - APU_EP_BASE, size);
 	}
 
-	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
-		// XGSCNT reflects guest-visible rendered sample progress rather than raw
-		// host time; SynchronizeAudio only advances this counter while XCNTMODE
-		// allows audio progress, so MMIO reads expose the frozen value directly.
-		return ReadRegisterFragment(m_XGSCounter, addr - NV_PAPU_XGSCNT, size);
+	if (addr >= NV_PAPU_IGSCNT && addr < NV_PAPU_IGSCNT + sizeof(uint32_t)) {
+		// IGSCNT reflects the same guest-visible sample progress as XGSCNT,
+		// exposed at a different register offset for interrupt timing.
+		uint32_t igsCnt = GetRegister32(NV_PAPU_SECTL) & 0x18;
+		if (igsCnt) {
+			return ReadRegisterFragment(m_XGSCounter, addr - NV_PAPU_IGSCNT, size);
+		}
+		return 0;
 	}
 
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
 		const uint32_t currentValue = RefreshFEMemDataRegister(0);
 		return ReadRegisterFragment(currentValue, addr - NV_PAPU_FEMEMDATA, size);
+	}
+
+	if (addr >= NV_PAPU_ISTS && addr < NV_PAPU_ISTS + sizeof(uint32_t)) {
+		RefreshInterruptStatus();
+		return ReadRegisterFragment(GetRegister32(NV_PAPU_ISTS), addr - NV_PAPU_ISTS, size);
 	}
 
 	return ReadRegister(addr, size);
@@ -1124,7 +1370,89 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
 	(void)barIndex;
-	SynchronizeAudio();
+	// NOTE: SynchronizeAudio() is no longer called here — audio rendering is now
+	// driven by the dedicated APU frame thread (xemu-style). This prevents the
+	// DPC loop freeze where synchronous rendering re-triggered interrupts faster
+	// than the guest could service them.
+
+	// Diagnostic: log every distinct register write so we can confirm
+	// the guest is actually configuring the APU.
+	{
+		static std::once_flag once;
+		static uint32_t lastLogFrame;
+		static uint32_t frameCounter;
+		std::call_once(once, []{ lastLogFrame = GetAPUTime(); });
+		++frameCounter;
+		if (GetAPUTime() - lastLogFrame >= 48000) { // every ~1 sec
+			lastLogFrame = GetAPUTime();
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: MMIO writes/sec=%u VPVADDR=0x%08X SECTL=0x%08X TVL2D=0x%04X TVL3D=0x%04X activeVoiceHints=%u",
+				frameCounter,
+				GetRegister32(NV_PAPU_VPVADDR),
+				GetRegister32(NV_PAPU_SECTL),
+				GetRegister32(NV_PAPU_TVL2D),
+				GetRegister32(NV_PAPU_TVL3D),
+				m_VPActiveVoiceHints[0] != 0 ? 1 : 0);
+			frameCounter = 0;
+		}
+	}
+
+	// Diagnostic: log the first N VP-method writes with address/value
+	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
+		static uint32_t vpDiagIdx;
+		if (vpDiagIdx < 20) {
+			++vpDiagIdx;
+			const uint32_t vpOffset = addr - APU_VP_BASE;
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: VP write #%u VPoff=0x%04X value=0x%08X size=%u %s",
+				vpDiagIdx, vpOffset, value, size,
+				(vpOffset == 0x124) ? "*** VOICE_ON ***" :
+				(vpOffset == 0x10C) ? "CLEAR_VOICES" :
+				(vpOffset == 0x2F8) ? "SET_CURRENT_VOICE" :
+				(vpOffset == 0x304) ? "SET_VOICE_CFG_FMT" :
+				(vpOffset == 0x318) ? "SET_VOICE_CFG_VBIN" :
+				(vpOffset == 0x31C) ? "SET_VOICE_CFG_VBOUT" : "");
+		}
+		// Always log VOICE_ON even beyond the diag limit
+		if ((addr - APU_VP_BASE) == 0x124) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU diag: VOICE_ON detected! handle=0x%04X VPVADDR=0x%08X",
+				value & 0xFFFF,
+				GetRegister32(NV_PAPU_VPVADDR));
+		}
+		// Always log buffer-base writes to identify when game sets buffer addresses
+		if ((addr - APU_VP_BASE) == 0x3A0) {
+			EmuLog(LOG_LEVEL::WARNING,
+				"APU diag: CFG_BUF_BASE voice=%u value=0x%08X",
+				GetRegister32(NV_PAPU_FECV),
+				value);
+		}
+	}
+
+	// Diagnostic: also log first GP FIFO writes with more detail
+	if (addr >= APU_GP_BASE && addr < APU_GP_BASE + APU_GP_SIZE) {
+		static uint32_t gpDiagIdx;
+		if (gpDiagIdx < 25) {
+			++gpDiagIdx;
+			const uint32_t gpOffset = addr - APU_GP_BASE;
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: GP write #%u GPoff=0x%05X value=0x%08X size=%u",
+				gpDiagIdx, gpOffset, value, size);
+		}
+	}
+
+	// Diagnostic: log first general-region writes (non-VP, non-GP, non-EP)
+	if (!(addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) &&
+	    !(addr >= APU_GP_BASE && addr < APU_GP_BASE + APU_GP_SIZE) &&
+	    !(addr >= APU_EP_BASE && addr < APU_EP_BASE + APU_EP_SIZE)) {
+		static uint32_t genDiagIdx;
+		if (genDiagIdx < 15) {
+			++genDiagIdx;
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: general write #%u addr=0x%05X value=0x%08X size=%u",
+				genDiagIdx, addr, value, size);
+		}
+	}
 
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
@@ -1156,6 +1484,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		const uint32_t clearMask = value << ((addr - NV_PAPU_ISTS) * 8);
 		SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) & ~clearMask);
 		RefreshInterruptStatus();
+		WakeAPUThread(); // Wake frame thread — guest acknowledged interrupt
 		return;
 	}
 
@@ -1163,6 +1492,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		(addr >= NV_PAPU_FECTL && addr < NV_PAPU_FECTL + sizeof(uint32_t))) {
 		WriteRegister(addr, value, size);
 		RefreshInterruptStatus();
+		WakeAPUThread(); // Wake frame thread — FECTL mode may have changed
 		return;
 	}
 
@@ -1191,6 +1521,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 			}
 		}
 		RefreshInterruptStatus();
+		WakeAPUThread(); // Wake frame thread — trap may have been cleared
 		return;
 	}
 
@@ -1224,6 +1555,36 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		}
 	}
 
+	// User Method FIFO: process methods when the kernel writes FEUFIFOCTL
+	// (0x1340) with count > 0.  At that point the method and param have
+	// both been written to the FIFO slots at 0x1400-0x1500.  Consume all
+	// pending methods synchronously and reset count to 0.
+	if (addr == 0x1340) {
+		uint32_t fifoCtl = value;
+		uint32_t count = fifoCtl & 0x3F;
+		uint32_t tail = (fifoCtl >> 16) & 0x1F;
+		while (count > 0) {
+			uint32_t methodOffset = GetRegister32(0x1400 + tail * 8);
+			uint32_t paramValue   = GetRegister32(0x1404 + tail * 8);
+			if (methodOffset != 0) {
+				ConsumeVPMethod(methodOffset, paramValue, sizeof(uint32_t));
+			}
+			SetRegister32(0x1400 + tail * 8, 0);
+			SetRegister32(0x1404 + tail * 8, 0);
+			tail = (tail + 1) & 0x1F;
+			count--;
+		}
+		// Report all methods consumed: count=0, tail advanced
+		uint32_t head = (fifoCtl >> 8) & 0x1F;
+		WriteRegister(addr, (head << 8) | (tail << 16), size);
+		return;
+	}
+
+	if (addr >= 0x1400 && addr < 0x1500) {
+		WriteRegister(addr, value, size);
+		return;
+	}
+
 	WriteRegister(addr, value, size);
 	const uint32_t registerBase = addr & ~0x3u;
 	if (IsAPUWordAddressRegister(registerBase)) {
@@ -1233,6 +1594,11 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		}
 	} else if (IsAPUMaxSgeRegister(registerBase)) {
 		SetRegister32(registerBase, NormalizeAPUMaxSge(GetRegister32(registerBase)));
+	}
+
+	// Wake APU frame thread if SECTL was written (XCNTMODE may have changed)
+	if (registerBase == NV_PAPU_SECTL) {
+		WakeAPUThread();
 	}
 }
 
@@ -1458,13 +1824,21 @@ void APUDevice::TransferDSPFifo(bool gp, uint8_t* ptr, unsigned index, size_t le
 
 bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t frameCount)
 {
-	if (output == nullptr || mixBins == nullptr || frameCount == 0 || !IsAnyDSPEnabled() ||
+	if (output == nullptr || mixBins == nullptr || frameCount == 0 || !IsGPDSPEnabled() ||
 		(frameCount % APU_DSP_FRAME_SAMPLES) != 0) {
 		return false;
 	}
 
-	m_DSPOutputScratch.clear();
-	const uint64_t maxCycleBudget = std::max<size_t>(frameCount, APU_DSP_FRAME_SAMPLES) * 4096ull;
+	// xemu-style DSP processing:
+	// 1. Write VP mixbin results into GP DSP XRAM at GP_DSP_MIXBUF_BASE
+	// 2. Run GP DSP (every VP frame = 32 samples)
+	// 3. Run EP DSP (every 8th VP frame = 256 samples)
+	// 4. EP output FIFO #0 write is captured by CaptureEPFifoOutput into m_DSPOutputScratch
+	//
+	// When EP produces output, we drain it from the buffered EP output.
+	// When EP hasn't run yet this cycle, we return false to use the direct stereo fallback.
+
+	const uint64_t maxCycleBudget = static_cast<uint64_t>(APU_DSP_FRAME_SAMPLES) * 4096ull;
 	const auto runDSP = [maxCycleBudget](DSPState* dsp) {
 		dsp_start_frame(dsp);
 		dsp->core.is_idle = false;
@@ -1476,41 +1850,57 @@ bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t 
 		}
 	};
 
-	for (size_t frameBase = 0; frameBase < frameCount; frameBase += APU_DSP_FRAME_SAMPLES) {
-		if (IsGPDSPEnabled()) {
-			for (size_t mixbin = 0; mixbin < std::min<size_t>(APU_MIXBIN_COUNT, 32); ++mixbin) {
-				for (size_t sample = 0; sample < APU_DSP_FRAME_SAMPLES; ++sample) {
-					const int16_t value = ClampToInt16(mixBins[mixbin * frameCount + frameBase + sample]);
-					dsp_write_memory(m_GPDsp, 'X',
-						APU_DSP_GP_MIXBUF_BASE + static_cast<uint32_t>(mixbin * APU_DSP_FRAME_SAMPLES + sample),
-						ConvertInt16ToDSP24(value));
+	// Step 1: Write mixBins to GP XRAM
+	for (size_t mixbin = 0; mixbin < std::min<size_t>(APU_MIXBIN_COUNT, 32); ++mixbin) {
+		for (size_t sample = 0; sample < APU_DSP_FRAME_SAMPLES; ++sample) {
+			const int16_t value = ClampToInt16(mixBins[mixbin * frameCount + sample]);
+			dsp_write_memory(m_GPDsp, 'X',
+				APU_DSP_GP_MIXBUF_BASE + static_cast<uint32_t>(mixbin * APU_DSP_FRAME_SAMPLES + sample),
+				ConvertInt16ToDSP24(value));
+		}
+	}
+
+	// Step 2: Run GP DSP
+	runDSP(m_GPDsp);
+
+	// Step 3: Run EP DSP every 8th GP frame
+	bool epProducedOutput = false;
+	if (IsEPDSPEnabled()) {
+		++m_DSPFrameDivider;
+		if ((m_DSPFrameDivider % APU_DSP_EP_FRAME_DIVIDER) == 0) {
+			m_DSPOutputScratch.clear();
+			runDSP(m_EPDsp);
+			epProducedOutput = !m_DSPOutputScratch.empty();
+		}
+	}
+
+	// Step 4: If EP produced output this frame, drain it to the caller.
+	// EP output is typically 256 stereo frames (512 int16s) covering 8 GP frames.
+	// We submit the entire EP output as one chunk to AC97 for smooth playback.
+	if (epProducedOutput) {
+		const size_t epStereoSamples = m_DSPOutputScratch.size();
+		const size_t epFrameCount = epStereoSamples / 2;
+		if (epFrameCount > 0) {
+			if (!m_LoggedDSPOutputCaptureFailure) {
+				// Log once when DSP first produces audio
+				static bool loggedFirstDSPOutput = false;
+				if (!loggedFirstDSPOutput) {
+					loggedFirstDSPOutput = true;
+					EmuLog(LOG_LEVEL::INFO,
+						"APU GP/EP DSP path active: EP produced %zu stereo frames via FIFO capture",
+						epFrameCount);
 				}
 			}
-			runDSP(m_GPDsp);
-		}
-
-		if (IsEPDSPEnabled()) {
-			++m_DSPFrameDivider;
-			if ((m_DSPFrameDivider % APU_DSP_EP_FRAME_DIVIDER) == 0) {
-				runDSP(m_EPDsp);
+			if (g_AC97 != nullptr) {
+				g_AC97->SubmitPCMFrames(m_DSPOutputScratch.data(), epFrameCount);
 			}
+			m_LoggedDSPOutputCaptureFailure = false;
+			return true; // Signal that DSP handled AC97 submission
 		}
 	}
 
-	if (m_DSPOutputScratch.size() != frameCount * 2) {
-		if (!m_LoggedDSPOutputCaptureFailure) {
-			EmuLog(LOG_LEVEL::WARNING,
-				"APU DSP frame produced %zu samples, expected %zu for %zu stereo frames; falling back to non-DSP host mix",
-				m_DSPOutputScratch.size(),
-				frameCount * 2,
-				frameCount);
-			m_LoggedDSPOutputCaptureFailure = true;
-		}
-		return false;
-	}
-	m_LoggedDSPOutputCaptureFailure = false;
-	std::copy(m_DSPOutputScratch.begin(), m_DSPOutputScratch.end(), output);
-	return true;
+	// GP ran but EP didn't produce output this frame — fall back to direct stereo
+	return false;
 }
 
 
@@ -1518,9 +1908,14 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 {
 	UpdateVPFifo();
 
+	// XGSCNT (VP offset 0x0C) — return the live sample counter
+	if (addr >= 0x0C && addr < 0x0C + sizeof(uint32_t)) {
+		return ReadRegisterFragment(m_XGSCounter, addr - 0x0C, size);
+	}
+
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
 		return ReadRegisterFragment(
-			GetRegister32(APU_VP_BASE + APU_VP_FREE),
+			GetVPFifoFreeSlots(),
 			addr - APU_VP_FREE,
 			size);
 	}
@@ -1563,6 +1958,30 @@ void APUDevice::VPWrite(uint32_t addr, uint32_t value, unsigned size)
 	}
 
 	WriteRegister(APU_VP_BASE + addr, value, size);
+
+	// VP voice-parameter window at offsets 0x800-0xFFF maps directly
+	// to the current voice's parameter block so that games can write
+	// buffer addresses and positions without going through the method
+	// dispatcher (ConsumeVPMethod only handles recognised methods).
+	// When the written value looks like a KSEG0 pointer, treat it as
+	// a buffer base address (NV_PAVS_VOICE_CUR_PSL_START) regardless
+	// of the VP window offset — games use this window for DMA buffer
+	// setup and the offset mapping differs between titles.
+	if (addr >= 0x800 && addr < 0x1000 && size == sizeof(uint32_t)) {
+		const uint32_t voiceHandle = GetRegister32(NV_PAPU_FECV);
+		if (voiceHandle < APU_VP_VOICE_MAX_HANDLE) {
+			if (value >= PHYSICAL_MAP_BASE && value <= PHYSICAL_MAP_END) {
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, value);
+				constexpr uint32_t DEFAULT_BUF_END = 0x10000;
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT,
+					NV_PAVS_VOICE_PAR_NEXT_EBO, DEFAULT_BUF_END);
+			} else {
+				WriteVoiceMask(voiceHandle, addr - 0x800, 0xFFFFFFFF, value);
+			}
+		}
+	}
+
 	ConsumeVPMethod(addr, value, size);
 	if (m_VPFifoLevel < APU_VP_FIFO_CAPACITY) {
 		++m_VPFifoLevel;
@@ -1719,6 +2138,18 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			return;
 		}
 
+		{
+			static bool once;
+			if (!once) {
+				once = true;
+				EmuLog(LOG_LEVEL::INFO,
+					"APU diag: first VOICE_ON handle=%u SECTL=0x%08X VPVADDR=0x%08X",
+					selectedHandle,
+					GetRegister32(NV_PAPU_SECTL),
+					GetRegister32(NV_PAPU_VPVADDR));
+			}
+		}
+
 		UnlinkVoiceFromLists(selectedHandle);
 
 		const uint32_t feav = GetRegister32(NV_PAPU_FEAV);
@@ -1802,19 +2233,26 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		uint32_t notifierBase = 0;
 		if (ResolveOptionalGuestTableBase(NV_PAPU_FENADDR, m_VPNotifyContextDMA, notifierBase)) {
 			WriteNotifierValue(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, 0);
+			WriteNotifierStatus(selectedHandle, MCPX_HW_NOTIFIER_VOICE_POSITION,
+				NV1BA0_NOTIFICATION_STATUS_DONE_SUCCESS);
 		}
 		ClearHRTFFilterState(selectedHandle);
+		// Reset SVF (state-variable filter) state on voice activation, matching
+		// xemu's voice_reset_filters() which clears all filter history.
+		if (selectedHandle < m_VPLowPassState.size()) {
+			m_VPLowPassState[selectedHandle] = {};
+		}
+		// Set NEW_VOICE flag so the first frame can detect a freshly triggered voice
+		// (xemu sets this in voice_on; cleared unconditionally at the start of voice_get_samples).
+		WriteVoiceMask(selectedHandle, NV_PAVS_VOICE_PAR_STATE,
+			NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 1);
 		InitializeVoiceEnvelopes(selectedHandle, value);
 		m_LoggedEmptyVoiceTableDiagnostics = false;
 		return;
 	}
 	case NV1BA0_PIO_VOICE_OFF: {
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_OFF_HANDLE;
-		SetVoiceActiveHint(voiceHandle, false);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
-		SetVoiceNotifierEnvelopeState(voiceHandle,
-			static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
+		ClearStoppedVoiceState(voiceHandle);
 		UnlinkVoiceFromLists(voiceHandle);
 		// Sample the guest-visible offset register before clearing the local playback cache so
 		// the completion notifier reflects the position software last programmed/observed.
@@ -1824,6 +2262,9 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 			m_VPPlaybackState[voiceHandle] = PlaybackState{};
 		}
 		ClearHRTFFilterState(voiceHandle);
+		if (voiceHandle < m_VPLowPassState.size()) {
+			m_VPLowPassState[voiceHandle] = {};
+		}
 		m_LoggedEmptyVoiceTableDiagnostics = false;
 		return;
 	}
@@ -1836,9 +2277,61 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	case NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY:
 		m_VPCurrentHRTFEntry = value & NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY_HANDLE;
 		return;
-	case NV1BA0_PIO_VOICE_LOCK:
-		SetVoiceLocked(currentVoice(), (value & 1u) != 0);
+	case NV1BA0_PIO_VOICE_LOCK: {
+		const uint32_t vh = currentVoice();
+		const bool locking = (value & 1u) != 0;
+		const bool wasLocked = IsVoiceLocked(vh);
+		SetVoiceLocked(vh, locking);
+		// When a voice is unlocked after being configured, and the
+		// game never explicitly calls VOICE_ON, activate it so the
+		// Stream Engine renders it.  Matches Bink/DirectSound
+		// patterns that use lock/configure/unlock to finalise voices.
+		if (!locking && wasLocked && vh < APU_VP_VOICE_MAX_HANDLE) {
+			const bool wasActive = (GetRegister32(NV_PAPU_FECV) & NV1BA0_PIO_VOICE_ON_HANDLE) == vh
+				&& IsVoiceActiveHinted(vh);
+			uint32_t state = 0;
+			if (ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+				NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state) &&
+				(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+				// If buffer base is zero, scan for a donor voice
+				uint32_t bufBase = 0;
+				ReadVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, bufBase);
+				if (bufBase == 0) {
+					for (uint32_t donor = 0; donor < MAX_VOICE_HANDLES; ++donor) {
+						uint32_t donorBase = 0;
+						if (ReadVoiceMask(donor, NV_PAVS_VOICE_CUR_PSL_START,
+							NV_PAVS_VOICE_CUR_PSL_START_BA, donorBase) && donorBase != 0) {
+							uint32_t end = 0, cur = 0;
+							ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_NEXT,
+								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
+							ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_OFFSET,
+								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
+							WriteVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
+								NV_PAVS_VOICE_CUR_PSL_START_BA, donorBase);
+							if (end != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_NEXT,
+								NV_PAVS_VOICE_PAR_NEXT_EBO, end);
+							if (cur != 0) WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
+								NV_PAVS_VOICE_PAR_OFFSET_CBO, cur);
+							break;
+						}
+					}
+				}
+				UnlinkVoiceFromLists(vh);
+				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+					NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
+				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+					NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
+				SetVoiceActiveHint(vh, true);
+				SetVoiceLocked(vh, false);
+				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
+					NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+				EmuLog(LOG_LEVEL::INFO,
+					"APU diag: auto-activated voice %u on VOICE_LOCK unlock", vh);
+			}
+		}
 		return;
+	}
 	case NV1BA0_PIO_VOICE_RELEASE: {
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_RELEASE_HANDLE;
 		if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
@@ -2533,6 +3026,13 @@ void APUDevice::NotifyVoiceCompletion(uint32_t voiceHandle, uint8_t status)
 
 uint32_t APUDevice::GetVoicePlaybackOffset(uint32_t voiceHandle) const
 {
+	if (voiceHandle < m_VPPlaybackState.size()) {
+		const auto& playbackState = m_VPPlaybackState[voiceHandle];
+		if (playbackState.valid) {
+			return playbackState.offset;
+		}
+	}
+
 	uint32_t currentOffset = 0;
 	// ReadVoiceMask already emits one-shot diagnostics on failure; keep the notifier
 	// payload deterministic by falling back to zero when the guest voice table cannot
@@ -2594,6 +3094,21 @@ void APUDevice::UnlinkVoiceFromLists(uint32_t voiceHandle)
 	UnlinkVoiceFromList(NV_PAPU_TVL3D, voiceHandle);
 	UnlinkVoiceFromList(NV_PAPU_TVLMP, voiceHandle);
 	SetVoiceNextHandle(voiceHandle, APU_VP_VOICE_MAX_HANDLE);
+}
+
+void APUDevice::ClearStoppedVoiceState(uint32_t voiceHandle)
+{
+	SetVoiceActiveHint(voiceHandle, false);
+	SetVoiceLocked(voiceHandle, false);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_LFOA_DELAYMODE, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_LFOF_DELAYMODE, 0);
+	WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_EACUR,
+		NV_PAVS_VOICE_PAR_STATE_EACUR_OFF);
+	SetVoiceNotifierEnvelopeState(voiceHandle,
+		static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
 }
 
 bool APUDevice::IsVoiceLocked(uint32_t voiceHandle) const
@@ -3382,23 +3897,12 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 
 void APUDevice::SynchronizeAudio()
 {
-	std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
-
-	const uint32_t now = GetAPUTime();
-	if (((GetRegister32(NV_PAPU_SECTL) & NV_PAPU_SECTL_XCNTMODE) >> Ctz32(NV_PAPU_SECTL_XCNTMODE)) ==
-		NV_PAPU_SECTL_XCNTMODE_OFF) {
-		m_LastAudioUpdate = now;
-		return;
-	}
-
-	uint32_t remaining = now - m_LastAudioUpdate;
-	while (remaining > 0) {
-		const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
-		RenderBasicAudioChunk(chunk);
-		m_LastAudioUpdate += static_cast<uint32_t>(chunk);
-		m_XGSCounter += static_cast<uint32_t>(chunk);
-		remaining -= static_cast<uint32_t>(chunk);
-	}
+    // Audio rendering is now driven by the dedicated APU frame thread.
+    // This method is kept for API compatibility (HLE patches, ServiceAudio)
+    // but only wakes the frame thread rather than doing synchronous rendering.
+    // This is the key fix for the DPC loop freeze: the guest's DirectSoundDoWork
+    // DPC no longer re-enters the renderer, preventing the interrupt storm.
+    WakeAPUThread();
 }
 
 void APUDevice::RenderBasicAudioChunk(size_t frameCount)
@@ -3472,14 +3976,12 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			m_LoggedFallbackActiveVoiceRender = true;
 		}
 	}
-	// FE still expects the SE2FE idle-voice path to progress even before the guest
-	// publishes NV_PAPU_VPVADDR; ConsumeVPMethod remains safe here because the
-	// shadow voice table backs the FE/VP state touched by that path.
-	if (!hasVoiceActivity &&
-		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
-		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
-		ConsumeVPMethod(SE2FE_IDLE_VOICE, APU_VP_VOICE_MAX_HANDLE, sizeof(uint32_t));
-	}
+	// xemu only fires SE2FE_IDLE_VOICE when an actual idle voice is found during
+	// the list walk (handled above in RenderBasicVoiceList). Firing it
+	// unconditionally with an invalid handle (0xFFFF) every frame was causing
+	// interference with the guest's DPC servicing — particularly for video
+	// playback titles that rely on FEVINT (notifier) interrupts for audio/video
+	// synchronization rather than the FE trap mechanism.
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (!hasVoiceActivity) {
 			if (!m_LoggedEmptyVoiceTableDiagnostics) {
@@ -3513,6 +4015,23 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 	ApplySubmixHeadroom(mixBins.data(), frameCount);
 	WriteOutputBuffers(mixBins.data(), frameCount);
+
+	// Diagnostic: log mix-bin peaks and voice activity periodically
+	{
+		static uint32_t lastChunkLog;
+		const uint32_t now = GetAPUTime();
+		if (hasVoiceActivity && now - lastChunkLog >= 48000) {
+			lastChunkLog = now;
+			const uint32_t peak0 = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 0);
+			const uint32_t peak1 = PeakAbsoluteMixBinAmplitude(mixBins.data(), frameCount, 1);
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: chunk frames=%zu voices(2D=%zu 3D=%zu MP=%zu fb=%zu) stereoPeak=[%u, %u] VPVADDR=0x%08X SECTL=0x%08X",
+				frameCount, visited2D, visited3D, visitedMP, fallbackVisited,
+				peak0, peak1,
+				GetRegister32(NV_PAPU_VPVADDR),
+				GetRegister32(NV_PAPU_SECTL));
+		}
+	}
 
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		uint32_t postHeadroomStereoPeak[2]{
@@ -3575,7 +4094,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	m_LoggedAC97Missing = false;
 
 	std::vector<int16_t> output(frameCount * 2);
-	const bool dspOutputActive = ProcessDSPAudio(output.data(), mixBins.data(), frameCount);
+	// xemu-style DSP path: run GP every VP frame, EP every 8th VP frame.
+	// When DSP is active, EP output (captured via CaptureEPFifoOutput) is the
+	// definitive audio output. On non-EP frames, GP is filling EP input FIFOs
+	// so we still submit the direct stereo fallback to keep audio flowing.
+	const bool dspEnabled = IsGPDSPEnabled();
+	bool dspOutputActive = false;
+	if (dspEnabled) {
+		dspOutputActive = ProcessDSPAudio(output.data(), mixBins.data(), frameCount);
+	}
 	if (!dspOutputActive) {
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
@@ -3721,7 +4248,28 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		}
 	}
 
-	g_AC97->SubmitPCMFrames(output.data(), frameCount);
+	// Diagnostic: log output peak right before submitting to AC97
+	{
+		static uint32_t lastOutputLog;
+		const uint32_t now = GetAPUTime();
+		if (now - lastOutputLog >= 48000) {
+			lastOutputLog = now;
+			const uint32_t peak = audio_diagnostics::PeakAbsoluteSampleAmplitude(output.data(), frameCount * 2);
+			EmuLog(LOG_LEVEL::INFO,
+				"APU diag: SubmitPCMFrames frames=%zu outputPeak=%u dsp=%d guestVP=%d hostSpatial=%zu",
+				frameCount, peak,
+				dspOutputActive ? 1 : 0,
+				!m_EnableHostSpatialHandoff ? 1 : 0,
+				m_ChunkSubmittedHostSpatialVoiceCount);
+		}
+	}
+
+	// When DSP path handled AC97 submission internally (EP output), skip the
+	// per-frame SubmitPCMFrames since ProcessDSPAudio already submitted the
+	// full EP frame (256 stereo samples) directly.
+	if (!dspOutputActive) {
+		g_AC97->SubmitPCMFrames(output.data(), frameCount);
+	}
 }
 
 void APUDevice::ApplySubmixHeadroom(int32_t* mixBins, size_t frameCount)
@@ -3805,8 +4353,26 @@ void APUDevice::WriteOutputBuffers(const int32_t* mixBins, size_t frameCount)
 
 size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, size_t frameCount)
 {
+	// Map top register to CVL/NVL registers (matching xemu's voice_list_regs table)
+	uint32_t cvlRegister = 0;
+	uint32_t nvlRegister = 0;
+	if (topRegister == NV_PAPU_TVL2D) {
+		cvlRegister = NV_PAPU_CVL2D;
+		nvlRegister = NV_PAPU_NVL2D;
+	} else if (topRegister == NV_PAPU_TVL3D) {
+		cvlRegister = NV_PAPU_CVL3D;
+		nvlRegister = NV_PAPU_NVL3D;
+	} else if (topRegister == NV_PAPU_TVLMP) {
+		cvlRegister = NV_PAPU_CVLMP;
+		nvlRegister = NV_PAPU_NVLMP;
+	}
+
 	uint32_t voiceHandle = GetRegister32(topRegister);
 	const uint32_t listHead = voiceHandle;
+	// Initialize CVL to the head of the list (matching xemu: d->regs[current] = d->regs[top])
+	if (cvlRegister != 0) {
+		SetRegister32(cvlRegister, voiceHandle);
+	}
 	size_t visitedVoiceCount = 0;
 	size_t activeVoiceCount = 0;
 	size_t mixedVoiceCount = 0;
@@ -3824,18 +4390,23 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 			 !diagnostics.decodedNonZero ||
 			 (diagnostics.framesRendered != 0 && diagnostics.offsetAdvance == 0 && diagnostics.pitchStep > 0.0));
 	};
-	for (size_t visited = 0; visited < 1024 && voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
+	for (size_t visited = 0; visited < 16384 && voiceHandle < APU_VP_VOICE_MAX_HANDLE; ++visited) {
 		uint32_t nextHandle = APU_VP_VOICE_MAX_HANDLE;
 		ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_TAR_PITCH_LINK,
 			NV_PAVS_VOICE_TAR_PITCH_LINK_NEXT_VOICE_HANDLE, nextHandle);
+		// Update NVL register (matching xemu: d->regs[next] = next_voice_handle)
+		if (nvlRegister != 0) {
+			SetRegister32(nvlRegister, nextHandle);
+		}
 		BasicVoiceDiagnosticSummary diagnostics;
 		uint32_t state = 0;
 		const bool hasState = ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state);
 		const bool active = hasState && (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
 		if (!active) {
+			// Match xemu: fire SE2FE_IDLE_VOICE but do NOT unlink voice from lists.
+			// The guest is responsible for list management after being notified.
 			SetVoiceActiveHint(voiceHandle, false);
 			ConsumeVPMethod(SE2FE_IDLE_VOICE, voiceHandle, sizeof(uint32_t));
-			UnlinkVoiceFromLists(voiceHandle);
 		} else if (!IsVoiceLocked(voiceHandle)) {
 			RenderBasicVoice(voiceHandle, mixBins, frameCount, &diagnostics);
 		}
@@ -3865,6 +4436,10 @@ size_t APUDevice::RenderBasicVoiceList(uint32_t topRegister, int32_t* mixBins, s
 			break;
 		}
 		voiceHandle = nextHandle;
+		// Update CVL register (matching xemu: d->regs[current] = d->regs[next])
+		if (cvlRegister != 0) {
+			SetRegister32(cvlRegister, voiceHandle);
+		}
 	}
 	if constexpr (audio_diagnostics::kEnableDiagnosticLogging) {
 		if (visitedVoiceCount != 0 || !interestingVoices.empty()) {
@@ -4301,6 +4876,21 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t state = 0;
 	if (!ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, 0xFFFFFFFF, state) ||
 		(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+		// One-shot diagnostic for first-rendered voice
+		if (voiceHandle == 64) {
+			static bool once;
+			if (!once) {
+				once = true;
+				uint32_t dbgBase = 0, dbgFmt = 0;
+				ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, dbgBase);
+				ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CFG_FMT, 0xFFFFFFFF, dbgFmt);
+				EmuLog(LOG_LEVEL::WARNING,
+					"APU diag: RenderBasicVoice(%u) REJECTED state=0x%08X active=%u base=0x%08X fmt=0x%08X",
+					voiceHandle, state, (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0 ? 1 : 0,
+					dbgBase, dbgFmt);
+			}
+		}
 		if ((state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
 			SetVoiceActiveHint(voiceHandle, false);
 		}
@@ -4423,6 +5013,38 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t lfoEnv = 0;
 	uint32_t lfoMod = 0;
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START, NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
+	// Buffer inheritance: if this voice has no buffer base, copy one
+	// from a donor voice or fall back to the VP register window.
+	if (baseAddress == 0) {
+		// Scan a limited range — the game writes the buffer to a low-
+		// numbered voice (typically FECV=0) via the VP window.
+		for (uint32_t donor = 0; donor < std::min(MAX_VOICE_HANDLES, 256u); ++donor) {
+			if (ReadVoiceMask(donor, NV_PAVS_VOICE_CUR_PSL_START,
+				NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress) && baseAddress != 0) {
+				ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_NEXT,
+					NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
+				ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_OFFSET,
+					NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT,
+					NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET,
+					NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+				break;
+			}
+		}
+	}
+	// The 24-bit CUR_PSL_START_BA mask truncates the upper byte of
+	// KSEG0 addresses.  Retrieve the full 32-bit value from the VP
+	// register window at offset 0x808 where the game originally
+	// wrote it.
+	if (baseAddress != 0) {
+		const uint32_t vpReg = ReadRegister(APU_VP_BASE + 0x808, sizeof(uint32_t));
+		if (vpReg >= PHYSICAL_MAP_BASE && vpReg <= PHYSICAL_MAP_END) {
+			baseAddress = vpReg;
+		}
+	}
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE, NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
@@ -4476,17 +5098,17 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	auto sslData = m_VPSSLData[voiceHandle];
 	bool shouldSkipStateWrites = false;
 	auto terminateVoiceWithStatus = [&](uint8_t completionStatus) {
+		// Match xemu's voice_off: clear ACTIVE_VOICE and fire the notifier, but
+		// do NOT unlink the voice from lists. The voice stays in the list and will
+		// be detected as idle on the next frame's list walk, triggering
+		// SE2FE_IDLE_VOICE to notify the guest. The guest is responsible for
+		// list management (via VOICE_OFF or reactivation).
 		shouldSkipStateWrites = true;
 		playbackState.previewDecodeFailures = 0;
 		SetVoiceActiveHint(voiceHandle, false);
-		SetVoiceLocked(voiceHandle, false);
 		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 0);
-		WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_STATE, NV_PAVS_VOICE_PAR_STATE_NEW_VOICE, 0);
-		SetVoiceNotifierEnvelopeState(voiceHandle,
-			static_cast<uint8_t>(NV_PAVS_VOICE_PAR_STATE_EFCUR_OFF), true);
 		WriteNotifierValue(voiceHandle, MCPX_HW_NOTIFIER_VOICE_POSITION, currentOffset);
 		NotifyVoiceCompletion(voiceHandle, completionStatus);
-		UnlinkVoiceFromLists(voiceHandle);
 		playbackState = PlaybackState{};
 		m_VPLowPassState[voiceHandle] = {};
 		ClearHRTFFilterState(voiceHandle);
@@ -4551,30 +5173,30 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			}
 		}
 	};
-	const bool lowPassEnabled = voiceHandle < APU_MAX_3D_VOICES
-		? filterMode == 1
-		: (stereo ? filterMode == 1 : (filterMode & 1u) != 0);
-	float lowPassCutoff[2]{};
-	float lowPassResonance[2]{};
-	if (lowPassEnabled) {
+	const bool filterEnabled = voiceHandle < APU_MAX_3D_VOICES
+		? filterMode != APU_FILTER_MODE_OFF
+		: (stereo ? filterMode != APU_FILTER_MODE_OFF : (filterMode & 1u) != 0);
+	float filterCutoff[2]{};
+	float filterResonance[2]{};
+	if (filterEnabled) {
 		for (uint32_t channel = 0; channel < channels; ++channel) {
 			const uint32_t registerOffset = channel == 0 ? NV_PAVS_VOICE_TAR_FCA : NV_PAVS_VOICE_TAR_FCB;
 			uint32_t cutoff = 0;
 			uint32_t resonance = 0;
 			ReadVoiceMask(voiceHandle, registerOffset, NV_PAVS_VOICE_TAR_FCA_FC0, cutoff);
 			ReadVoiceMask(voiceHandle, registerOffset, NV_PAVS_VOICE_TAR_FCA_FC1, resonance);
-			lowPassCutoff[channel] = std::clamp(std::pow(2.0f, static_cast<float>(static_cast<int16_t>(cutoff)) / 4096.0f),
+			filterCutoff[channel] = std::clamp(std::pow(2.0f, static_cast<float>(static_cast<int16_t>(cutoff)) / 4096.0f),
 				APU_FILTER_MIN_FREQUENCY, 1.0f);
-			lowPassResonance[channel] = std::clamp(static_cast<float>(resonance) / APU_FILTER_Q_NORMALIZER,
+			filterResonance[channel] = std::clamp(static_cast<float>(resonance) / APU_FILTER_Q_NORMALIZER,
 				APU_FILTER_MIN_Q, 1.0f);
 		}
 		if (channels == 1) {
-			lowPassCutoff[1] = lowPassCutoff[0];
-			lowPassResonance[1] = lowPassResonance[0];
+			filterCutoff[1] = filterCutoff[0];
+			filterResonance[1] = filterResonance[0];
 		}
 	}
-	auto applyLowPass = [&](float& sampleLeft, float& sampleRight, float envGain, float cutoffLFOOctaves) {
-		if (!lowPassEnabled) {
+	auto applyFilter = [&](float& sampleLeft, float& sampleRight, float envGain, float cutoffLFOOctaves) {
+		if (!filterEnabled) {
 			return;
 		}
 		const float clampedFilterEnvelopeGain = std::clamp(
@@ -4582,17 +5204,17 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float modulatedCutoff[2]{};
 		for (size_t channel = 0; channel < std::size(modulatedCutoff); ++channel) {
 			modulatedCutoff[channel] = APU_FILTER_MIN_FREQUENCY +
-				(lowPassCutoff[channel] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain;
+				(filterCutoff[channel] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain;
 			modulatedCutoff[channel] = std::clamp(
 				static_cast<float>(modulatedCutoff[channel] * std::exp2(cutoffLFOOctaves)),
 				APU_FILTER_MIN_FREQUENCY,
 				1.0f);
 		}
 		auto& filterState = m_VPLowPassState[voiceHandle];
-		sampleLeft = ClampUnitSample(RunLowPassFilter(filterState[0].high, filterState[0].band, filterState[0].low,
-			modulatedCutoff[0], lowPassResonance[0], sampleLeft));
-		sampleRight = ClampUnitSample(RunLowPassFilter(filterState[1].high, filterState[1].band, filterState[1].low,
-			modulatedCutoff[1], lowPassResonance[1], sampleRight));
+		sampleLeft = ClampUnitSample(RunSVFilter(filterState[0].high, filterState[0].band, filterState[0].low,
+			modulatedCutoff[0], filterResonance[0], sampleLeft, filterMode));
+		sampleRight = ClampUnitSample(RunSVFilter(filterState[1].high, filterState[1].band, filterState[1].low,
+			modulatedCutoff[1], filterResonance[1], sampleRight, filterMode));
 	};
 	uint32_t hrtfEntryIndex = APU_INVALID_HRTF_ENTRY_INDEX;
 	const bool hrtfEnabled = voiceHandle < APU_MAX_3D_VOICES &&
@@ -4978,7 +5600,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			break;
 		}
 		if (multipass) {
-			applyLowPass(currentLeft, currentRight, filterEnvelopeGain, cutoffLFOOctaves);
+			applyFilter(currentLeft, currentRight, filterEnvelopeGain, cutoffLFOOctaves);
 			if (capture3DHandoff) {
 				storeCaptured3DSample(frame, currentLeft, currentRight, totalGain);
 			}
@@ -5019,7 +5641,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const float interpolation = static_cast<float>(playbackState.fraction);
 		float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
-		applyLowPass(sampleLeft, sampleRight, filterEnvelopeGain, cutoffLFOOctaves);
+		applyFilter(sampleLeft, sampleRight, filterEnvelopeGain, cutoffLFOOctaves);
 		if (capture3DHandoff) {
 			storeCaptured3DSample(frame, sampleLeft, sampleRight, totalGain);
 		}
@@ -5084,22 +5706,34 @@ void APUDevice::UpdateVPFifo()
 
 void APUDevice::RefreshVPStatus()
 {
-	uint32_t status = 0;
-	if (m_VPFifoLevel == 0) {
-		status |= APU_VP_STATUS_EMPTY;
-	}
-	SetRegister32(APU_VP_BASE + APU_VP_FREE, status);
+	SetRegister32(APU_VP_BASE + APU_VP_FREE, GetVPFifoFreeSlots());
+}
+
+uint32_t APUDevice::GetVPFifoFreeSlots() const
+{
+	return m_VPFifoLevel >= APU_VP_FIFO_CAPACITY
+		? 0u
+		: (APU_VP_FIFO_CAPACITY - m_VPFifoLevel);
 }
 
 void APUDevice::RefreshInterruptStatus()
 {
 	uint32_t status = GetRegister32(NV_PAPU_ISTS) & ~NV_PAPU_ISTS_GINTSTS;
-	if ((GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+
+	// FETINTSTS is asserted only when FEMETHMODE == TRAPPED (0xE0).
+	// This matches xemu's update_irq which checks for the TRAPPED mask specifically.
+	// HALTED mode (0x80) does NOT assert FETINTSTS in hardware.
+	const uint32_t feMode = GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE;
+	if (feMode == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
 		status |= NV_PAPU_ISTS_FETINTSTS;
 	}
 
-	if ((GetRegister32(NV_PAPU_IEN) & NV_PAPU_ISTS_GINTSTS) != 0 &&
-		((status & ~NV_PAPU_ISTS_GINTSTS) & GetRegister32(NV_PAPU_IEN)) != 0) {
+	// GINTSTS is the hardware summary bit. Per xemu's update_irq, it requires
+	// IEN bit 0 (GINTSTS enable) to be set, AND at least one other pending+enabled
+	// interrupt source in ISTS. This two-gate approach matches real hardware.
+	const uint32_t ien = GetRegister32(NV_PAPU_IEN);
+	if ((ien & NV_PAPU_ISTS_GINTSTS) != 0 &&
+		((status & ~NV_PAPU_ISTS_GINTSTS) & ien) != 0) {
 		status |= NV_PAPU_ISTS_GINTSTS;
 	}
 

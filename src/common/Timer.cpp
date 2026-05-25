@@ -168,19 +168,12 @@ static void dispatch_non_periodic_events()
 // the earliest deadline (relative to HostQPCStartTime).
 static uint64_t dispatch_periodic_events(uint64_t now)
 {
-	// g_AC97 is created during InitXboxHardware() before the system-events thread
-	// starts and is not reassigned afterward in this process; the null check is
-	// just defensive for early bring-up paths, so only the device's internal state
-	// needs synchronization here.
-	if (g_AC97 != nullptr) {
-		g_AC97->ServiceAudio();
-	}
-
-	std::array<uint64_t, 4> deadlines = {
+	std::array<uint64_t, 5> deadlines = {
 		pit_tick(now),
 		g_NV2A->vblank_tick(now),
 		g_NV2A->ptimer_tick(now),
-		g_USB0->m_HostController->OHCI_tick(now)
+		g_USB0->m_HostController->OHCI_tick(now),
+		g_APU->apu_tick(now)
 	};
 	return *std::min_element(deadlines.begin(), deadlines.end());
 }
@@ -204,11 +197,6 @@ xbox::void_xt NTAPI system_events(xbox::PVOID arg)
 		// 2. Dispatch all events and find earliest next deadline
 		dispatch_non_periodic_events();
 		const uint64_t next_deadline = dispatch_periodic_events(now);
-		if (g_AC97 != nullptr) {
-			g_AC97->ServiceAudio();
-		} else if (g_APU != nullptr) {
-			g_APU->SynchronizeAudio();
-		}
 
 		// 3. Sleep until the absolute deadline (skip if no subsystem is active)
 		if (next_deadline != UINT64_MAX) {

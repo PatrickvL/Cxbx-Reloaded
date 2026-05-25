@@ -945,7 +945,8 @@ uint32_t dsp56k_read_memory(dsp_core_t* dsp, int space, uint32_t address)
                 return dsp->xram[address];
             } else {
                 fprintf(stderr, "Out of bounds read at %x!\n", address);
-                return 0x00FFFFFF; // FIXME: What does the DSP actually do in this case?
+                dsp56k_add_interrupt(dsp, DSP_INTER_ILLEGAL);
+                return 0x00BADBAD;
             }
         }
     } else if (space == DSP_SPACE_Y) {

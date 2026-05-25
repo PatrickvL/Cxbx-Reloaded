@@ -30,6 +30,7 @@
 #include "AudioDiagnostics.h"
 #include "APUTimer.h"
 #include "common/AddressRanges.h"
+#include "core/kernel/exports/EmuKrnl.h"
 #include "core/kernel/support/Emu.h"
 
 #include <AL/al.h>
@@ -95,6 +96,8 @@ constexpr uint32_t GLOB_STA_PO_INT = 1 << 9;
 constexpr uint32_t GLOB_STA_MC_INT = 1 << 10;
 constexpr uint32_t GLOB_STA_CHANNEL_INT_MASK = GLOB_STA_PI_INT | GLOB_STA_PO_INT | GLOB_STA_MC_INT;
 constexpr uint32_t GLOB_STA_RDY = 1 << 15;
+// The kernel HAL maps the AC97 controller to system IRQ 6.
+constexpr uint32_t AC97_IRQ = 6;
 
 constexpr uint16_t SR_FIFOE = 1 << 4;
 constexpr uint16_t SR_BCIS = 1 << 3;
@@ -626,7 +629,7 @@ void AC97Device::ServiceAudio()
 	// reset, and submission paths can run on other emulator threads, so the shared
 	// AC97 state needs the same mutex used by those entry points.
 	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
-	UpdateBusMasterChannels();
+	UpdateBusMasterChannels(true);
 }
 
 bool AC97Device::EnsureOutputDevice()
@@ -1441,6 +1444,21 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	}
 
 	const size_t sampleCount = frameCount * AC97_OUTPUT_CHANNELS;
+	// Diagnostic: periodic log of audio reaching the output stage
+	{
+		static uint32_t lastPcmLog;
+		const uint32_t now = GetAPUTime();
+		if (now - lastPcmLog >= 48000) {
+			lastPcmLog = now;
+			uint32_t peak = audio_diagnostics::PeakAbsoluteSampleAmplitude(samples, sampleCount);
+			EmuLog(LOG_LEVEL::INFO,
+				"AC97 diag: SubmitPCMFrames frames=%zu peak=%u queuedBytes=%u freeBufs=%zu stagedFrames=%zu",
+				frameCount, peak,
+				m_QueuedAudioBytes, m_FreeOutputBuffers.size(),
+				m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS);
+		}
+	}
+
 	const uint16_t masterVolume = ReadRegister16(AC97_Master_Volume);
 	const uint16_t pcmOutVolume = ReadRegister16(AC97_PCM_Out_Volume);
 	const float leftGain = DecodeOutputAttenuation(masterVolume, true) * DecodeOutputAttenuation(pcmOutVolume, true);
@@ -1735,7 +1753,7 @@ uint32_t AC97Device::IORead(int barIndex, uint32_t addr, unsigned size)
 {
 	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (barIndex == 1) {
-		UpdateBusMasterChannels();
+		UpdateBusMasterChannels(false);
 	}
 
 	switch (barIndex) {
@@ -1752,7 +1770,7 @@ void AC97Device::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned s
 {
 	std::lock_guard<std::recursive_mutex> lock(m_AudioMutex);
 	if (barIndex == 1) {
-		UpdateBusMasterChannels();
+		UpdateBusMasterChannels(false);
 	}
 
 	switch (barIndex) {
@@ -1952,7 +1970,7 @@ uint32_t AC97Device::MMIORead(int barIndex, uint32_t addr, unsigned size)
 
 	if (addr < AC97_MMIO_SIZE) {
 		if (addr >= AC97_NAM_SIZE) {
-			UpdateBusMasterChannels();
+			UpdateBusMasterChannels(false);
 		}
 		return ReadRegister(addr, size);
 	}
@@ -1967,7 +1985,7 @@ void AC97Device::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned
 
 	if (addr < AC97_MMIO_SIZE) {
 		if (addr >= AC97_NAM_SIZE) {
-			UpdateBusMasterChannels();
+			UpdateBusMasterChannels(false);
 		}
 		IOWrite(addr < AC97_NAM_SIZE ? 0 : 1, addr < AC97_NAM_SIZE ? addr : addr - AC97_NAM_SIZE, value, size);
 	}
@@ -2033,11 +2051,15 @@ void AC97Device::UpdateGlobalStatus()
 	}
 
 	WriteRegister(AC97_NAM_SIZE + NABM_GLOB_STA, status, sizeof(uint32_t));
+	// Surface enabled AC97 DMA channel interrupts to the guest-visible controller IRQ.
+	HalSystemInterrupts[AC97_IRQ].Assert((status & GLOB_STA_CHANNEL_INT_MASK) != 0);
 }
 
-void AC97Device::UpdateBusMasterChannels()
+void AC97Device::UpdateBusMasterChannels(bool synchronizeAPU)
 {
-	if (g_APU != nullptr) {
+	// Let the system-events thread drive APU rendering, but avoid forcing that
+	// work from guest MMIO polling paths that frequently sample AC97 state.
+	if (synchronizeAPU && g_APU != nullptr) {
 		g_APU->SynchronizeAudio();
 	}
 	UpdateBusMasterStatus(NABM_PI_BASE);
@@ -2062,7 +2084,7 @@ void AC97Device::ResetBusMasterChannel(uint32_t channelBase)
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_BDBAR, 0, sizeof(uint32_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CIV, 0, sizeof(uint8_t));
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_LVI, 0, sizeof(uint8_t));
-	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_SR, SR_DCH | SR_CELV);
+	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_SR, SR_DCH);
 	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PICB, 0);
 	WriteRegister16(AC97_NAM_SIZE + channelBase + BM_PIV, 0);
 	WriteRegister(AC97_NAM_SIZE + channelBase + BM_CR, 0, sizeof(uint8_t));
