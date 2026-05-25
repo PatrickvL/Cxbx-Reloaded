@@ -1394,8 +1394,11 @@ static void CxbxrKrnlInitHacks()
 		static uint64_t s_vblankFired = 0;
 		static uint64_t s_isrFired = 0;
 		bool more_work;
+		bool isr_fired_this_iteration;
+		bool first_iteration = true;
 		do {
 			more_work = false;
+			isr_fired_this_iteration = false;
 
 			if (g_bEnableAllInterrupts && g_NV2A) {
 				NV2AState* d = g_NV2A->GetDeviceState();
@@ -1481,6 +1484,7 @@ static void CxbxrKrnlInitHacks()
 				    EmuInterruptList[3] && EmuInterruptList[3]->Connected) {
 					HalSystemInterrupts[3].Trigger(EmuInterruptList[3]);
 					s_isrFired++;
+					isr_fired_this_iteration = true;
 				}
 			} else if (g_NV2A && g_NV2A->GetDeviceState()->vblank_pending.test()) {
 				static int s_cliSkips = 0;
@@ -1489,13 +1493,17 @@ static void CxbxrKrnlInitHacks()
 				}
 			}
 
-			// Dispatch all pending DPCs. This thread is the primary DPC
-			// dispatcher — timer expirations (KiTimerExpiration) and other
-			// system DPCs rely on it. The combined g_DpcRoutineActive /
-			// per-thread PRCB guard inside ExecuteDpcQueue prevents dispatch
-			// when game code has set DpcRoutineActive (via fs:0x58 writes)
-			// or when we're already dispatching on this thread.
-			ExecuteDpcQueue();
+			// Dispatch all pending DPCs. Only dispatch when an ISR fired in
+			// this iteration (which may have queued new DPCs) or on the first
+			// iteration after wake-up. Without this guard, a game DPC that
+			// re-queues itself would be dispatched on every re-check iteration
+			// of the do-while loop (since the NV2A more_work condition keeps
+			// it alive), creating a tight infinite loop instead of the
+			// once-per-VBlank/timer-tick cadence that real Xbox hardware provides.
+			if (first_iteration || isr_fired_this_iteration) {
+				ExecuteDpcQueue();
+				first_iteration = false;
+			}
 
 			// Re-check: if NV2A interrupts are still pending after ISR+DPC processing,
 			// loop back immediately. This catches cases where:
