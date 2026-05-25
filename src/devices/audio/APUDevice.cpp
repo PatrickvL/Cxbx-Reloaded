@@ -1239,6 +1239,10 @@ uint64_t APUDevice::apu_tick(uint64_t now_qpc)
 	ProcessVPFrame();
 	m_NextFrameQpc = now_qpc + m_EPFrameQpc;
 
+	// Signal any pending voice completion interrupts so the game thread
+	// can wake from KeWaitForSingleObject on the voice notifier event.
+	RefreshInterruptStatus();
+
 	// Advance AC97 audio output progress
 	g_AC97->ServiceAudio();
 

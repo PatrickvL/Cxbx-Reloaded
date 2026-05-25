@@ -1,5 +1,3 @@
-// This is an open source non-commercial project. Dear PVS-Studio, please check it.
-// PVS-Studio Static Code Analyzer for C, C++ and C#: http://www.viva64.com
 // ******************************************************************
 // *
 // *  This file is part of the Cxbx project.
@@ -30,14 +28,10 @@
 #include "core\kernel\init\CxbxKrnl.h"
 #include "core\kernel\support\Emu.h"
 #include "core\kernel\support\EmuFS.h"
-#include "devices\audio\APUDevice.h"
-
-extern class APUDevice* g_APU;
 #include "EmuKrnlKi.h"
 #include <future>
 #include <cstdio>
 
-// CONTAINING_RECORD macro
 #define OBJECT_TO_OBJECT_HEADER(Object) \
     CONTAINING_RECORD(Object, OBJECT_HEADER, Body)
 
@@ -58,9 +52,7 @@ inline std::atomic_bool g_bEnableAllInterrupts = true;
 class HalSystemInterrupt {
 public:
 	void Assert(bool state) {
-		if (m_Asserted == 0 && state == 1) {
-			m_Pending = true;
-		}
+		if (m_Asserted == 0 && state == 1) m_Pending = true;
 		m_Asserted = state;
 	};
 	void Enable() { m_Enabled = true; }
@@ -69,18 +61,13 @@ public:
 	bool IsPending() { return m_Asserted && m_Pending; }
 	void SetInterruptMode(xbox::KINTERRUPT_MODE InterruptMode) { m_InterruptMode = InterruptMode; }
 	void Trigger(xbox::PKINTERRUPT Interrupt) {
-		if (m_InterruptMode == xbox::KINTERRUPT_MODE::LevelSensitive) {
-			m_Pending = false;
-		}
-		xbox::boolean_xt(__stdcall *ServiceRoutine)(xbox::PKINTERRUPT, void*) =
-			(xbox::boolean_xt(__stdcall *)(xbox::PKINTERRUPT, void*))Interrupt->ServiceRoutine;
-		xbox::boolean_xt result = ServiceRoutine(Interrupt, Interrupt->ServiceContext);
+		if (m_InterruptMode == xbox::KINTERRUPT_MODE::LevelSensitive) m_Pending = false;
+		auto ServiceRoutine = (xbox::boolean_xt(__stdcall*)(xbox::PKINTERRUPT, void*))Interrupt->ServiceRoutine;
+		ServiceRoutine(Interrupt, Interrupt->ServiceContext);
 	}
 private:
-	bool m_Asserted = false;
-	bool m_Enabled = false;
+	bool m_Asserted = false, m_Enabled = false, m_Pending = false;
 	xbox::KINTERRUPT_MODE m_InterruptMode;
-	bool m_Pending = false;
 };
 
 extern HalSystemInterrupt HalSystemInterrupts[MAX_BUS_INTERRUPT_LEVEL + 1];
@@ -94,13 +81,13 @@ template<typename T>
 std::optional<xbox::ntstatus_xt> SatisfyWait(T &&Lambda, xbox::PKTHREAD kThread,
 	xbox::boolean_xt Alertable, xbox::char_xt WaitMode)
 {
-	if (const auto ret = Lambda(kThread)) { return ret; }
+	if (const auto ret = Lambda(kThread)) return ret;
 	xbox::KiApcListMtx.lock();
 	bool EmptyKernel = IsListEmpty(&kThread->ApcState.ApcListHead[xbox::KernelMode]);
 	bool EmptyUser = IsListEmpty(&kThread->ApcState.ApcListHead[xbox::UserMode]);
 	xbox::KiApcListMtx.unlock();
-	if (EmptyKernel == false) { xbox::KiExecuteKernelApc(); }
-	if ((EmptyUser == false) && (Alertable == TRUE) && (WaitMode == xbox::UserMode)) {
+	if (!EmptyKernel) xbox::KiExecuteKernelApc();
+	if (!EmptyUser && Alertable == TRUE && WaitMode == xbox::UserMode) {
 		xbox::KiExecuteUserApc();
 		xbox::KiUnwaitThreadAndLock(kThread, X_STATUS_USER_APC, 0);
 		return kThread->WaitStatus;
@@ -120,28 +107,21 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout,
 			if (const auto ret = SatisfyWait(Lambda, kThread, Alertable, WaitMode)) {
 				status = *ret; break;
 			}
-			if (hWake) {
-				WaitForSingleObjectEx(hWake, 10, TRUE);
-			} else {
-				SleepEx(1, TRUE);
-			}
+			if (hWake) WaitForSingleObjectEx(hWake, 10, TRUE);
+			else SleepEx(1, TRUE);
 			if (++stallIters == 300) {
 				auto* objPtr = (unsigned char*)kThread->WaitBlockList->Object;
-				int objType = objPtr[0];
-				int signalState = *(int*)(objPtr + 4);
-				int waiters = !(((uintptr_t*)(objPtr + 8))[0] == (uintptr_t)(objPtr + 8));
-				fprintf(stderr, "[WAIT-STALL] tid=0x%X obj=0x%p type=%d signalState=%d waiters=%d state=%d\n",
+				fprintf(stderr, "[WAIT-STALL] tid=0x%X obj=0x%p type=%d signalState=%d state=%d\n",
 					GetCurrentThreadId(), kThread->WaitBlockList->Object,
-					objType, signalState, waiters, (int)kThread->State);
+					objPtr[0], *(int*)(objPtr + 4), (int)kThread->State);
 				fflush(stderr);
 			}
 		}
 	}
 	else if (Timeout->QuadPart == 0) {
 		assert(host_wait);
-		if (const auto ret = SatisfyWait(Lambda, kThread, Alertable, WaitMode)) {
-			status = *ret;
-		} else {
+		if (const auto ret = SatisfyWait(Lambda, kThread, Alertable, WaitMode)) status = *ret;
+		else {
 			xbox::KiUnwaitThreadAndLock(kThread, X_STATUS_TIMEOUT, 0);
 			status = kThread->WaitStatus;
 		}
@@ -153,26 +133,21 @@ xbox::ntstatus_xt WaitApc(T &&Lambda, xbox::PLARGE_INTEGER Timeout,
 			if (const auto ret = SatisfyWait(Lambda, kThread, Alertable, WaitMode)) {
 				status = *ret; break;
 			}
-			if (host_wait && (kThread->State == xbox::Ready)) {
+			if (host_wait && kThread->State == xbox::Ready) {
 				status = kThread->WaitStatus; break;
 			}
-			if (hWake) {
-				WaitForSingleObjectEx(hWake, 10, TRUE);
-			} else {
-				SleepEx(1, TRUE);
-			}
+			if (hWake) WaitForSingleObjectEx(hWake, 10, TRUE);
+			else SleepEx(1, TRUE);
 			if (++finiteStallIters == 300) {
 				auto* objPtr2 = (unsigned char*)kThread->WaitBlockList->Object;
-				fprintf(stderr, "[WAIT-STALL-FIN] tid=0x%X obj=0x%p type=%d signalState=%d timeout=%lld state=%d\n",
+				fprintf(stderr, "[WAIT-STALL-FIN] tid=0x%X obj=0x%p type=%d timeout=%lld state=%d\n",
 					GetCurrentThreadId(), kThread->WaitBlockList->Object,
-					objPtr2[0], *(int*)(objPtr2 + 4), Timeout->QuadPart, (int)kThread->State);
+					objPtr2[0], Timeout->QuadPart, (int)kThread->State);
 				fflush(stderr);
 			}
 		}
 	}
-	if constexpr (host_wait) {
-		kThread->State = xbox::Running;
-	}
+	if constexpr (host_wait) kThread->State = xbox::Running;
 	return status;
 }
 
