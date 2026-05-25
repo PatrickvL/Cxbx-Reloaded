@@ -1104,7 +1104,10 @@ void APUDevice::IOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned si
 uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 {
 	(void)barIndex;
-	SynchronizeAudio();
+	// SynchronizeAudio is intentionally NOT called here — it is driven
+	// from ServiceAudio (DPC loop) and MMIOWrite.  Calling it from MMIORead
+	// causes the ISR-to-ISTS-read-to-FEVINT-to-GINT loop that creates an
+	// infinite interrupt storm in DirectSound titles.
 
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		return VPRead(addr - APU_VP_BASE, size);
