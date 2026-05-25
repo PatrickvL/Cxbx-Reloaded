@@ -1527,6 +1527,10 @@ static void CxbxrKrnlInitHacks()
 			}
 		} while (more_work);
 
+		// Yield to the OS to prevent the DirectSound DPC-event loop
+		// from consuming 100% CPU when no GPU work is pending.
+		Sleep(0);
+
 		// Check for present stalls — if no present has arrived in 5 seconds,
 		// dump all thread stacks to diagnose what's blocking progress.
 		EmuCheckPresentStall(5000);
