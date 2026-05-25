@@ -1554,6 +1554,12 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		WriteRegister(addr, value, size);
 		WriteGuestWord(GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
 		RefreshFEMemDataRegister(GetRegister32(NV_PAPU_FEMEMDATA));
+		static int magicCnt = 0;
+		if (magicCnt++ < 5) {
+			fprintf(stderr, "[APU-MAGIC] FEMEMADDR=0x%08X FEMEMDATA=0x%08X\n",
+				GetRegister32(NV_PAPU_FEMEMADDR), GetRegister32(NV_PAPU_FEMEMDATA));
+			fflush(stderr);
+		}
 		return;
 	}
 
