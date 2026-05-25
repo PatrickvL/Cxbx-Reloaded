@@ -1444,6 +1444,21 @@ void AC97Device::SubmitPCMFrames(const int16_t* samples, size_t frameCount)
 	}
 
 	const size_t sampleCount = frameCount * AC97_OUTPUT_CHANNELS;
+	// Diagnostic: periodic log of audio reaching the output stage
+	{
+		static uint32_t lastPcmLog;
+		const uint32_t now = GetAPUTime();
+		if (now - lastPcmLog >= 48000) {
+			lastPcmLog = now;
+			uint32_t peak = audio_diagnostics::PeakAbsoluteSampleAmplitude(samples, sampleCount);
+			EmuLog(LOG_LEVEL::INFO,
+				"AC97 diag: SubmitPCMFrames frames=%zu peak=%u queuedBytes=%u freeBufs=%zu stagedFrames=%zu",
+				frameCount, peak,
+				m_QueuedAudioBytes, m_FreeOutputBuffers.size(),
+				m_StagedOutputFrames.size() / AC97_OUTPUT_CHANNELS);
+		}
+	}
+
 	const uint16_t masterVolume = ReadRegister16(AC97_Master_Volume);
 	const uint16_t pcmOutVolume = ReadRegister16(AC97_PCM_Out_Volume);
 	const float leftGain = DecodeOutputAttenuation(masterVolume, true) * DecodeOutputAttenuation(pcmOutVolume, true);
