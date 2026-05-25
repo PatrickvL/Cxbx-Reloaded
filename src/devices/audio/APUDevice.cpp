@@ -1810,13 +1810,21 @@ void APUDevice::TransferDSPFifo(bool gp, uint8_t* ptr, unsigned index, size_t le
 
 bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t frameCount)
 {
-	if (output == nullptr || mixBins == nullptr || frameCount == 0 || !IsAnyDSPEnabled() ||
+	if (output == nullptr || mixBins == nullptr || frameCount == 0 || !IsGPDSPEnabled() ||
 		(frameCount % APU_DSP_FRAME_SAMPLES) != 0) {
 		return false;
 	}
 
-	m_DSPOutputScratch.clear();
-	const uint64_t maxCycleBudget = std::max<size_t>(frameCount, APU_DSP_FRAME_SAMPLES) * 4096ull;
+	// xemu-style DSP processing:
+	// 1. Write VP mixbin results into GP DSP XRAM at GP_DSP_MIXBUF_BASE
+	// 2. Run GP DSP (every VP frame = 32 samples)
+	// 3. Run EP DSP (every 8th VP frame = 256 samples)
+	// 4. EP output FIFO #0 write is captured by CaptureEPFifoOutput into m_DSPOutputScratch
+	//
+	// When EP produces output, we drain it from the buffered EP output.
+	// When EP hasn't run yet this cycle, we return false to use the direct stereo fallback.
+
+	const uint64_t maxCycleBudget = static_cast<uint64_t>(APU_DSP_FRAME_SAMPLES) * 4096ull;
 	const auto runDSP = [maxCycleBudget](DSPState* dsp) {
 		dsp_start_frame(dsp);
 		dsp->core.is_idle = false;
@@ -1828,41 +1836,57 @@ bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t 
 		}
 	};
 
-	for (size_t frameBase = 0; frameBase < frameCount; frameBase += APU_DSP_FRAME_SAMPLES) {
-		if (IsGPDSPEnabled()) {
-			for (size_t mixbin = 0; mixbin < std::min<size_t>(APU_MIXBIN_COUNT, 32); ++mixbin) {
-				for (size_t sample = 0; sample < APU_DSP_FRAME_SAMPLES; ++sample) {
-					const int16_t value = ClampToInt16(mixBins[mixbin * frameCount + frameBase + sample]);
-					dsp_write_memory(m_GPDsp, 'X',
-						APU_DSP_GP_MIXBUF_BASE + static_cast<uint32_t>(mixbin * APU_DSP_FRAME_SAMPLES + sample),
-						ConvertInt16ToDSP24(value));
+	// Step 1: Write mixBins to GP XRAM
+	for (size_t mixbin = 0; mixbin < std::min<size_t>(APU_MIXBIN_COUNT, 32); ++mixbin) {
+		for (size_t sample = 0; sample < APU_DSP_FRAME_SAMPLES; ++sample) {
+			const int16_t value = ClampToInt16(mixBins[mixbin * frameCount + sample]);
+			dsp_write_memory(m_GPDsp, 'X',
+				APU_DSP_GP_MIXBUF_BASE + static_cast<uint32_t>(mixbin * APU_DSP_FRAME_SAMPLES + sample),
+				ConvertInt16ToDSP24(value));
+		}
+	}
+
+	// Step 2: Run GP DSP
+	runDSP(m_GPDsp);
+
+	// Step 3: Run EP DSP every 8th GP frame
+	bool epProducedOutput = false;
+	if (IsEPDSPEnabled()) {
+		++m_DSPFrameDivider;
+		if ((m_DSPFrameDivider % APU_DSP_EP_FRAME_DIVIDER) == 0) {
+			m_DSPOutputScratch.clear();
+			runDSP(m_EPDsp);
+			epProducedOutput = !m_DSPOutputScratch.empty();
+		}
+	}
+
+	// Step 4: If EP produced output this frame, drain it to the caller.
+	// EP output is typically 256 stereo frames (512 int16s) covering 8 GP frames.
+	// We submit the entire EP output as one chunk to AC97 for smooth playback.
+	if (epProducedOutput) {
+		const size_t epStereoSamples = m_DSPOutputScratch.size();
+		const size_t epFrameCount = epStereoSamples / 2;
+		if (epFrameCount > 0) {
+			if (!m_LoggedDSPOutputCaptureFailure) {
+				// Log once when DSP first produces audio
+				static bool loggedFirstDSPOutput = false;
+				if (!loggedFirstDSPOutput) {
+					loggedFirstDSPOutput = true;
+					EmuLog(LOG_LEVEL::INFO,
+						"APU GP/EP DSP path active: EP produced %zu stereo frames via FIFO capture",
+						epFrameCount);
 				}
 			}
-			runDSP(m_GPDsp);
-		}
-
-		if (IsEPDSPEnabled()) {
-			++m_DSPFrameDivider;
-			if ((m_DSPFrameDivider % APU_DSP_EP_FRAME_DIVIDER) == 0) {
-				runDSP(m_EPDsp);
+			if (g_AC97 != nullptr) {
+				g_AC97->SubmitPCMFrames(m_DSPOutputScratch.data(), epFrameCount);
 			}
+			m_LoggedDSPOutputCaptureFailure = false;
+			return true; // Signal that DSP handled AC97 submission
 		}
 	}
 
-	if (m_DSPOutputScratch.size() != frameCount * 2) {
-		if (!m_LoggedDSPOutputCaptureFailure) {
-			EmuLog(LOG_LEVEL::WARNING,
-				"APU DSP frame produced %zu samples, expected %zu for %zu stereo frames; falling back to non-DSP host mix",
-				m_DSPOutputScratch.size(),
-				frameCount * 2,
-				frameCount);
-			m_LoggedDSPOutputCaptureFailure = true;
-		}
-		return false;
-	}
-	m_LoggedDSPOutputCaptureFailure = false;
-	std::copy(m_DSPOutputScratch.begin(), m_DSPOutputScratch.end(), output);
-	return true;
+	// GP ran but EP didn't produce output this frame — fall back to direct stereo
+	return false;
 }
 
 
@@ -4039,8 +4063,15 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	m_LoggedAC97Missing = false;
 
 	std::vector<int16_t> output(frameCount * 2);
-	const bool dspOutputActive = false; // DSP path disabled: interpreter is too slow per-frame
-	(void)mixBins; (void)frameCount;
+	// xemu-style DSP path: run GP every VP frame, EP every 8th VP frame.
+	// When DSP is active, EP output (captured via CaptureEPFifoOutput) is the
+	// definitive audio output. On non-EP frames, GP is filling EP input FIFOs
+	// so we still submit the direct stereo fallback to keep audio flowing.
+	const bool dspEnabled = IsGPDSPEnabled();
+	bool dspOutputActive = false;
+	if (dspEnabled) {
+		dspOutputActive = ProcessDSPAudio(output.data(), mixBins.data(), frameCount);
+	}
 	if (!dspOutputActive) {
 		for (size_t frame = 0; frame < frameCount; ++frame) {
 			// mixBins are stored slot-major: all frames for bin 0, then all frames for bin 1, etc.
@@ -4202,7 +4233,12 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 		}
 	}
 
-	g_AC97->SubmitPCMFrames(output.data(), frameCount);
+	// When DSP path handled AC97 submission internally (EP output), skip the
+	// per-frame SubmitPCMFrames since ProcessDSPAudio already submitted the
+	// full EP frame (256 stereo samples) directly.
+	if (!dspOutputActive) {
+		g_AC97->SubmitPCMFrames(output.data(), frameCount);
+	}
 }
 
 void APUDevice::ApplySubmixHeadroom(int32_t* mixBins, size_t frameCount)
