@@ -1055,6 +1055,7 @@ void APUDevice::Init()
 	m_VendorId = PCI_VENDOR_ID_NVIDIA;
 
 	Reset();
+	StartFrameThread();
 }
 
 void APUDevice::Reset()
@@ -1142,6 +1143,182 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_TVLMP, APU_VP_VOICE_MAX_HANDLE);
 	RefreshVPStatus();
 	RefreshInterruptStatus();
+	m_EPFrameDiv = 0;
+}
+
+APUDevice::~APUDevice()
+{
+	StopFrameThread();
+}
+
+void APUDevice::StartFrameThread()
+{
+	if (m_APURunning.load()) {
+		return;
+	}
+	m_APUExiting.store(false);
+	m_APURunning.store(true);
+	m_NextFrameTime = std::chrono::steady_clock::now();
+	m_APUThread = std::thread(&APUDevice::APUFrameThread, this);
+}
+
+void APUDevice::StopFrameThread()
+{
+	if (!m_APURunning.load()) {
+		return;
+	}
+	m_APUExiting.store(true);
+	m_APUCond.notify_all();
+	if (m_APUThread.joinable()) {
+		m_APUThread.join();
+	}
+	m_APURunning.store(false);
+}
+
+bool APUDevice::IsAPUHaltedOrTrapped() const
+{
+	const uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+	if ((fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+		return true;
+	}
+
+	const uint32_t sectl = GetRegister32(NV_PAPU_SECTL);
+	const uint32_t xcntmode = (sectl & NV_PAPU_SECTL_XCNTMODE) >> 3;
+	if (xcntmode == 0) { // XCNTMODE_OFF
+		// Some games don't properly set XCNTMODE before activating voices.
+		// Only consider halted if there's truly nothing to render.
+		const uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+		if (vpvaddr == 0) {
+			bool hasActiveVoices = false;
+			for (size_t i = 0; i < m_VPActiveVoiceHints.size(); ++i) {
+				if (m_VPActiveVoiceHints[i] != 0) {
+					hasActiveVoices = true;
+					break;
+				}
+			}
+			if (!hasActiveVoices) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+void APUDevice::WakeAPUThread()
+{
+	m_APUCond.notify_all();
+}
+
+void APUDevice::Throttle()
+{
+	// Only throttle on EP-frame boundaries (every 8 VP frames)
+	if ((m_EPFrameDiv % EP_FRAME_DIVIDER) != 0) {
+		return;
+	}
+
+	auto now = std::chrono::steady_clock::now();
+
+	// If we've fallen too far behind (more than one EP frame), re-anchor
+	if (now - m_NextFrameTime > std::chrono::microseconds(EP_FRAME_US * 2)) {
+		m_NextFrameTime = now;
+	}
+
+	// Sleep until the next frame deadline
+	if (m_NextFrameTime > now) {
+		std::unique_lock<std::mutex> lock(m_AudioUpdateMutex);
+		m_APUCond.wait_until(lock, m_NextFrameTime, [this] {
+			return m_APUExiting.load();
+		});
+	}
+
+	m_NextFrameTime += std::chrono::microseconds(EP_FRAME_US);
+}
+
+void APUDevice::ProcessVPFrame()
+{
+	// Process one VP frame worth of audio (NUM_SAMPLES_PER_FRAME samples)
+	std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
+
+	// Periodically scan the guest voice table for voices that were
+	// activated via direct memory write (games can set ACTIVE_VOICE
+	// without calling the VP VOICE_ON method).
+	{
+		static uint32_t lastVoiceScan;
+		const uint32_t now = GetAPUTime();
+		if (now - lastVoiceScan >= 4800) { // ~10 Hz
+			lastVoiceScan = now;
+			const uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+			if (vpvaddr != 0) {
+				uint32_t newlyActivated = 0;
+				for (uint32_t vh = 0; vh < MAX_VOICE_HANDLES; ++vh) {
+					uint32_t state = 0;
+					if (!ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+						NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state)) {
+						break;
+					}
+					const bool active = (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
+					const bool tracked = IsVoiceActiveHinted(vh);
+					if (active && !tracked) {
+						UnlinkVoiceFromLists(vh);
+						WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+							NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
+						SetVoiceActiveHint(vh, true);
+						SetVoiceLocked(vh, false);
+						WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
+							NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+						++newlyActivated;
+					}
+				}
+				if (newlyActivated > 0) {
+					EmuLog(LOG_LEVEL::INFO,
+						"APU diag: guest-memory voice scan activated %u voices not tracked in VP hints",
+						newlyActivated);
+				}
+			}
+		}
+	}
+
+	// Advance time by one VP frame (32 samples)
+	const size_t frameSamples = NUM_SAMPLES_PER_FRAME;
+
+	// Run the audio chunk rendering
+	RenderBasicAudioChunk(frameSamples);
+	m_LastAudioUpdate = GetAPUTime();
+	m_XGSCounter += static_cast<uint32_t>(frameSamples);
+
+	m_EPFrameDiv++;
+}
+
+void APUDevice::APUFrameThread()
+{
+	EmuLog(LOG_LEVEL::INFO, "APU frame thread started (xemu-style pacing at ~%.1f Hz EP rate)",
+		1000000.0 / EP_FRAME_US);
+
+	while (!m_APUExiting.load()) {
+		// Check if the APU is halted or trapped
+		if (IsAPUHaltedOrTrapped()) {
+			// Fire interrupt to notify the guest (like xemu does)
+			{
+				std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
+				RefreshInterruptStatus();
+			}
+
+			// Sleep on condition variable until woken by MMIO write
+			std::unique_lock<std::mutex> lock(m_AudioUpdateMutex);
+			m_APUCond.wait_for(lock, std::chrono::milliseconds(TRAPPED_SLEEP_MS), [this] {
+				return m_APUExiting.load() || !IsAPUHaltedOrTrapped();
+			});
+			continue;
+		}
+
+		// Normal operation: pace and process one VP frame
+		Throttle();
+		if (m_APUExiting.load()) break;
+		ProcessVPFrame();
+	}
+
+	EmuLog(LOG_LEVEL::INFO, "APU frame thread exiting");
 }
 
 uint32_t APUDevice::IORead(int barIndex, uint32_t addr, unsigned size)
@@ -1197,7 +1374,10 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned size)
 {
 	(void)barIndex;
-	SynchronizeAudio();
+	// NOTE: SynchronizeAudio() is no longer called here — audio rendering is now
+	// driven by the dedicated APU frame thread (xemu-style). This prevents the
+	// DPC loop freeze where synchronous rendering re-triggered interrupts faster
+	// than the guest could service them.
 
 	// Diagnostic: log every distinct register write so we can confirm
 	// the guest is actually configuring the APU.
@@ -1308,6 +1488,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		const uint32_t clearMask = value << ((addr - NV_PAPU_ISTS) * 8);
 		SetRegister32(NV_PAPU_ISTS, GetRegister32(NV_PAPU_ISTS) & ~clearMask);
 		RefreshInterruptStatus();
+		WakeAPUThread(); // Wake frame thread — guest acknowledged interrupt
 		return;
 	}
 
@@ -1315,6 +1496,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		(addr >= NV_PAPU_FECTL && addr < NV_PAPU_FECTL + sizeof(uint32_t))) {
 		WriteRegister(addr, value, size);
 		RefreshInterruptStatus();
+		WakeAPUThread(); // Wake frame thread — FECTL mode may have changed
 		return;
 	}
 
@@ -1343,6 +1525,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 			}
 		}
 		RefreshInterruptStatus();
+		WakeAPUThread(); // Wake frame thread — trap may have been cleared
 		return;
 	}
 
@@ -1385,6 +1568,11 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		}
 	} else if (IsAPUMaxSgeRegister(registerBase)) {
 		SetRegister32(registerBase, NormalizeAPUMaxSge(GetRegister32(registerBase)));
+	}
+
+	// Wake APU frame thread if SECTL was written (XCNTMODE may have changed)
+	if (registerBase == NV_PAPU_SECTL) {
+		WakeAPUThread();
 	}
 }
 
@@ -3642,93 +3830,12 @@ float APUDevice::StepVoiceEnvelope(uint32_t voiceHandle, uint32_t reg0, uint32_t
 
 void APUDevice::SynchronizeAudio()
 {
-    std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
-
-    const uint32_t now = GetAPUTime();
-    const bool counterOff =
-        ((GetRegister32(NV_PAPU_SECTL) & NV_PAPU_SECTL_XCNTMODE) >> Ctz32(NV_PAPU_SECTL_XCNTMODE)) ==
-        NV_PAPU_SECTL_XCNTMODE_OFF;
-
-    // Periodically scan the guest voice table for voices that were
-    // activated via direct memory write (games can set ACTIVE_VOICE
-    // without calling the VP VOICE_ON method).  When a voice is found
-    // active in guest memory but not tracked in our shadow hints,
-    // perform the activation side-effects that ConsumeVPMethod(VOICE_ON)
-    // would normally handle.
-    {
-        static uint32_t lastVoiceScan;
-        if (now - lastVoiceScan >= 4800) { // ~10 Hz
-            lastVoiceScan = now;
-            const uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
-            if (vpvaddr != 0) {
-                uint32_t newlyActivated = 0;
-                for (uint32_t vh = 0; vh < MAX_VOICE_HANDLES; ++vh) {
-                    uint32_t state = 0;
-                    if (!ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
-                        NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state)) {
-                        break;
-                    }
-                    const bool active = (state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0;
-                    const bool tracked = IsVoiceActiveHinted(vh);
-                    if (active && !tracked) {
-                        UnlinkVoiceFromLists(vh);
-                        const uint32_t feav = GetRegister32(NV_PAPU_FEAV);
-                        const uint32_t list = (feav & NV_PAPU_FEAV_LST) >> Ctz32(NV_PAPU_FEAV_LST);
-                        WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
-                            NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
-                        SetVoiceActiveHint(vh, true);
-                        SetVoiceLocked(vh, false);
-                        WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
-                            NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
-                        ++newlyActivated;
-                    }
-                }
-                if (newlyActivated > 0) {
-                    EmuLog(LOG_LEVEL::INFO,
-                        "APU diag: guest-memory voice scan activated %u voices not tracked in VP hints",
-                        newlyActivated);
-                }
-            }
-        }
-    }
-
-    if (counterOff) {
-        const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-        bool hasActiveVoices = voiceTableBase != 0;
-        if (!hasActiveVoices) {
-            for (size_t i = 0; i < m_VPActiveVoiceHints.size(); ++i) {
-                if (m_VPActiveVoiceHints[i] != 0) {
-                    hasActiveVoices = true;
-                    break;
-                }
-            }
-        }
-        if (!hasActiveVoices) {
-            m_LastAudioUpdate = now;
-            return;
-        }
-    }
-
-    uint32_t remaining = now - m_LastAudioUpdate;
-    if (remaining > 0) {
-        static uint32_t lastRenderLog;
-		if (now - lastRenderLog >= 240000) { // log at most once per 5 seconds
-            lastRenderLog = now;
-            EmuLog(LOG_LEVEL::INFO,
-                "APU diag: rendering %u frames (counter=%s VPVADDR=0x%08X activeHints=%u)",
-                remaining,
-                counterOff ? "off/bypass" : "on",
-                GetRegister32(NV_PAPU_VPVADDR),
-                m_VPActiveVoiceHints[0] != 0 || m_VPActiveVoiceHints[1] != 0 ? 1 : 0);
-        }
-    }
-    while (remaining > 0) {
-        const size_t chunk = std::min<size_t>(remaining, APU_AUDIO_CHUNK_FRAMES);
-        RenderBasicAudioChunk(chunk);
-        m_LastAudioUpdate += static_cast<uint32_t>(chunk);
-        m_XGSCounter += static_cast<uint32_t>(chunk);
-        remaining -= static_cast<uint32_t>(chunk);
-    }
+    // Audio rendering is now driven by the dedicated APU frame thread.
+    // This method is kept for API compatibility (HLE patches, ServiceAudio)
+    // but only wakes the frame thread rather than doing synchronous rendering.
+    // This is the key fix for the DPC loop freeze: the guest's DirectSoundDoWork
+    // DPC no longer re-enters the renderer, preventing the interrupt storm.
+    WakeAPUThread();
 }
 
 void APUDevice::RenderBasicAudioChunk(size_t frameCount)

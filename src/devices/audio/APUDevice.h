@@ -29,9 +29,13 @@
 #define _APU_H_
 
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include "../PCIDevice.h"
@@ -48,9 +52,16 @@ public:
 	static constexpr size_t MAX_RECENT_FE_METHODS = 16;
 	static constexpr size_t VP_VOICE_TABLE_SHADOW_BYTES = MAX_VOICE_HANDLES * 0x80;
 
+	// APU frame timing constants (matching xemu's hardware model)
+	static constexpr size_t NUM_SAMPLES_PER_FRAME = 32;   // Samples per VP frame
+	static constexpr size_t EP_FRAME_DIVIDER = 8;          // EP runs every 8 VP frames
+	static constexpr int64_t EP_FRAME_US = 5333;           // 256/48000 sec in microseconds
+	static constexpr int64_t TRAPPED_SLEEP_MS = 5;         // Sleep when FE is trapped
+
 	// PCI Functions
 	void Init();
 	void Reset();
+	~APUDevice();
 
 	uint32_t IORead(int barIndex, uint32_t addr, unsigned size = sizeof(uint8_t));
 	void IOWrite(int barIndex, uint32_t addr, uint32_t data, unsigned size = sizeof(uint8_t));
@@ -210,8 +221,23 @@ private:
 	void SetRegister32(uint32_t addr, uint32_t value);
 	uint32_t GetRegister32(uint32_t addr) const;
 
+	// APU frame thread (xemu-style dedicated audio thread)
+	void StartFrameThread();
+	void StopFrameThread();
+	void APUFrameThread();
+	void ProcessVPFrame();
+	void Throttle();
+	bool IsAPUHaltedOrTrapped() const;
+	void WakeAPUThread();
+
 	std::array<uint8_t, APU_SIZE> m_Registers{};
 	mutable std::mutex m_AudioUpdateMutex{};
+	std::condition_variable m_APUCond{};
+	std::thread m_APUThread{};
+	std::atomic<bool> m_APUExiting{false};
+	std::atomic<bool> m_APURunning{false};
+	std::chrono::steady_clock::time_point m_NextFrameTime{};
+	uint32_t m_EPFrameDiv = 0;
 	uint32_t m_VPFifoLevel = 0;
 	uint32_t m_VPFifoLastUpdate = 0;
 	uint32_t m_LastAudioUpdate = 0;

@@ -37,10 +37,14 @@
 namespace xbox {
 // Minimal HLE: replace DirectSoundDoWork to prevent the native
 // implementation from spinning or crashing when the LLE APU
-// DSP is not fully functional.
+// DSP is not fully functional.  With the xemu-style APU frame
+// thread, this just ensures the thread stays active.
 void_xt WINAPI EMUPATCH(DirectSoundDoWork)()
 {
+	// The APU frame thread handles all audio rendering at ~187.5 Hz.
+	// We just wake it to ensure timely processing after the DPC.
 	if (g_APU != nullptr) g_APU->SynchronizeAudio();
+	// Let AC97 bus master DMA progress (lightweight status update)
 	if (g_AC97 != nullptr) g_AC97->ServiceAudio();
 }
 } // namespace xbox
