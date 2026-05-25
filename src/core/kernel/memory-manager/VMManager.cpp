@@ -963,8 +963,11 @@ xbox::PFN_COUNT VMManager::DeallocateSystemMemory(xbox::PageType BusyType, VAddr
 
 	if (BusyType == xbox::DebuggerType)
 	{
-		assert(IS_DEVKIT_ADDRESS(addr));
-		MemoryType = DevkitRegion;
+		if (IS_DEVKIT_ADDRESS(addr)) {
+			MemoryType = DevkitRegion;
+		} else {
+			MemoryType = SystemRegion;
+		}
 	}
 	else { assert(IS_SYSTEM_ADDRESS(addr)); }
 

@@ -188,7 +188,7 @@ XBSYSAPI EXPORTNUM(170) xbox::void_xt NTAPI xbox::MmDeleteKernelStack
 
 	ULONG actualStackSize = ((VAddr)StackBase - (VAddr)StackLimit) + PAGE_SIZE;
 
-	g_VMManager.DeallocateSystemMemory(IS_SYSTEM_ADDRESS(StackBase) ? StackType : DebuggerType,
+	g_VMManager.DeallocateSystemMemory(StackType,
 		(VAddr)StackBase - (VAddr)actualStackSize, actualStackSize);
 }
 
