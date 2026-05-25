@@ -1156,6 +1156,27 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_FEMEMADDR, 0);
 	SetRegister32(NV_PAPU_FEMEMDATA, 0);
 	SetRegister32(NV_PAPU_FETFORCE0, 0);
+
+	// Allocate the voice descriptor table in Xbox contiguous memory and
+	// set VPVADDR so the game's native audio code can read/write voice
+	// descriptors.  On real Xbox, CMcpxAPU::Initialize does this via
+	// MmAllocateContiguousMemory(256 * 128) + MMIO write to VPVADDR.
+	// Our LLE APU absorbs both steps here.
+	{
+		constexpr size_t VOICE_TABLE_SIZE = 256 * 0x80; // 32 KB for 256 voices
+		uint32_t voiceTableAddr = 0x83F00000;
+		void* addr = VirtualAlloc((LPVOID)(uintptr_t)voiceTableAddr, VOICE_TABLE_SIZE,
+			MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		if (addr == nullptr) {
+			// Fallback: let system pick address, then compute physical
+			addr = VirtualAlloc(nullptr, VOICE_TABLE_SIZE,
+				MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		}
+		if (addr != nullptr) {
+			uint32_t physAddr = (uint32_t)(uintptr_t)addr - CONTIGUOUS_MEMORY_BASE;
+			SetRegister32(NV_PAPU_VPVADDR, physAddr);
+		}
+	}
 	SetRegister32(NV_PAPU_FETFORCE1, 0);
 	SetRegister32(NV_PAPU_SECTL, 0x00000008);
 	SetRegister32(NV_PAPU_VPVADDR, 0);
