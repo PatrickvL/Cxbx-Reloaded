@@ -62,8 +62,24 @@ public:
 	void SetInterruptMode(xbox::KINTERRUPT_MODE InterruptMode) { m_InterruptMode = InterruptMode; }
 	void Trigger(xbox::PKINTERRUPT Interrupt) {
 		if (m_InterruptMode == xbox::KINTERRUPT_MODE::LevelSensitive) m_Pending = false;
+
+		// On real Xbox, the ISR runs at its assigned device IRQL (above
+		// DISPATCH_LEVEL). This prevents KeInsertQueueDpc from dispatching
+		// DPCs inline during the ISR — DPCs are queued and fire later when
+		// IRQL drops below DISPATCH_LEVEL. Without this, the ISR's
+		// KeInsertQueueDpc calls see IRQL < DISPATCH_LEVEL and dispatch
+		// immediately, causing tight loops for DPCs that re-queue themselves
+		// or for ISRs that fire repeatedly.
+		volatile xbox::KPCR* Pcr = EmuKeGetPcr();
+		xbox::KIRQL OldIrql = (xbox::KIRQL)Pcr->Irql;
+		xbox::KIRQL IsrIrql = (xbox::KIRQL)Interrupt->Irql;
+		if (IsrIrql < DISPATCH_LEVEL) IsrIrql = DISPATCH_LEVEL;
+		if (IsrIrql > OldIrql) Pcr->Irql = IsrIrql;
+
 		auto ServiceRoutine = (xbox::boolean_xt(__stdcall*)(xbox::PKINTERRUPT, void*))Interrupt->ServiceRoutine;
 		ServiceRoutine(Interrupt, Interrupt->ServiceContext);
+
+		Pcr->Irql = OldIrql;
 	}
 private:
 	bool m_Asserted = false, m_Enabled = false, m_Pending = false;
