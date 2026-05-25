@@ -1935,9 +1935,36 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 	case NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY:
 		m_VPCurrentHRTFEntry = value & NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY_HANDLE;
 		return;
-	case NV1BA0_PIO_VOICE_LOCK:
-		SetVoiceLocked(currentVoice(), (value & 1u) != 0);
+	case NV1BA0_PIO_VOICE_LOCK: {
+		const uint32_t vh = currentVoice();
+		const bool locking = (value & 1u) != 0;
+		const bool wasLocked = IsVoiceLocked(vh);
+		SetVoiceLocked(vh, locking);
+		// When a voice is unlocked after being configured, and the
+		// game never explicitly calls VOICE_ON, activate it so the
+		// Stream Engine renders it.  Matches Bink/DirectSound
+		// patterns that use lock/configure/unlock to finalise voices.
+		if (!locking && wasLocked && vh < APU_VP_VOICE_MAX_HANDLE) {
+			uint32_t state = 0;
+			if (ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+				NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state) &&
+				(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
+				// Activate the voice via the same path as VOICE_ON
+				UnlinkVoiceFromLists(vh);
+				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+					NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
+				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+					NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
+				SetVoiceActiveHint(vh, true);
+				SetVoiceLocked(vh, false);
+				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
+					NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
+				EmuLog(LOG_LEVEL::INFO,
+					"APU diag: auto-activated voice %u on VOICE_LOCK unlock", vh);
+			}
+		}
 		return;
+	}
 	case NV1BA0_PIO_VOICE_RELEASE: {
 		const uint32_t voiceHandle = value & NV1BA0_PIO_VOICE_RELEASE_HANDLE;
 		if (voiceHandle >= APU_VP_VOICE_MAX_HANDLE) {
