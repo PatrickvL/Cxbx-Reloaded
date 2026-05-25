@@ -77,6 +77,8 @@ constexpr uint32_t NV_PAPU_ISTS_FEVINTSTS = 1 << 6;
 constexpr uint32_t NV_PAPU_IEN = 0x00001004;
 constexpr uint32_t NV_PAPU_FECTL = 0x00001100;
 constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE = 0x000000E0;
+constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE_FREE = 0x00000000;
+constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE_HALTED = 0x00000080;
 constexpr uint32_t NV_PAPU_FECTL_FEMETHMODE_TRAPPED = 0x000000E0;
 constexpr uint32_t NV_PAPU_FECTL_FETRAPREASON = 0x00000F00;
 constexpr uint32_t NV_PAPU_FECTL_FETRAPREASON_REQUESTED = 0x00000F00;
@@ -623,7 +625,7 @@ float ClampUnitSample(float value)
 
 float RunLowPassFilter(float& high, float& band, float& low, float cutoff, float resonance, float input)
 {
-	// State-variable low-pass filter adapted to the lightweight MCPX VP path.
+	// State-variable filter adapted to the lightweight MCPX VP path.
 	// The small bias and cubic damping terms are the same stabilizers used in xemu's SVF implementation.
 	const float normalizedInput = std::sqrt(resonance / 2.0f + 0.01f) * input;
 	band -= band * band * band * 0.001f;
@@ -631,6 +633,28 @@ float RunLowPassFilter(float& high, float& band, float& low, float cutoff, float
 	band += cutoff * high;
 	low += cutoff * band;
 	return low;
+}
+
+// SVF filter mode constants matching NV_PAVS_VOICE_CFG_MISC_FMODE field values
+constexpr uint32_t APU_FILTER_MODE_OFF = 0;
+constexpr uint32_t APU_FILTER_MODE_LP = 1;
+constexpr uint32_t APU_FILTER_MODE_BP = 2;
+constexpr uint32_t APU_FILTER_MODE_HP = 3;
+
+float RunSVFilter(float& high, float& band, float& low, float cutoff, float resonance, float input, uint32_t mode)
+{
+	// State-variable filter with selectable output (LP/BP/HP).
+	// Matches xemu's setup_svf/run_svf implementation.
+	const float normalizedInput = std::sqrt(resonance / 2.0f + 0.01f) * input;
+	band -= band * band * band * 0.001f;
+	high = normalizedInput - low - resonance * band;
+	band += cutoff * high;
+	low += cutoff * band;
+	switch (mode) {
+	case APU_FILTER_MODE_BP: return band;
+	case APU_FILTER_MODE_HP: return high;
+	default: return low; // LP
+	}
 }
 
 uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
@@ -1190,7 +1214,9 @@ void APUDevice::StopFrameThread()
 bool APUDevice::IsAPUHaltedOrTrapped() const
 {
 	const uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
-	if ((fectl & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+	const uint32_t feMode = fectl & NV_PAPU_FECTL_FEMETHMODE;
+	if (feMode == NV_PAPU_FECTL_FEMETHMODE_TRAPPED ||
+		feMode == NV_PAPU_FECTL_FEMETHMODE_HALTED) {
 		return true;
 	}
 
@@ -5142,30 +5168,30 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			}
 		}
 	};
-	const bool lowPassEnabled = voiceHandle < APU_MAX_3D_VOICES
-		? filterMode == 1
-		: (stereo ? filterMode == 1 : (filterMode & 1u) != 0);
-	float lowPassCutoff[2]{};
-	float lowPassResonance[2]{};
-	if (lowPassEnabled) {
+	const bool filterEnabled = voiceHandle < APU_MAX_3D_VOICES
+		? filterMode != APU_FILTER_MODE_OFF
+		: (stereo ? filterMode != APU_FILTER_MODE_OFF : (filterMode & 1u) != 0);
+	float filterCutoff[2]{};
+	float filterResonance[2]{};
+	if (filterEnabled) {
 		for (uint32_t channel = 0; channel < channels; ++channel) {
 			const uint32_t registerOffset = channel == 0 ? NV_PAVS_VOICE_TAR_FCA : NV_PAVS_VOICE_TAR_FCB;
 			uint32_t cutoff = 0;
 			uint32_t resonance = 0;
 			ReadVoiceMask(voiceHandle, registerOffset, NV_PAVS_VOICE_TAR_FCA_FC0, cutoff);
 			ReadVoiceMask(voiceHandle, registerOffset, NV_PAVS_VOICE_TAR_FCA_FC1, resonance);
-			lowPassCutoff[channel] = std::clamp(std::pow(2.0f, static_cast<float>(static_cast<int16_t>(cutoff)) / 4096.0f),
+			filterCutoff[channel] = std::clamp(std::pow(2.0f, static_cast<float>(static_cast<int16_t>(cutoff)) / 4096.0f),
 				APU_FILTER_MIN_FREQUENCY, 1.0f);
-			lowPassResonance[channel] = std::clamp(static_cast<float>(resonance) / APU_FILTER_Q_NORMALIZER,
+			filterResonance[channel] = std::clamp(static_cast<float>(resonance) / APU_FILTER_Q_NORMALIZER,
 				APU_FILTER_MIN_Q, 1.0f);
 		}
 		if (channels == 1) {
-			lowPassCutoff[1] = lowPassCutoff[0];
-			lowPassResonance[1] = lowPassResonance[0];
+			filterCutoff[1] = filterCutoff[0];
+			filterResonance[1] = filterResonance[0];
 		}
 	}
-	auto applyLowPass = [&](float& sampleLeft, float& sampleRight, float envGain, float cutoffLFOOctaves) {
-		if (!lowPassEnabled) {
+	auto applyFilter = [&](float& sampleLeft, float& sampleRight, float envGain, float cutoffLFOOctaves) {
+		if (!filterEnabled) {
 			return;
 		}
 		const float clampedFilterEnvelopeGain = std::clamp(
@@ -5173,17 +5199,17 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		float modulatedCutoff[2]{};
 		for (size_t channel = 0; channel < std::size(modulatedCutoff); ++channel) {
 			modulatedCutoff[channel] = APU_FILTER_MIN_FREQUENCY +
-				(lowPassCutoff[channel] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain;
+				(filterCutoff[channel] - APU_FILTER_MIN_FREQUENCY) * clampedFilterEnvelopeGain;
 			modulatedCutoff[channel] = std::clamp(
 				static_cast<float>(modulatedCutoff[channel] * std::exp2(cutoffLFOOctaves)),
 				APU_FILTER_MIN_FREQUENCY,
 				1.0f);
 		}
 		auto& filterState = m_VPLowPassState[voiceHandle];
-		sampleLeft = ClampUnitSample(RunLowPassFilter(filterState[0].high, filterState[0].band, filterState[0].low,
-			modulatedCutoff[0], lowPassResonance[0], sampleLeft));
-		sampleRight = ClampUnitSample(RunLowPassFilter(filterState[1].high, filterState[1].band, filterState[1].low,
-			modulatedCutoff[1], lowPassResonance[1], sampleRight));
+		sampleLeft = ClampUnitSample(RunSVFilter(filterState[0].high, filterState[0].band, filterState[0].low,
+			modulatedCutoff[0], filterResonance[0], sampleLeft, filterMode));
+		sampleRight = ClampUnitSample(RunSVFilter(filterState[1].high, filterState[1].band, filterState[1].low,
+			modulatedCutoff[1], filterResonance[1], sampleRight, filterMode));
 	};
 	uint32_t hrtfEntryIndex = APU_INVALID_HRTF_ENTRY_INDEX;
 	const bool hrtfEnabled = voiceHandle < APU_MAX_3D_VOICES &&
@@ -5569,7 +5595,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 			break;
 		}
 		if (multipass) {
-			applyLowPass(currentLeft, currentRight, filterEnvelopeGain, cutoffLFOOctaves);
+			applyFilter(currentLeft, currentRight, filterEnvelopeGain, cutoffLFOOctaves);
 			if (capture3DHandoff) {
 				storeCaptured3DSample(frame, currentLeft, currentRight, totalGain);
 			}
@@ -5610,7 +5636,7 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 		const float interpolation = static_cast<float>(playbackState.fraction);
 		float sampleLeft = currentLeft + (nextLeft - currentLeft) * interpolation;
 		float sampleRight = currentRight + (nextRight - currentRight) * interpolation;
-		applyLowPass(sampleLeft, sampleRight, filterEnvelopeGain, cutoffLFOOctaves);
+		applyFilter(sampleLeft, sampleRight, filterEnvelopeGain, cutoffLFOOctaves);
 		if (capture3DHandoff) {
 			storeCaptured3DSample(frame, sampleLeft, sampleRight, totalGain);
 		}
@@ -5689,17 +5715,13 @@ void APUDevice::RefreshInterruptStatus()
 {
 	uint32_t status = GetRegister32(NV_PAPU_ISTS) & ~NV_PAPU_ISTS_GINTSTS;
 
-	// When FEMETHMODE transitions away from zero the guest is asking the
-	// FE to begin processing.  Signal FETINT once (the guest acknowledges
-	// by clearing ISTS, but we track the one-shot state internally so
-	// RefreshInterruptStatus doesn't retrigger the interrupt).
+	// FETINTSTS is asserted whenever FEMETHMODE is non-zero (HALTED or TRAPPED).
+	// This matches xemu's update_irq which unconditionally sets this bit based on
+	// current FE state. The guest clears FETINTSTS by writing to ISTS; if the FE
+	// is still halted/trapped on the next refresh, it will be re-asserted.
 	const uint32_t feMode = GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE;
-	if (feMode != 0 && !m_FEInterruptFired) {
+	if (feMode != NV_PAPU_FECTL_FEMETHMODE_FREE) {
 		status |= NV_PAPU_ISTS_FETINTSTS;
-		m_FEInterruptFired = true;
-	}
-	if (feMode == 0) {
-		m_FEInterruptFired = false;
 	}
 
 	// GINTSTS is the hardware summary bit — set it whenever any pending

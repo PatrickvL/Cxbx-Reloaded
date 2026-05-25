@@ -294,7 +294,6 @@ private:
 	bool m_LoggedVPOutputBufferOverrun = false;
 	bool m_LoggedDSPOutputCaptureFailure = false;
 	bool m_LoggedFallbackActiveVoiceRender = false;
-	bool m_FEInterruptFired = false;
 	size_t m_ChunkCaptured3DVoiceCount = 0;
 	size_t m_ChunkSubmittedHostSpatialVoiceCount = 0;
 };
