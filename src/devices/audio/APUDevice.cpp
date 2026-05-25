@@ -1939,11 +1939,16 @@ uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 {
 	UpdateVPFifo();
 
+	// VP FIFO free slots at offset 0x10 — but the XDK also defines FEMAXTV
+	// at the same address.  When the guest has written FEMAXTV (checked by
+	// examining the register value), return the stored value so GetCaps
+	// readback succeeds.  FIFO_FREE is still available through RefreshVPStatus.
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
-		return ReadRegisterFragment(
-			GetVPFifoFreeSlots(),
-			addr - APU_VP_FREE,
-			size);
+		uint32_t femaxTv = GetRegister32(APU_VP_BASE + addr);
+		if (femaxTv != 0) {
+			return ReadRegisterFragment(femaxTv, addr - APU_VP_FREE, size);
+		}
+		return ReadRegisterFragment(GetVPFifoFreeSlots(), addr - APU_VP_FREE, size);
 	}
 
 	if (addr >= NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY && addr < NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY + sizeof(uint32_t)) {
