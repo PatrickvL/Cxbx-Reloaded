@@ -25,17 +25,16 @@ namespace xbox {
 
 void_xt WINAPI EMUPATCH(DirectSoundDoWork)()
 {
+	// Drive the LLE audio pipeline at the game's frame rate so
+	// voice-rendered and DMA-driven audio is consumed.  Do NOT
+	// forward to the native implementation — it completes
+	// instantly when there is no audio work and creates the
+	// infinite NtSetEvent / KeInsertQueueDpc spin.
 	if (g_APU != nullptr) {
 		g_APU->SynchronizeAudio();
 	}
 	if (g_AC97 != nullptr) {
 		g_AC97->ServiceAudio();
-	}
-
-	void_xt(WINAPI * native)() = reinterpret_cast<decltype(native)>(
-		GetPatchedFunctionTrampoline("DirectSoundDoWork"));
-	if (native != nullptr) {
-		native();
 	}
 }
 
