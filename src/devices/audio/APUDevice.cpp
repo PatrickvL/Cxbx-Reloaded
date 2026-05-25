@@ -4748,6 +4748,28 @@ void APUDevice::RenderBasicVoice(uint32_t voiceHandle, int32_t* mixBins, size_t 
 	uint32_t lfoEnv = 0;
 	uint32_t lfoMod = 0;
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START, NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
+	// Buffer inheritance: if this voice has no buffer base, copy one
+	// from a donor voice that was configured via the VP window.
+	if (baseAddress == 0) {
+		for (uint32_t donor = 0; donor < MAX_VOICE_HANDLES; ++donor) {
+			if (ReadVoiceMask(donor, NV_PAVS_VOICE_CUR_PSL_START,
+				NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress) && baseAddress != 0) {
+				ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_NEXT,
+					NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
+				ReadVoiceMask(donor, NV_PAVS_VOICE_PAR_OFFSET,
+					NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+				// Persist the inherited values so subsequent
+				// frames see them.
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSL_START,
+					NV_PAVS_VOICE_CUR_PSL_START_BA, baseAddress);
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT,
+					NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
+				WriteVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET,
+					NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
+				break;
+			}
+		}
+	}
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_OFFSET, NV_PAVS_VOICE_PAR_OFFSET_CBO, currentOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_PAR_NEXT, NV_PAVS_VOICE_PAR_NEXT_EBO, endOffset);
 	ReadVoiceMask(voiceHandle, NV_PAVS_VOICE_CUR_PSH_SAMPLE, NV_PAVS_VOICE_CUR_PSH_SAMPLE_LBO, loopOffset);
