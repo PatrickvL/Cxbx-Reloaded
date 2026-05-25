@@ -3909,11 +3909,13 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 			m_LoggedFallbackActiveVoiceRender = true;
 		}
 	}
-	// FE still expects the SE2FE idle-voice path to progress even before the guest
-	// publishes NV_PAPU_VPVADDR; ConsumeVPMethod remains safe here because the
-	// shadow voice table backs the FE/VP state touched by that path.
-	if (!hasVoiceActivity &&
-		(GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
+	// The FE expects an SE2FE_IDLE_VOICE signal after every frame cycle so the
+	// guest DPC can advance.  Fire it unconditionally (matching xemu behaviour)
+	// whenever FETFORCE1 has the SE2FE bit set and the FE is not already trapped.
+	// Previously this was gated by !hasVoiceActivity, which caused the guest to
+	// stall when fallback voices were being rendered (hasVoiceActivity was true but
+	// no list-walk idle callback fired).
+	if ((GetRegister32(NV_PAPU_FETFORCE1) & NV_PAPU_FETFORCE1_SE2FE_IDLE_VOICE) != 0 &&
 		(GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) != NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
 		ConsumeVPMethod(SE2FE_IDLE_VOICE, APU_VP_VOICE_MAX_HANDLE, sizeof(uint32_t));
 	}
