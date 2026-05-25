@@ -39,6 +39,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <unordered_set>
 #include <vector>
 
@@ -950,9 +952,54 @@ void APUDevice::InitializeDSP()
 {
 	if (m_GPDsp == nullptr) {
 		m_GPDsp = dsp_init(this, &APUDevice::GPDspScratchRW, &APUDevice::GPDspFifoRW);
+		m_GPDsp->is_gp = true;
+		m_GPDsp->core.is_gp = true;
 	}
 	if (m_EPDsp == nullptr) {
 		m_EPDsp = dsp_init(this, &APUDevice::EPDspScratchRW, &APUDevice::EPDspFifoRW);
+		m_EPDsp->is_gp = false;
+		m_EPDsp->core.is_gp = false;
+	}
+
+	// Load the MCPX GP/EP DSP firmware from the emulator directory.
+	static bool firmwareLoaded;
+	if (!firmwareLoaded) {
+		firmwareLoaded = true;
+		char exePathBuf[MAX_PATH]{};
+		GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
+		std::filesystem::path exePath(exePathBuf);
+		std::filesystem::path fwPath = exePath.parent_path() / "mcpx_1.0.bin";
+		if (!std::filesystem::exists(fwPath)) {
+			fwPath = "mcpx_1.0.bin"; // try CWD
+		}
+		std::ifstream fwFile(fwPath, std::ios::binary);
+		if (fwFile.is_open()) {
+			EmuLog(LOG_LEVEL::INFO, "Loading MCPX DSP firmware from %s", fwPath.string().c_str());
+			const size_t pramWords = 0x800; // 2048 words
+			for (auto* dsp : {m_GPDsp, m_EPDsp}) {
+				if (dsp == nullptr) continue;
+				for (size_t i = 0; i < pramWords; ++i) {
+					uint8_t buf[4]{};
+					if (!fwFile.read(reinterpret_cast<char*>(buf), 4)) {
+						EmuLog(LOG_LEVEL::WARNING, "MCPX firmware: EOF at word %zu", i);
+						break;
+					}
+					uint32_t word = buf[0] | (buf[1] << 8) |
+						(buf[2] << 16) | (buf[3] << 24);
+					if (word & 0xff000000) {
+						word &= 0x00ffffff;
+					}
+					dsp->core.pram[i] = word;
+				}
+				memset(dsp->core.pram_opcache, 0,
+					sizeof(dsp->core.pram_opcache));
+				fwFile.clear();
+				fwFile.seekg(0);
+			}
+		} else {
+			EmuLog(LOG_LEVEL::WARNING, "MCPX DSP firmware not found at %s; GP/EP DSP will not execute",
+				fwPath.string().c_str());
+		}
 	}
 }
 
