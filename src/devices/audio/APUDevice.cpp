@@ -5378,12 +5378,24 @@ uint32_t APUDevice::GetVPFifoFreeSlots() const
 void APUDevice::RefreshInterruptStatus()
 {
 	uint32_t status = GetRegister32(NV_PAPU_ISTS) & ~NV_PAPU_ISTS_GINTSTS;
-	if ((GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE) == NV_PAPU_FECTL_FEMETHMODE_TRAPPED) {
+
+	// When FEMETHMODE transitions away from zero the guest is asking the
+	// FE to begin processing.  Signal FETINT once (the guest acknowledges
+	// by clearing ISTS, but we track the one-shot state internally so
+	// RefreshInterruptStatus doesn't retrigger the interrupt).
+	const uint32_t feMode = GetRegister32(NV_PAPU_FECTL) & NV_PAPU_FECTL_FEMETHMODE;
+	if (feMode != 0 && !m_FEInterruptFired) {
 		status |= NV_PAPU_ISTS_FETINTSTS;
+		m_FEInterruptFired = true;
+	}
+	if (feMode == 0) {
+		m_FEInterruptFired = false;
 	}
 
-	if ((GetRegister32(NV_PAPU_IEN) & NV_PAPU_ISTS_GINTSTS) != 0 &&
-		((status & ~NV_PAPU_ISTS_GINTSTS) & GetRegister32(NV_PAPU_IEN)) != 0) {
+	// GINTSTS is the hardware summary bit — set it whenever any pending
+	// interrupt source is also enabled in IEN.  Unlike real hardware
+	// behaviour seen in many DSound titles, IEN bit 0 does NOT gate GINT.
+	if ((status & GetRegister32(NV_PAPU_IEN)) != 0) {
 		status |= NV_PAPU_ISTS_GINTSTS;
 	}
 
