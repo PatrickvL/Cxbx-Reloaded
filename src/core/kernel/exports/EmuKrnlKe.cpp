@@ -1439,19 +1439,17 @@ XBSYSAPI EXPORTNUM(119) xbox::boolean_xt NTAPI xbox::KeInsertQueueDpc
 	BOOLEAN NeedsInsertion = (Dpc->Inserted == FALSE);
 
 	// Rate-limit: if the same DPC was dispatched within the last
-	// millisecond, suppress re-insertion.  This prevents the
-	// DirectSound DPC storm (NtSetEvent -> DPC -> KeSetEvent ->
-	// NtSetEvent ad infinitum) that occurs when the LLE APU DSP
-	// has no work to process.
+	// 2 ms, suppress re-insertion to prevent the DirectSound DPC
+	// storm while still allowing legitimate per-frame work.
 	if (NeedsInsertion) {
 		static uint64_t s_lastDpcTicks[16];
 		static xbox::addr_xt s_lastDpcAddrs[16]{};
 		static size_t s_dpcIdx;
-		const uint64_t now = Timer_GetScaledPerformanceCounter(1000); // ms
+		const uint64_t now = Timer_GetScaledPerformanceCounter(1000);
 		const xbox::addr_xt dpcAddr = static_cast<xbox::addr_xt>(reinterpret_cast<uintptr_t>(Dpc));
 		for (size_t i = 0; i < 16; ++i) {
 			if (s_lastDpcAddrs[i] == dpcAddr &&
-			    (now - s_lastDpcTicks[i]) < 10) { // 10 ms threshold
+			    (now - s_lastDpcTicks[i]) < 2) {
 				NeedsInsertion = false;
 				break;
 			}
