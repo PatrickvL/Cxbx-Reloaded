@@ -1168,7 +1168,7 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 	// Diagnostic: log the first N VP-method writes with address/value
 	if (addr >= APU_VP_BASE && addr < APU_VP_BASE + APU_VP_SIZE) {
 		static uint32_t vpDiagIdx;
-		if (vpDiagIdx < 100) {
+		if (vpDiagIdx < 20) {
 			++vpDiagIdx;
 			const uint32_t vpOffset = addr - APU_VP_BASE;
 			EmuLog(LOG_LEVEL::INFO,
@@ -1964,17 +1964,18 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 		// Stream Engine renders it.  Matches Bink/DirectSound
 		// patterns that use lock/configure/unlock to finalise voices.
 		if (!locking && wasLocked && vh < APU_VP_VOICE_MAX_HANDLE) {
+			static bool bufferScanned;
 			uint32_t state = 0;
 			if (ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 				NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, state) &&
 				(state & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) == 0) {
-				// If the voice has no buffer base, scan the voice table
-				// for a donor, or fall back to the VP-window-written
-				// address that the game stored in legacy VP registers.
+				// Only scan for donor buffers on the first activation
+				// to avoid O(n) scanning on every lock/unlock cycle.
 				uint32_t bufBase = 0;
 				ReadVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
 					NV_PAVS_VOICE_CUR_PSL_START_BA, bufBase);
-				if (bufBase == 0) {
+				if (bufBase == 0 && !bufferScanned) {
+					bufferScanned = true;
 					for (uint32_t donor = 0; donor < MAX_VOICE_HANDLES; ++donor) {
 						uint32_t donorBase = 0;
 						if (ReadVoiceMask(donor, NV_PAVS_VOICE_CUR_PSL_START,
@@ -1998,10 +1999,7 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 						}
 					}
 				}
-				// Fallback: when no voice donor supplies a buffer base,
-				// use the guest-memory-backed register window value that
-				// the game wrote to VP offset 0x808 during early init
-				// (typically a KSEG0 pointer to the PCM buffer).
+				// Fallback: read VP window register for buffer address
 				if (bufBase == 0) {
 					const uint32_t vpWindowBase = ReadRegister(
 						APU_VP_BASE + 0x808, sizeof(uint32_t));
@@ -3669,7 +3667,7 @@ void APUDevice::SynchronizeAudio()
     uint32_t remaining = now - m_LastAudioUpdate;
     if (remaining > 0) {
         static uint32_t lastRenderLog;
-        if (now - lastRenderLog >= 48000) { // log at most once per second
+		if (now - lastRenderLog >= 240000) { // log at most once per 5 seconds
             lastRenderLog = now;
             EmuLog(LOG_LEVEL::INFO,
                 "APU diag: rendering %u frames (counter=%s VPVADDR=0x%08X activeHints=%u)",
