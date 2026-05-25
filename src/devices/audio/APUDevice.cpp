@@ -96,6 +96,7 @@ constexpr uint32_t NV_PAPU_SECTL = 0x00002000;
 constexpr uint32_t NV_PAPU_SECTL_XCNTMODE = 0x00000018;
 constexpr uint32_t NV_PAPU_SECTL_XCNTMODE_OFF = 0;
 constexpr uint32_t NV_PAPU_XGSCNT = 0x0000200C;
+constexpr uint32_t NV_PAPU_IGSCNT = 0x0000008C;
 constexpr uint32_t NV_PAPU_VPVADDR = 0x0000202C;
 constexpr uint32_t NV_PAPU_VPSGEADDR = 0x00002030;
 constexpr uint32_t NV_PAPU_VPSSLADDR = 0x00002034;
@@ -1187,90 +1188,42 @@ APUDevice::~APUDevice()
 	StopFrameThread();
 }
 
-void APUDevice::StartFrameThread()
+uint64_t APUDevice::apu_tick(uint64_t now_qpc)
 {
-	if (m_APURunning.load()) {
-		return;
-	}
-	m_APUExiting.store(false);
-	m_APURunning.store(true);
-	m_NextFrameTime = std::chrono::steady_clock::now();
-	m_APUThread = std::thread(&APUDevice::APUFrameThread, this);
-}
-
-void APUDevice::StopFrameThread()
-{
-	if (!m_APURunning.load()) {
-		return;
-	}
-	m_APUExiting.store(true);
-	m_APUCond.notify_all();
-	if (m_APUThread.joinable()) {
-		m_APUThread.join();
-	}
-	m_APURunning.store(false);
-}
-
-bool APUDevice::IsAPUHaltedOrTrapped() const
-{
-	const uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
-	const uint32_t feMode = fectl & NV_PAPU_FECTL_FEMETHMODE;
-	if (feMode == NV_PAPU_FECTL_FEMETHMODE_TRAPPED ||
-		feMode == NV_PAPU_FECTL_FEMETHMODE_HALTED) {
-		return true;
-	}
-
-	const uint32_t sectl = GetRegister32(NV_PAPU_SECTL);
-	const uint32_t xcntmode = (sectl & NV_PAPU_SECTL_XCNTMODE) >> 3;
-	if (xcntmode == 0) { // XCNTMODE_OFF
-		// Some games don't properly set XCNTMODE before activating voices.
-		// Only consider halted if there's truly nothing to render.
-		const uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
-		if (vpvaddr == 0) {
-			bool hasActiveVoices = false;
-			for (size_t i = 0; i < m_VPActiveVoiceHints.size(); ++i) {
-				if (m_VPActiveVoiceHints[i] != 0) {
-					hasActiveVoices = true;
-					break;
-				}
-			}
-			if (!hasActiveVoices) {
-				return true;
-			}
+	// First call: compute EP frame interval in QPC ticks and establish deadline
+	if (m_NextFrameQpc == 0) {
+		extern int64_t HostQPCFrequency;
+		extern uint64_t HostQPCStartTime;
+		if (m_EPFrameQpc == 0 && HostQPCFrequency > 0) {
+			m_EPFrameQpc = static_cast<uint64_t>(HostQPCFrequency) * m_EPFrameUs / 1000000;
 		}
+		m_NextFrameQpc = now_qpc;
+		return now_qpc + m_EPFrameQpc;
 	}
 
-	return false;
-}
-
-void APUDevice::WakeAPUThread()
-{
-	m_APUCond.notify_all();
-}
-
-void APUDevice::Throttle()
-{
-	// Only throttle on EP-frame boundaries (every 8 VP frames)
-	if ((m_EPFrameDiv % EP_FRAME_DIVIDER) != 0) {
-		return;
+	// If not overdue yet, return the deadline
+	if (now_qpc < m_NextFrameQpc) {
+		return m_NextFrameQpc;
 	}
 
-	auto now = std::chrono::steady_clock::now();
-
-	// If we've fallen too far behind (more than one EP frame), re-anchor
-	if (now - m_NextFrameTime > std::chrono::microseconds(EP_FRAME_US * 2)) {
-		m_NextFrameTime = now;
+	// If the APU is halted or trapped, fire interrupt and skip rendering
+	if (IsAPUHaltedOrTrapped()) {
+		std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
+		RefreshInterruptStatus();
+		m_NextFrameQpc = now_qpc + m_EPFrameQpc / 4; // check again faster
+		return m_NextFrameQpc;
 	}
 
-	// Sleep until the next frame deadline
-	if (m_NextFrameTime > now) {
-		std::unique_lock<std::mutex> lock(m_AudioUpdateMutex);
-		m_APUCond.wait_until(lock, m_NextFrameTime, [this] {
-			return m_APUExiting.load();
-		});
+	// Process one VP frame
+	ProcessVPFrame();
+	m_NextFrameQpc = now_qpc + m_EPFrameQpc;
+
+	// Wake AC97 if present
+	if (g_AC97 != nullptr) {
+		g_AC97->ServiceAudio();
 	}
 
-	m_NextFrameTime += std::chrono::microseconds(EP_FRAME_US);
+	return m_NextFrameQpc;
 }
 
 void APUDevice::ProcessVPFrame()
@@ -1328,35 +1281,39 @@ void APUDevice::ProcessVPFrame()
 	m_EPFrameDiv++;
 }
 
-void APUDevice::APUFrameThread()
+void APUDevice::WakeAPUThread()
 {
-	EmuLog(LOG_LEVEL::INFO, "APU frame thread started (xemu-style pacing at ~%.1f Hz EP rate)",
-		1000000.0 / EP_FRAME_US);
+	// APU thread removed; kept for API compatibility.
+}
 
-	while (!m_APUExiting.load()) {
-		// Check if the APU is halted or trapped
-		if (IsAPUHaltedOrTrapped()) {
-			// Fire interrupt to notify the guest (like xemu does)
-			{
-				std::lock_guard<std::mutex> lock(m_AudioUpdateMutex);
-				RefreshInterruptStatus();
-			}
-
-			// Sleep on condition variable until woken by MMIO write
-			std::unique_lock<std::mutex> lock(m_AudioUpdateMutex);
-			m_APUCond.wait_for(lock, std::chrono::milliseconds(TRAPPED_SLEEP_MS), [this] {
-				return m_APUExiting.load() || !IsAPUHaltedOrTrapped();
-			});
-			continue;
-		}
-
-		// Normal operation: pace and process one VP frame
-		Throttle();
-		if (m_APUExiting.load()) break;
-		ProcessVPFrame();
+bool APUDevice::IsAPUHaltedOrTrapped() const
+{
+	const uint32_t fectl = GetRegister32(NV_PAPU_FECTL);
+	const uint32_t feMode = fectl & NV_PAPU_FECTL_FEMETHMODE;
+	if (feMode == NV_PAPU_FECTL_FEMETHMODE_TRAPPED ||
+		feMode == NV_PAPU_FECTL_FEMETHMODE_HALTED) {
+		return true;
 	}
 
-	EmuLog(LOG_LEVEL::INFO, "APU frame thread exiting");
+	const uint32_t sectl = GetRegister32(NV_PAPU_SECTL);
+	const uint32_t xcntmode = (sectl & NV_PAPU_SECTL_XCNTMODE) >> 3;
+	if (xcntmode == 0) {
+		const uint32_t vpvaddr = GetRegister32(NV_PAPU_VPVADDR);
+		if (vpvaddr == 0) {
+			bool hasActiveVoices = false;
+			for (size_t i = 0; i < m_VPActiveVoiceHints.size(); ++i) {
+				if (m_VPActiveVoiceHints[i] != 0) {
+					hasActiveVoices = true;
+					break;
+				}
+			}
+			if (!hasActiveVoices) {
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 uint32_t APUDevice::IORead(int barIndex, uint32_t addr, unsigned size)
@@ -1389,11 +1346,14 @@ uint32_t APUDevice::MMIORead(int barIndex, uint32_t addr, unsigned size)
 		return EPRead(addr - APU_EP_BASE, size);
 	}
 
-	if (addr >= NV_PAPU_XGSCNT && addr < NV_PAPU_XGSCNT + sizeof(uint32_t)) {
-		// XGSCNT reflects guest-visible rendered sample progress rather than raw
-		// host time; SynchronizeAudio only advances this counter while XCNTMODE
-		// allows audio progress, so MMIO reads expose the frozen value directly.
-		return ReadRegisterFragment(m_XGSCounter, addr - NV_PAPU_XGSCNT, size);
+	if (addr >= NV_PAPU_IGSCNT && addr < NV_PAPU_IGSCNT + sizeof(uint32_t)) {
+		// IGSCNT reflects the same guest-visible sample progress as XGSCNT,
+		// exposed at a different register offset for interrupt timing.
+		uint32_t igsCnt = GetRegister32(NV_PAPU_SECTL) & 0x18;
+		if (igsCnt) {
+			return ReadRegisterFragment(m_XGSCounter, addr - NV_PAPU_IGSCNT, size);
+		}
+		return 0;
 	}
 
 	if (addr >= NV_PAPU_FEMEMDATA && addr < NV_PAPU_FEMEMDATA + sizeof(uint32_t)) {
@@ -1951,6 +1911,11 @@ bool APUDevice::ProcessDSPAudio(int16_t* output, const int32_t* mixBins, size_t 
 uint32_t APUDevice::VPRead(uint32_t addr, unsigned size)
 {
 	UpdateVPFifo();
+
+	// XGSCNT (VP offset 0x0C) — return the live sample counter
+	if (addr >= 0x0C && addr < 0x0C + sizeof(uint32_t)) {
+		return ReadRegisterFragment(m_XGSCounter, addr - 0x0C, size);
+	}
 
 	if (addr >= APU_VP_FREE && addr < APU_VP_FREE + sizeof(uint32_t)) {
 		return ReadRegisterFragment(
