@@ -428,8 +428,393 @@ uint32_t GetFEMethodTargetVoiceOrDefault(uint32_t addr, uint32_t value, uint32_t
 {
 	switch (addr) {
 	case NV1BA0_PIO_SET_CURRENT_VOICE:
-		m_CurrentVoice = value & NV1BA0_PIO_VOICE_ON_HANDLE;
-		SetRegister32(NV_PAPU_FECV, value & NV1BA0_PIO_VOICE_ON_HANDLE);
+		return value & APU_VP_VOICE_MAX_HANDLE;
+	case NV1BA0_PIO_VOICE_ON:
+	case NV1BA0_PIO_VOICE_OFF:
+	case NV1BA0_PIO_VOICE_RELEASE:
+	case NV1BA0_PIO_GET_VOICE_POSITION:
+	case NV1BA0_PIO_VOICE_PAUSE:
+	case NV1BA0_PIO_SET_CURRENT_HRTF_ENTRY:
+		return value & APU_VP_VOICE_MAX_HANDLE;
+	case NV1BA0_PIO_VOICE_LOCK:
+	case NV1BA0_PIO_SET_CONTEXT_DMA_NOTIFY:
+	case NV1BA0_PIO_SET_CURRENT_SSL_CONTEXT_DMA:
+	case NV1BA0_PIO_SET_CURRENT_SSL:
+	case NV1BA0_PIO_SET_HRTF_SUBMIXES:
+	case NV1BA0_PIO_SET_HRTF_HEADROOM:
+	case NV1BA0_PIO_SET_VOICE_CFG_VBIN:
+	case NV1BA0_PIO_SET_VOICE_CFG_FMT:
+	case NV1BA0_PIO_SET_VOICE_CFG_ENV0:
+	case NV1BA0_PIO_SET_VOICE_CFG_ENVA:
+	case NV1BA0_PIO_SET_VOICE_CFG_ENV1:
+	case NV1BA0_PIO_SET_VOICE_CFG_ENVF:
+	case NV1BA0_PIO_SET_VOICE_CFG_MISC:
+	case NV1BA0_PIO_SET_VOICE_TAR_HRTF:
+	case NV1BA0_PIO_SET_VOICE_SSL_A:
+	case NV1BA0_PIO_SET_VOICE_SSL_B:
+	case NV1BA0_PIO_SET_VOICE_TAR_VOLA:
+	case NV1BA0_PIO_SET_VOICE_TAR_VOLB:
+	case NV1BA0_PIO_SET_VOICE_TAR_VOLC:
+	case NV1BA0_PIO_SET_VOICE_LFO_ENV:
+	case NV1BA0_PIO_SET_VOICE_LFO_MOD:
+	case NV1BA0_PIO_SET_VOICE_TAR_FCA:
+	case NV1BA0_PIO_SET_VOICE_TAR_FCB:
+	case NV1BA0_PIO_SET_VOICE_TAR_PITCH:
+	case NV1BA0_PIO_SET_VOICE_CFG_BUF_BASE:
+	case NV1BA0_PIO_SET_VOICE_CFG_BUF_LBO:
+	case NV1BA0_PIO_SET_VOICE_BUF_CBO:
+	case NV1BA0_PIO_SET_VOICE_CFG_BUF_EBO:
+		return currentVoiceValue & APU_VP_VOICE_MAX_HANDLE;
+	default:
+		return APU_VP_VOICE_MAX_HANDLE;
+	}
+}
+// Match xemu's VP filter bounds: hardware-style cutoff is clamped to 2^-8..1.0.
+constexpr float APU_FILTER_MIN_FREQUENCY = 0.003906f;
+constexpr float APU_FILTER_ENV_MIN_GAIN = 0.0f;
+constexpr float APU_FILTER_ENV_MAX_GAIN = 1.0f;
+// Match xemu's minimum stable SVF resonance derived from the MCPX FC1 range.
+constexpr float APU_FILTER_MIN_Q = 0.079407f;
+// FC1 is a 16-bit fixed-point resonance value normalized against 0x8000.
+constexpr float APU_FILTER_Q_NORMALIZER = 32768.0f;
+constexpr uint16_t APU_LFO_LEVEL_MAX = 0x7FFF;
+constexpr uint16_t APU_LFO_LEVEL_CENTER = 0x4000;
+constexpr float APU_LFO_MODULATION_NORMALIZER = 127.0f;
+
+bool IsAPUWordAddressRegister(uint32_t addr)
+{
+	switch (addr) {
+	case NV_PAPU_FENADDR:
+	case NV_PAPU_FEMEMADDR:
+	case NV_PAPU_VPVADDR:
+	case NV_PAPU_VPSGEADDR:
+	case NV_PAPU_VPSSLADDR:
+	case NV_PAPU_GPSADDR:
+	case NV_PAPU_GPFADDR:
+	case NV_PAPU_EPSADDR:
+	case NV_PAPU_EPFADDR:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool IsAPUMaxSgeRegister(uint32_t addr)
+{
+	switch (addr) {
+	case NV_PAPU_GPSMAXSGE:
+	case NV_PAPU_GPFMAXSGE:
+	case NV_PAPU_EPSMAXSGE:
+	case NV_PAPU_EPFMAXSGE:
+		return true;
+	default:
+		return false;
+	}
+}
+
+uint32_t NormalizeAPUWordAddress(uint32_t value)
+{
+	return value & ~0x3u;
+}
+
+uint32_t NormalizeAPUMaxSge(uint32_t value)
+{
+	// MCPX drivers program MAXSGE through LOW16 writes, so discard any upper
+	// garbage bits before the count feeds the DMA page walkers.
+	return value & 0xFFFFu;
+}
+
+bool IsVoiceEntryOffsetWithinBounds(uint32_t offset)
+{
+	// NV_PAVS_SIZE is one voice entry; keep 32-bit accesses fully inside it.
+	return offset <= NV_PAVS_SIZE - sizeof(uint32_t);
+}
+
+// Forward declaration for the helper defined below near the other low-level
+// bitfield utilities; it returns the count of trailing zero bits in a 32-bit
+// mask/value.
+uint32_t Ctz32(uint32_t value);
+
+uint32_t GetMaskedValue(uint32_t current, uint32_t mask)
+{
+	// Extract and right-align the selected bitfield, or return the raw word for
+	// full-width masks.
+	if (mask == 0xFFFFFFFF) {
+		return current;
+	}
+
+	return (current & mask) >> Ctz32(mask);
+}
+
+uint32_t MergeMaskedValue(uint32_t current, uint32_t mask, uint32_t value)
+{
+	// Replace only the masked bitfield, preserving the rest of the current word.
+	if (mask == 0xFFFFFFFF) {
+		return value;
+	}
+
+	return (current & ~mask) | ((value << Ctz32(mask)) & mask);
+}
+
+struct EnvelopeFieldConfig {
+	uint32_t attackRateMask;
+	uint32_t delayTimeMask;
+	uint32_t decayRateMask;
+	uint32_t holdTimeMask;
+	uint32_t sustainLevelMask;
+};
+
+const EnvelopeFieldConfig& GetEnvelopeFieldConfig(uint32_t reg0, uint32_t regA)
+{
+	static constexpr EnvelopeFieldConfig kAmplitudeEnvelopeFieldConfig{
+		NV_PAVS_VOICE_CFG_ENV0_EA_ATTACKRATE,
+		NV_PAVS_VOICE_CFG_ENV0_EA_DELAYTIME,
+		NV_PAVS_VOICE_CFG_ENVA_EA_DECAYRATE,
+		NV_PAVS_VOICE_CFG_ENVA_EA_HOLDTIME,
+		NV_PAVS_VOICE_CFG_ENVA_EA_SUSTAINLEVEL,
+	};
+	static constexpr EnvelopeFieldConfig kFilterEnvelopeFieldConfig{
+		NV_PAVS_VOICE_CFG_ENV1_EF_ATTACKRATE,
+		NV_PAVS_VOICE_CFG_ENV1_EF_DELAYTIME,
+		NV_PAVS_VOICE_CFG_ENVF_EF_DECAYRATE,
+		NV_PAVS_VOICE_CFG_ENVF_EF_HOLDTIME,
+		NV_PAVS_VOICE_CFG_ENVF_EF_SUSTAINLEVEL,
+	};
+	return (reg0 == NV_PAVS_VOICE_CFG_ENV1 && regA == NV_PAVS_VOICE_CFG_ENVF)
+		? kFilterEnvelopeFieldConfig
+		: kAmplitudeEnvelopeFieldConfig;
+}
+
+uint32_t AbsoluteMixMagnitude(int32_t value)
+{
+	const int64_t signedSample = static_cast<int64_t>(value);
+	const uint64_t magnitude = signedSample < 0
+		? static_cast<uint64_t>(-signedSample)
+		: static_cast<uint64_t>(signedSample);
+	return static_cast<uint32_t>(magnitude);
+}
+
+uint32_t PeakAbsoluteMixAmplitude(const int32_t* samples, size_t sampleCount)
+{
+	uint32_t peak = 0;
+	for (size_t i = 0; i < sampleCount; ++i) {
+		peak = std::max(peak, AbsoluteMixMagnitude(samples[i]));
+	}
+	return peak;
+}
+
+uint32_t PeakAbsoluteMixBinAmplitude(const int32_t* mixBins, size_t frameCount, size_t slot)
+{
+	return PeakAbsoluteMixAmplitude(mixBins + slot * frameCount, frameCount);
+}
+
+float ClampUnitSample(float value)
+{
+	return std::clamp(value, -1.0f, 1.0f);
+}
+
+float RunLowPassFilter(float& high, float& band, float& low, float cutoff, float resonance, float input)
+{
+	// State-variable low-pass filter adapted to the lightweight MCPX VP path.
+	// The small bias and cubic damping terms are the same stabilizers used in xemu's SVF implementation.
+	const float normalizedInput = std::sqrt(resonance / 2.0f + 0.01f) * input;
+	band -= band * band * band * 0.001f;
+	high = normalizedInput - low - resonance * band;
+	band += cutoff * high;
+	low += cutoff * band;
+	return low;
+}
+
+uint32_t ReadLE(const uint8_t* data, uint32_t addr, unsigned size)
+{
+	uint32_t value = 0;
+	for (unsigned i = 0; i < size; ++i) {
+		value |= static_cast<uint32_t>(data[addr + i]) << (i * 8);
+	}
+	return value;
+}
+
+void WriteLE(uint8_t* data, uint32_t addr, uint32_t value, unsigned size)
+{
+	for (unsigned i = 0; i < size; ++i) {
+		data[addr + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xFF);
+	}
+}
+
+uint32_t ReadRegisterFragment(uint32_t value, uint32_t byteOffset, unsigned size)
+{
+	const uint32_t shift = byteOffset * 8;
+	if (size >= sizeof(uint32_t)) {
+		return value;
+	}
+
+	const uint32_t mask = (1u << (size * 8)) - 1;
+	return (value >> shift) & mask;
+}
+
+uint32_t WriteRegisterFragment(uint32_t current, uint32_t value, uint32_t byteOffset, unsigned size)
+{
+	const uint32_t shift = byteOffset * 8;
+	if (size >= sizeof(uint32_t)) {
+		return value;
+	}
+
+	const uint32_t mask = ((1u << (size * 8)) - 1u) << shift;
+	return (current & ~mask) | ((value << shift) & mask);
+}
+
+uint32_t Ctz32(uint32_t value)
+{
+	uint32_t shift = 0;
+	while (((value >> shift) & 1u) == 0u && shift < 32) {
+		++shift;
+	}
+	return shift;
+}
+
+// Return the bit index of the least-significant set bit in a 64-bit voice mask.
+// A return value of 64 means the mask was empty, which lets callers keep the
+// "no bits set" case explicit without a separate sentinel.
+uint32_t CountTrailingZeros64(uint64_t value)
+{
+	if (value == 0) {
+		return 64;
+	}
+#if defined(__clang__) || defined(__GNUC__)
+	return static_cast<uint32_t>(__builtin_ctzll(value));
+#else
+	uint32_t shift = 0;
+	while (((value >> shift) & 1u) == 0u) {
+		++shift;
+	}
+	return shift;
+#endif
+}
+
+size_t GetRecentFEMethodIndex(size_t nextIndex, size_t bufferSize, size_t reverseOffset)
+{
+	// Walk the fixed-size recent-method ring buffer newest-first.
+	// reverseOffset=0 returns the most recently written entry and larger offsets
+	// move progressively backward through older entries. Callers are expected to
+	// clamp reverseOffset to the number of valid buffered entries.
+	return (nextIndex + bufferSize - 1 - (reverseOffset % bufferSize)) % bufferSize;
+}
+
+bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size, uintptr_t& hostAddress)
+{
+	if (size == 0) {
+		return false;
+	}
+
+	const uint64_t startAddress = static_cast<uint64_t>(guestAddress);
+	const uint64_t span = static_cast<uint64_t>(size - 1);
+	if (span > UINT64_MAX - startAddress) {
+		return false;
+	}
+
+	const uint64_t endAddress = startAddress + span;
+	if (guestAddress >= PHYSICAL_MAP_BASE && endAddress <= PHYSICAL_MAP_END) {
+		// Xbox KSEG0/physical-map addresses are reserved directly in the host address
+		// space, so a guest physical-map VA can be dereferenced as-is here.
+		hostAddress = static_cast<uintptr_t>(guestAddress);
+		return true;
+	}
+
+	// KSEG1 (uncached) mirrors KSEG0: virtual 0xA0000000 maps to physical 0x00000000.
+	// DirectSound and the kernel use KSEG1 for audio buffer DMA to avoid cache
+	// coherency issues.  Resolve it through the same CONTIGUOUS_MEMORY_BASE window
+	// that backs KSEG0.
+	if (guestAddress >= 0xA0000000 && endAddress <= 0xBFFFFFFF) {
+		const uint64_t guestPhys = startAddress - 0xA0000000;
+		if (guestPhys < PHYSICAL_MAP_SIZE && (guestPhys + span) < PHYSICAL_MAP_SIZE) {
+			hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestPhys);
+			return true;
+		}
+	}
+
+	if (guestAddress < PHYSICAL_MAP_SIZE && endAddress < PHYSICAL_MAP_SIZE) {
+		hostAddress = static_cast<uintptr_t>(CONTIGUOUS_MEMORY_BASE + guestAddress);
+		return true;
+	}
+
+	return false;
+}
+
+bool ResolveGuestMemoryPointer(uint32_t guestAddress, size_t size)
+{
+	uintptr_t hostAddress = 0;
+	return ResolveGuestMemoryPointer(guestAddress, size, hostAddress);
+}
+
+bool IsGuestRangeAccessible(uint32_t guestAddress, size_t size)
+{
+	return ResolveGuestMemoryPointer(guestAddress, size);
+}
+
+float AttenuateVoiceVolume(uint32_t volume)
+{
+	const uint32_t clamped = volume & 0x0FFF;
+	return clamped == 0x0FFF ? 0.0f : std::pow(10.0f, static_cast<float>(clamped) / APU_VOLUME_DECIBEL_DIVISOR);
+}
+
+static int32_t ApplyHeadroomToMixSample(int32_t sample, uint8_t headroom)
+{
+	if (headroom == 0) {
+		return sample;
+	}
+
+	const int32_t rounding = 1 << (headroom - 1);
+	if (sample >= 0) {
+		return (sample + rounding) >> headroom;
+	}
+
+	return -(((-sample) + rounding) >> headroom);
+}
+
+float ConvertUnsigned8(uint8_t value)
+{
+	return (static_cast<float>(value) - 128.0f) / 128.0f;
+}
+
+float ConvertSigned16(int16_t value)
+{
+	return static_cast<float>(value) / 32768.0f;
+}
+
+float ConvertSigned24(uint32_t value)
+{
+	const int32_t extended = (static_cast<int32_t>(value << 8)) >> 8;
+	return static_cast<float>(extended) / 8388608.0f;
+}
+
+float ConvertSigned32(int32_t value)
+{
+	return static_cast<float>(value) / 2147483648.0f;
+}
+
+double DecodePitchStep(uint32_t pitch)
+{
+	const int16_t signedPitch = static_cast<int16_t>(pitch & 0xFFFF);
+	return std::exp2(static_cast<double>(signedPitch) / APU_PITCH_STEP_EXPONENT);
+}
+
+float NormalizeVoiceLFOModulationLevel(uint32_t level)
+{
+	// PAR_LFO stores a 15-bit triangle-wave level where 0x4000 is the neutral
+	// midpoint; map the hardware range [0, 0x7FFF] to a bipolar [-1, 1] host
+	// modulation value.
+	const float normalized = (static_cast<float>(std::min<uint32_t>(level, APU_LFO_LEVEL_MAX)) /
+		static_cast<float>(APU_LFO_LEVEL_CENTER)) - 1.0f;
+	return std::clamp(normalized, -1.0f, 1.0f);
+}
+
+void StepVoiceLFOLevel(uint32_t delta, uint32_t& level, bool& descending)
+{
+	if (delta == 0) {
+		// Voice render code uses a zero delta to hold an LFO at its current level,
+		// which is how the guest-visible delay-mode bits keep the oscillator parked
+		// at the neutral center until the corresponding envelope leaves DELAY.
+		level = std::min<uint32_t>(level, APU_LFO_LEVEL_MAX);
 		return;
 	}
 
