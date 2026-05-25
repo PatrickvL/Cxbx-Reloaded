@@ -221,22 +221,27 @@ private:
 	void SetRegister32(uint32_t addr, uint32_t value);
 	uint32_t GetRegister32(uint32_t addr) const;
 
-	// APU frame thread (xemu-style dedicated audio thread)
-	void StartFrameThread();
-	void StopFrameThread();
-	void APUFrameThread();
+public:
+	// Process one APU VP frame — called from dispatch_periodic_events
+	// (Timer.cpp) at ~187.5 Hz alongside VBlank/PIT/OHCI.
+	// Returns absolute QPC deadline for the next VP frame.
+	uint64_t apu_tick(uint64_t now_qpc);
+
+	// Stop the APU frame thread (kept for API compatibility; timing moved to Timer.cpp)
+	void StartFrameThread() {}
+	void StopFrameThread() {}
 	void ProcessVPFrame();
-	void Throttle();
+
+private:
 	bool IsAPUHaltedOrTrapped() const;
 	void WakeAPUThread();
 
 	std::array<uint8_t, APU_SIZE> m_Registers{};
 	mutable std::mutex m_AudioUpdateMutex{};
 	std::condition_variable m_APUCond{};
-	std::thread m_APUThread{};
-	std::atomic<bool> m_APUExiting{false};
-	std::atomic<bool> m_APURunning{false};
-	std::chrono::steady_clock::time_point m_NextFrameTime{};
+	uint64_t m_NextFrameQpc = 0;
+	uint64_t m_EPFrameQpc = 0;
+	int64_t m_EPFrameUs = 5333;
 	uint32_t m_EPFrameDiv = 0;
 	uint32_t m_VPFifoLevel = 0;
 	uint32_t m_VPFifoLastUpdate = 0;
