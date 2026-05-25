@@ -133,13 +133,17 @@ constexpr uint32_t AC97_MIC_INPUT_CHANNELS = 1;
 constexpr uint32_t AC97_MIC_INPUT_BYTES_PER_FRAME = sizeof(int16_t) * AC97_MIC_INPUT_CHANNELS;
 constexpr uint32_t AC97_PCM_LOOPBACK_HISTORY_FRAMES = AC97_RATE_48KHZ / 2;
 constexpr uint32_t AC97_MAX_QUEUED_AUDIO_BYTES = APU_TIMER_FREQUENCY * AC97_OUTPUT_BYTES_PER_FRAME / 2;
-constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 2048;
+// Each EP tick produces NUM_SAMPLES_PER_FRAME * EP_FRAME_DIVIDER = 256 frames.
+// Match the OpenAL buffer size to one tick's output so each submission queues
+// immediately rather than waiting multiple ticks to accumulate.
+constexpr uint32_t AC97_STREAM_BUFFER_BYTES = 1024;
 constexpr uint32_t AC97_STREAM_BUFFER_FRAMES = AC97_STREAM_BUFFER_BYTES / AC97_OUTPUT_BYTES_PER_FRAME;
-// Prime four stream buffers before starting playback so the producer cadence
-// does not immediately underrun the OpenAL queue.
-constexpr uint32_t AC97_STARTUP_BUFFER_CHUNKS = 4;
+// Prime eight stream buffers before starting playback (8 × 5.333ms ≈ 42.7ms
+// runway) so scheduling jitter in the system-events thread doesn't immediately
+// underrun the OpenAL queue.
+constexpr uint32_t AC97_STARTUP_BUFFER_CHUNKS = 8;
 constexpr uint32_t AC97_STARTUP_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES * AC97_STARTUP_BUFFER_CHUNKS;
-// After an underrun, restart quickly with a single buffer to minimize audible gaps.
+// After an underrun, restart with a single buffer to minimize audible gaps.
 constexpr uint32_t AC97_RESTART_BUFFER_FRAMES = AC97_STREAM_BUFFER_FRAMES;
 constexpr uint32_t AC97_MAX_BUFFERED_AUDIO_BYTES = AC97_MAX_QUEUED_AUDIO_BYTES * 2;
 constexpr uint16_t AC97_VOLUME_MUTE = 0x8000;
