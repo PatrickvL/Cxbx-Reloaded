@@ -2022,6 +2022,23 @@ void APUDevice::ConsumeVPMethod(uint32_t addr, uint32_t value, unsigned size)
 					NV_PAVS_VOICE_PAR_STATE_PAUSED, 0);
 				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
 					NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE, 1);
+				{
+					static bool firstActivation;
+					if (!firstActivation) {
+						firstActivation = true;
+						uint32_t verify = 0;
+						ReadVoiceMask(vh, NV_PAVS_VOICE_PAR_STATE,
+							0xFFFFFFFF, verify);
+						uint32_t verifyBase = 0;
+						ReadVoiceMask(vh, NV_PAVS_VOICE_CUR_PSL_START,
+							NV_PAVS_VOICE_CUR_PSL_START_BA, verifyBase);
+						EmuLog(LOG_LEVEL::WARNING,
+							"APU diag: post-activation voice %u state=0x%08X (active=%d) base=0x%08X",
+							vh, verify,
+							(verify & NV_PAVS_VOICE_PAR_STATE_ACTIVE_VOICE) != 0 ? 1 : 0,
+							verifyBase);
+					}
+				}
 				SetVoiceActiveHint(vh, true);
 				SetVoiceLocked(vh, false);
 				WriteVoiceMask(vh, NV_PAVS_VOICE_PAR_OFFSET,
