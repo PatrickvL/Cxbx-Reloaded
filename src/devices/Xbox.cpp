@@ -162,6 +162,7 @@ void InitXboxHardware(HardwareModel hardwareModel)
 	                                                                        // SMC uses different AV_PACK values than the Kernel
 	                                                                        // See https://xboxdevwiki.net/PIC#The_AV_Pack
 	g_EEPROM = new EEPROMDevice();
+	g_APU = new APUDevice();
 	g_AC97 = new AC97Device();
 	g_NVNet = new NVNetDevice();
 	g_NV2A = new NV2ADevice();
