@@ -1597,6 +1597,36 @@ void APUDevice::MMIOWrite(int barIndex, uint32_t addr, uint32_t value, unsigned 
 		}
 	}
 
+	// User Method FIFO: process methods when the kernel writes FEUFIFOCTL
+	// (0x1340) with count > 0.  At that point the method and param have
+	// both been written to the FIFO slots at 0x1400-0x1500.  Consume all
+	// pending methods synchronously and reset count to 0.
+	if (addr == 0x1340) {
+		uint32_t fifoCtl = value;
+		uint32_t count = fifoCtl & 0x3F;
+		uint32_t tail = (fifoCtl >> 16) & 0x1F;
+		while (count > 0) {
+			uint32_t methodOffset = GetRegister32(0x1400 + tail * 8);
+			uint32_t paramValue   = GetRegister32(0x1404 + tail * 8);
+			if (methodOffset != 0) {
+				ConsumeVPMethod(methodOffset, paramValue, sizeof(uint32_t));
+			}
+			SetRegister32(0x1400 + tail * 8, 0);
+			SetRegister32(0x1404 + tail * 8, 0);
+			tail = (tail + 1) & 0x1F;
+			count--;
+		}
+		// Report all methods consumed: count=0, tail advanced
+		uint32_t head = (fifoCtl >> 8) & 0x1F;
+		WriteRegister(addr, (head << 8) | (tail << 16), size);
+		return;
+	}
+
+	if (addr >= 0x1400 && addr < 0x1500) {
+		WriteRegister(addr, value, size);
+		return;
+	}
+
 	WriteRegister(addr, value, size);
 	const uint32_t registerBase = addr & ~0x3u;
 	if (IsAPUWordAddressRegister(registerBase)) {
