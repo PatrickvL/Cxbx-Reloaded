@@ -1158,11 +1158,15 @@ void APUDevice::Reset()
 	SetRegister32(NV_PAPU_FEMEMDATA, 0);
 	SetRegister32(NV_PAPU_FETFORCE0, 0);
 	SetRegister32(NV_PAPU_FETFORCE1, 0);
+
 	// Initialize FEUFIFOCTL with head=31, tail=0 so the first kernel write
 	// goes to slot 0 (head wraps 31→0), matching our tail=0 read position.
 	SetRegister32(NV_PAPU_FEUFIFOCTL, (31 << 8) | (0 << 16));
 	SetRegister32(NV_PAPU_SECTL, 0x00000008);
-	SetRegister32(NV_PAPU_VPVADDR, 0);
+	// Set VPVADDR to a non-zero sentinel so the game's native code doesn't
+	// crash dereferencing address 0.  VoiceMask functions check for this
+	// sentinel and use the internal shadow table (same as VPVADDR=0).
+	SetRegister32(NV_PAPU_VPVADDR, 1);
 	SetRegister32(NV_PAPU_VPSGEADDR, 0);
 	SetRegister32(NV_PAPU_VPSSLADDR, 0);
 	SetRegister32(NV_PAPU_GPSADDR, 0);
@@ -2840,7 +2844,7 @@ bool APUDevice::ReadVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t ma
 	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	if (voiceTableBase == 0) {
+	if (voiceTableBase <= 1) {
 		const size_t shadowOffset = static_cast<size_t>(voiceHandle) * NV_PAVS_SIZE + offset;
 		const uint32_t current = ReadMemoryWindow(
 			m_VPVoiceTableShadow.data(),
@@ -2885,7 +2889,7 @@ bool APUDevice::WriteVoiceMask(uint32_t voiceHandle, uint32_t offset, uint32_t m
 	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	if (voiceTableBase == 0) {
+	if (voiceTableBase <= 1) {
 		const size_t shadowOffset = static_cast<size_t>(voiceHandle) * NV_PAVS_SIZE + offset;
 		const uint32_t current = ReadMemoryWindow(
 			m_VPVoiceTableShadow.data(),
@@ -3939,7 +3943,7 @@ void APUDevice::RenderBasicAudioChunk(size_t frameCount)
 	}
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	if (voiceTableBase == 0) {
+	if (voiceTableBase <= 1) {
 		if (!m_LoggedMissingVoiceTableDuringRender) {
 			EmuLog(LOG_LEVEL::INFO,
 				"APU using internal shadow voice table (NV_PAPU_VPVADDR not yet initialized by guest)");
@@ -4607,7 +4611,7 @@ void APUDevice::LogVoiceTableDiagnostics() const
 	};
 
 	const uint32_t voiceTableBase = GetRegister32(NV_PAPU_VPVADDR);
-	const char* voiceTableSource = voiceTableBase == 0 ? "shadow" : "guest";
+	const char* voiceTableSource = voiceTableBase <= 1 ? "shadow" : "guest";
 
 	size_t activeVoiceCount = 0;
 	size_t pausedVoiceCount = 0;
