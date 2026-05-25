@@ -561,7 +561,7 @@ XBSYSAPI EXPORTNUM(375) xbox::ulong_xt NTAPI xbox::MmDbgFreeMemory
 		LOG_FUNC_ARG(NumberOfBytes)
 	LOG_FUNC_END;
 
-	ULONG FreedPagesNumber = g_VMManager.DeallocateSystemMemory(DebuggerType, (VAddr)BaseAddress, NumberOfBytes);
+	ULONG FreedPagesNumber = g_VMManager.DeallocateSystemMemory(SystemMemoryType, (VAddr)BaseAddress, NumberOfBytes);
 
 	RETURN(FreedPagesNumber);
 }
